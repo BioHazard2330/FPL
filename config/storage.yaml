@@ -1,0 +1,14 @@
+# Storage budgets in MB. Source: bootstrap spec sections 8, 13, 14.
+
+app_data:
+  target_mb: 250
+  max_mb: 500
+
+logs:
+  max_mb: 25
+
+cache:
+  target_mb: 100
+  max_mb: 200
+
+raw_retention_hours: 72

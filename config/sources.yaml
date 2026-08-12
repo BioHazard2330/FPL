@@ -1,0 +1,11 @@
+# Source hierarchy per bootstrap spec section 27.
+# Phase 1: Tier 1 official only. Tier 2-4 added in later phases if approved.
+
+tier_1_official:
+  - name: fpl_api
+    base_url: https://fantasy.premierleague.com/api
+    enabled: true
+
+tier_2_specialist: []
+tier_3_journalism: []
+tier_4_community: []

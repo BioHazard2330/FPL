@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# runtime data — never commit
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+logs/*.log
+logs/*.log.*
+*.cache/
+.tmp/
+
+# secrets
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db

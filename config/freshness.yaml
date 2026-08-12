@@ -1,0 +1,12 @@
+# Freshness thresholds in minutes. Data older than this is stale, not "live".
+# Source: bootstrap spec section 25. Configurable, not hardcoded truths.
+
+price: 60
+ownership: 180
+fixtures: 360
+transfers_preseason: 60
+transfers_active_window: 30
+injuries_normal: 360
+injuries_deadline_day: 30
+team_news_normal: 360
+team_news_deadline_day: 15
