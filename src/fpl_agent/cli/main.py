@@ -11,7 +11,9 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
+from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
+from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
@@ -22,6 +24,7 @@ from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
 from fpl_agent.models.fixtures import _reference_event
+from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
@@ -64,6 +67,7 @@ def storage():
     click.echo(f"cache      {report.cache_mb:>8.2f} MB")
     click.echo(f"logs       {report.logs_mb:>8.2f} MB")
     click.echo(f"temp       {report.temp_mb:>8.2f} MB")
+    click.echo(f"backups    {report.backups_mb:>8.2f} MB")
     click.echo("-" * 30)
     click.echo(f"total      {report.total_mb:>8.2f} MB")
     click.echo(f"target     {report.target_mb:>8.2f} MB")
@@ -303,9 +307,21 @@ def build_squad(gw_window: int):
         raise SystemExit(1)
 
     xi = pick_starting_xi(conn, result.squad)
+
+    decision_id = log_decision(
+        conn, "squad",
+        summary=f"squad built: total_xp={result.total_xp}, cost=£{result.total_cost_tenths/10:.1f}m",
+        detail={
+            "squad": [{"player_id": c.player_id, "web_name": c.web_name, "position": c.position, "xp": c.xp} for c in result.squad],
+            "captain": xi.captain.web_name if xi.captain else None,
+            "vice_captain": xi.vice_captain.web_name if xi.vice_captain else None,
+            "gw_window": gw_window,
+        },
+        model_version=MODEL_VERSION,
+    )
     conn.close()
 
-    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)")
+    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)  decision_id={decision_id}")
     click.echo(f"total cost: £{result.total_cost_tenths / 10:.1f}m   total xP: {result.total_xp}")
     click.echo()
     click.echo("STARTING XI")
@@ -325,11 +341,25 @@ def captain(squad: str):
     """Rank a squad's captaincy options for the next fixture."""
     conn = get_connection()
     report = captaincy_report(conn, _parse_squad_option(squad))
-    conn.close()
 
     if report.best is None:
+        conn.close()
         click.echo("no valid squad")
         return
+
+    decision_id = log_decision(
+        conn, "captain",
+        summary=f"best={report.best.web_name} (median={report.best.median})",
+        detail={
+            "best": report.best.web_name, "second": report.second.web_name if report.second else None,
+            "safe": report.safe.web_name if report.safe else None,
+            "high_upside": report.high_upside.web_name if report.high_upside else None,
+            "risks": report.risks,
+        },
+        confidence=report.best.confidence,
+    )
+    conn.close()
+    click.echo(f"decision_id={decision_id}")
 
     def _line(label, o):
         if o is None:
@@ -361,11 +391,21 @@ def chips(squad: str | None):
 
     squad_ids = _parse_squad_option(squad)
     if squad_ids:
+        bb = bench_boost_value(conn, squad_ids)
+        tc = triple_captain_value(conn, squad_ids)
+        wc = wildcard_value(conn, squad_ids, n_gw=5)
+        fh = freehit_value(conn, squad_ids)
         click.echo()
-        click.echo(f"bench boost value:    {bench_boost_value(conn, squad_ids)} xP")
-        click.echo(f"triple captain value: {triple_captain_value(conn, squad_ids)} xP")
-        click.echo(f"wildcard value (5gw): {wildcard_value(conn, squad_ids, n_gw=5)} xP")
-        click.echo(f"free hit value:       {freehit_value(conn, squad_ids)} xP")
+        click.echo(f"bench boost value:    {bb} xP")
+        click.echo(f"triple captain value: {tc} xP")
+        click.echo(f"wildcard value (5gw): {wc} xP")
+        click.echo(f"free hit value:       {fh} xP")
+        decision_id = log_decision(
+            conn, "chip",
+            summary=f"bboost={bb} tc={tc} wildcard={wc} freehit={fh}",
+            detail={"bench_boost": bb, "triple_captain": tc, "wildcard_5gw": wc, "free_hit": fh},
+        )
+        click.echo(f"decision_id={decision_id}")
     conn.close()
 
 
@@ -380,8 +420,19 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int):
     rec = recommend_transfer(
         conn, _parse_squad_option(squad), bank_tenths=round(bank * 10), free_transfers=free_transfers, n_gw=gw_window
     )
+
+    detail = {"action": rec.action, "reason": rec.reason, "gw_window": gw_window}
+    if rec.best_candidate:
+        c = rec.best_candidate
+        detail["candidate"] = {
+            "out": c.player_out_name, "in": c.player_in_name,
+            "net_ev_1gw": c.net_ev_1gw, "net_ev_3gw": c.net_ev_3gw, "net_ev_5gw": c.net_ev_5gw,
+            "uses_hit": c.uses_hit,
+        }
+    decision_id = log_decision(conn, "transfer", summary=rec.reason, detail=detail)
     conn.close()
-    click.echo(f"action: {rec.action}")
+
+    click.echo(f"action: {rec.action}  decision_id={decision_id}")
     click.echo(f"reason: {rec.reason}")
     if rec.best_candidate:
         c = rec.best_candidate
@@ -435,6 +486,110 @@ def fixture_watch(n_gw: int):
             elif count >= 2:
                 click.echo(f"GW{event}  DOUBLE  {t['short_name']} ({count} fixtures)")
     conn.close()
+
+
+@cli.command()
+def backup():
+    """Snapshot the DB via sqlite3's backup API. Keeps a rolling set of at most
+    5 backups - not hundreds of local copies (section 112)."""
+    path = create_backup()
+    result = verify_backup(path)
+    click.echo(f"backup created: {path.name}")
+    click.echo(f"verify: {'OK' if result.ok else 'FAILED'} - {result.detail}")
+
+
+@cli.command("backups")
+def list_backups_cmd():
+    """List available backups."""
+    paths = list_backups()
+    if not paths:
+        click.echo("no backups yet - run `fpl backup`")
+        return
+    for p in paths:
+        size_mb = p.stat().st_size / (1024 * 1024)
+        click.echo(f"{p.name}  {size_mb:.2f}MB")
+
+
+@cli.command("verify-backup")
+@click.argument("name")
+def verify_backup_cmd(name: str):
+    """Check a backup's integrity (PRAGMA integrity_check + migration count)."""
+    result = verify_backup(BACKUP_DIR / name)
+    click.echo(f"{'OK' if result.ok else 'FAILED'} - {result.detail}")
+    if not result.ok:
+        raise SystemExit(1)
+
+
+@cli.command()
+@click.argument("name")
+@click.option("--yes", is_flag=True, help="required to actually perform the restore")
+def restore(name: str, yes: bool):
+    """Overwrite the live DB with a backup. Destructive - takes a safety backup of
+    the pre-restore state first, but still requires --yes to actually run."""
+    path = BACKUP_DIR / name
+    if not yes:
+        result = verify_backup(path)
+        click.echo(f"would restore from {name} (verify: {'OK' if result.ok else 'FAILED'} - {result.detail})")
+        click.echo("re-run with --yes to actually perform the restore")
+        return
+
+    safety_backup = restore_backup(path)
+    click.echo(f"restored from {name}")
+    click.echo(f"pre-restore state saved as {safety_backup.name}")
+
+
+@cli.command()
+def cleanup():
+    """Prune expired raw payloads, clear temp files, reclaim DB free space (VACUUM).
+    Never touches players/decisions/rules/user state (sections 15/111)."""
+    conn = get_connection()
+    report = run_cleanup(conn)
+    conn.close()
+    click.echo(f"raw files pruned:  {report.raw_files_pruned}")
+    click.echo(f"temp files cleared: {report.temp_files_cleared}")
+    click.echo(f"DB space reclaimed: {report.vacuum_freed_mb}MB")
+
+
+@cli.command()
+@click.option("--limit", default=20, help="max decisions to show")
+@click.option("--type", "decision_type", default=None, help="filter by decision_type: squad/captain/transfer/chip")
+def decisions(limit: int, decision_type: str | None):
+    """List the decision journal (section 71) - every recommendation ever generated."""
+    conn = get_connection()
+    all_decisions = list_decisions(conn, limit=limit * 3 if decision_type else limit)
+    conn.close()
+    if decision_type:
+        all_decisions = [d for d in all_decisions if d.decision_type == decision_type][:limit]
+    if not all_decisions:
+        click.echo("no decisions recorded yet")
+        return
+    for d in all_decisions:
+        click.echo(f"#{d.id:<4} {d.created_at}  {d.decision_type:<8} {d.summary}")
+
+
+@cli.command()
+@click.argument("decision_id", type=int)
+def why(decision_id: int):
+    """Section 72 decision trace, as far as stored data allows: Decision + Evidence
+    + confidence. Full Alternatives/Risks/Trigger synthesis needs the transfer-analyst
+    or decision-auditor subagent - this command surfaces facts, not fresh reasoning."""
+    conn = get_connection()
+    d = get_decision(conn, decision_id)
+    conn.close()
+    if d is None:
+        click.echo(f"no decision #{decision_id}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Decision   #{d.id} ({d.decision_type}) - {d.created_at}")
+    click.echo(f"Summary    {d.summary}")
+    click.echo(f"Model      {d.model_version or 'n/a'}")
+    click.echo(f"Confidence {d.confidence or 'n/a'}")
+    click.echo("Evidence:")
+    for key, value in d.detail.items():
+        click.echo(f"  {key}: {value}")
+    click.echo()
+    click.echo("(Alternatives/Risks/Trigger not stored - ask the transfer-analyst or")
+    click.echo(" decision-auditor subagent for a full section-72 trace on this decision.)")
 
 
 if __name__ == "__main__":

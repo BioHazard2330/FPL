@@ -3,8 +3,6 @@ from pathlib import Path
 
 from fpl_agent.config import CACHE_DIR, DATA_DIR, DB_PATH, LOGS_DIR, load_storage_budget
 
-_TEMP_DIR = DATA_DIR / "tmp"
-
 
 def _dir_size_mb(path: Path) -> float:
     if not path.exists():
@@ -25,6 +23,7 @@ class StorageReport:
     cache_mb: float
     logs_mb: float
     temp_mb: float
+    backups_mb: float
     total_mb: float
     target_mb: float
     max_mb: float
@@ -37,8 +36,9 @@ def measure_storage() -> StorageReport:
     db_mb = _file_size_mb(DB_PATH)
     cache_mb = _dir_size_mb(CACHE_DIR)
     logs_mb = _dir_size_mb(LOGS_DIR)
-    temp_mb = _dir_size_mb(_TEMP_DIR)
-    total = db_mb + cache_mb + logs_mb + temp_mb
+    temp_mb = _dir_size_mb(DATA_DIR / "tmp")
+    backups_mb = _dir_size_mb(DATA_DIR / "backups")
+    total = db_mb + cache_mb + logs_mb + temp_mb + backups_mb
 
     if total > budget.app_data_max_mb:
         status = "OVER"
@@ -52,6 +52,7 @@ def measure_storage() -> StorageReport:
         cache_mb=round(cache_mb, 2),
         logs_mb=round(logs_mb, 2),
         temp_mb=round(temp_mb, 2),
+        backups_mb=round(backups_mb, 2),
         total_mb=round(total, 2),
         target_mb=budget.app_data_target_mb,
         max_mb=budget.app_data_max_mb,

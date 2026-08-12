@@ -14,6 +14,7 @@ data/*.db-shm
 data/raw/
 data/cache/
 data/tmp/
+data/backups/
 logs/*.log
 logs/*.log.*
 *.cache/
