@@ -22,6 +22,17 @@ def normalize_teams(bootstrap: dict) -> list[dict]:
     ]
 
 
+_STRENGTH_FIELDS = (
+    "strength_overall_home", "strength_overall_away",
+    "strength_attack_home", "strength_attack_away",
+    "strength_defence_home", "strength_defence_away",
+)
+
+
+def normalize_team_strength(bootstrap: dict) -> list[dict]:
+    return [{"team_id": t["id"], **{f: t.get(f) for f in _STRENGTH_FIELDS}} for t in bootstrap["teams"]]
+
+
 def normalize_element_types(bootstrap: dict) -> list[dict]:
     return [
         {
@@ -178,6 +189,31 @@ def normalize_fixtures(fixtures_raw: list) -> list[dict]:
         }
         for f in fixtures_raw
     ]
+
+
+_SEASON_HISTORY_FIELDS = (
+    "minutes", "starts", "total_points", "goals_scored", "assists", "clean_sheets",
+    "goals_conceded", "bonus", "bps", "expected_goals", "expected_assists",
+    "expected_goal_involvements", "expected_goals_conceded", "defensive_contribution",
+    "start_cost", "end_cost",
+)
+
+_SEASON_HISTORY_FLOAT_FIELDS = {
+    "expected_goals", "expected_assists", "expected_goal_involvements", "expected_goals_conceded",
+}
+
+
+def normalize_season_history(player_id: int, element_summary: dict) -> list[dict]:
+    rows = []
+    for season in element_summary.get("history_past", []):
+        row = {"player_id": player_id, "season_name": season["season_name"]}
+        for field in _SEASON_HISTORY_FIELDS:
+            value = season.get(field)
+            if value is not None:
+                value = float(value) if field in _SEASON_HISTORY_FLOAT_FIELDS else int(value)
+            row[field] = value
+        rows.append(row)
+    return rows
 
 
 def flatten_rules(bootstrap: dict) -> dict[str, Any]:

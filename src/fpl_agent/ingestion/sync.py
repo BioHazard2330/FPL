@@ -23,6 +23,7 @@ from fpl_agent.normalization.fpl_core import (
     normalize_player_setpieces,
     normalize_player_stats,
     normalize_players,
+    normalize_team_strength,
     normalize_teams,
 )
 
@@ -70,83 +71,59 @@ def _upsert_many(conn: sqlite3.Connection, table: str, rows: list[dict], now: st
     conn.executemany(sql, [tuple(r[c] for c in data_cols) + (now,) for r in rows])
 
 
-def sync_price_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
+def _sync_valid_from_until_history(
+    conn: sqlite3.Connection, table: str, key_col: str, fields: tuple[str, ...], rows: list[dict], now: str
+) -> int:
+    """Shared valid_from/valid_until change-tracking pattern (section 11): insert a new
+    row only when tracked field values actually differ from the currently-open row."""
     changed = 0
+    field_list = ",".join(fields)
+    placeholders = ",".join(["?"] * len(fields))
     for r in rows:
-        pid = r["player_id"]
+        key = r[key_col]
         cur = conn.execute(
-            "SELECT id, value_tenths FROM player_price_history WHERE player_id=? AND valid_until IS NULL",
-            (pid,),
+            f"SELECT id, {field_list} FROM {table} WHERE {key_col}=? AND valid_until IS NULL",
+            (key,),
         ).fetchone()
-        if cur is None:
+        new_tuple = tuple(r[f] for f in fields)
+        if cur is None or tuple(cur[f] for f in fields) != new_tuple:
+            if cur is not None:
+                conn.execute(f"UPDATE {table} SET valid_until=? WHERE id=?", (now, cur["id"]))
             conn.execute(
-                "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES (?,?,?,NULL)",
-                (pid, r["value_tenths"], now),
-            )
-            changed += 1
-        elif cur["value_tenths"] != r["value_tenths"]:
-            conn.execute("UPDATE player_price_history SET valid_until=? WHERE id=?", (now, cur["id"]))
-            conn.execute(
-                "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES (?,?,?,NULL)",
-                (pid, r["value_tenths"], now),
+                f"INSERT INTO {table} ({key_col},{field_list},valid_from,valid_until) "
+                f"VALUES (?,{placeholders},?,NULL)",
+                (key, *new_tuple, now),
             )
             changed += 1
     return changed
+
+
+def sync_price_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
+    return _sync_valid_from_until_history(conn, "player_price_history", "player_id", ("value_tenths",), rows, now)
 
 
 def sync_ownership_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
-    changed = 0
-    for r in rows:
-        pid = r["player_id"]
-        cur = conn.execute(
-            "SELECT id, selected_by_percent FROM player_ownership_history WHERE player_id=? AND valid_until IS NULL",
-            (pid,),
-        ).fetchone()
-        if cur is None:
-            conn.execute(
-                "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) VALUES (?,?,?,NULL)",
-                (pid, r["selected_by_percent"], now),
-            )
-            changed += 1
-        elif cur["selected_by_percent"] != r["selected_by_percent"]:
-            conn.execute("UPDATE player_ownership_history SET valid_until=? WHERE id=?", (now, cur["id"]))
-            conn.execute(
-                "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) VALUES (?,?,?,NULL)",
-                (pid, r["selected_by_percent"], now),
-            )
-            changed += 1
-    return changed
+    return _sync_valid_from_until_history(
+        conn, "player_ownership_history", "player_id", ("selected_by_percent",), rows, now
+    )
 
 
 _SETPIECE_FIELDS = ("penalties_order", "penalties_text", "corners_order", "corners_text", "direct_fk_order", "direct_fk_text")
 
 
 def sync_setpiece_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
-    changed = 0
-    for r in rows:
-        pid = r["player_id"]
-        cur = conn.execute(
-            f"SELECT id, {','.join(_SETPIECE_FIELDS)} FROM player_setpiece_history "
-            "WHERE player_id=? AND valid_until IS NULL",
-            (pid,),
-        ).fetchone()
-        new_tuple = tuple(r[f] for f in _SETPIECE_FIELDS)
-        if cur is None:
-            conn.execute(
-                f"INSERT INTO player_setpiece_history (player_id, {','.join(_SETPIECE_FIELDS)}, valid_from, valid_until) "
-                f"VALUES (?,{','.join(['?'] * len(_SETPIECE_FIELDS))},?,NULL)",
-                (pid, *new_tuple, now),
-            )
-            changed += 1
-        elif tuple(cur[f] for f in _SETPIECE_FIELDS) != new_tuple:
-            conn.execute("UPDATE player_setpiece_history SET valid_until=? WHERE id=?", (now, cur["id"]))
-            conn.execute(
-                f"INSERT INTO player_setpiece_history (player_id, {','.join(_SETPIECE_FIELDS)}, valid_from, valid_until) "
-                f"VALUES (?,{','.join(['?'] * len(_SETPIECE_FIELDS))},?,NULL)",
-                (pid, *new_tuple, now),
-            )
-            changed += 1
-    return changed
+    return _sync_valid_from_until_history(conn, "player_setpiece_history", "player_id", _SETPIECE_FIELDS, rows, now)
+
+
+_STRENGTH_FIELDS = (
+    "strength_overall_home", "strength_overall_away",
+    "strength_attack_home", "strength_attack_away",
+    "strength_defence_home", "strength_defence_away",
+)
+
+
+def sync_team_strength_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
+    return _sync_valid_from_until_history(conn, "team_strength_history", "team_id", _STRENGTH_FIELDS, rows, now)
 
 
 def sync_stats_snapshot(conn: sqlite3.Connection, rows: list[dict], retrieved_at: str) -> int:
@@ -261,6 +238,7 @@ def run_sync() -> dict:
             price_changed = sync_price_history(conn, normalize_player_prices(bootstrap), now)
             ownership_changed = sync_ownership_history(conn, normalize_player_ownership(bootstrap), now)
             stats_inserted = sync_stats_snapshot(conn, normalize_player_stats(bootstrap), now)
+            strength_changed = sync_team_strength_history(conn, normalize_team_strength(bootstrap), now)
 
             new_setpiece_rows = normalize_player_setpieces(bootstrap)
             setpiece_changed = sync_setpiece_history(conn, new_setpiece_rows, now)
@@ -287,6 +265,7 @@ def run_sync() -> dict:
             "ownership_changes": ownership_changed,
             "stats_snapshots_inserted": stats_inserted,
             "setpiece_changes": setpiece_changed,
+            "strength_changes": strength_changed,
             "lifecycle_events": lifecycle_events,
             "setpiece_events": setpiece_events,
             "rules_changed": rules_changed,

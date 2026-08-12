@@ -64,3 +64,6 @@ class FPLApiAdapter:
 
     def fetch_fixtures(self) -> RawFetch:
         return self._get("fpl_api_fixtures", "/fixtures/")
+
+    def fetch_element_summary(self, player_id: int) -> RawFetch:
+        return self._get(f"fpl_api_element_summary_{player_id}", f"/element-summary/{player_id}/")

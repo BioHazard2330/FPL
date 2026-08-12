@@ -11,9 +11,11 @@ for _stream in (sys.stdout, sys.stderr):
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.fpl_api import SourceFetchError
+from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.logging_setup import setup_logging
 from fpl_agent.models.availability import list_availability
+from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
@@ -70,11 +72,52 @@ def sync():
     click.echo(f"ownership chg   {summary['ownership_changes']}")
     click.echo(f"stats snapshots {summary['stats_snapshots_inserted']}")
     click.echo(f"setpiece chg    {summary['setpiece_changes']}")
+    click.echo(f"strength chg    {summary['strength_changes']}")
     click.echo(f"lifecycle evts  {summary['lifecycle_events']}")
     click.echo(f"setpiece evts   {summary['setpiece_events']}")
     click.echo(f"rules changed   {summary['rules_changed']}")
     click.echo(f"raw pruned      {summary['raw_files_pruned']}")
     click.echo(f"retrieved_at    {summary['retrieved_at']}")
+
+
+@cli.command("sync-history")
+@click.option("--limit", default=None, type=int, help="max players to fetch this run (omit for all)")
+@click.option("--force", is_flag=True, help="refetch even players who already have season history")
+def sync_history(limit: int | None, force: bool):
+    """Fetch per-player career history (element-summary). Slow (~1 req/0.15-0.4s per
+    player) and heavy on the API - separate from `fpl sync`, safe to interrupt/resume."""
+    result = sync_player_season_history(limit=limit, force=force)
+    click.echo(f"fetched              {result['fetched']}")
+    click.echo(f"already had history  {result['already_had_history']}")
+    click.echo(f"skipped (limit)      {result['limit_skipped']}")
+    click.echo(f"failed               {len(result['failed'])}")
+    if result["failed"]:
+        click.echo(f"failed player ids: {result['failed']}")
+
+
+@cli.command()
+@click.option("--limit", default=20, help="max players to show")
+@click.option("--position", default=None, help="filter by GKP/DEF/MID/FWD")
+@click.option("--gw-window", default=1, help="fixture window size for clean-sheet calc")
+def projections(limit: int, position: str | None, gw_window: int):
+    """Top players by expected points. Preseason-prior model - see CLAUDE.md for
+    the exact heuristics/assumptions behind these numbers."""
+    conn = get_connection()
+    results = []
+    for r in conn.execute("SELECT id, web_name FROM players WHERE removed=0").fetchall():
+        ep = expected_points(conn, r["id"], n_gw=gw_window)
+        if position and ep.position != position.upper():
+            continue
+        results.append((r["web_name"], ep))
+    conn.close()
+
+    results.sort(key=lambda x: x[1].median, reverse=True)
+    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)")
+    for name, ep in results[:limit]:
+        click.echo(
+            f"{name:<20} {ep.position:<4} floor={ep.floor:>5} median={ep.median:>5} "
+            f"ceiling={ep.ceiling:>5} conf={ep.confidence:<6} exp_min={ep.expected_minutes:>4}"
+        )
 
 
 @cli.command("source-status")
