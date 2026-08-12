@@ -8,6 +8,7 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
 LOGS_DIR = PROJECT_ROOT / "logs"
 CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 DB_PATH = DATA_DIR / "fpl.db"
 

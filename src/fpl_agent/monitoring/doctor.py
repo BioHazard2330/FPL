@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from fpl_agent.config import PROJECT_ROOT, load_freshness, load_sources, load_storage_budget
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.migrate import pending_migrations
+from fpl_agent.monitoring.source_status import get_source_health
 
 _MIN_FREE_DISK_MB = 1024  # 1GB floor before flagging low disk
 
@@ -55,10 +56,28 @@ def _check_config() -> CheckResult:
         return CheckResult("config", False, str(e))
 
 
+def _check_sources() -> CheckResult:
+    try:
+        conn = get_connection()
+        statuses = get_source_health(conn)
+        conn.close()
+    except Exception as e:
+        return CheckResult("sources", False, str(e))
+
+    if not statuses:
+        return CheckResult("sources", True, "DEGRADED — no sync run yet, run `fpl sync`")
+
+    failing = [s.source_name for s in statuses if s.failure_count > 0 or s.last_success is None]
+    if failing:
+        return CheckResult("sources", False, f"failing: {', '.join(failing)}")
+    return CheckResult("sources", True, f"{len(statuses)} source(s) healthy")
+
+
 def run_checks() -> list[CheckResult]:
     return [
         _check_database(),
         _check_migrations(),
         _check_disk(),
         _check_config(),
+        _check_sources(),
     ]

@@ -49,15 +49,24 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Phase 1 implemented: `fpl doctor`, `fpl storage`.
-Planned (later phases): `sync`, `scan`, `build-team`, `captain`, `transfers`, `chips`, `injuries`, `team-news`, `fixtures`, `prices`, `changes`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`, `source-status`.
+Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl source-status`.
+Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `injuries`, `team-news`, `fixtures`, `prices`, `changes`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
+
+## Data model (Phase 2)
+
+- `teams`, `element_types`, `events`, `players`, `fixtures` — current-state facts, idempotent upsert on `id`.
+- `player_price_history`, `player_ownership_history` — `value`/`valid_from`/`valid_until` pattern (section 11); new row only inserted when the value actually changes.
+- `player_stats_snapshot` — append-only, but skipped (via `stats_hash`) when nothing changed since the last sync.
+- `rules` — one row per `(rule_key, season, version)`, sourced from the live `game_config.rules` + `game_config.scoring` (official API, not guessed/scraped). New version only on an actual value change.
+- `source_health` — per-source last success/failure/latency/failure_count, backs `fpl source-status` and the doctor source check.
+- Raw API responses land in `data/raw/`, pruned by `raw_retention_hours` (`config/storage.yaml`) on every sync.
 
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended).
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
-- [ ] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership via official API)
+- [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
 - [ ] Phase 3 — Intelligence (transfers, injuries, team news, set pieces)
 - [ ] Phase 4 — Models (team strength, expected minutes/points)
 - [ ] Phase 5 — Optimisation (squad, transfer, captaincy, chips)
