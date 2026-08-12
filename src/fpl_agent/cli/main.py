@@ -1,10 +1,19 @@
+import sys
+
 import click
+
+# Windows consoles default to a legacy codepage that can't encode player
+# names/news text pulled straight from the FPL API — force UTF-8 output.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.logging_setup import setup_logging
+from fpl_agent.models.availability import list_availability
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
@@ -60,6 +69,9 @@ def sync():
     click.echo(f"price changes   {summary['price_changes']}")
     click.echo(f"ownership chg   {summary['ownership_changes']}")
     click.echo(f"stats snapshots {summary['stats_snapshots_inserted']}")
+    click.echo(f"setpiece chg    {summary['setpiece_changes']}")
+    click.echo(f"lifecycle evts  {summary['lifecycle_events']}")
+    click.echo(f"setpiece evts   {summary['setpiece_events']}")
     click.echo(f"rules changed   {summary['rules_changed']}")
     click.echo(f"raw pruned      {summary['raw_files_pruned']}")
     click.echo(f"retrieved_at    {summary['retrieved_at']}")
@@ -77,6 +89,42 @@ def source_status():
     for s in statuses:
         state = "OK" if s.failure_count == 0 and s.last_success else "DEGRADED"
         click.echo(f"{s.source_name:<20} {state:<9} last_success={s.last_success} failures={s.failure_count} latency={s.latency_ms}ms")
+
+
+@cli.command()
+def injuries():
+    """List players not fully available (status/chance-of-playing derived, official source)."""
+    conn = get_connection()
+    players = list_availability(conn, unavailable_only=True)
+    conn.close()
+    if not players:
+        click.echo("no availability concerns")
+        return
+    for p in players:
+        chance = p.chance_of_playing_this_round
+        chance_str = f"{chance}%" if chance is not None else "?"
+        click.echo(f"{p.web_name:<20} {p.team:<4} {p.classification:<22} chance={chance_str:<5} {p.news or ''}")
+
+
+@cli.command()
+@click.option("--limit", default=20, help="max events to show")
+def changes(limit: int):
+    """Show recent change events (new/removed players, club changes, status changes, set pieces)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT event_type, entity, entity_id, old_value, new_value, detected_at, severity "
+        "FROM change_events ORDER BY detected_at DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        click.echo("no changes recorded yet — run `fpl sync`")
+        return
+    for r in rows:
+        click.echo(
+            f"{r['detected_at']}  {r['severity']:<8} {r['event_type']:<16} "
+            f"{r['entity']}#{r['entity_id']}  {r['old_value']} -> {r['new_value']}"
+        )
 
 
 if __name__ == "__main__":

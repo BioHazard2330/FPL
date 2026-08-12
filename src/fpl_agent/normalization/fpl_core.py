@@ -86,6 +86,21 @@ def normalize_player_ownership(bootstrap: dict) -> list[dict]:
     ]
 
 
+def normalize_player_setpieces(bootstrap: dict) -> list[dict]:
+    return [
+        {
+            "player_id": el["id"],
+            "penalties_order": el.get("penalties_order"),
+            "penalties_text": el.get("penalties_text") or None,
+            "corners_order": el.get("corners_and_indirect_freekicks_order"),
+            "corners_text": el.get("corners_and_indirect_freekicks_text") or None,
+            "direct_fk_order": el.get("direct_freekicks_order"),
+            "direct_fk_text": el.get("direct_freekicks_text") or None,
+        }
+        for el in bootstrap["elements"]
+    ]
+
+
 _STATS_FIELDS = [
     "total_points",
     "event_points",

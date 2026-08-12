@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 
 from fpl_agent.config import load_storage_budget
 from fpl_agent.database.connection import get_connection, transaction
+from fpl_agent.ingestion.change_detection import (
+    detect_player_lifecycle_changes,
+    detect_setpiece_changes,
+    snapshot_player_state,
+    snapshot_setpiece_state,
+)
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.raw_store import prune_raw
 from fpl_agent.normalization.fpl_core import (
@@ -14,6 +20,7 @@ from fpl_agent.normalization.fpl_core import (
     normalize_fixtures,
     normalize_player_ownership,
     normalize_player_prices,
+    normalize_player_setpieces,
     normalize_player_stats,
     normalize_players,
     normalize_teams,
@@ -106,6 +113,37 @@ def sync_ownership_history(conn: sqlite3.Connection, rows: list[dict], now: str)
             conn.execute(
                 "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) VALUES (?,?,?,NULL)",
                 (pid, r["selected_by_percent"], now),
+            )
+            changed += 1
+    return changed
+
+
+_SETPIECE_FIELDS = ("penalties_order", "penalties_text", "corners_order", "corners_text", "direct_fk_order", "direct_fk_text")
+
+
+def sync_setpiece_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
+    changed = 0
+    for r in rows:
+        pid = r["player_id"]
+        cur = conn.execute(
+            f"SELECT id, {','.join(_SETPIECE_FIELDS)} FROM player_setpiece_history "
+            "WHERE player_id=? AND valid_until IS NULL",
+            (pid,),
+        ).fetchone()
+        new_tuple = tuple(r[f] for f in _SETPIECE_FIELDS)
+        if cur is None:
+            conn.execute(
+                f"INSERT INTO player_setpiece_history (player_id, {','.join(_SETPIECE_FIELDS)}, valid_from, valid_until) "
+                f"VALUES (?,{','.join(['?'] * len(_SETPIECE_FIELDS))},?,NULL)",
+                (pid, *new_tuple, now),
+            )
+            changed += 1
+        elif tuple(cur[f] for f in _SETPIECE_FIELDS) != new_tuple:
+            conn.execute("UPDATE player_setpiece_history SET valid_until=? WHERE id=?", (now, cur["id"]))
+            conn.execute(
+                f"INSERT INTO player_setpiece_history (player_id, {','.join(_SETPIECE_FIELDS)}, valid_from, valid_until) "
+                f"VALUES (?,{','.join(['?'] * len(_SETPIECE_FIELDS))},?,NULL)",
+                (pid, *new_tuple, now),
             )
             changed += 1
     return changed
@@ -208,16 +246,31 @@ def run_sync() -> dict:
 
         bootstrap = bootstrap_fetch.data
 
+        # capture prior state before upserting, so change detection has something to diff against
+        prev_player_state = snapshot_player_state(conn)
+        prev_setpiece_state = snapshot_setpiece_state(conn)
+
         with transaction(conn):
             _upsert_many(conn, "teams", normalize_teams(bootstrap), now)
             _upsert_many(conn, "element_types", normalize_element_types(bootstrap), now)
             _upsert_many(conn, "events", normalize_events(bootstrap), now)
-            _upsert_many(conn, "players", normalize_players(bootstrap), now)
+            new_player_rows = normalize_players(bootstrap)
+            _upsert_many(conn, "players", new_player_rows, now)
             _upsert_many(conn, "fixtures", normalize_fixtures(fixtures_fetch.data), now)
 
             price_changed = sync_price_history(conn, normalize_player_prices(bootstrap), now)
             ownership_changed = sync_ownership_history(conn, normalize_player_ownership(bootstrap), now)
             stats_inserted = sync_stats_snapshot(conn, normalize_player_stats(bootstrap), now)
+
+            new_setpiece_rows = normalize_player_setpieces(bootstrap)
+            setpiece_changed = sync_setpiece_history(conn, new_setpiece_rows, now)
+
+            lifecycle_events = detect_player_lifecycle_changes(
+                conn, prev_player_state, new_player_rows, now, "fpl_api_bootstrap"
+            )
+            setpiece_events = detect_setpiece_changes(
+                conn, prev_setpiece_state, new_setpiece_rows, now, "fpl_api_bootstrap"
+            )
 
             season = _extract_season(bootstrap)
             rules_changed = sync_rules(conn, flatten_rules(bootstrap), season, "fpl_api_bootstrap", now)
@@ -233,6 +286,9 @@ def run_sync() -> dict:
             "price_changes": price_changed,
             "ownership_changes": ownership_changed,
             "stats_snapshots_inserted": stats_inserted,
+            "setpiece_changes": setpiece_changed,
+            "lifecycle_events": lifecycle_events,
+            "setpiece_events": setpiece_events,
             "rules_changed": rules_changed,
             "season": season,
             "raw_files_pruned": pruned,

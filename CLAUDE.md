@@ -49,8 +49,8 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl source-status`.
-Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `injuries`, `team-news`, `fixtures`, `prices`, `changes`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
+Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl source-status`, `fpl injuries`, `fpl changes`.
+Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `team-news`, `fixtures`, `prices`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
 
 ## Data model (Phase 2)
 
@@ -61,13 +61,20 @@ Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `
 - `source_health` — per-source last success/failure/latency/failure_count, backs `fpl source-status` and the doctor source check.
 - Raw API responses land in `data/raw/`, pruned by `raw_retention_hours` (`config/storage.yaml`) on every sync.
 
+## Data model (Phase 3)
+
+- `player_setpiece_history` — penalties/corners/direct-freekick taker order+text, same `valid_from`/`valid_until` change-aware pattern.
+- `change_events` — generic change-detection engine (sections 36-37): `new_player`, `removed_player`, `club_change`, `status_change`, `setpiece_change`. Confidence is always `CONFIRMED` (Tier 1 source only). Severity per section 85 scale, computed in `ingestion/change_detection.py`.
+- `models/availability.py::classify()` — pure function, section 45 classification (FIT / FIT BUT MONITORED / DOUBTFUL / LIKELY UNAVAILABLE / CONFIRMED UNAVAILABLE) derived from `players.status` + latest snapshot's `chance_of_playing_*`. Not persisted — computed on read, since it's cheap and always-fresh.
+- Deliberately **not** built this phase, because they need Tier 2-4 sources (journalism/club announcements) the user has not enabled yet: full transfer intelligence (section 42 — negotiations/medicals/loans beyond what the FPL API itself confirms), team news / predicted lineups (section 47), manager-change engine (section 44), predictive suspension from card-accumulation thresholds (section 46 — FPL's own `status='s'` flag is used instead, since the actual PL disciplinary point thresholds aren't in any Tier 1 source and weren't going to be guessed). Revisit if the user approves adding Tier 2-4 sources.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended).
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
-- [ ] Phase 3 — Intelligence (transfers, injuries, team news, set pieces)
+- [x] Phase 3 — Intelligence, Tier 1 subset (injury/availability, set pieces, change detection). Transfers/team-news/manager-changes deferred — see above.
 - [ ] Phase 4 — Models (team strength, expected minutes/points)
 - [ ] Phase 5 — Optimisation (squad, transfer, captaincy, chips)
 - [ ] Phase 6 — Claude Code layer (Skills, subagents, hooks)
