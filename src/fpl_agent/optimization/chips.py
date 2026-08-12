@@ -89,4 +89,6 @@ def _candidates(conn: sqlite3.Connection, squad_ids: list[int]):
         yield PlayerCandidate(
             player_id=r["id"], web_name=r["web_name"], position=r["position"],
             team_id=r["team_id"], team_short=r["team_short"], price_tenths=0, xp=ep.median,
+            median=ep.median, floor=ep.floor, ceiling=ep.ceiling, confidence=ep.confidence,
+            expected_minutes=ep.expected_minutes,
         )

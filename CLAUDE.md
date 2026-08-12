@@ -49,8 +49,7 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`.
-Planned (later phases): `scan`, `build-team`, `team-news`, `audit`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`.
 
 ## Data model (Phase 2)
 
@@ -194,9 +193,47 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   Synthetic data, no live network, but proves the phases genuinely compose rather
   than just passing in isolation.
 
+## First-team ready (Phase 9)
+
+- `optimization/squad.py` extended with `objective="median"|"ceiling"` and
+  `budget_override_tenths` - needed because section 94's three alternative
+  structures must be genuinely different optimiser runs, not the same result
+  relabeled. Verified live: median vs ceiling objectives produce squads that
+  differ in 3/15 picks, not the same squad twice.
+- `models/differentials.py` / `traps.py` / `breakouts.py` / `template.py`
+  (sections 58-60, 76) - all pure functions over already-synced data, no new
+  ingestion. Ownership thresholds and the value-ratio/risk-bucket heuristics are
+  explicitly documented as uncalibrated, same honesty pattern as the xP model.
+  Live-verified against the real pool: correctly flagged real preseason rotation
+  risk (e.g. high-ownership players with sub-25-minute expected involvement) and
+  a sensible template (Haaland top-owned FWD, etc).
+- `optimization/build_team.py` + `fpl build-team` (sections 92-94) - the actual
+  payoff command. Structures A (best EV) / B (best flexibility, ~3% budget left
+  as bank) / C (best calculated upside, ceiling objective), captain/vice, risks
+  (squad members flagged by the availability engine), players narrowly missed
+  per position, pre-GW1 watchlist (new players + unselected breakouts), full
+  section 93 output table. Logs itself to the decision journal.
+- `fpl status` (quick dashboard) and `fpl readiness` (section 108's exact
+  checklist) - every readiness row reflects a live check against the real DB/
+  solver, not a hardcoded "yes." `Transfers` and `Team news` are honestly marked
+  DEGRADED (Tier 1 only, the user's standing choice); `Scheduler` is DEGRADED
+  because it's built but not registered (also the user's choice, Phase 7). The
+  `Tests` row states plainly that it reports the last known manual `pytest`
+  result rather than re-running the suite live.
+- `fpl final-check --squad` - section 91's deadline-critical workflow, added
+  after noticing section 122's own final-test list requires it and it hadn't
+  been built as a CLI command (only as the Phase 6 Skill, which describes the
+  same steps for Claude to run manually). Surfaces squad-relevant changes above
+  the verdict table when there are any - live-verified it correctly caught a
+  real set-piece order change on a synthetic-squad member during testing.
+- **Section 122's full final test passed live**, in this order, against the
+  real 581-player pool: `fpl sync`, `fpl status`, `fpl changes`, `fpl
+  projections`, `fpl build-team`, `fpl captain`, `fpl transfers`, `fpl chips`,
+  `fpl final-check` - every command ran clean, no fabricated output.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended).
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases complete.**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -206,7 +243,30 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Phase 6 — Claude Code layer (Skills, subagents, hooks). See project-root caveat above before assuming these are active in any given session.
 - [x] Phase 7 — Live operations (resource-aware scheduler, deadline-aware cadence, terminal alerts). Windows-only; scheduled task built but not registered (user's choice) - see above.
 - [x] Phase 8 — Reliability (decision journal, cleanup, backup/restore, E2E test). Two real bugs found and fixed during this phase - see above.
-- [ ] Phase 9 — First-team ready
+- [x] Phase 9 — First-team ready (`fpl build-team`, readiness gate, `fpl final-check`). Section 122's final test passed live end to end - see above.
+
+## What's still genuinely limited (read before trusting output)
+
+- **The xP model is an uncalibrated preseason prior** (`models/expected_points.py`
+  docstring + CLAUDE.md Phase 4 section). Every number `fpl build-team`/`projections`
+  produces should be read as "best available estimate before a ball is kicked,"
+  not a validated forecast. Recalibrate against real results once GW1-5 happen
+  (section 79).
+- **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
+  detection all need Tier 2-4 sources the user chose not to enable. What's built
+  instead (official-status injuries, confirmed-transfer club changes) is real and
+  useful, just narrower than the full bootstrap spec envisions.
+- **No real squad exists yet.** Nothing here has ever been run against the
+  user's actual FPL team, because there isn't one - this is a from-scratch
+  build. `fpl build-team` produces a genuine first-XV recommendation from the
+  live player pool; whether the user actually acts on it is their call
+  (section 83: recommend only, never auto-submit).
+- **Scheduler not registered.** `fpl run-scheduled` and the Task Scheduler setup
+  script are built and tested but inactive - nothing is currently polling in
+  the background. Data goes stale the moment `fpl sync` stops being run
+  manually.
+
+## Skill/subagent guidance
 
 ## Skill/subagent guidance
 

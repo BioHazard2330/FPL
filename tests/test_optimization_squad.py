@@ -81,7 +81,11 @@ def _patch_expected_points(monkeypatch):
     xp_map = {pid: xp for pid, _et, _team_id, _price, xp in _PLAYERS}
 
     def fake(conn, player_id, n_gw=1):
-        return SimpleNamespace(median=xp_map[player_id])
+        median = xp_map[player_id]
+        return SimpleNamespace(
+            median=median, floor=median * 0.5, ceiling=median * 1.8,
+            confidence="MEDIUM", expected_minutes=75.0,
+        )
 
     monkeypatch.setattr(squad_mod, "expected_points", fake)
 
@@ -131,3 +135,42 @@ def test_starting_xi_respects_formation_bounds(db_conn, monkeypatch):
     assert gkp_in_xi == 1
     assert xi.captain is not None
     assert xi.captain.xp == max(c.xp for c in xi.starting)
+
+
+def test_ceiling_objective_can_pick_a_different_squad_than_median(db_conn, monkeypatch):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    xp_map = {pid: xp for pid, _et, _team_id, _price, xp in _PLAYERS}
+    # player 11 has a modest median but a huge ceiling relative to everyone else -
+    # the median-objective solver should ignore it, the ceiling-objective one should grab it.
+    ceiling_overrides = {11: 25.0}
+
+    def fake(conn, player_id, n_gw=1):
+        median = xp_map[player_id]
+        ceiling = ceiling_overrides.get(player_id, median * 1.8)
+        return SimpleNamespace(
+            median=median, floor=median * 0.5, ceiling=ceiling, confidence="MEDIUM", expected_minutes=75.0
+        )
+
+    monkeypatch.setattr(squad_mod, "expected_points", fake)
+
+    result_median = squad_mod.optimise_squad(db_conn, n_gw=1, objective="median")
+    result_ceiling = squad_mod.optimise_squad(db_conn, n_gw=1, objective="ceiling")
+
+    assert result_median.status == "Optimal"
+    assert result_ceiling.status == "Optimal"
+    ids_median = {c.player_id for c in result_median.squad}
+    ids_ceiling = {c.player_id for c in result_ceiling.squad}
+
+    assert 11 in ids_ceiling
+    assert ids_median != ids_ceiling
+
+
+def test_budget_override_is_respected(db_conn, monkeypatch):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1, budget_override_tenths=700)
+
+    assert result.status == "Optimal"
+    assert result.total_cost_tenths <= 700

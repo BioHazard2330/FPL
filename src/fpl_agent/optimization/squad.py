@@ -23,10 +23,24 @@ class PlayerCandidate:
     team_id: int
     team_short: str
     price_tenths: int
-    xp: float
+    xp: float          # the objective value actually optimised (median or ceiling)
+    median: float
+    floor: float
+    ceiling: float
+    confidence: str
+    expected_minutes: float
 
 
-def build_player_pool(conn: sqlite3.Connection, n_gw: int = 1, exclude_ids: set[int] | None = None) -> list[PlayerCandidate]:
+def build_player_pool(
+    conn: sqlite3.Connection, n_gw: int = 1, exclude_ids: set[int] | None = None, objective: str = "median"
+) -> list[PlayerCandidate]:
+    """objective picks which ExpectedPoints field becomes `xp` (the value the
+    optimiser maximises) - "median" for a best-EV squad, "ceiling" for a
+    upside-oriented one (section 94's structure C). floor/median/ceiling/confidence
+    are always carried through regardless, so callers can inspect risk either way."""
+    if objective not in ("median", "ceiling"):
+        raise ValueError(f"objective must be 'median' or 'ceiling', got {objective!r}")
+
     exclude_ids = exclude_ids or set()
     rows = conn.execute(
         "SELECT p.id, p.web_name, et.singular_name_short AS position, p.team_id, t.short_name AS team_short "
@@ -51,7 +65,10 @@ def build_player_pool(conn: sqlite3.Connection, n_gw: int = 1, exclude_ids: set[
             PlayerCandidate(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 team_id=r["team_id"], team_short=r["team_short"],
-                price_tenths=price_row["value_tenths"], xp=ep.median,
+                price_tenths=price_row["value_tenths"],
+                xp=ep.ceiling if objective == "ceiling" else ep.median,
+                median=ep.median, floor=ep.floor, ceiling=ep.ceiling, confidence=ep.confidence,
+                expected_minutes=ep.expected_minutes,
             )
         )
     return pool
@@ -66,10 +83,19 @@ class SquadResult:
 
 
 def optimise_squad(
-    conn: sqlite3.Connection, n_gw: int = 1, exclude_ids: set[int] | None = None
+    conn: sqlite3.Connection,
+    n_gw: int = 1,
+    exclude_ids: set[int] | None = None,
+    objective: str = "median",
+    budget_override_tenths: int | None = None,
 ) -> SquadResult:
+    """budget_override_tenths lets a caller solve under a tighter cap than the
+    real rules budget (section 94's structure B: leaving bank spare for future
+    flexibility) without touching the rules table."""
     season = current_season(conn)
-    budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000)
+    budget_tenths = budget_override_tenths if budget_override_tenths is not None else get_rule(
+        conn, season, "rules.squad_total_spend", 1000
+    )
     club_limit = get_rule(conn, season, "rules.squad_team_limit", 3)
 
     position_requirements = {
@@ -77,7 +103,7 @@ def optimise_squad(
         for r in conn.execute("SELECT singular_name_short, squad_select FROM element_types").fetchall()
     }
 
-    pool = build_player_pool(conn, n_gw=n_gw, exclude_ids=exclude_ids)
+    pool = build_player_pool(conn, n_gw=n_gw, exclude_ids=exclude_ids, objective=objective)
     if not pool:
         return SquadResult(squad=[], total_cost_tenths=0, total_xp=0.0, status="Infeasible (empty pool)")
 

@@ -22,12 +22,14 @@ from fpl_agent.logging_setup import setup_logging
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.models.availability import list_availability
-from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
+from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.doctor import run_checks
+from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
+from fpl_agent.optimization.build_team import generate_build_team_report
 from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.optimization.chips import (
     bench_boost_value,
@@ -36,7 +38,7 @@ from fpl_agent.optimization.chips import (
     triple_captain_value,
     wildcard_value,
 )
-from fpl_agent.optimization.squad import optimise_squad, pick_starting_xi
+from fpl_agent.optimization.squad import build_player_pool, optimise_squad, pick_starting_xi
 from fpl_agent.optimization.transfers import recommend as recommend_transfer
 
 
@@ -57,6 +59,51 @@ def doctor():
         click.echo(f"{r.name:<12} {mark:<5} {r.detail}")
     if not all(r.ok for r in results):
         raise SystemExit(1)
+
+
+@cli.command()
+def readiness():
+    """Section 108 readiness gate - every check reflects live system state."""
+    conn = get_connection()
+    checks = run_readiness_checks(conn)
+    conn.close()
+    for c in checks:
+        mark = "✓" if c.status == "OK" else c.status
+        click.echo(f"{c.name:<24} {mark:<10} {c.detail}")
+
+
+@cli.command()
+def status():
+    """Quick dashboard: last sync, next deadline, pending alerts, decision history."""
+    conn = get_connection()
+
+    sources = get_source_health(conn)
+    last_sync = next((s.last_success for s in sources if s.source_name == "fpl_api_bootstrap"), None)
+
+    event = conn.execute(
+        "SELECT name, deadline_time_epoch FROM events WHERE deadline_time_epoch > strftime('%s','now') "
+        "ORDER BY deadline_time_epoch LIMIT 1"
+    ).fetchone()
+
+    pending = len(pending_alerts(conn))
+    doctor_results = run_checks()
+    doctor_ok = all(c.ok for c in doctor_results)
+
+    latest_decision = list_decisions(conn, limit=1)
+    conn.close()
+
+    click.echo(f"last sync:        {last_sync or 'never'}")
+    if event:
+        click.echo(f"next deadline:    {event['name']}")
+    else:
+        click.echo("next deadline:    none found")
+    click.echo(f"pending alerts:   {pending}")
+    click.echo(f"system health:    {'OK' if doctor_ok else 'ISSUES - run `fpl doctor`'}")
+    if latest_decision:
+        d = latest_decision[0]
+        click.echo(f"latest decision:  #{d.id} ({d.decision_type}) {d.summary}")
+    else:
+        click.echo("latest decision:  none yet - run `fpl build-team`")
 
 
 @cli.command()
@@ -294,6 +341,103 @@ def _parse_squad_option(squad: str | None) -> list[int] | None:
     if not squad:
         return None
     return [int(x) for x in squad.split(",")]
+
+
+@cli.command("build-team")
+@click.option("--sync/--no-sync", default=True, help="refresh data before building (default: yes)")
+def build_team(sync: bool):
+    """Section 92-94: full first-team workflow. Three structures (best EV / best
+    flexibility / best upside), captain/vice, risks, narrowly-missed players,
+    pre-GW1 watchlist. This is section 61's optimiser plus context - not a
+    separate model, so it inherits every caveat of the preseason-prior xP model."""
+    if sync:
+        try:
+            run_sync()
+        except (SourceFetchError, ValidationError) as e:
+            click.echo(f"sync failed: {e}", err=True)
+            raise SystemExit(1)
+
+    conn = get_connection()
+    checks = run_checks()
+    if not all(c.ok for c in checks):
+        click.echo("WARNING: doctor checks not all OK - results may be degraded:", err=True)
+        for c in checks:
+            if not c.ok:
+                click.echo(f"  {c.name}: {c.detail}", err=True)
+
+    report = generate_build_team_report(conn)
+    primary = report.structures[0]
+
+    if not primary.result.squad:
+        click.echo(f"could not build a squad: {primary.result.status}", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    gw1_xp = primary.result.total_xp
+    five_gw_xp = sum(
+        expected_points_window(conn, c.player_id, n_gw=5).total_median for c in primary.xi.starting
+    )
+
+    detail = {
+        "structures": {
+            s.label: {
+                "cost": s.result.total_cost_tenths / 10, "total_xp": s.result.total_xp,
+                "squad": [c.web_name for c in s.result.squad],
+            }
+            for s in report.structures
+        },
+        "captain": report.captain.web_name if report.captain else None,
+        "vice": report.vice.web_name if report.vice else None,
+        "risks": report.risks,
+        "narrowly_missed": [c.web_name for c in report.narrowly_missed],
+        "watchlist": report.watchlist,
+    }
+    decision_id = log_decision(
+        conn, "build_team", f"first team: {primary.label}, total_xp={gw1_xp}",
+        detail, model_version=MODEL_VERSION,
+        confidence=report.captain.confidence if report.captain else None,
+    )
+    conn.close()
+
+    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)  decision_id={decision_id}")
+    click.echo()
+    click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'Start%':>7} {'xP':>6}  Risk")
+    for c in primary.xi.starting:
+        start_pct = min(c.expected_minutes / 90 * 100, 100)
+        tag = " (C)" if c is primary.xi.captain else " (VC)" if c is primary.xi.vice_captain else ""
+        click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {start_pct:>6.0f}% {c.median:>6.2f}  {c.confidence}{tag}")
+    click.echo("-- bench --")
+    for c in primary.xi.bench:
+        start_pct = min(c.expected_minutes / 90 * 100, 100)
+        click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {start_pct:>6.0f}% {c.median:>6.2f}  {c.confidence}")
+
+    click.echo()
+    click.echo(f"Total Cost:            £{primary.result.total_cost_tenths/10:.1f}m")
+    click.echo(f"GW1 expected points:   {gw1_xp}")
+    click.echo(f"First 5-GW xP (XI):    {round(five_gw_xp, 2)}")
+    click.echo(f"Captain:               {report.captain.web_name if report.captain else 'n/a'}")
+    click.echo(f"Vice:                  {report.vice.web_name if report.vice else 'n/a'}")
+    click.echo(f"Bench order:           {', '.join(c.web_name for c in primary.xi.bench)}")
+
+    click.echo()
+    for s in report.structures[1:]:
+        click.echo(f"Alternative [{s.label}]: cost=£{s.result.total_cost_tenths/10:.1f}m total_xp={s.result.total_xp}")
+
+    click.echo()
+    click.echo("Major risks:" if report.risks else "Major risks: none flagged")
+    for r in report.risks:
+        click.echo(f"  - {r}")
+
+    click.echo("Players narrowly missed:")
+    for c in report.narrowly_missed:
+        click.echo(f"  {c.position} {c.web_name} (xP={c.median})")
+
+    click.echo("Pre-GW1 watchlist:" if report.watchlist else "Pre-GW1 watchlist: none")
+    for w in report.watchlist:
+        click.echo(f"  - {w}")
+
+    click.echo()
+    click.echo(f"Last verified: {report.retrieved_at}")
 
 
 @cli.command("build-squad")
@@ -590,6 +734,87 @@ def why(decision_id: int):
     click.echo()
     click.echo("(Alternatives/Risks/Trigger not stored - ask the transfer-analyst or")
     click.echo(" decision-auditor subagent for a full section-72 trace on this decision.)")
+
+
+@cli.command("final-check")
+@click.option("--squad", required=True, help="comma-separated player ids")
+@click.option("--bank", default=0.0, help="bank in £m")
+@click.option("--free-transfers", default=1, type=int)
+@click.option("--sync/--no-sync", default=True, help="refresh data before checking (default: yes)")
+def final_check(squad: str, bank: float, free_transfers: int, sync: bool):
+    """Section 91's deadline-critical workflow: sync, injuries, changes, captain,
+    transfers, chips - all against one squad, in one FINAL VERDICT."""
+    if sync:
+        try:
+            run_sync()
+        except (SourceFetchError, ValidationError) as e:
+            click.echo(f"sync failed: {e}", err=True)
+            raise SystemExit(1)
+
+    squad_ids = _parse_squad_option(squad)
+    conn = get_connection()
+
+    pool = build_player_pool(conn, n_gw=1)
+    squad_candidates = [c for c in pool if c.player_id in squad_ids]
+    xi = pick_starting_xi(conn, squad_candidates) if squad_candidates else None
+
+    squad_availability = [a for a in list_availability(conn, unavailable_only=True) if a.player_id in squad_ids]
+
+    recent_changes = conn.execute(
+        "SELECT event_type, entity, entity_id, old_value, new_value, detected_at, severity "
+        "FROM change_events WHERE entity='player' AND entity_id IN ({}) "
+        "ORDER BY detected_at DESC LIMIT 10".format(",".join("?" * len(squad_ids))),
+        squad_ids,
+    ).fetchall()
+
+    cap_report = captaincy_report(conn, squad_ids)
+    transfer_rec = recommend_transfer(conn, squad_ids, bank_tenths=round(bank * 10), free_transfers=free_transfers, n_gw=3)
+    chip_windows = eligible_chips(conn)
+    eligible_now = [w for w in chip_windows if w.eligible_now]
+    bb_value = bench_boost_value(conn, squad_ids) if squad_ids else 0.0
+
+    confidences = [c.confidence for c in squad_candidates]
+    overall_confidence = "LOW" if "LOW" in confidences else ("MEDIUM" if "MEDIUM" in confidences else "HIGH")
+
+    sources = get_source_health(conn)
+    data_status = "OK" if all(s.failure_count == 0 for s in sources) else "DEGRADED"
+
+    detail = {
+        "squad_ids": squad_ids, "transfer_action": transfer_rec.action,
+        "captain": cap_report.best.web_name if cap_report.best else None,
+        "vice": cap_report.second.web_name if cap_report.second else None,
+        "availability_flags": [a.web_name for a in squad_availability],
+        "changes_count": len(recent_changes),
+    }
+    decision_id = log_decision(
+        conn, "final_check", f"final check: {len(squad_ids)}-player squad, transfer={transfer_rec.action}",
+        detail, confidence=overall_confidence,
+    )
+    conn.close()
+
+    if squad_availability or recent_changes:
+        click.echo("SQUAD-RELEVANT CHANGES (review before trusting the verdict below):")
+        for a in squad_availability:
+            click.echo(f"  - {a.web_name}: {a.classification} - {a.news or 'no detail'}")
+        for r in recent_changes:
+            click.echo(f"  - {r['detected_at']} {r['severity']} {r['event_type']} player#{r['entity_id']}: {r['old_value']} -> {r['new_value']}")
+        click.echo()
+
+    click.echo("FINAL VERDICT")
+    click.echo()
+    click.echo(f"Transfer:      {transfer_rec.action} - {transfer_rec.reason}")
+    click.echo(f"Captain:       {cap_report.best.web_name if cap_report.best else 'n/a'}")
+    click.echo(f"Vice:          {cap_report.second.web_name if cap_report.second else 'n/a'}")
+    if xi:
+        click.echo(f"Starting XI:   {', '.join(c.web_name for c in xi.starting)}")
+        click.echo(f"Bench:         {', '.join(c.web_name for c in xi.bench)}")
+    else:
+        click.echo("Starting XI:   could not be determined (squad ids not found in current pool)")
+    click.echo(f"Chip:          {', '.join(w.name for w in eligible_now) or 'none eligible'} "
+               f"(bench boost value if used: {bb_value} xP)")
+    click.echo(f"Confidence:    {overall_confidence}")
+    click.echo(f"Data status:   {data_status}")
+    click.echo(f"decision_id={decision_id}")
 
 
 if __name__ == "__main__":
