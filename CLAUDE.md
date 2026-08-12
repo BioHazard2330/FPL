@@ -49,8 +49,8 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`.
-Planned (later phases): `scan`, `build-team`, `team-news`, `fixtures`, `prices`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`. Note `transfers` has no CLI yet — it's an importable function (`optimization/transfers.py`) with nothing to drive it against until a real squad exists (Phase 9's `/build-team`).
+Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`.
+Planned (later phases): `scan`, `build-team`, `team-news`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
 
 ## Data model (Phase 2)
 
@@ -84,6 +84,46 @@ Planned (later phases): `scan`, `build-team`, `team-news`, `fixtures`, `prices`,
 - `optimization/captaincy.py` — ranks a squad's next-fixture options by median/floor/ceiling/confidence, flags penalty-taker status and rotation/confidence risk.
 - `optimization/chips.py` — window eligibility + single-decision-point heuristic value (bench-boost = current bench's xP sum, triple-captain = best captain's median, wildcard/free-hit = rebuilt-squad-xP minus current-squad-xP). Explicitly **not** season-long chip scheduling — that needs a real squad trajectory to optimise over, which doesn't exist until Phase 9.
 
+## Claude Code layer (Phase 6)
+
+**Important: project-root caveat.** This conversation's session root is the parent
+`FPL/` folder (where the bootstrap spec lives), not `fpl-agent/` itself — so
+`fpl-agent/.claude/{skills,agents,settings.json}` were authored correctly for the
+*intended* usage (running Claude Code with `fpl-agent/` as the working directory,
+per section 97's project layout) but were never actually loaded/discoverable in
+*this* session, and the hook was pipe-tested at the script level rather than proven
+to fire live. If skills/subagents/hooks seem inactive in a fresh session, first
+check it was started with cwd = `fpl-agent/`, not its parent.
+
+- `.claude/skills/` — 15 skills, each a thin instruction layer over a real, tested
+  CLI command (never fabricated capability): `fpl-scan`, `player-analysis`,
+  `squad-optimizer`, `transfer-optimizer`, `captaincy-analysis`, `chip-optimizer`,
+  `injury-monitor`, `price-monitor`, `new-player-monitor`, `fixture-watch`,
+  `data-health`, `storage-health`, `full-audit`, `final-check`, `preseason-monitor`.
+  `fixture-watch` deliberately consolidates the spec's separate blank-GW/double-GW
+  skills (sections 67/68) since they're the same underlying detection.
+  **Deferred, not built**: `team-news-monitor` (needs Tier 2-4), `mini-league`
+  (needs FPL account, user declined), `post-gameweek-review` (needs a finished GW -
+  none exist yet this preseason).
+- `.claude/agents/` — 5 subagents, scoped down from the spec's 10 (section 100):
+  `transfer-analyst` (full decision trace, section 72), `injury-analyst`
+  (interprets official news text nuance), `fixture-analyst` (narrative fixture
+  reads), `decision-auditor` (red-team pass, section 73), `fpl-researcher`
+  (ad-hoc web verification when explicitly asked - never persists into the
+  Tier 1-only DB). Skipped as separate agents (redundant or premature given
+  current scope, not "not useful in principle"): `data-engineer` (the main thread
+  already does this directly), `player-modeler`/`projection-modeler`/`optimizer`
+  (these are deterministic code, not LLM judgment - section 1.6), `team-news-analyst`
+  (nothing to interpret without Tier 2-4 sources beyond what `injury-analyst`
+  already covers from official fields).
+- `.claude/hooks/bash_guard.py` + `.claude/settings.json` — PreToolUse guard on
+  Bash: blocks `rm -rf` on the project's data/DB files, `git reset --hard`,
+  `git push --force`, raw `DROP TABLE`/unscoped `DELETE FROM` against
+  `data/fpl.db`, and committing/staging a real `.env` (including a forced
+  `git add -f .env` bypass of `.gitignore`). Pipe-tested directly against the
+  script (all cases behave correctly) - not proven to fire end-to-end, see the
+  project-root caveat above.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended).
@@ -93,11 +133,16 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Phase 3 — Intelligence, Tier 1 subset (injury/availability, set pieces, change detection). Transfers/team-news/manager-changes deferred — see above.
 - [x] Phase 4 — Models (team strength history, fixture difficulty, expected minutes, preseason-prior xP). See caveats above — uncalibrated until real match data exists.
 - [x] Phase 5 — Optimisation (squad ILP, transfer/captaincy/chip logic). Chip scheduling is single-decision-point only, not season-long — see above.
-- [ ] Phase 6 — Claude Code layer (Skills, subagents, hooks)
+- [x] Phase 6 — Claude Code layer (Skills, subagents, hooks). See project-root caveat above before assuming these are active in any given session.
 - [ ] Phase 7 — Live operations (scheduler, alerts, change detection)
 - [ ] Phase 8 — Reliability (tests, backup/restore)
 - [ ] Phase 9 — First-team ready
 
 ## Skill/subagent guidance
 
-Not yet created (Phase 6). Do not invoke multiple subagents for simple questions once they exist — match spec sections 4.4 / 100.
+Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
+what these skills do is "run one CLI command, interpret the output," which the main
+thread should just do directly. Reach for a subagent specifically when the task
+needs the kind of extended, isolated reasoning pass described in its own file
+(a full decision trace, a red-team challenge) - not as a default wrapper for
+routine command output.

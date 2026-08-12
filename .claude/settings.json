@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\2003p\\FPL\\fpl-agent\\.venv\\Scripts\\python.exe\" \"C:\\Users\\2003p\\FPL\\fpl-agent\\.claude\\hooks\\bash_guard.py\"",
+            "statusMessage": "Checking command against fpl-agent safety rules..."
+          }
+        ]
+      }
+    ]
+  }
+}

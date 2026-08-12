@@ -16,6 +16,7 @@ from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.logging_setup import setup_logging
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
+from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
@@ -28,6 +29,7 @@ from fpl_agent.optimization.chips import (
     wildcard_value,
 )
 from fpl_agent.optimization.squad import optimise_squad, pick_starting_xi
+from fpl_agent.optimization.transfers import recommend as recommend_transfer
 
 
 @click.group()
@@ -160,14 +162,22 @@ def injuries():
 
 @cli.command()
 @click.option("--limit", default=20, help="max events to show")
-def changes(limit: int):
+@click.option("--type", "event_type", default=None, help="filter to one event_type, e.g. new_player")
+def changes(limit: int, event_type: str | None):
     """Show recent change events (new/removed players, club changes, status changes, set pieces)."""
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT event_type, entity, entity_id, old_value, new_value, detected_at, severity "
-        "FROM change_events ORDER BY detected_at DESC, id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    if event_type:
+        rows = conn.execute(
+            "SELECT event_type, entity, entity_id, old_value, new_value, detected_at, severity "
+            "FROM change_events WHERE event_type=? ORDER BY detected_at DESC, id DESC LIMIT ?",
+            (event_type, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT event_type, entity, entity_id, old_value, new_value, detected_at, severity "
+            "FROM change_events ORDER BY detected_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     conn.close()
     if not rows:
         click.echo("no changes recorded yet — run `fpl sync`")
@@ -259,6 +269,74 @@ def chips(squad: str | None):
         click.echo(f"triple captain value: {triple_captain_value(conn, squad_ids)} xP")
         click.echo(f"wildcard value (5gw): {wildcard_value(conn, squad_ids, n_gw=5)} xP")
         click.echo(f"free hit value:       {freehit_value(conn, squad_ids)} xP")
+    conn.close()
+
+
+@cli.command()
+@click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
+@click.option("--bank", default=0.0, help="bank in £m, e.g. 0.5")
+@click.option("--free-transfers", default=1, type=int)
+@click.option("--gw-window", default=3, type=int, help="EV window for the comparison")
+def transfers(squad: str, bank: float, free_transfers: int, gw_window: int):
+    """Roll vs best transfer, compared on windowed net EV (not single-GW xP) - section 62."""
+    conn = get_connection()
+    rec = recommend_transfer(
+        conn, _parse_squad_option(squad), bank_tenths=round(bank * 10), free_transfers=free_transfers, n_gw=gw_window
+    )
+    conn.close()
+    click.echo(f"action: {rec.action}")
+    click.echo(f"reason: {rec.reason}")
+    if rec.best_candidate:
+        c = rec.best_candidate
+        click.echo(
+            f"{c.player_out_name} -> {c.player_in_name}  "
+            f"1gw={c.net_ev_1gw:+.2f} 3gw={c.net_ev_3gw:+.2f} 5gw={c.net_ev_5gw:+.2f}  "
+            f"price_delta=£{c.price_delta_tenths/10:+.1f}m  hit={c.uses_hit}"
+        )
+
+
+@cli.command()
+@click.option("--limit", default=20, help="max changes to show")
+def prices(limit: int):
+    """Recent player price changes (transitions only, not each player's baseline)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT h.player_id, p.web_name, h.value_tenths AS new_value, h.valid_from, "
+        "(SELECT value_tenths FROM player_price_history h2 "
+        " WHERE h2.player_id = h.player_id AND h2.valid_until = h.valid_from) AS old_value "
+        "FROM player_price_history h JOIN players p ON p.id = h.player_id "
+        "WHERE EXISTS (SELECT 1 FROM player_price_history h3 "
+        "              WHERE h3.player_id = h.player_id AND h3.valid_until = h.valid_from) "
+        "ORDER BY h.valid_from DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        click.echo("no price changes recorded yet")
+        return
+    for r in rows:
+        direction = "up" if r["new_value"] > r["old_value"] else "down"
+        click.echo(f"{r['valid_from']}  {r['web_name']:<20} £{r['old_value']/10:.1f}m -> £{r['new_value']/10:.1f}m ({direction})")
+
+
+@cli.command("fixture-watch")
+@click.option("--n-gw", default=5, help="window size to scan for blanks/doubles")
+def fixture_watch(n_gw: int):
+    """Blank/double gameweek detection per team over the next N gameweeks (sections 67-68)."""
+    conn = get_connection()
+    start = _reference_event(conn)
+    teams = conn.execute("SELECT id, short_name FROM teams ORDER BY short_name").fetchall()
+
+    for event in range(start, start + n_gw):
+        for t in teams:
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM fixtures WHERE (team_h=? OR team_a=?) AND event=?",
+                (t["id"], t["id"], event),
+            ).fetchone()["c"]
+            if count == 0:
+                click.echo(f"GW{event}  BLANK   {t['short_name']}")
+            elif count >= 2:
+                click.echo(f"GW{event}  DOUBLE  {t['short_name']} ({count} fixtures)")
     conn.close()
 
 
