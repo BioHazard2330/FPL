@@ -19,6 +19,15 @@ from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
+from fpl_agent.optimization.captaincy import captaincy_report
+from fpl_agent.optimization.chips import (
+    bench_boost_value,
+    eligible_chips,
+    freehit_value,
+    triple_captain_value,
+    wildcard_value,
+)
+from fpl_agent.optimization.squad import optimise_squad, pick_starting_xi
 
 
 @click.group()
@@ -168,6 +177,89 @@ def changes(limit: int):
             f"{r['detected_at']}  {r['severity']:<8} {r['event_type']:<16} "
             f"{r['entity']}#{r['entity_id']}  {r['old_value']} -> {r['new_value']}"
         )
+
+
+def _parse_squad_option(squad: str | None) -> list[int] | None:
+    if not squad:
+        return None
+    return [int(x) for x in squad.split(",")]
+
+
+@cli.command("build-squad")
+@click.option("--gw-window", default=1, help="xP window used to pick the squad")
+def build_squad(gw_window: int):
+    """Optimise a 15-man squad under budget/position/club-limit constraints (ILP)."""
+    conn = get_connection()
+    result = optimise_squad(conn, n_gw=gw_window)
+    if result.status != "Optimal":
+        click.echo(f"solver status: {result.status}", err=True)
+        raise SystemExit(1)
+
+    xi = pick_starting_xi(conn, result.squad)
+    conn.close()
+
+    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)")
+    click.echo(f"total cost: £{result.total_cost_tenths / 10:.1f}m   total xP: {result.total_xp}")
+    click.echo()
+    click.echo("STARTING XI")
+    for c in xi.starting:
+        tag = " (C)" if c is xi.captain else " (VC)" if c is xi.vice_captain else ""
+        click.echo(f"  {c.position:<4} {c.web_name:<20} {c.team_short:<4} £{c.price_tenths/10:>4.1f} xp={c.xp:>5.2f}{tag}")
+    click.echo("BENCH")
+    for c in xi.bench:
+        click.echo(f"  {c.position:<4} {c.web_name:<20} {c.team_short:<4} £{c.price_tenths/10:>4.1f} xp={c.xp:>5.2f}")
+    click.echo()
+    click.echo(f"player ids for fpl captain/fpl chips: {','.join(str(c.player_id) for c in result.squad)}")
+
+
+@cli.command()
+@click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
+def captain(squad: str):
+    """Rank a squad's captaincy options for the next fixture."""
+    conn = get_connection()
+    report = captaincy_report(conn, _parse_squad_option(squad))
+    conn.close()
+
+    if report.best is None:
+        click.echo("no valid squad")
+        return
+
+    def _line(label, o):
+        if o is None:
+            click.echo(f"{label:<12} none")
+            return
+        vs = f"vs {o.opponent_short}" if o.opponent_short else "no fixture"
+        home = "(H)" if o.is_home else "(A)" if o.is_home is not None else ""
+        click.echo(f"{label:<12} {o.web_name:<18} median={o.median:>5} ceiling={o.ceiling:>5} {vs}{home} conf={o.confidence}")
+
+    _line("best", report.best)
+    _line("second", report.second)
+    _line("safe", report.safe)
+    _line("high_upside", report.high_upside)
+    if report.risks:
+        click.echo("risks:")
+        for r in report.risks:
+            click.echo(f"  - {r}")
+
+
+@cli.command()
+@click.option("--squad", default=None, help="comma-separated player ids - omit to only show window eligibility")
+def chips(squad: str | None):
+    """Chip window eligibility + single-decision-point heuristic value. Not season-long
+    chip scheduling - see optimization/chips.py docstring for why."""
+    conn = get_connection()
+    for w in eligible_chips(conn):
+        mark = "ELIGIBLE" if w.eligible_now else "-"
+        click.echo(f"{w.name:<10} #{w.number} GW{w.start_event}-{w.stop_event} {mark}")
+
+    squad_ids = _parse_squad_option(squad)
+    if squad_ids:
+        click.echo()
+        click.echo(f"bench boost value:    {bench_boost_value(conn, squad_ids)} xP")
+        click.echo(f"triple captain value: {triple_captain_value(conn, squad_ids)} xP")
+        click.echo(f"wildcard value (5gw): {wildcard_value(conn, squad_ids, n_gw=5)} xP")
+        click.echo(f"free hit value:       {freehit_value(conn, squad_ids)} xP")
+    conn.close()
 
 
 if __name__ == "__main__":

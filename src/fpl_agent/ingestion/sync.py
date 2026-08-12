@@ -15,6 +15,7 @@ from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.raw_store import prune_raw
 from fpl_agent.normalization.fpl_core import (
     flatten_rules,
+    normalize_chip_windows,
     normalize_element_types,
     normalize_events,
     normalize_fixtures,
@@ -252,6 +253,7 @@ def run_sync() -> dict:
 
             season = _extract_season(bootstrap)
             rules_changed = sync_rules(conn, flatten_rules(bootstrap), season, "fpl_api_bootstrap", now)
+            _upsert_many(conn, "chip_windows", normalize_chip_windows(bootstrap, season), now)
 
         budget = load_storage_budget()
         pruned = prune_raw(budget.raw_retention_hours)

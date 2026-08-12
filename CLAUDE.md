@@ -49,8 +49,8 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes`, `fpl projections`.
-Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `team-news`, `fixtures`, `prices`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
+Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`.
+Planned (later phases): `scan`, `build-team`, `team-news`, `fixtures`, `prices`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`. Note `transfers` has no CLI yet — it's an importable function (`optimization/transfers.py`) with nothing to drive it against until a real squad exists (Phase 9's `/build-team`).
 
 ## Data model (Phase 2)
 
@@ -76,6 +76,14 @@ Planned (later phases): `scan`, `build-team`, `captain`, `transfers`, `chips`, `
 - `models/expected_minutes.py` — blends current-season per-GW rate (once games exist) with last season's minutes/38 prior, damped by availability classification.
 - `models/expected_points.py` — `MODEL_VERSION = "preseason-prior-v1"`. **Read the module docstring before trusting these numbers** — appearance points are a linear proxy (not the real 0/1/2 step function), clean-sheet probability is an uncalibrated linear heuristic, cards/goals-conceded penalties aren't modelled at all, and floor/ceiling are blunt multiplicative bands. None of this has been calibrated against real results, because none exist yet this season. Revisit once GW1-5 data lands (section 79, model calibration).
 
+## Data model / logic (Phase 5)
+
+- `chip_windows` — the 8 chip instances (2x wildcard/freehit/bench boost/triple captain) with their exact GW ranges, straight from `game_config.chips` (was missing from Phase 2, backfilled here). `element_types.squad_select` was also missing and got backfilled the same way (migration `0006`) — **learned the hard way**: migration `0005` got edited after it had already run against the dev DB once, which is exactly the mistake CLAUDE.md's own "never edit an applied migration" line warns about. Caught it, reverted 0005, put the fix in a fresh 0006 instead.
+- `optimization/squad.py` — 15-man squad via MILP (PuLP + bundled CBC): maximize Σ median xP subject to budget/position/club-limit constraints, all pulled from `rules`/`element_types`, not hardcoded. Solves the live 581-player pool in ~0.2s. `pick_starting_xi()` then greedily fills the best valid XI from the chosen 15.
+- `optimization/transfers.py` — needs real multi-GW cumulative EV, not single-match xP repeated, so `expected_points_window()` was added to `models/expected_points.py`: sums one estimate per actual fixture in the window (correctly handles doubles/blanks), with a flat 0.9x-per-extra-match rotation-risk discount (an admitted heuristic, not a real rotation model — section 68 explicitly warns against assuming fixtures just multiply). Hit cost is -4/transfer beyond the free allowance; never recommends purely on 1-GW xP (section 62).
+- `optimization/captaincy.py` — ranks a squad's next-fixture options by median/floor/ceiling/confidence, flags penalty-taker status and rotation/confidence risk.
+- `optimization/chips.py` — window eligibility + single-decision-point heuristic value (bench-boost = current bench's xP sum, triple-captain = best captain's median, wildcard/free-hit = rebuilt-squad-xP minus current-squad-xP). Explicitly **not** season-long chip scheduling — that needs a real squad trajectory to optimise over, which doesn't exist until Phase 9.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended).
@@ -84,7 +92,7 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
 - [x] Phase 3 — Intelligence, Tier 1 subset (injury/availability, set pieces, change detection). Transfers/team-news/manager-changes deferred — see above.
 - [x] Phase 4 — Models (team strength history, fixture difficulty, expected minutes, preseason-prior xP). See caveats above — uncalibrated until real match data exists.
-- [ ] Phase 5 — Optimisation (squad, transfer, captaincy, chips)
+- [x] Phase 5 — Optimisation (squad ILP, transfer/captaincy/chip logic). Chip scheduling is single-decision-point only, not season-long — see above.
 - [ ] Phase 6 — Claude Code layer (Skills, subagents, hooks)
 - [ ] Phase 7 — Live operations (scheduler, alerts, change detection)
 - [ ] Phase 8 — Reliability (tests, backup/restore)

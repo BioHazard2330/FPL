@@ -18,35 +18,66 @@ fit to actual results yet, because none exist yet this season:
   this makes the median a slight overestimate, mainly for defenders/GKs).
 - floor = 0.5x median, ceiling = 1.8x median + a flat goal-upside allowance.
   Both are blunt uncertainty bands, not derived from a fitted distribution.
+- expected_points_window() sums one estimate per fixture in the window (so
+  double gameweeks correctly count twice, blanks correctly count zero), but
+  damps expected minutes by 0.9 per extra match in the same window as a crude
+  rotation-risk proxy - section 68 explicitly warns against assuming two
+  fixtures just means double points, but there's no real rotation model here,
+  just this one flat discount.
 """
 
-import json
 import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.models.expected_minutes import expected_minutes
-from fpl_agent.models.fixtures import fixture_window_score
+from fpl_agent.models.fixtures import _reference_event, fixture_difficulty, fixture_window_score
+from fpl_agent.models.rules import current_season, get_rule
 
 MODEL_VERSION = "preseason-prior-v1"
 
 _CEILING_GOAL_UPSIDE = 4.0
-
-
-def _current_season(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute("SELECT season FROM rules ORDER BY id DESC LIMIT 1").fetchone()
-    return row["season"] if row else None
-
-
-def _get_rule(conn: sqlite3.Connection, season: str, rule_key: str, default=None):
-    row = conn.execute(
-        "SELECT value FROM rules WHERE rule_key=? AND season=? ORDER BY version DESC LIMIT 1",
-        (rule_key, season),
-    ).fetchone()
-    return json.loads(row["value"]) if row else default
+_ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
 
 
 def _clean_sheet_probability(defence_difficulty: float) -> float:
     return max(0.05, min(0.60, 0.75 - defence_difficulty * 0.10))
+
+
+def _player_match_rates(conn: sqlite3.Connection, player_id: int) -> dict:
+    player = conn.execute(
+        "SELECT p.team_id, et.singular_name_short AS position FROM players p "
+        "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
+        (player_id,),
+    ).fetchone()
+    if player is None:
+        raise ValueError(f"unknown player_id: {player_id}")
+    position = player["position"]
+
+    season = current_season(conn)
+    goals_rate = get_rule(conn, season, f"scoring.goals_scored.{position}", 0) or 0
+    assists_rate = get_rule(conn, season, "scoring.assists", 0) or 0
+    clean_sheet_pts = get_rule(conn, season, f"scoring.clean_sheets.{position}", 0) or 0
+
+    prior = conn.execute(
+        "SELECT minutes, expected_goals, expected_assists, bonus FROM player_season_history "
+        "WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
+        (player_id,),
+    ).fetchone()
+    if prior and prior["minutes"]:
+        per90 = 90 / prior["minutes"]
+        xg90 = (prior["expected_goals"] or 0) * per90
+        xa90 = (prior["expected_assists"] or 0) * per90
+        bonus90 = (prior["bonus"] or 0) * per90
+    else:
+        xg90 = xa90 = bonus90 = 0.0
+
+    em = expected_minutes(conn, player_id)
+
+    return {
+        "position": position, "team_id": player["team_id"],
+        "goals_rate": goals_rate, "assists_rate": assists_rate, "clean_sheet_pts": clean_sheet_pts,
+        "xg90": xg90, "xa90": xa90, "bonus90": bonus90, "em": em,
+    }
 
 
 @dataclass(frozen=True)
@@ -62,45 +93,17 @@ class ExpectedPoints:
 
 
 def expected_points(conn: sqlite3.Connection, player_id: int, n_gw: int = 1) -> ExpectedPoints:
-    player = conn.execute(
-        "SELECT p.team_id, et.singular_name_short AS position FROM players p "
-        "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
-        (player_id,),
-    ).fetchone()
-    if player is None:
-        raise ValueError(f"unknown player_id: {player_id}")
-    position = player["position"]
-
-    season = _current_season(conn)
-    goals_rate = _get_rule(conn, season, f"scoring.goals_scored.{position}", 0) or 0
-    assists_rate = _get_rule(conn, season, "scoring.assists", 0) or 0
-    clean_sheet_pts = _get_rule(conn, season, f"scoring.clean_sheets.{position}", 0) or 0
-
-    em = expected_minutes(conn, player_id)
+    rates = _player_match_rates(conn, player_id)
+    em = rates["em"]
     minutes_fraction = em.expected_minutes / 90
 
     appearance_points = min(minutes_fraction, 1.0) * 2.0
+    involvement_points = (rates["xg90"] * rates["goals_rate"] + rates["xa90"] * rates["assists_rate"]) * minutes_fraction
+    expected_bonus = rates["bonus90"] * minutes_fraction
 
-    prior = conn.execute(
-        "SELECT minutes, expected_goals, expected_assists, bonus FROM player_season_history "
-        "WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
-        (player_id,),
-    ).fetchone()
-
-    if prior and prior["minutes"]:
-        per90 = 90 / prior["minutes"]
-        xg90 = (prior["expected_goals"] or 0) * per90
-        xa90 = (prior["expected_assists"] or 0) * per90
-        bonus90 = (prior["bonus"] or 0) * per90
-    else:
-        xg90 = xa90 = bonus90 = 0.0
-
-    involvement_points = (xg90 * goals_rate + xa90 * assists_rate) * minutes_fraction
-    expected_bonus = bonus90 * minutes_fraction
-
-    window = fixture_window_score(conn, player["team_id"], n_gw)
+    window = fixture_window_score(conn, rates["team_id"], n_gw)
     cs_prob = _clean_sheet_probability(window.avg_defence_difficulty) if window.fixture_count else 0.0
-    clean_sheet_points = cs_prob * clean_sheet_pts * min(minutes_fraction, 1.0)
+    clean_sheet_points = cs_prob * rates["clean_sheet_pts"] * min(minutes_fraction, 1.0)
 
     median = appearance_points + involvement_points + expected_bonus + clean_sheet_points
     floor = round(median * 0.5, 2)
@@ -108,11 +111,57 @@ def expected_points(conn: sqlite3.Connection, player_id: int, n_gw: int = 1) -> 
 
     return ExpectedPoints(
         player_id=player_id,
-        position=position,
+        position=rates["position"],
         floor=floor,
         median=round(median, 2),
         ceiling=ceiling,
         confidence=em.confidence,
         expected_minutes=em.expected_minutes,
         model_version=MODEL_VERSION,
+    )
+
+
+@dataclass(frozen=True)
+class WindowExpectedPoints:
+    player_id: int
+    n_gw: int
+    fixture_count: int
+    total_median: float
+    model_version: str
+
+
+def expected_points_window(
+    conn: sqlite3.Connection, player_id: int, n_gw: int, from_event: int | None = None
+) -> WindowExpectedPoints:
+    """Cumulative EV across a window - correctly sums doubles, correctly zeroes blanks."""
+    rates = _player_match_rates(conn, player_id)
+    em = rates["em"]
+    base_minutes_fraction = min(em.expected_minutes / 90, 1.0)
+
+    start = from_event if from_event is not None else _reference_event(conn)
+    fixture_ids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM fixtures WHERE (team_h=? OR team_a=?) AND event >= ? AND event < ? ORDER BY event",
+            (rates["team_id"], rates["team_id"], start, start + n_gw),
+        ).fetchall()
+    ]
+
+    total = 0.0
+    for i, fid in enumerate(fixture_ids):
+        fd = fixture_difficulty(conn, fid)
+        defence_difficulty = fd.team_h_defence_difficulty if fd.team_h == rates["team_id"] else fd.team_a_defence_difficulty
+        minutes_fraction = base_minutes_fraction * (_ROTATION_DAMPING_PER_EXTRA_MATCH ** i)
+
+        appearance = min(minutes_fraction, 1.0) * 2.0
+        involvement = (rates["xg90"] * rates["goals_rate"] + rates["xa90"] * rates["assists_rate"]) * minutes_fraction
+        bonus = rates["bonus90"] * minutes_fraction
+        cs_prob = _clean_sheet_probability(defence_difficulty)
+        clean_sheet = cs_prob * rates["clean_sheet_pts"] * min(minutes_fraction, 1.0)
+
+        total += appearance + involvement + bonus + clean_sheet
+
+    return WindowExpectedPoints(
+        player_id=player_id, n_gw=n_gw, fixture_count=len(fixture_ids),
+        total_median=round(total, 2), model_version=MODEL_VERSION,
     )

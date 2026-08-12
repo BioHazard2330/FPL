@@ -42,6 +42,7 @@ def normalize_element_types(bootstrap: dict) -> list[dict]:
             "plural_name": et["plural_name"],
             "squad_min_play": et.get("squad_min_play"),
             "squad_max_play": et.get("squad_max_play"),
+            "squad_select": et.get("squad_select"),
         }
         for et in bootstrap["element_types"]
     ]
@@ -214,6 +215,21 @@ def normalize_season_history(player_id: int, element_summary: dict) -> list[dict
             row[field] = value
         rows.append(row)
     return rows
+
+
+def normalize_chip_windows(bootstrap: dict, season: str) -> list[dict]:
+    return [
+        {
+            "id": c["id"],
+            "name": c["name"],
+            "number": c["number"],
+            "start_event": c["start_event"],
+            "stop_event": c["stop_event"],
+            "chip_type": c["chip_type"],
+            "season": season,
+        }
+        for c in bootstrap.get("chips", [])
+    ]
 
 
 def flatten_rules(bootstrap: dict) -> dict[str, Any]:
