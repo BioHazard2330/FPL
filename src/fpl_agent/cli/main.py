@@ -1,3 +1,5 @@
+import logging
+import subprocess
 import sys
 
 import click
@@ -8,12 +10,15 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
+from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.logging_setup import setup_logging
+from fpl_agent.scheduler.cadence import recommended_cadence
+from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points
 from fpl_agent.models.fixtures import _reference_event
@@ -106,6 +111,42 @@ def sync_history(limit: int | None, force: bool):
         click.echo(f"failed player ids: {result['failed']}")
 
 
+@cli.command("run-scheduled")
+def run_scheduled():
+    """The actual entrypoint the OS scheduler invokes (section 19) - not `fpl sync`
+    directly. Checks resources first (defers if constrained), syncs, then delivers
+    any newly-pending HIGH+ alerts. Logs to the rotating log file, not just stdout,
+    since this runs unattended."""
+    logger = logging.getLogger("fpl_agent.scheduler")
+
+    resources = check_resources()
+    if resources.defer:
+        logger.info("run-scheduled deferred: %s", resources.defer_reason)
+        click.echo(f"deferred: {resources.defer_reason}")
+        return
+
+    try:
+        summary = run_sync()
+    except (SourceFetchError, ValidationError) as e:
+        logger.error("run-scheduled sync failed: %s", e)
+        click.echo(f"sync failed: {e}", err=True)
+        raise SystemExit(1)
+
+    logger.info(
+        "run-scheduled sync ok: %d lifecycle events, %d setpiece events, retrieved_at=%s",
+        summary["lifecycle_events"], summary["setpiece_events"], summary["retrieved_at"],
+    )
+
+    conn = get_connection()
+    alerts = deliver_pending_alerts(conn, TerminalNotifier())
+    cadence = recommended_cadence(conn)
+    conn.close()
+
+    logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
+    click.echo(f"sync ok - {len(alerts)} alert(s) delivered")
+    click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
+
+
 @cli.command()
 @click.option("--limit", default=20, help="max players to show")
 @click.option("--position", default=None, help="filter by GKP/DEF/MID/FWD")
@@ -143,6 +184,39 @@ def source_status():
     for s in statuses:
         state = "OK" if s.failure_count == 0 and s.last_success else "DEGRADED"
         click.echo(f"{s.source_name:<20} {state:<9} last_success={s.last_success} failures={s.failure_count} latency={s.latency_ms}ms")
+
+
+_SCHEDULER_TASK_NAME = "FPLAgentSync"  # must match scripts/setup_scheduler.ps1's default
+
+
+@cli.command("scheduler-status")
+def scheduler_status():
+    """Check whether the Windows Task Scheduler entry exists and when it last/next ran."""
+    if sys.platform != "win32":
+        click.echo("scheduler-status only supports Windows Task Scheduler currently")
+        return
+
+    ps_command = (
+        f"$t = Get-ScheduledTask -TaskName '{_SCHEDULER_TASK_NAME}' -ErrorAction SilentlyContinue; "
+        f"if ($t) {{ $i = Get-ScheduledTaskInfo -TaskName '{_SCHEDULER_TASK_NAME}'; "
+        f"Write-Output \"State=$($t.State)\"; Write-Output \"LastRunTime=$($i.LastRunTime)\"; "
+        f"Write-Output \"NextRunTime=$($i.NextRunTime)\"; Write-Output \"LastResult=$($i.LastTaskResult)\" }} "
+        f"else {{ Write-Output 'NOT_REGISTERED' }}"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_command],
+        capture_output=True, text=True, timeout=15,
+    )
+    output = result.stdout.strip()
+
+    if not output or "NOT_REGISTERED" in output:
+        click.echo(f"task '{_SCHEDULER_TASK_NAME}' not registered")
+        click.echo("register with: powershell -ExecutionPolicy Bypass -File scripts\\setup_scheduler.ps1")
+        return
+
+    click.echo(f"task '{_SCHEDULER_TASK_NAME}':")
+    for line in output.splitlines():
+        click.echo(f"  {line}")
 
 
 @cli.command()
@@ -187,6 +261,29 @@ def changes(limit: int, event_type: str | None):
             f"{r['detected_at']}  {r['severity']:<8} {r['event_type']:<16} "
             f"{r['entity']}#{r['entity_id']}  {r['old_value']} -> {r['new_value']}"
         )
+
+
+@cli.command()
+@click.option("--deliver", is_flag=True, help="mark alerts as delivered so they won't show again")
+def alerts(deliver: bool):
+    """Show pending HIGH+ severity alerts (section 84-86). Terminal-only channel."""
+    conn = get_connection()
+
+    if deliver:
+        sent = deliver_pending_alerts(conn, TerminalNotifier())  # notifier.send() does the printing
+        if not sent:
+            click.echo("no pending alerts")
+    else:
+        pending = pending_alerts(conn)
+        if not pending:
+            click.echo("no pending alerts")
+        for a in pending:
+            click.echo(
+                f"[{a.severity}] {a.event_type} {a.entity}#{a.entity_id}: "
+                f"{a.old_value} -> {a.new_value}  ({a.detected_at})"
+            )
+
+    conn.close()
 
 
 def _parse_squad_option(squad: str | None) -> list[int] | None:

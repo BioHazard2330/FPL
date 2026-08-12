@@ -49,8 +49,8 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`.
-Planned (later phases): `scan`, `build-team`, `team-news`, `audit`, `cleanup`, `backup`, `restore`, `scheduler-status`.
+Implemented: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`.
+Planned (later phases): `scan`, `build-team`, `team-news`, `audit`, `cleanup`, `backup`, `restore`.
 
 ## Data model (Phase 2)
 
@@ -124,6 +124,41 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   script (all cases behave correctly) - not proven to fire end-to-end, see the
   project-root caveat above.
 
+## Live operations (Phase 7)
+
+- `scheduler/resources.py` — resource-aware gate (section 21-22): defers a scheduled
+  run on low disk (<1GB free) or low+unplugged battery (<15%, not charging). Adds
+  `psutil` as a dependency (justified: reliable cross-platform CPU/RAM/battery
+  detection isn't practical stdlib-only).
+- `scheduler/cadence.py` — maps time-to-next-deadline onto the existing
+  `config/freshness.yaml` thresholds (deadline-day / active-window / normal), plus
+  one deliberately-added `_MODERATE_WINDOW_MINUTES` (60min, 24-72h out) not present
+  in the freshness config, documented in the module rather than silently added to
+  the YAML. **Informational only right now** - Windows Task Scheduler triggers a
+  fixed interval, it doesn't dynamically re-schedule itself; `fpl run-scheduled`
+  logs the recommended cadence but always runs when triggered (gated only by the
+  resource check). Adaptive re-scheduling would need the scheduler to re-register
+  itself, not built this phase.
+- `alerts/engine.py` — `Notifier` abstract interface + `TerminalNotifier` (the only
+  channel enabled - user's Phase 1 choice). Alerts are `change_events` rows with
+  severity HIGH/CRITICAL that haven't been delivered yet (`change_events.alerted_at`,
+  migration `0007` - kept separate from `action_required`, which flags something
+  different: whether a change needs user attention at all, not whether it's been
+  shown). Section 85: don't notify about every piece of news - MEDIUM/LOW severity
+  changes never become alerts.
+- `fpl run-scheduled` — the actual entrypoint the OS scheduler calls, not `fpl sync`
+  directly: resource check -> sync -> deliver pending alerts -> log outcome to the
+  rotating log file (this runs unattended, stdout alone isn't enough).
+- `scripts/setup_scheduler.ps1` / `remove_scheduler.ps1` — register/unregister a
+  Windows Task Scheduler entry running `fpl run-scheduled` on a fixed interval
+  (default 60min). **Built and tested (syntax-parsed, logic verified manually) but
+  deliberately not registered** - the user chose to leave it inactive for now
+  rather than start a persistent unattended background task; run
+  `setup_scheduler.ps1` when ready. `fpl scheduler-status` reports whether it's
+  registered and its last/next run time. Windows-only currently (section 20 wants
+  cross-platform OS detection; macOS/Linux schedulers not implemented - no
+  non-Windows dev environment to build/test against here).
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended).
@@ -134,7 +169,7 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Phase 4 — Models (team strength history, fixture difficulty, expected minutes, preseason-prior xP). See caveats above — uncalibrated until real match data exists.
 - [x] Phase 5 — Optimisation (squad ILP, transfer/captaincy/chip logic). Chip scheduling is single-decision-point only, not season-long — see above.
 - [x] Phase 6 — Claude Code layer (Skills, subagents, hooks). See project-root caveat above before assuming these are active in any given session.
-- [ ] Phase 7 — Live operations (scheduler, alerts, change detection)
+- [x] Phase 7 — Live operations (resource-aware scheduler, deadline-aware cadence, terminal alerts). Windows-only; scheduled task built but not registered (user's choice) - see above.
 - [ ] Phase 8 — Reliability (tests, backup/restore)
 - [ ] Phase 9 — First-team ready
 
