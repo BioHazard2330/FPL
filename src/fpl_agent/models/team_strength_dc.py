@@ -95,6 +95,8 @@ def fit_dixon_coles(matches: list[Match], team_ids: list[int], half_life_days: f
         _neg_log_likelihood, x0, args=(team_ids, matches, decay_k), method="L-BFGS-B",
         bounds=[(-3, 3)] * (2 * (n - 1)) + [(-1, 1), (-0.2, 0.2)],
     )
+    if not result.success:
+        raise RuntimeError(f"Dixon-Coles fit did not converge: {result.message}")
     params = result.x
 
     attack = dict(zip(team_ids[:-1], params[: n - 1]))
