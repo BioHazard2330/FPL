@@ -11,6 +11,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
+from fpl_agent.backtesting.harness import run_backtest, save_backtest_run
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -190,6 +191,31 @@ def backfill_xg(season: str):
         conn.close()
     click.echo(f"matches processed   {summary['matches_processed']}")
     click.echo(f"player rows upserted {summary['player_rows_inserted']}")
+
+
+@cli.command("backtest")
+@click.option("--season", required=True, help="e.g. 2024-25 - must already be backfilled via backfill-odds/backfill-xg")
+@click.option("--model-version", default=None, help="defaults to the current MODEL_VERSION")
+def backtest(season: str, model_version: str | None):
+    """Walk-forward backtest of the calibrated model against a historical
+    season - no future leakage, scores against Understat-reconstructed
+    actual points (core components only; bonus/BPS unavailable in that source)."""
+    conn = get_connection()
+    try:
+        result = run_backtest(conn, season, model_version or MODEL_VERSION)
+        run_id = save_backtest_run(conn, result)
+    finally:
+        conn.close()
+
+    click.echo(f"model version       {result.model_version}")
+    click.echo(f"season               {result.season}")
+    click.echo(f"rounds evaluated     {result.rounds_evaluated}")
+    click.echo(f"predictions scored   {result.predictions_scored}")
+    click.echo(f"MAE                  {result.mae}")
+    click.echo(f"RMSE                 {result.rmse}")
+    click.echo(f"baseline MAE         {result.baseline_mae}")
+    click.echo(f"{'beats' if result.mae < result.baseline_mae else 'DOES NOT beat'} naive baseline")
+    click.echo(f"saved as run #{run_id}")
 
 
 @cli.command("run-scheduled")

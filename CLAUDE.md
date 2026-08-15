@@ -231,9 +231,42 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   projections`, `fpl build-team`, `fpl captain`, `fpl transfers`, `fpl chips`,
   `fpl final-check` - every command ran clean, no fabricated output.
 
+## Data model / logic (Pillar 0 — prediction accuracy core)
+
+- `market_teams`/`team_name_aliases`/`player_name_aliases` (migration `0009`) — crosswalk
+  between FPL's internal ids and free-text names used by external sources (needed since
+  promoted/relegated teams and mid-career transfers aren't representable in `teams`/`players`
+  alone). `match_results_history`/`team_match_odds_history` (football-data.co.uk),
+  `player_match_stats_history` (Understat shot-level xG/xA) are Tier-2 **model-input only**
+  sources — explicitly separate from the Tier2-4 news/rumor trust-precedence policy.
+  `fpl backfill-odds --season YYYY-YY` / `fpl backfill-xg --season YYYY-YY` populate them,
+  idempotent, safe to re-run.
+- `models/team_strength_dc.py` — Dixon-Coles Poisson team-strength fit (MLE, time-decayed via
+  `half_life_days`, low-score correlation term `rho`) over `match_results_history`.
+- `models/odds.py` — proportional devig of bookmaker odds into implied probabilities, blended
+  with the Dixon-Coles fixture-goals estimate (`blend_fixture_goals`); degrades to DC-only when
+  no odds row exists for a fixture (live pre-match odds aren't fed yet — see limitation below).
+- `models/player_regression.py` — shrinkage-regressed per-90 goals/assists/cards toward the
+  positional mean (population prior, not leave-one-out — see `progress.md` Task 10 ruling), plus
+  team-xG-share for the goals term.
+- `models/minutes_distribution.py` — empirical minutes-bucket probability distribution (>=4
+  pre-cutoff matches), falling back to the existing `expected_minutes()` estimate below that —
+  the fallback path is not leakage-free and is excluded from backtest scoring.
+- `models/expected_points.py` — `MODEL_VERSION = "calibrated-v2"`. Replaces the v1 linear
+  heuristic: real appearance step function, Dixon-Coles/odds-blended clean-sheet and
+  goals-conceded-band probabilities, shrinkage-regressed goals/assists, cards modeled from
+  historical per-90 discipline rate. `ExpectedPoints`/`WindowExpectedPoints` field names
+  unchanged — `optimization/` callers untouched.
+- `backtesting/harness.py` + `fpl backtest --season YYYY-YY [--model-version VERSION]` —
+  walk-forward evaluation (10-match rounds, chronological, `as_of_date` threaded through every
+  query so nothing sees future data) against Understat-reconstructed actual points (core
+  scoring only: appearance + goals + assists + yellow cards — bonus/BPS aren't in that source,
+  excluded from both sides rather than faked). Scores MAE/RMSE against a raw-per-90 baseline,
+  persists to `model_backtest_runs`.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases complete.**
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) complete.**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -244,14 +277,24 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Phase 7 — Live operations (resource-aware scheduler, deadline-aware cadence, terminal alerts). Windows-only; scheduled task built but not registered (user's choice) - see above.
 - [x] Phase 8 — Reliability (decision journal, cleanup, backup/restore, E2E test). Two real bugs found and fixed during this phase - see above.
 - [x] Phase 9 — First-team ready (`fpl build-team`, readiness gate, `fpl final-check`). Section 122's final test passed live end to end - see above.
+- [x] Pillar 0 — Prediction accuracy core (Dixon-Coles/odds-blended, shrinkage-regressed,
+  minutes-distribution `calibrated-v2` model + walk-forward backtest harness). Spec:
+  `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`. Plan:
+  `docs/superpowers/plans/2026-08-15-prediction-accuracy-core.md` (14/14 tasks, full
+  implementer+reviewer ledger in `.superpowers/sdd/2026-08-15-prediction-accuracy-core/progress.md`).
 
 ## What's still genuinely limited (read before trusting output)
 
-- **The xP model is an uncalibrated preseason prior** (`models/expected_points.py`
-  docstring + CLAUDE.md Phase 4 section). Every number `fpl build-team`/`projections`
-  produces should be read as "best available estimate before a ball is kicked,"
-  not a validated forecast. Recalibrate against real results once GW1-5 happen
-  (section 79).
+- **`calibrated-v2` still doesn't model bonus/BPS or (outside the shrinkage prior) cards
+  precisely.** Backtest scoring excludes bonus/BPS on both sides (Understat doesn't carry it)
+  rather than faking it — real predictions are honest, just narrower than full FPL scoring.
+- **Live pre-match odds blending is effectively unreachable today.**
+  `team_match_odds_history` only has played-match odds from the backfill sources, so live
+  `fpl projections`/`build-team` runs always fall back to Dixon-Coles-only until a live odds
+  feed is added (not built this pillar).
+- **Backtest baseline is historical-only.** `fpl backtest` proves the model against 2024-25-style
+  historical seasons (once backfilled); it says nothing yet about live in-season accuracy —
+  revisit once real 2026-27 GW1-5 results exist to compare against.
 - **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
   detection all need Tier 2-4 sources the user chose not to enable. What's built
   instead (official-status injuries, confirmed-transfer club changes) is real and
