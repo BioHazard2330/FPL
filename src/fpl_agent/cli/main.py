@@ -15,6 +15,7 @@ from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, r
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
+from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.sync import ValidationError, run_sync
@@ -160,6 +161,20 @@ def sync_history(limit: int | None, force: bool):
     click.echo(f"failed               {len(result['failed'])}")
     if result["failed"]:
         click.echo(f"failed player ids: {result['failed']}")
+
+
+@cli.command("backfill-odds")
+@click.option("--season", required=True, help="e.g. 2024-25")
+def backfill_odds(season: str):
+    """One-time historical (or current-season refresh) match results + odds
+    backfill from football-data.co.uk - safe to re-run, upserts idempotently."""
+    conn = get_connection()
+    try:
+        summary = backfill_football_data(conn, season)
+    finally:
+        conn.close()
+    click.echo(f"matches inserted/updated  {summary['matches_inserted']}")
+    click.echo(f"odds rows inserted/updated {summary['odds_inserted']}")
 
 
 @cli.command("run-scheduled")

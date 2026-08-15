@@ -1,7 +1,14 @@
 """Historical + live-season match results and odds from football-data.co.uk
 (free CSV, no auth, updated through the live season as well as historical
 archives - one source covers both backfill and in-season refresh)."""
-from datetime import datetime
+import csv
+import io
+from datetime import datetime, timezone
+
+import requests
+
+from fpl_agent.ingestion.market_identity import get_or_create_market_team
+from fpl_agent.ingestion.sync import update_source_health
 
 
 class FootballDataFetchError(Exception):
@@ -48,3 +55,84 @@ def parse_football_data_row(row: dict) -> dict | None:
         "away_goals": int(row["FTAG"]),
         "odds": odds,
     }
+
+
+_TIMEOUT_SECONDS = 15
+
+
+def season_to_code(season: str) -> str:
+    """'2024-25' -> '2425' (football-data.co.uk's URL season code)."""
+    start, end = season.split("-")
+    return start[-2:] + end
+
+
+def fetch_season_csv(season: str) -> str:
+    code = season_to_code(season)
+    url = f"https://www.football-data.co.uk/mmz4281/{code}/E0.csv"
+    try:
+        resp = requests.get(url, timeout=_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise FootballDataFetchError(f"failed to fetch {url}: {exc}") from exc
+    return resp.text
+
+
+def _upsert_match_and_odds(conn, season: str, parsed: dict) -> bool:
+    home_id = get_or_create_market_team(conn, "football_data", parsed["home_team_name"])
+    away_id = get_or_create_market_team(conn, "football_data", parsed["away_team_name"])
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn.execute(
+        "INSERT INTO match_results_history "
+        "(season, match_date, home_team_id, away_team_id, home_goals, away_goals, source, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(season, match_date, home_team_id, away_team_id) DO UPDATE SET "
+        "home_goals=excluded.home_goals, away_goals=excluded.away_goals, retrieved_at=excluded.retrieved_at",
+        (season, parsed["match_date"], home_id, away_id, parsed["home_goals"], parsed["away_goals"],
+         "football_data", now),
+    )
+    # cur.lastrowid is unreliable here: on the ON CONFLICT DO UPDATE path (no row
+    # actually inserted), sqlite leaves last_insert_rowid() at whatever the previous
+    # real INSERT on this connection set it to - not this row's id - so a plain
+    # lookup by the unique key is used instead of trusting the cursor.
+    match_id = conn.execute(
+        "SELECT id FROM match_results_history WHERE season=? AND match_date=? AND home_team_id=? AND away_team_id=?",
+        (season, parsed["match_date"], home_id, away_id),
+    ).fetchone()["id"]
+
+    if parsed["odds"]:
+        o = parsed["odds"]
+        conn.execute(
+            "INSERT INTO team_match_odds_history "
+            "(match_id, source, bookmaker, home_win_odds, draw_odds, away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(match_id, source, bookmaker) DO UPDATE SET "
+            "home_win_odds=excluded.home_win_odds, draw_odds=excluded.draw_odds, away_win_odds=excluded.away_win_odds, "
+            "over_2_5_odds=excluded.over_2_5_odds, under_2_5_odds=excluded.under_2_5_odds, retrieved_at=excluded.retrieved_at",
+            (match_id, "football_data", o["bookmaker"], o["home_win"], o["draw"], o["away_win"],
+             o["over_2_5"], o["under_2_5"], now),
+        )
+    return True
+
+
+def backfill_football_data(conn, season: str, csv_text: str | None = None) -> dict:
+    try:
+        text = csv_text if csv_text is not None else fetch_season_csv(season)
+    except FootballDataFetchError as exc:
+        update_source_health(conn, "football_data", success=False, error=str(exc))
+        raise
+
+    reader = csv.DictReader(io.StringIO(text))
+    matches_inserted = odds_inserted = 0
+    for raw_row in reader:
+        parsed = parse_football_data_row(raw_row)
+        if parsed is None:
+            continue
+        _upsert_match_and_odds(conn, season, parsed)
+        matches_inserted += 1
+        if parsed["odds"]:
+            odds_inserted += 1
+    conn.commit()
+
+    update_source_health(conn, "football_data", success=True, error=None)
+    return {"matches_inserted": matches_inserted, "odds_inserted": odds_inserted}

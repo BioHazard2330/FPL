@@ -1,4 +1,4 @@
-from fpl_agent.ingestion.football_data_source import parse_football_data_row
+from fpl_agent.ingestion.football_data_source import backfill_football_data, parse_football_data_row
 
 
 def test_parse_row_prefers_avg_odds_and_iso_date():
@@ -41,3 +41,44 @@ def test_parse_row_handles_four_digit_year():
 def test_parse_row_skips_unplayed_fixture():
     row = {"Date": "17/08/24", "HomeTeam": "Man City", "AwayTeam": "Chelsea", "FTHG": "", "FTAG": ""}
     assert parse_football_data_row(row) is None
+
+
+_SAMPLE_CSV = (
+    "Date,HomeTeam,AwayTeam,FTHG,FTAG,AvgH,AvgD,AvgA,Avg>2.5,Avg<2.5\n"
+    "17/08/24,Man City,Chelsea,2,0,1.45,4.8,7.2,1.9,1.95\n"
+    "18/08/24,Arsenal,Wolves,3,1,1.3,5.5,9.0,1.7,2.1\n"
+)
+
+
+def test_backfill_football_data_upserts_matches_and_odds(db_conn):
+    summary = backfill_football_data(db_conn, "2024-25", csv_text=_SAMPLE_CSV)
+    assert summary["matches_inserted"] == 2
+    matches = db_conn.execute("SELECT * FROM match_results_history ORDER BY match_date").fetchall()
+    assert len(matches) == 2
+    assert matches[0]["home_goals"] == 2
+    odds = db_conn.execute("SELECT * FROM team_match_odds_history").fetchall()
+    assert len(odds) == 2
+    assert odds[0]["bookmaker"] == "avg"
+
+
+def test_backfill_football_data_idempotent(db_conn):
+    backfill_football_data(db_conn, "2024-25", csv_text=_SAMPLE_CSV)
+    summary = backfill_football_data(db_conn, "2024-25", csv_text=_SAMPLE_CSV)
+    assert summary["matches_inserted"] == 2  # upsert, not duplicate
+    matches = db_conn.execute("SELECT COUNT(*) AS n FROM match_results_history").fetchone()
+    assert matches["n"] == 2
+
+    # Regression guard: each match's odds row must stay tied to *that* match
+    # after a re-run, not bleed onto another match via a stale rowid lookup.
+    odds_by_match = {
+        r["match_id"]: r["home_win_odds"]
+        for r in db_conn.execute("SELECT match_id, home_win_odds FROM team_match_odds_history").fetchall()
+    }
+    matches_by_id = {
+        r["id"]: (r["home_goals"], r["away_goals"])
+        for r in db_conn.execute("SELECT id, home_goals, away_goals FROM match_results_history").fetchall()
+    }
+    man_city_match_id = next(mid for mid, g in matches_by_id.items() if g == (2, 0))
+    arsenal_match_id = next(mid for mid, g in matches_by_id.items() if g == (3, 1))
+    assert odds_by_match[man_city_match_id] == 1.45
+    assert odds_by_match[arsenal_match_id] == 1.3
