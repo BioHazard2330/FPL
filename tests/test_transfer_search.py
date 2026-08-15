@@ -134,6 +134,96 @@ def test_search_transfer_sequences_respects_max_banked_free_transfers(db_conn, m
         assert seq.final_free_transfers <= 5  # max_banked from the seeded rule (1 + 4)
 
 
+def _patch_expected_points_window_event_dependent(monkeypatch):
+    """Event-DEPENDENT fake, local to the horizon-awareness test below - deliberately
+    different from the shared _PLAYER_GW_EV (which ignores from_event entirely and so
+    cannot catch a regression that breaks from_event threading through the horizon
+    loop - see that test's own note). Player 3 (strong) scores a one-off 10.0 spike
+    ONLY at event=1 (simulating e.g. a double gameweek or a one-off favourable
+    fixture) and reverts to a mundane 2.5 at every later event; players 1/2 (weak,
+    starting squad) and player 4 (an uninteresting always-worse alternative target)
+    are flat regardless of event, so they can't confound the event=1-vs-later
+    comparison. n_gw != 1 returns an out-of-range sentinel (-1000.0) rather than a
+    real value: search_transfer_sequences only ever calls best_transfer_for_player
+    with n_gw=1 (see its own docstring/call site), so a correct search never reads
+    this branch - if a regression ever passed a different n_gw through, the sentinel
+    would corrupt the ranking and the magnitude assertion below would catch it too
+    (a partial guard for that secondary property, not an exhaustive one)."""
+    def fake(conn, player_id, n_gw, from_event=None):
+        if n_gw != 1:
+            return SimpleNamespace(total_median=-1000.0)
+        if player_id in (1, 2):
+            return SimpleNamespace(total_median=2.0)
+        if player_id == 4:
+            return SimpleNamespace(total_median=0.5)
+        if player_id == 3:
+            return SimpleNamespace(total_median=10.0 if from_event == 1 else 2.5)
+        raise AssertionError(f"unexpected player_id {player_id}")
+
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+
+def test_search_transfer_sequences_uses_the_correct_event_per_horizon_step(db_conn, monkeypatch):
+    """Proves the search actually threads from_event through each horizon step,
+    rather than (as the final-branch-review mutation test demonstrated) silently
+    reusing event=1's data for every step while every other test in this file still
+    passes green, because they all use an event-INDEPENDENT fake.
+
+    Setup: squad_ids=[1,2] (both flat 2.0/GW, every event), free_transfers=1,
+    bank_tenths=100, horizon_gw=2, beam_width=4. Player 3 spikes to 10.0 ONLY at
+    event=1 and is a mundane 2.5 at event=2 onward; player 4 is a flat, always-worse
+    0.5 (never worth transferring in, so it can't confound the comparison).
+
+    Hand-derived correct optimum (buy player 3 as early as legally possible, GW1,
+    using the free transfer, then hold):
+      - GW1 (event=1): swap player 1 -> player 3 (free transfer, not a hit, since
+        free_transfers=1 >= 1). Squad (2,3) this GW: 2.0 + 10.0 = 12.0. Free
+        transfer accrual nets back to 1 FT still available next GW (spending a
+        banked FT while the automatic +1 still arrives - same rule the existing
+        33.0 regression test exercises).
+      - GW2 (event=2): squad is already (2,3). Holding (roll) scores 2.0 + 2.5 =
+        4.5 - swapping player 3 back out for player 1 also scores 2.0 + 2.5 = 4.5
+        (player 1 and player 2 are identically flat 2.0, so this branch ties roll
+        rather than beating or losing to it; it does not change the total).
+      Total = 12.0 + 4.5 = 16.5, no hit cost anywhere.
+
+    Contrast with buying LATE instead (never transferring at GW1, i.e. rolling
+    first): squad stays (1,2) at GW1 = 2.0 + 2.0 = 4.0 (missing the 10.0 spike
+    entirely, since it only exists at event=1 and this path wasn't in player 3 yet).
+    GW2 then swaps in player 3 at its mundane 2.5: new squad e.g. (2,3) = 2.0 + 2.5
+    = 4.5. Total = 4.0 + 4.5 = 8.5 - the correct implementation must never choose
+    this path when the early path is available, and 16.5 is measurably (not
+    marginally) higher than 8.5, so this is a real discriminating gap, not a
+    rounding-level difference.
+
+    Mutation check performed during development (see task notes): temporarily
+    freezing `event` at `start_event` for every offset in the horizon loop (the
+    exact "always use event=1" mutation the final review used to prove this
+    property was previously unguarded) was confirmed to make this test FAIL - under
+    that mutation player 3's 10.0 spike is (incorrectly) visible at every step, not
+    just event=1, so the search instead holds (2,3) for both GWs at an inflated
+    2.0+10.0=12.0/GW, reaching 24.0 total, not 16.5. The mutation was reverted
+    immediately after confirming the failure; only this test (and the fake above)
+    remain as the permanent regression guard.
+    """
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window_event_dependent(monkeypatch)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, beam_width=4,
+    )
+    best = sequences[0]
+
+    assert best.total_net_ev == 16.5, (
+        f"got {best.total_net_ev}, expected exactly 16.5 (buy player 3 at GW1 to "
+        "capture its event=1-only 10.0 spike, then hold: 12.0(GW1) + 4.5(GW2)). "
+        "24.0 would mean event=1's data is being reused for every horizon step "
+        "(from_event isn't threading through correctly - the exact bug class the "
+        "final review's mutation test proved was unguarded). 8.5 would mean the "
+        "search bought in late (or never), missing the early-event spike entirely."
+    )
+
+
 def _patch_expected_points_window_wide_gap(monkeypatch):
     """Separate fake, local to the wildcard-proximity test below: team 2 (players
     3/4) is boosted to 8.0/GW (vs the shared module's 6.0) instead of the usual

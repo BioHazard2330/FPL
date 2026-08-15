@@ -49,7 +49,7 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad`, `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`.
 
 ## Data model (Phase 2)
 
@@ -274,6 +274,16 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   change-tracking pattern as `player_price_history`/`player_ownership_history`.
   `total_players` is the momentum ratio's denominator, stored as a single scalar in
   the previously-unused `app_meta` key-value table rather than a new one-row table.
+  Scope note: `transfers_in_event`/`transfers_out_event` are read every sync but will
+  update on essentially every sync once the season is live and transfer activity is
+  non-zero (currently always zero, preseason) — this table's `valid_from`/`valid_until`
+  change-tracking pattern was designed for slow-changing facts like price/ownership,
+  not a fast-changing per-sync signal, so it may accumulate rows faster than that
+  pattern was built for once the season starts. No near-term consequence (the
+  scheduler remains unregistered by the user's own standing choice — see Phase 7 —
+  so nothing is polling `fpl sync` unattended yet), but worth a real design decision
+  (a different persistence pattern, or a retention policy in `fpl cleanup`) before the
+  scheduler is ever registered or Tier 2-4/Pillar 3 work begins.
 - `models/price_forecast.py::classify_price_change()` — net event-transfers /
   total_players against a fixed ±0.005 threshold, returning `RISE_LIKELY` /
   `FALL_LIKELY` / `STABLE` with `confidence` always `"low"`. Explicitly labeled in
@@ -298,6 +308,19 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   (`WILDCARD_PROXIMITY_PENALTY`, one GW before an eligible wildcard/free-hit window)
   are both small **tie-break nudges on top of the EV ranking**, never hard filters —
   deliberately kept that way since neither input is validated against real data yet.
+  Kept out of the headline number too: `TransferSequence.total_net_ev` is pure squad
+  EV minus real hit costs; the nudge total is reported separately as
+  `tiebreak_adjustment`, never mixed into `total_net_ev` (this project's own
+  FACTS/DERIVED/REASONING layering rule, see Conventions above). Each horizon step
+  can only ever make **one** transfer (never two in the same GW, e.g. to justify a
+  hit) — combined with free-transfer accrual always leaving every step's
+  `free_transfers` >= 1 once the search is under way, a hit is realistically only
+  reachable at the very first horizon step (`is_hit` can only be true when the
+  caller explicitly passes `free_transfers=0`). The wildcard-proximity nudge's real
+  reach is narrow: against this project's actual `chip_windows` data, it only fires
+  for a hit-transfer at exactly GW1 or GW19 (windows start at events 2 and 20), and
+  only matters when the caller has passed `free_transfers=0` per the point above — a
+  comprehensive chip-timing scheduler is explicitly Plan 1b's job, not this one's.
   Known gap, documented rather than silently left unhandled: a generated multi-step
   sequence is not validated for club-limit legality (max 3 players from one
   real-world club) as the squad evolves across steps — only per-swap budget is
@@ -380,8 +403,6 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   exist yet — `fpl transfers --search` only optimises transfer sequences, it does
   not schedule chips or simulate season trajectories. Needs its own
   brainstorm-if-needed → plan cycle before starting.
-
-## Skill/subagent guidance
 
 ## Skill/subagent guidance
 

@@ -110,26 +110,22 @@ def best_transfer_for_player(
     from_event: int | None = None,
     cache: dict[tuple, float] | None = None,
 ) -> list[TransferCandidate]:
-    """Best same-position replacements for player_out, respecting bank + club limit
-    (same club limit enforced implicitly by squad_optimiser at squad-build time -
-    this only checks budget, since a like-for-like swap doesn't change club counts
-    unless the replacement is from a club already at the 3-player cap). cache is
-    forwarded to evaluate_transfer unchanged - see its docstring; default None
-    means uncached, so existing callers (recommend()) are unaffected."""
+    """Best same-position replacements for player_out, respecting bank only - club
+    limits are not checked here (same club limit enforced implicitly by
+    squad_optimiser at squad-build time - this only checks budget, since a
+    like-for-like swap doesn't change club counts unless the replacement is from a
+    club already at the 3-player cap). cache is forwarded to evaluate_transfer
+    unchanged - see its docstring; default None means uncached, so existing callers
+    (recommend()) are unaffected."""
     position = _position(conn, player_out_id)
     price_out = _current_price(conn, player_out_id)
     budget_tenths = price_out + bank_tenths
 
-    squad_team_ids = {
-        r["team_id"] for r in conn.execute(
-            f"SELECT team_id FROM players WHERE id IN ({','.join('?' * len(squad_ids))})", squad_ids
-        ).fetchall()
-    }
-
     candidates = conn.execute(
         "SELECT p.id, p.team_id FROM players p "
         "JOIN element_types et ON et.id = p.element_type "
-        "WHERE et.singular_name_short = ? AND p.removed = 0",
+        "WHERE et.singular_name_short = ? AND p.removed = 0 "
+        "ORDER BY p.id",
         (position,),
     ).fetchall()
 
@@ -203,7 +199,8 @@ class TransferSequence:
     final_squad_ids: tuple[int, ...]
     final_free_transfers: int
     final_bank_tenths: int
-    total_net_ev: float
+    total_net_ev: float  # pure squad EV minus real hit costs - never includes tiebreak_adjustment
+    tiebreak_adjustment: float  # sum of PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY nudges, reported separately
 
 
 @dataclass(frozen=True)
@@ -211,8 +208,9 @@ class _BeamState:
     squad_ids: tuple[int, ...]
     free_transfers: int
     bank_tenths: int
-    cumulative_ev: float
-    hit_cost_total: float
+    cumulative_ev: float  # real squad EV only - never nudges
+    hit_cost_total: float  # real HIT_COST charges only - never the wildcard penalty
+    tiebreak_adjustment: float  # PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY nudges, kept separate
     steps: tuple[TransferSequenceStep, ...]
 
 
@@ -234,7 +232,15 @@ def _squad_gw_ev(conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: in
 def _wildcard_or_freehit_starting_soon(conn: sqlite3.Connection, event: int) -> bool:
     """Matches on ChipWindow.name ("wildcard"/"freehit"), not chip_type - verified
     against a real bootstrap-static payload that chip_type is a coarse category
-    ("transfer" for wildcard/freehit, "team" for bboost/3xc), not the chip identity."""
+    ("transfer" for wildcard/freehit, "team" for bboost/3xc), not the chip identity.
+
+    Real reach, honestly: against this project's actual chip_windows data
+    (wildcard/free-hit windows starting at events 2 and 20), this only fires for a
+    hit-transfer at exactly GW1 or GW19 - and only matters at all when the caller
+    has already passed free_transfers=0 (see search_transfer_sequences's own
+    docstring on when a hit is reachable). This is a narrow, deliberately-scoped
+    nudge, not a general chip-timing scheduler - a comprehensive one is a separate,
+    not-yet-built future plan (Plan 1b)."""
     for w in eligible_chips(conn):
         if w.name in ("wildcard", "freehit") and event < w.start_event <= event + WILDCARD_PROXIMITY_GWS:
             return True
@@ -259,6 +265,22 @@ def search_transfer_sequences(
     not re-run at every node here for cost reasons. Price-change forecast and chip
     (wildcard/free-hit) proximity are small tie-break nudges on top of the EV
     ranking, never hard filters - see PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY.
+    These nudges influence which candidates the beam KEEPS (its sort/pruning key is
+    cumulative_ev - hit_cost_total + tiebreak_adjustment) but are never mixed into
+    the reported/persisted total_net_ev (per this project's FACTS/DERIVED/REASONING
+    layering rule in CLAUDE.md) - cumulative_ev only ever accumulates real squad EV,
+    hit_cost_total only ever accumulates real HIT_COST charges, and the nudge
+    amounts accumulate separately in tiebreak_adjustment, reported on
+    TransferSequence as its own honestly-labeled field rather than hidden inside
+    total_net_ev = round(cumulative_ev - hit_cost_total, 2).
+
+    Scope note: each horizon step can only ever make ONE transfer (never two in the
+    same GW, e.g. to justify a hit with two incoming players) - the beam only
+    explores single-swap branches per step, same as the roll-or-one-swap structure
+    below. Combined with the free-transfer accrual fix (every step's free_transfers
+    is >= 1 once the search is under way), a hit is realistically only reachable at
+    the very first horizon step, since is_hit can only be True when the caller
+    explicitly passes free_transfers=0.
 
     Cost note (see this task's brief, Algorithm point 7): _squad_gw_ev is cached
     per (player_id, event) across the whole search, since the same pair recurs
@@ -290,7 +312,7 @@ def search_transfer_sequences(
 
     states = [_BeamState(
         squad_ids=tuple(squad_ids), free_transfers=free_transfers, bank_tenths=bank_tenths,
-        cumulative_ev=0.0, hit_cost_total=0.0, steps=(),
+        cumulative_ev=0.0, hit_cost_total=0.0, tiebreak_adjustment=0.0, steps=(),
     )]
 
     for offset in range(horizon_gw):
@@ -306,6 +328,7 @@ def search_transfer_sequences(
                 bank_tenths=state.bank_tenths,
                 cumulative_ev=state.cumulative_ev + _squad_gw_ev(conn, state.squad_ids, event, cache),
                 hit_cost_total=state.hit_cost_total,
+                tiebreak_adjustment=state.tiebreak_adjustment,
                 steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False),),
             ))
 
@@ -320,14 +343,15 @@ def search_transfer_sequences(
                     new_squad = tuple(pid for pid in state.squad_ids if pid != player_out_id) + (cand.player_in_id,)
                     gw_ev = _squad_gw_ev(conn, new_squad, event, cache)
 
+                    tiebreak = 0.0
                     if classify_price_change(conn, cand.player_in_id).direction == "RISE_LIKELY":
-                        gw_ev += PRICE_TIEBREAK_BONUS
+                        tiebreak += PRICE_TIEBREAK_BONUS
                     if player_out_falling:
-                        gw_ev += PRICE_TIEBREAK_BONUS
+                        tiebreak += PRICE_TIEBREAK_BONUS
 
                     hit_cost = HIT_COST if is_hit else 0.0
                     if is_hit and wildcard_soon:
-                        hit_cost += WILDCARD_PROXIMITY_PENALTY
+                        tiebreak -= WILDCARD_PROXIMITY_PENALTY
 
                     # FPL grants +1 free transfer at every deadline regardless of
                     # whether a transfer was made. A free (non-hit) transfer spends
@@ -345,19 +369,21 @@ def search_transfer_sequences(
                         bank_tenths=state.bank_tenths - cand.price_delta_tenths,
                         cumulative_ev=state.cumulative_ev + gw_ev,
                         hit_cost_total=state.hit_cost_total + hit_cost,
+                        tiebreak_adjustment=state.tiebreak_adjustment + tiebreak,
                         steps=state.steps + (TransferSequenceStep(
                             event, player_out_id, cand.player_out_name,
                             cand.player_in_id, cand.player_in_name, is_hit,
                         ),),
                     ))
 
-        next_states.sort(key=lambda s: s.cumulative_ev - s.hit_cost_total, reverse=True)
+        next_states.sort(key=lambda s: s.cumulative_ev - s.hit_cost_total + s.tiebreak_adjustment, reverse=True)
         states = next_states[:beam_width]
 
     return [
         TransferSequence(
             steps=s.steps, final_squad_ids=s.squad_ids, final_free_transfers=s.free_transfers,
             final_bank_tenths=s.bank_tenths, total_net_ev=round(s.cumulative_ev - s.hit_cost_total, 2),
+            tiebreak_adjustment=round(s.tiebreak_adjustment, 2),
         )
         for s in states
     ]

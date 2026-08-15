@@ -635,6 +635,7 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
             "sequences": [
                 {
                     "total_net_ev": s.total_net_ev,
+                    "tiebreak_adjustment": s.tiebreak_adjustment,
                     "steps": [
                         {"event": st.event, "out": st.player_out_name, "in": st.player_in_name, "uses_hit": st.uses_hit}
                         for st in s.steps
@@ -644,14 +645,14 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
             ],
         }
         summary = f"best sequence net_ev={best.total_net_ev}" if best else "no sequence found"
-        decision_id = log_decision(conn, "transfer_search", summary=summary, detail=detail)
+        decision_id = log_decision(conn, "transfer_search", summary=summary, detail=detail, confidence="low")
         conn.close()
 
         click.echo(f"decision_id={decision_id}")
         if best is None:
             click.echo("no sequence found")
             return
-        click.echo(f"best sequence total net EV: {best.total_net_ev}")
+        click.echo(f"best sequence total net EV: {best.total_net_ev} (tiebreak adjustment: {best.tiebreak_adjustment}, not included above)")
         for st in best.steps:
             if st.player_out_id is None:
                 click.echo(f"  GW{st.event}: roll")
@@ -793,7 +794,7 @@ def cleanup():
 
 @cli.command()
 @click.option("--limit", default=20, help="max decisions to show")
-@click.option("--type", "decision_type", default=None, help="filter by decision_type: squad/captain/transfer/chip")
+@click.option("--type", "decision_type", default=None, help="filter by decision_type: squad/captain/transfer/chip/transfer_search")
 def decisions(limit: int, decision_type: str | None):
     """List the decision journal (section 71) - every recommendation ever generated."""
     conn = get_connection()
@@ -805,7 +806,7 @@ def decisions(limit: int, decision_type: str | None):
         click.echo("no decisions recorded yet")
         return
     for d in all_decisions:
-        click.echo(f"#{d.id:<4} {d.created_at}  {d.decision_type:<8} {d.summary}")
+        click.echo(f"#{d.id:<4} {d.created_at}  {d.decision_type:<16} {d.summary}")
 
 
 @cli.command()
