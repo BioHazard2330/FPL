@@ -1,6 +1,6 @@
 import json
 
-from fpl_agent.ingestion.understat_source import extract_json_var, parse_understat_match_players
+from fpl_agent.ingestion.understat_source import backfill_understat, extract_json_var, parse_understat_match_players
 
 
 def _js_escape(obj) -> str:
@@ -44,3 +44,26 @@ def test_parse_understat_match_players_flattens_both_sides():
     assert haaland["goals"] == 2
     assert haaland["xg"] == 1.8
     assert haaland["minutes"] == 90
+
+
+_SEASON_HTML = """<script>var datesData = JSON.parse('[{"id":"555","isResult":true,
+"h":{"title":"Man City"},"a":{"title":"Chelsea"},"datetime":"2024-08-17 15:00:00"}]');</script>"""
+
+_MATCH_HTML = """<script>var rostersData = JSON.parse('{"h":{"101":{"id":"101",
+"player":"Erling Haaland","team":"Man City","minutes":"90","goals":"2","assists":"0",
+"shots":"5","xG":"1.8","xA":"0.1","key_passes":"1","yellow_card":"0","red_card":"0"}},
+"a":{}}');</script>"""
+
+
+def test_backfill_understat_upserts_player_match_stats(db_conn):
+    summary = backfill_understat(
+        db_conn, "2024-25",
+        season_page_html=_SEASON_HTML,
+        match_pages={"555": _MATCH_HTML},
+    )
+    assert summary["matches_processed"] == 1
+    assert summary["player_rows_inserted"] == 1
+    row = db_conn.execute("SELECT * FROM player_match_stats_history").fetchone()
+    assert row["goals"] == 2
+    assert row["xg"] == 1.8
+    assert row["player_id"] is None  # no players seeded in this test -> unresolved, not fabricated

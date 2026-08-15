@@ -19,6 +19,7 @@ from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.sync import ValidationError, run_sync
+from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
@@ -175,6 +176,20 @@ def backfill_odds(season: str):
         conn.close()
     click.echo(f"matches inserted/updated  {summary['matches_inserted']}")
     click.echo(f"odds rows inserted/updated {summary['odds_inserted']}")
+
+
+@cli.command("backfill-xg")
+@click.option("--season", required=True, help="e.g. 2024-25")
+def backfill_xg(season: str):
+    """One-time historical (or current-season refresh) shot-level xG/xA
+    backfill from Understat - polite per-match delay, safe to re-run."""
+    conn = get_connection()
+    try:
+        summary = backfill_understat(conn, season)
+    finally:
+        conn.close()
+    click.echo(f"matches processed   {summary['matches_processed']}")
+    click.echo(f"player rows upserted {summary['player_rows_inserted']}")
 
 
 @cli.command("run-scheduled")
