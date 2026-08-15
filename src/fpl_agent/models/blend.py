@@ -27,10 +27,31 @@ class BlendedFixtureGoals:
     away_expected_goals: float
 
 
+_LAMBDA_LOWER = 0.01
+_LAMBDA_UPPER = 30.0
+
+
 def market_implied_total_goals(totals: GoalsTotalProbabilities) -> float:
-    """Inverts P(total goals > 2.5) back to a single Poisson mean for total match goals."""
+    """Inverts P(total goals > 2.5) back to a single Poisson mean for total match goals.
+
+    Solved by bisecting lam in [0.01, 30.0]. At those endpoints
+    1 - poisson.cdf(2, lam) is ~1.65e-7 and ~0.9999999999549898, so any
+    totals.over in that band - which covers every practically-reachable
+    devigged over/under-2.5 probability, including heavily lopsided real
+    markets - resolves. totals.over outside that band would require an
+    over/under line no real bookmaker would price.
+    """
     target = totals.over
-    return brentq(lambda lam: (1 - poisson.cdf(2, lam)) - target, 0.01, 10.0)
+    f_lower = (1 - poisson.cdf(2, _LAMBDA_LOWER)) - target
+    f_upper = (1 - poisson.cdf(2, _LAMBDA_UPPER)) - target
+    if f_lower * f_upper > 0:
+        raise ValueError(
+            f"totals.over={target!r} is outside the range this Poisson total-goals "
+            f"inversion can solve (bracket covers ~1.65e-7 to ~0.9999999999549898); "
+            f"this implies an over/under market too lopsided for any real bookmaker "
+            f"to price."
+        )
+    return brentq(lambda lam: (1 - poisson.cdf(2, lam)) - target, _LAMBDA_LOWER, _LAMBDA_UPPER)
 
 
 def market_implied_fixture_goals(
