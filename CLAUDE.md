@@ -264,9 +264,62 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   excluded from both sides rather than faked). Scores MAE/RMSE against a raw-per-90 baseline,
   persists to `model_backtest_runs`.
 
+## Data model / logic (Pillar 1 Plan 1a)
+
+- `player_transfer_momentum_history` + `app_meta.total_players` (migration `0010`) —
+  bootstrap-static already returns `transfers_in_event`/`transfers_out_event`/
+  `transfers_in`/`transfers_out` per element, fetched every sync but never persisted
+  before this plan (only `now_cost` was captured). No new external source, just new
+  persistence of an already-fetched field, same `valid_from`/`valid_until`
+  change-tracking pattern as `player_price_history`/`player_ownership_history`.
+  `total_players` is the momentum ratio's denominator, stored as a single scalar in
+  the previously-unused `app_meta` key-value table rather than a new one-row table.
+- `models/price_forecast.py::classify_price_change()` — net event-transfers /
+  total_players against a fixed ±0.005 threshold, returning `RISE_LIKELY` /
+  `FALL_LIKELY` / `STABLE` with `confidence` always `"low"`. Explicitly labeled in
+  the module docstring as an **uncalibrated heuristic** — FPL's real price-change
+  trigger algorithm is unpublished and unofficial, and there is no real in-season
+  transfer-momentum data yet (built preseason, before any GW has happened) to fit
+  the threshold against. Same honesty posture as `models/differentials.py`/
+  `traps.py`/`template.py`: a directional signal only, never a claimed predictor.
+- `optimization/transfers.py::search_transfer_sequences()` + `fpl transfers --search`
+  — multi-GW beam search over transfer sequences (default horizon 5 GW, beam width
+  8), replacing the single-swap comparison `recommend_transfer()` still does by
+  default. Scores each candidate sequence by summing **full-15-squad EV across every
+  GW in the horizon** (not just the one-time EV delta at the moment of transfer), so
+  a player bought early correctly earns credit for every remaining GW they're
+  actually in the squad — the bug class this specifically guards against (see
+  `tests/test_transfer_search.py`'s 33.0-magnitude regression test) is a delta-only
+  implementation that would undercount by an order of magnitude. Free-transfer
+  accrual follows FPL's real rule (+1 at every deadline regardless of whether a
+  transfer was made, capped at `rules.max_extra_free_transfers`+1); hit cost is -4
+  per transfer beyond the free allowance, same as the single-swap path. Price
+  forecast (`PRICE_TIEBREAK_BONUS`) and chip-window proximity
+  (`WILDCARD_PROXIMITY_PENALTY`, one GW before an eligible wildcard/free-hit window)
+  are both small **tie-break nudges on top of the EV ranking**, never hard filters —
+  deliberately kept that way since neither input is validated against real data yet.
+  Known gap, documented rather than silently left unhandled: a generated multi-step
+  sequence is not validated for club-limit legality (max 3 players from one
+  real-world club) as the squad evolves across steps — only per-swap budget is
+  checked, same pre-existing limitation `best_transfer_for_player()`'s single-swap
+  path already had.
+- `tests/test_e2e_plan1a_lifecycle.py` — one test chaining the actual pipeline: sync
+  (momentum + `total_players`) → price forecast → beam search → `fpl transfers
+  --search` → decision journal, same bar `test_e2e_lifecycle.py`/
+  `test_e2e_pillar0_lifecycle.py` already set. Confirmed a real wiring quirk while
+  writing it (not a Tasks-1-6 bug): the `cli()` group callback does its own
+  `get_connection()` → `run_migrations()` → `conn.close()` on every invocation, so a
+  test that monkeypatches `get_connection` to always return the literal shared
+  `db_conn` object gets that connection closed by the group callback before the
+  subcommand body runs. Worked around the same way `tests/test_cli_transfer_search.py`
+  (Task 6) already had to: don't patch `get_connection` at all, and let `db_conn`'s
+  own `DATA_DIR`/`DB_PATH` monkeypatch make the real (unpatched) `get_connection()`
+  open a fresh connection to the same temp db file each call, exactly like
+  production.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) complete.**
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plan 1a (multi-GW transfer search + price forecast) complete.**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -282,6 +335,15 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`. Plan:
   `docs/superpowers/plans/2026-08-15-prediction-accuracy-core.md` (14/14 tasks, full
   implementer+reviewer ledger in `.superpowers/sdd/2026-08-15-prediction-accuracy-core/progress.md`).
+- [x] Pillar 1 Plan 1a — Multi-GW transfer search + price-change forecast
+  (transfer-momentum sync, uncalibrated price-forecast heuristic, `search_transfer_sequences`
+  beam search, `fpl transfers --search`). Spec:
+  `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`, Pillar 1
+  section. Plan: `docs/superpowers/plans/2026-08-15-decision-intelligence-plan1a-transfer-search.md`
+  (7/7 tasks, full implementer+reviewer ledger in
+  `.superpowers/sdd/2026-08-15-decision-intelligence-plan1a-transfer-search/progress.md`).
+  Plan 1b (scenario engine, chip DP scheduling, sampled effective ownership,
+  `fpl season-sim`) is a separate, still-unbuilt plan — see below.
 
 ## What's still genuinely limited (read before trusting output)
 
@@ -308,6 +370,16 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   script are built and tested but inactive - nothing is currently polling in
   the background. Data goes stale the moment `fpl sync` stops being run
   manually.
+- **Price-change forecast has never been checked against a real price-change
+  event.** `models/price_forecast.py`'s ±0.005 threshold is a documented starting
+  point, not empirically fit — this is preseason, so no real FPL price rise/fall
+  has happened yet to validate the heuristic against, in either direction.
+  Revisit once real in-season price movements exist to compare predictions to.
+- **Plan 1b is still unbuilt.** The scenario engine, chip DP scheduling, sampled
+  effective ownership, and `fpl season-sim` (Pillar 1 spec, beyond Plan 1a) do not
+  exist yet — `fpl transfers --search` only optimises transfer sequences, it does
+  not schedule chips or simulate season trajectories. Needs its own
+  brainstorm-if-needed → plan cycle before starting.
 
 ## Skill/subagent guidance
 
