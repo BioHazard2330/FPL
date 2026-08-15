@@ -9,6 +9,8 @@ dependencies = [
     "requests>=2.31",
     "pulp>=2.8",
     "psutil>=5.9",
+    "numpy>=1.26",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
