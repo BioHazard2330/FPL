@@ -42,7 +42,7 @@ from fpl_agent.optimization.chips import (
     wildcard_value,
 )
 from fpl_agent.optimization.squad import build_player_pool, optimise_squad, pick_starting_xi
-from fpl_agent.optimization.transfers import recommend as recommend_transfer
+from fpl_agent.optimization.transfers import recommend as recommend_transfer, search_transfer_sequences
 
 
 @click.group()
@@ -615,12 +615,52 @@ def chips(squad: str | None):
 @click.option("--bank", default=0.0, help="bank in £m, e.g. 0.5")
 @click.option("--free-transfers", default=1, type=int)
 @click.option("--gw-window", default=3, type=int, help="EV window for the comparison")
-def transfers(squad: str, bank: float, free_transfers: int, gw_window: int):
-    """Roll vs best transfer, compared on windowed net EV (not single-GW xP) - section 62."""
+@click.option("--search", is_flag=True, default=False, help="run the multi-GW beam search instead of the single-swap comparison")
+@click.option("--horizon", default=5, type=int, help="beam search horizon in GWs (only with --search)")
+@click.option("--beam-width", default=8, type=int, help="beam search width (only with --search)")
+def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, search: bool, horizon: int, beam_width: int):
+    """Roll vs best transfer, compared on windowed net EV (not single-GW xP) - section 62.
+    --search runs a multi-GW beam search instead (Pillar 1 Plan 1a)."""
     conn = get_connection()
-    rec = recommend_transfer(
-        conn, _parse_squad_option(squad), bank_tenths=round(bank * 10), free_transfers=free_transfers, n_gw=gw_window
-    )
+    squad_ids = _parse_squad_option(squad)
+
+    if search:
+        sequences = search_transfer_sequences(
+            conn, squad_ids, free_transfers=free_transfers, bank_tenths=round(bank * 10),
+            horizon_gw=horizon, beam_width=beam_width,
+        )
+        best = sequences[0] if sequences else None
+        detail = {
+            "horizon_gw": horizon, "beam_width": beam_width,
+            "sequences": [
+                {
+                    "total_net_ev": s.total_net_ev,
+                    "steps": [
+                        {"event": st.event, "out": st.player_out_name, "in": st.player_in_name, "uses_hit": st.uses_hit}
+                        for st in s.steps
+                    ],
+                }
+                for s in sequences
+            ],
+        }
+        summary = f"best sequence net_ev={best.total_net_ev}" if best else "no sequence found"
+        decision_id = log_decision(conn, "transfer_search", summary=summary, detail=detail)
+        conn.close()
+
+        click.echo(f"decision_id={decision_id}")
+        if best is None:
+            click.echo("no sequence found")
+            return
+        click.echo(f"best sequence total net EV: {best.total_net_ev}")
+        for st in best.steps:
+            if st.player_out_id is None:
+                click.echo(f"  GW{st.event}: roll")
+            else:
+                hit = " (HIT)" if st.uses_hit else ""
+                click.echo(f"  GW{st.event}: {st.player_out_name} -> {st.player_in_name}{hit}")
+        return
+
+    rec = recommend_transfer(conn, squad_ids, bank_tenths=round(bank * 10), free_transfers=free_transfers, n_gw=gw_window)
 
     detail = {"action": rec.action, "reason": rec.reason, "gw_window": gw_window}
     if rec.best_candidate:
