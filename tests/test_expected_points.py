@@ -295,6 +295,58 @@ def test_core_expected_points_is_leakage_free(db_conn):
     assert as_of == unchanged
     assert live.goals > as_of.goals  # the later hot streak is visible in live mode only
     assert as_of.total == pytest.approx(as_of.appearance + as_of.goals + as_of.assists + as_of.cards, abs=1e-4)
+    # 6 pre-cutoff matches -> the empirical (genuinely leakage-free) minutes
+    # path. The flag must be reachable, because the OTHER path is not
+    # leakage-free and the harness has to be able to tell them apart.
+    assert as_of.minutes_source == "empirical"
+
+
+def test_core_expected_points_falls_back_and_says_so(db_conn):
+    # Fewer than _MIN_MATCHES_FOR_EMPIRICAL pre-cutoff matches -> minutes come
+    # from expected_minutes(), which reads live players.status / the newest
+    # stats snapshot / a live finished-event count and is NOT date-scoped. The
+    # number is still returned, but minutes_source must admit which path ran so
+    # the backtest can exclude or discount it.
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    for i in range(2):
+        _insert_match_stat(db_conn, season, f"m{i}", 1, arsenal, f"2026-05-{10 + i:02d}")
+
+    assert core_expected_points(db_conn, 1, as_of_date="2026-05-14").minutes_source == "fallback_prior"
+
+
+def test_core_expected_points_isolates_the_requested_season(db_conn):
+    # A backtest replays a historical season against a DB that also holds the
+    # LIVE season's rules. Without an explicit season, every query would filter
+    # on current_season() and match zero historical rows - all-zero rates and a
+    # fallback minutes prior, i.e. a plausible-looking meaningless number.
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    # 2024-25's rules land FIRST so current_season() still returns the live
+    # season, which is the shape the real DB actually has.
+    sync_rules(db_conn, flatten_rules(bootstrap), "2024-25", "fpl_api_bootstrap", "t0")
+    _seed_full(db_conn, bootstrap, "t0")
+    live_season = current_season(db_conn)
+    assert live_season != "2024-25"
+
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    # Prolific in 2024-25, anonymous in the live season.
+    for i in range(6):
+        _insert_match_stat(db_conn, "2024-25", f"h{i}", 1, arsenal, f"2025-01-{10 + i:02d}", xg=0.9, goals=2)
+    for i in range(6):
+        _insert_match_stat(db_conn, live_season, f"c{i}", 1, arsenal, f"2026-05-{10 + i:02d}", xg=0.0, goals=0)
+
+    historical = core_expected_points(db_conn, 1, as_of_date="2026-01-01", season="2024-25")
+    live = core_expected_points(db_conn, 1)
+
+    assert historical.season == "2024-25"
+    assert historical.minutes_source == "empirical"  # the 6 pre-cutoff 2024-25 rows, not the fallback
+    assert historical.goals > 0  # 2024-25 scoring rules AND 2024-25 goals both resolved
+    assert historical.goals > live.goals
+
+    # ...and the live season's rows cannot influence the historical answer.
+    db_conn.execute("DELETE FROM player_match_stats_history WHERE season=?", (live_season,))
+    db_conn.commit()
+
+    assert core_expected_points(db_conn, 1, as_of_date="2026-01-01", season="2024-25") == historical
 
 
 def test_null_bonus_in_season_history_does_not_crash(db_conn):

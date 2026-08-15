@@ -50,13 +50,16 @@ Three interface notes, all deliberate:
 - Every number here is still a per-match estimate. Nothing in this module
   multiplies by fixture count except expected_points_window().
 - expected_points()/expected_points_window() have locked public signatures
-  and always run in "live" mode (all available data). Code that needs a
-  leakage-free, as-of-a-past-date estimate - the walk-forward backtest
-  harness - calls core_expected_points(conn, player_id, as_of_date=...),
-  which takes the same player-layer components (appearance/goals/assists/
-  cards) with every underlying query bounded to strictly-before that date.
-  It deliberately omits the team blend (clean sheet / goals conceded), which
-  the harness doesn't reconstruct per historical match anyway.
+  and always run in "live" mode (all available data). Code that needs an
+  as-of-a-past-date estimate - the walk-forward backtest harness - calls
+  core_expected_points(conn, player_id, as_of_date=..., season=...), which
+  takes the same player-layer components (appearance/goals/assists/cards) and
+  omits the team blend (clean sheet / goals conceded) the harness doesn't
+  reconstruct per historical match anyway. That path is leakage-free for the
+  rates and for the empirical minutes distribution, but NOT on the
+  minutes fallback path, which inherits expected_minutes()'s live-data reads;
+  the returned `minutes_source` flags which path ran. See
+  core_expected_points()'s own docstring - it states the boundary exactly.
 """
 
 import sqlite3
@@ -233,7 +236,29 @@ def _historical_minutes_fraction(
     return player_minutes / (team_matches * 90)
 
 
-def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None) -> dict:
+def _scoring_season(conn: sqlite3.Connection, season: str | None) -> str | None:
+    """Which season's `rules` rows to price a match with. Normally the same
+    season the stats come from, but a backtest replaying e.g. 2024-25 against a
+    DB that only ever ingested the live season's rules would otherwise get
+    `get_rule` defaults for every scoring key - i.e. goals/assists/cards all
+    worth 0, silently collapsing the estimate to appearance points. When the
+    requested season has no rules at all, price with the live season instead
+    (FPL's core scoring values are stable across these seasons) rather than
+    returning a plausible-looking zero."""
+    if season is None:
+        return current_season(conn)
+    exists = conn.execute("SELECT 1 FROM rules WHERE season=? LIMIT 1", (season,)).fetchone()
+    return season if exists else current_season(conn)
+
+
+def _player_match_rates(
+    conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None, season: str | None = None
+) -> dict:
+    """`season` defaults to the LIVE season (rules' newest row). A backtest
+    replaying a historical season must pass it explicitly: every query below
+    filters `season = ?`, so leaving it live against a DB that also holds the
+    current season's rules silently returns zero rows for the replayed season
+    rather than erroring."""
     player = conn.execute(
         "SELECT p.team_id, et.singular_name_short AS position FROM players p "
         "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
@@ -243,10 +268,11 @@ def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: st
         raise ValueError(f"unknown player_id: {player_id}")
     position = player["position"]
 
-    season = current_season(conn)
-    goals_rate = get_rule(conn, season, f"scoring.goals_scored.{position}", 0) or 0
-    assists_rate = get_rule(conn, season, "scoring.assists", 0) or 0
-    clean_sheet_pts = get_rule(conn, season, f"scoring.clean_sheets.{position}", 0) or 0
+    season = season if season is not None else current_season(conn)
+    rules_season = _scoring_season(conn, season)
+    goals_rate = get_rule(conn, rules_season, f"scoring.goals_scored.{position}", 0) or 0
+    assists_rate = get_rule(conn, rules_season, "scoring.assists", 0) or 0
+    clean_sheet_pts = get_rule(conn, rules_season, f"scoring.clean_sheets.{position}", 0) or 0
 
     shrunk = player_shrunk_rates(conn, player_id, season, as_of_date)
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
@@ -268,7 +294,7 @@ def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: st
     has_bonus_prior = prior is not None and prior["minutes"] and prior["bonus"] is not None
     bonus90 = (prior["bonus"] / prior["minutes"] * 90) if has_bonus_prior else 0.0
 
-    yellow_card_rate = get_rule(conn, season, "scoring.yellow_cards", -1) or -1
+    yellow_card_rate = get_rule(conn, rules_season, "scoring.yellow_cards", -1) or -1
 
     return {
         "position": position, "team_id": player["team_id"],
@@ -278,7 +304,8 @@ def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: st
         "yellow_card_rate": yellow_card_rate,
         "player_share": player_share, "player_share_per90": share_per90,
         "historical_minutes_fraction": minutes_fraction,
-        "bonus90": bonus90, "minutes_probs": minutes_probs, "season": season,
+        "bonus90": bonus90, "minutes_probs": minutes_probs,
+        "season": season, "rules_season": rules_season,
     }
 
 
@@ -303,7 +330,7 @@ def _match_components(
     # time on the pitch, so that one keeps the blended fraction.
     p_sixty_plus = min(probs.p_full * damping, 1.0)
     clean_sheet = clean_sheet_probability(opp_goals) * rates["clean_sheet_pts"] * p_sixty_plus
-    conceded = _goals_conceded_penalty(conn, rates["season"], rates["position"], opp_goals) * min(
+    conceded = _goals_conceded_penalty(conn, rates["rules_season"], rates["position"], opp_goals) * min(
         effective_minutes_fraction, 1.0
     )
 
@@ -420,20 +447,45 @@ class CoreExpectedPoints:
     cards: float
     total: float
     model_version: str
+    season: str | None
+    minutes_source: str
 
 
 def core_expected_points(
-    conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None
+    conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None, season: str | None = None
 ) -> CoreExpectedPoints:
     """Team-blend-free "core" per-match points - appearance + goals + assists +
-    cards - for one player, computed only from data strictly before
-    `as_of_date` (None = live, all data).
+    cards - for one player, as of `as_of_date` (None = live, all data) within
+    `season` (None = the live season from the `rules` table).
 
-    This is the leakage-free entry point the walk-forward backtest harness
-    scores against. expected_points()'s public signature is locked to
-    (conn, player_id, n_gw), so `as_of_date` cannot be threaded through it;
-    this function exists so a no-leakage path is reachable from outside the
-    module without a caller having to reimplement the player layer.
+    This is the entry point the walk-forward backtest harness scores against.
+    expected_points()'s public signature is locked to (conn, player_id, n_gw),
+    so `as_of_date` cannot be threaded through it; this function exists so an
+    as-of-a-past-date path is reachable from outside the module without a
+    caller having to reimplement the player layer.
+
+    PASS `season` WHEN BACKTESTING. Every underlying query filters
+    `season = ?`; defaulting to the live season against a real DB (which holds
+    the current season's rules) would match zero rows for a replayed historical
+    season - all-zero shrunk rates and a fallback minutes prior - producing a
+    plausible-looking but meaningless number rather than an error.
+
+    LEAKAGE, precisely:
+    - The goals/assists/cards rates and the EMPIRICAL minutes-bucket path are
+      leakage-free: every query is bounded to strictly before `as_of_date`.
+    - The FALLBACK minutes path is NOT. When a player has fewer than
+      _MIN_MATCHES_FOR_EMPIRICAL pre-cutoff Understat matches,
+      minutes_bucket_probabilities() falls through to expected_minutes(),
+      which is a LIVE-prediction function built before backtesting existed: it
+      reads current `players.status`, the newest `player_stats_snapshot` row,
+      and a live count of finished events, none of them date-scoped. In a
+      walk-forward backtest that means early-season rounds and low-minutes
+      players can leak end-of-season information into an "as of" estimate.
+      `minutes_source` on the result says which path ran ("empirical" vs
+      "fallback_prior") so the caller can exclude or discount those rows
+      rather than silently trusting them. Making expected_minutes() itself
+      date-aware was ruled out of scope - it is a pre-existing live module and
+      changing it would move the live prediction path too.
 
     Deliberately excluded, matching what the harness can actually reconstruct
     from historical rows: bonus (Understat carries no BPS), clean sheets and
@@ -441,7 +493,7 @@ def core_expected_points(
     distribution for that specific historical fixture). The goals term here
     uses the shrunk per-90 goal rate directly rather than the team-goals x
     xG-share route the live model takes, for the same reason."""
-    rates = _player_match_rates(conn, player_id, as_of_date)
+    rates = _player_match_rates(conn, player_id, as_of_date, season)
     probs = rates["minutes_probs"]
     effective_minutes_fraction = probs.p_partial / 3 + probs.p_full
 
@@ -456,4 +508,5 @@ def core_expected_points(
         assists=round(assists, 4), cards=round(cards, 4),
         total=round(appearance + goals + assists + cards, 4),
         model_version=MODEL_VERSION,
+        season=rates["season"], minutes_source=probs.source,
     )
