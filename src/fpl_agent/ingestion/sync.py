@@ -23,6 +23,7 @@ from fpl_agent.normalization.fpl_core import (
     normalize_player_prices,
     normalize_player_setpieces,
     normalize_player_stats,
+    normalize_player_transfer_momentum,
     normalize_players,
     normalize_team_strength,
     normalize_teams,
@@ -106,6 +107,24 @@ def sync_price_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> 
 def sync_ownership_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
     return _sync_valid_from_until_history(
         conn, "player_ownership_history", "player_id", ("selected_by_percent",), rows, now
+    )
+
+
+def sync_transfer_momentum_history(conn: sqlite3.Connection, rows: list[dict], now: str) -> int:
+    return _sync_valid_from_until_history(
+        conn, "player_transfer_momentum_history", "player_id",
+        ("transfers_in_event", "transfers_out_event", "transfers_in", "transfers_out"), rows, now,
+    )
+
+
+def sync_total_players(conn: sqlite3.Connection, bootstrap: dict, now: str) -> None:
+    """Single scalar, stored in the existing (previously unused) app_meta key-value
+    table - no new schema needed. Used by models/price_forecast.py as the momentum
+    ratio's denominator."""
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (str(bootstrap["total_players"]), now),
     )
 
 
@@ -238,6 +257,10 @@ def run_sync() -> dict:
 
             price_changed = sync_price_history(conn, normalize_player_prices(bootstrap), now)
             ownership_changed = sync_ownership_history(conn, normalize_player_ownership(bootstrap), now)
+            momentum_changed = sync_transfer_momentum_history(
+                conn, normalize_player_transfer_momentum(bootstrap), now
+            )
+            sync_total_players(conn, bootstrap, now)
             stats_inserted = sync_stats_snapshot(conn, normalize_player_stats(bootstrap), now)
             strength_changed = sync_team_strength_history(conn, normalize_team_strength(bootstrap), now)
 

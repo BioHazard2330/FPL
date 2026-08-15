@@ -98,6 +98,19 @@ def normalize_player_ownership(bootstrap: dict) -> list[dict]:
     ]
 
 
+def normalize_player_transfer_momentum(bootstrap: dict) -> list[dict]:
+    return [
+        {
+            "player_id": el["id"],
+            "transfers_in_event": el["transfers_in_event"],
+            "transfers_out_event": el["transfers_out_event"],
+            "transfers_in": el["transfers_in"],
+            "transfers_out": el["transfers_out"],
+        }
+        for el in bootstrap["elements"]
+    ]
+
+
 def normalize_player_setpieces(bootstrap: dict) -> list[dict]:
     return [
         {
