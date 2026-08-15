@@ -53,10 +53,12 @@ def _position(conn: sqlite3.Connection, player_id: int) -> str:
 
 
 def evaluate_transfer(
-    conn: sqlite3.Connection, player_out_id: int, player_in_id: int, is_hit: bool
+    conn: sqlite3.Connection, player_out_id: int, player_in_id: int, is_hit: bool,
+    from_event: int | None = None,
 ) -> TransferCandidate:
-    ev_out = {n: expected_points_window(conn, player_out_id, n).total_median for n in (1, 3, 5)}
-    ev_in = {n: expected_points_window(conn, player_in_id, n).total_median for n in (1, 3, 5)}
+    kwargs = {"from_event": from_event} if from_event is not None else {}
+    ev_out = {n: expected_points_window(conn, player_out_id, n, **kwargs).total_median for n in (1, 3, 5)}
+    ev_in = {n: expected_points_window(conn, player_in_id, n, **kwargs).total_median for n in (1, 3, 5)}
     ev_delta = {n: round(ev_in[n] - ev_out[n], 2) for n in (1, 3, 5)}
 
     hit = HIT_COST if is_hit else 0
@@ -83,6 +85,7 @@ def best_transfer_for_player(
     is_hit: bool,
     n_gw: int = 3,
     top_n: int = 5,
+    from_event: int | None = None,
 ) -> list[TransferCandidate]:
     """Best same-position replacements for player_out, respecting bank + club limit
     (same club limit enforced implicitly by squad_optimiser at squad-build time -
@@ -112,7 +115,7 @@ def best_transfer_for_player(
         price_in = _current_price(conn, c["id"])
         if price_in > budget_tenths:
             continue
-        results.append(evaluate_transfer(conn, player_out_id, c["id"], is_hit))
+        results.append(evaluate_transfer(conn, player_out_id, c["id"], is_hit, from_event=from_event))
 
     key = {1: "net_ev_1gw", 3: "net_ev_3gw", 5: "net_ev_5gw"}[n_gw]
     results.sort(key=lambda t: getattr(t, key), reverse=True)
