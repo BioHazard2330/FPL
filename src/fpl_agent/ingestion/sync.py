@@ -288,6 +288,7 @@ def run_sync() -> dict:
             "events": len(bootstrap["events"]),
             "price_changes": price_changed,
             "ownership_changes": ownership_changed,
+            "momentum_changes": momentum_changed,
             "stats_snapshots_inserted": stats_inserted,
             "setpiece_changes": setpiece_changed,
             "strength_changes": strength_changed,
