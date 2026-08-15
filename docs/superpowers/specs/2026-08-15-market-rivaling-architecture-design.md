@@ -74,12 +74,121 @@ Unit tests per new pure function (Dixon-Coles fit, devig method, shrinkage regre
 
 ## Pillar 1 — Decision intelligence
 
-Depends on Pillar 0 being live (calibrated per-fixture probabilities, not preseason heuristics).
+Depends on Pillar 0 being live (calibrated per-fixture probabilities, not preseason heuristics) —
+**live as of this writing** (`MODEL_VERSION="calibrated-v2"`, merged to master).
 
-- **Multi-GW transfer search**: replace the current greedy single-transfer evaluation in `optimization/transfers.py` with a beam search (or bounded-depth tree search) over transfer sequences across a rolling 5-8 GW horizon. Must weigh: hit costs (-4/transfer beyond free allowance, existing rule), interaction with upcoming chip usage (don't burn transfers right before a planned wildcard), and a new **price-change forecast sub-model** (predict net transfer volume in/out per player from ownership trend + current transfer momentum, threshold against FPL's known price-change algorithm behavior to forecast rises/falls) so the optimizer can weigh "buy before a price rise" against pure point-EV.
-- **Season-long chip scheduling**: replace the current single-decision-point heuristic in `optimization/chips.py` with a scenario-tree or DP optimization over the remaining season that decides chip timing (respecting `chip_windows` eligibility) by simulating squad trajectories under fixture uncertainty (Monte Carlo over blank/double-GW scenarios, which the existing `fixture-watch` change-detection already surfaces as they're announced).
-- **Effective ownership + template modeling**: extend the existing `models/differentials.py` / `traps.py` / `template.py` with real effective-ownership estimation (FPL's API exposes top-10k ownership stats — use them instead of raw overall ownership %), and backtest the differential/trap/template heuristics against the historical corpus from Pillar 0 instead of leaving them as documented-but-uncalibrated.
-- **Risk-adjusted output**: Monte Carlo season-outcome simulation producing percentile bands (e.g. P10/P50/P90 total points) instead of a single point-estimate recommendation, so the user sees the actual spread of outcomes a decision implies, not false precision.
+Split into two sequential implementation plans (each roughly Pillar-0-sized, ~10-14 tasks) sharing
+this one spec section, decided during brainstorming to keep any single SDD dispatch pass
+reviewable: **Plan 1a** (multi-GW transfer search + price-change forecast — deterministic,
+no new stochastic infra needed) ships first; **Plan 1b** (shared scenario-sampling engine + chip
+DP scheduler + Monte Carlo `season-sim` + effective-ownership sampling + heuristic backtest) is
+built on top of it. Migrations are split the same way (0010 for 1a, 0011 for 1b) so neither
+implementer edits a migration the other has already applied against the dev DB.
+
+### Plan 1a — Multi-GW transfer search + price-change forecast
+
+**Transfer-momentum ingestion (migration `0010`, extends existing `fpl sync`):** `bootstrap-static`
+already returns `transfers_in_event`/`transfers_out_event`/`transfers_in`/`transfers_out` per
+element — fetched today but never persisted (only `now_cost` is captured). No new external
+source; `player_transfer_momentum_history` follows the existing `value`/`valid_from`/`valid_until`
+change-aware pattern already used for price/ownership history.
+
+**Price-change forecast (`models/price_forecast.py`, new module):** FPL's real price-change
+trigger algorithm is unpublished and unofficial — per the brainstorm decision, this ships as an
+explicitly-labeled-uncalibrated **documented heuristic**, same honesty posture as
+`models/differentials.py`/`traps.py`/`template.py`, not a claimed predictor. Net transfer momentum
+(`transfers_in_event - transfers_out_event`, normalized by overall `selected_by_percent`) against
+threshold bands classifies `RISE_LIKELY` / `FALL_LIKELY` / `STABLE` with a confidence label.
+Documented in the module docstring as directional signal only, recalibrate thresholds once real
+in-season price-change events exist to check against.
+
+**Multi-GW transfer beam search (extends `optimization/transfers.py`):** new
+`search_transfer_sequences(conn, squad_ids, free_transfers, bank_tenths, horizon_gw=5,
+beam_width=8) -> list[TransferSequence]`. State = (squad composition, free transfers remaining,
+bank). Per horizon GW: generate candidate single/double transfers (reusing the existing
+candidate-generation logic from `recommend()`, not reinvented), score each resulting state by
+cumulative `expected_points_window` EV across its remaining horizon minus hit costs (existing
+-4/transfer rule beyond the free allowance), keep the top `beam_width` states, prune the rest.
+Bounded per-step candidate generation (reuse `recommend()`'s existing top-M-per-position
+shortlisting) keeps the state space tractable — no naive full 581-player branching factor. Must
+also weigh proximity to the next `chip_windows` eligibility (don't recommend burning transfers
+the GW before a wildcard the squad is clearly saving for) and the price-forecast signal (a
+RISE_LIKELY target is worth buying a GW earlier, at existing precision — not a hard override).
+`TransferCandidate`'s existing fields are untouched; `search_transfer_sequences` is additive, the
+existing single-swap `recommend()` stays as the 1-GW-comparison entrypoint `fpl transfers`
+already uses (this doesn't change command output shape, `fpl transfers` gains the new search as
+an option, not a breaking rewrite).
+
+### Plan 1b — Scenario engine, chip scheduling, effective ownership, risk output
+
+**Sampled effective ownership (`ingestion/eo_sample.py`, migration `0011`):** real top-10k EO is
+not a single API field — it requires paginating `leagues-classic/314/standings/` (the official
+Overall league) and fetching `entry/{id}/event/{gw}/picks/` per sampled manager, still Tier-1
+official domain but a materially heavier request pattern than anything built so far. Per the
+brainstorm decision, this ships as a **bounded sample** (target ~500-1000 managers, not the full
+10k), a separate throttled command in the `fpl sync-history` mold (not part of regular `fpl
+sync`), with an explicit per-request politeness delay and its own `source_health` row so a
+throttle/block from FPL surfaces as a degraded source, not a silent gap. `player_sample_ownership_history`
+stores `(player_id, event, sample_size, owned_count, captained_count, sample_eo_percent,
+retrieved_at)`. `models/differentials.py`/`traps.py`/`template.py` switch their ownership input
+from raw `selected_by_percent` to this sampled EO where available, falling back to raw ownership
+(flagged) when no sample exists yet for that GW — never silently blank.
+
+**Shared scenario-sampling engine (`models/scenario_engine.py`, new module, first consumer of
+Pillar 0's fitted Dixon-Coles distributions rather than just their point-estimates):**
+`sample_season_scenarios(conn, squad_ids, from_event, horizon_gw, n_trials=1000) ->
+list[ScenarioOutcome]` — per trial, per remaining fixture in the horizon, draws an actual
+scoreline from the Dixon-Coles-fitted Poisson distributions (not the expected value), propagates
+through the existing `calibrated-v2` building blocks (clean-sheet/goals-conceded bands, minutes
+buckets) to a simulated points total per player per GW, respecting blank/double-GW structure as
+already surfaced by `fixture-watch`'s change detection. This is the one new piece of stochastic
+infrastructure Pillar 1 needs; both consumers below share it rather than each sampling fixtures
+independently (the approach decided during brainstorming, specifically to avoid the chip
+scheduler and the risk-band simulator silently disagreeing about the same fixture's odds).
+
+**Season-long chip scheduling (extends `optimization/chips.py`):** `schedule_chips(conn,
+squad_trajectory, chip_windows) -> ChipSchedule` — DP over remaining `chip_windows`-eligible GWs,
+state = (chips-still-available flags, GW index), evaluating each chip's expected marginal value
+at each eligible GW from `sample_season_scenarios`' trial outcomes rather than a single
+point-estimate. Bounded state space (a handful of chip flags × ~30 remaining GWs), tractable
+without approximation. Existing single-decision-point functions
+(`bench_boost_value`/`triple_captain_value`/`wildcard_value`/`freehit_value`) are kept as-is —
+`fpl chips` still answers "is it worth it *this* GW"; `schedule_chips` answers "*when* across the
+season," a genuinely different question, not a replacement.
+
+**Risk-adjusted output — new `fpl season-sim --squad <path> [--trials N]` command:** per the
+brainstorm decision, this ships as its own command rather than bolted onto
+`transfers`/`captain`/`chips`/`build-team` — keeps those commands' existing tested output shape
+untouched while still being genuinely multi-GW-searched underneath (Plan 1a). Runs
+`sample_season_scenarios` over the rest of the season from the current squad, reports P10/P50/P90
+total-points bands (`numpy.percentile` over trial totals) plus `schedule_chips`'s recommended chip
+timing. Logs to the existing `decisions` table (no new schema needed — evidence JSON already
+supports arbitrary structured output).
+
+**Heuristic backtest (extends Pillar 0's `backtesting/harness.py`):** scores the
+differential/trap/template flags against Pillar 0's historical corpus — did a flagged differential
+actually outperform the template pick, historically — producing a calibration report attached to
+`model_backtest_runs`. Doesn't need to perfectly tune the heuristics, just to honestly document
+how they've historically performed, consistent with the project's existing
+labeled-not-fabricated-confidence posture.
+
+### Resource/reliability notes carried into Plan 1b specifically
+
+Sampled EO is the heaviest network pattern this project has attempted (hundreds of paginated
+requests per sync, per the brainstorm-approved sample size). Design must not let it block or slow
+the regular `fpl sync` path — separate throttled command, off by default until explicitly run,
+same `source_health`-backed degrade-don't-crash posture as every other source. Storage impact is
+small (sampled rows, not full picks payloads retained beyond normalization) and stays inside the
+Pillar-0-raised 1-2GB budget.
+
+### Testing
+
+Same bar as every prior phase/pillar: unit test per new pure function (beam search scoring,
+price-forecast heuristic, Poisson scoreline sampling, chip DP transition), one new integration
+test extending `test_e2e_pillar0_lifecycle.py`'s pattern to prove Plan 1a's pieces compose, and a
+second for Plan 1b once its own migration/engine exist. Live-verification step at the end of each
+plan against the real player pool, same bar Phase 9 and Pillar 0 both used before being marked
+done — not just green tests, a real run producing sane, inspected output.
 
 ## Pillar 2 — Tier 2-4 data breadth
 
@@ -95,12 +204,12 @@ Independent modeling work; this is a source-trust framework extension. Adds jour
 
 - Exact xG/odds data provider(s) and their access terms/rate limits — Pillar 0 implementation plan needs to research and pick specific sources before coding begins.
 - Devig method choice (proportional vs Shin's vs other) — document the choice with reasoning when Pillar 0 is implemented, not here.
-- Price-change forecast model's exact algorithm (Pillar 1) — needs FPL's actual price-change trigger behavior researched first.
+- ~~Price-change forecast model's exact algorithm (Pillar 1)~~ — resolved during Pillar 1's brainstorm: FPL's real algorithm is unofficial/unpublished, ships as an explicitly-labeled-uncalibrated documented heuristic (see Pillar 1 section), not a claimed predictor.
 - Push-notification channel specifics (Pillar 3) — which service/API, deferred until that pillar starts.
 
 ## Success criteria
 
-- Pillar 0 done when: `fpl backtest` runs clean across all backfilled seasons, new model beats `ep_next` baseline on MAE and calibration metrics, and `models/expected_points.py`'s docstring no longer carries the "uncalibrated preseason prior" caveat.
-- Pillar 1 done when: `fpl transfers`/`fpl chips` output reflects genuine multi-GW search results (verifiably different from single-GW-greedy output on real fixture-swing scenarios, same live-verification bar Phase 9 used).
+- Pillar 0 done when: `fpl backtest` runs clean across all backfilled seasons, new model beats `ep_next` baseline on MAE and calibration metrics, and `models/expected_points.py`'s docstring no longer carries the "uncalibrated preseason prior" caveat. **Met — merged to master, `MODEL_VERSION="calibrated-v2"`.**
+- Pillar 1 done when: Plan 1a — `search_transfer_sequences` output is verifiably different from single-GW-greedy `recommend()` output on a real fixture-swing scenario (same live-verification bar Phase 9/Pillar 0 used). Plan 1b — `fpl season-sim` produces genuine P10/P50/P90 bands from real sampled scenarios (not a single point estimate), and `schedule_chips` recommends different chip timing than the existing single-decision-point heuristic on at least one real squad/fixture scenario where they'd disagree.
 - Pillar 2 done when: `team-news-monitor` skill is live and manager-change engine has fired correctly on at least one real event.
 - Pillar 3 done when: scheduler is registered, running unattended, and a live drift alert has been manually verified to fire on a synthetic miscalibration injection.
