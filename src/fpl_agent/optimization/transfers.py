@@ -10,6 +10,10 @@ import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.models.expected_points import expected_points_window
+from fpl_agent.models.fixtures import _reference_event
+from fpl_agent.models.price_forecast import classify_price_change
+from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.optimization.chips import eligible_chips
 
 HIT_COST = 4  # points, per transfer beyond the free allowance
 
@@ -155,3 +159,153 @@ def recommend(
         action="transfer", best_candidate=best,
         reason=f"{best.player_out_name} -> {best.player_in_name} nets +{getattr(best, f'net_ev_{n_gw}gw')} xP over {n_gw} GWs",
     )
+
+
+PRICE_TIEBREAK_BONUS = 0.1  # documented nudge, not a hard override - see price_forecast.py's own uncalibrated-heuristic caveat
+WILDCARD_PROXIMITY_GWS = 1
+WILDCARD_PROXIMITY_PENALTY = 2.0
+
+
+@dataclass(frozen=True)
+class TransferSequenceStep:
+    event: int
+    player_out_id: int | None
+    player_out_name: str | None
+    player_in_id: int | None
+    player_in_name: str | None
+    uses_hit: bool
+
+
+@dataclass(frozen=True)
+class TransferSequence:
+    steps: tuple[TransferSequenceStep, ...]
+    final_squad_ids: tuple[int, ...]
+    final_free_transfers: int
+    final_bank_tenths: int
+    total_net_ev: float
+
+
+@dataclass(frozen=True)
+class _BeamState:
+    squad_ids: tuple[int, ...]
+    free_transfers: int
+    bank_tenths: int
+    cumulative_ev: float
+    hit_cost_total: float
+    steps: tuple[TransferSequenceStep, ...]
+
+
+def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: dict) -> float:
+    key = (player_id, event)
+    if key not in cache:
+        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median
+    return cache[key]
+
+
+def _squad_gw_ev(conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: int, cache: dict) -> float:
+    return sum(_player_gw_ev(conn, pid, event, cache) for pid in squad_ids)
+
+
+def _wildcard_or_freehit_starting_soon(conn: sqlite3.Connection, event: int) -> bool:
+    """Matches on ChipWindow.name ("wildcard"/"freehit"), not chip_type - verified
+    against a real bootstrap-static payload that chip_type is a coarse category
+    ("transfer" for wildcard/freehit, "team" for bboost/3xc), not the chip identity."""
+    for w in eligible_chips(conn):
+        if w.name in ("wildcard", "freehit") and event < w.start_event <= event + WILDCARD_PROXIMITY_GWS:
+            return True
+    return False
+
+
+def search_transfer_sequences(
+    conn: sqlite3.Connection,
+    squad_ids: list[int],
+    free_transfers: int,
+    bank_tenths: int,
+    horizon_gw: int = 5,
+    beam_width: int = 8,
+) -> list[TransferSequence]:
+    """Beam search over transfer sequences across a rolling horizon (section: Pillar
+    1 Plan 1a). Scores each candidate sequence by TOTAL squad EV summed across every
+    GW in the horizon (not just the EV delta at the moment of transfer) minus
+    accumulated hit costs, so a player bought early correctly earns credit for every
+    remaining GW they're actually in the squad. Uses full-15-squad EV as the per-GW
+    objective (not best-XI EV) - picking the optimal starting XI at every beam node
+    is a separate, already-solved problem (optimization/squad.py) and deliberately
+    not re-run at every node here for cost reasons. Price-change forecast and chip
+    (wildcard/free-hit) proximity are small tie-break nudges on top of the EV
+    ranking, never hard filters - see PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY.
+
+    Cost note (see this task's brief, Algorithm point 7): _squad_gw_ev is cached
+    per (player_id, event) across the whole search, since the same pair recurs
+    across many competing beam states. best_transfer_for_player's own internal
+    position-pool scan is NOT memoized here - that's a separate, larger cost
+    (bounded by top_n=3 candidates returned, but scanning the full position pool
+    internally) that a full memoization layer would need to address; out of scope
+    for this task, documented rather than silently left unbounded.
+    """
+    season = current_season(conn)
+    max_banked = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)
+    start_event = _reference_event(conn)
+    cache: dict[tuple[int, int], float] = {}
+
+    states = [_BeamState(
+        squad_ids=tuple(squad_ids), free_transfers=free_transfers, bank_tenths=bank_tenths,
+        cumulative_ev=0.0, hit_cost_total=0.0, steps=(),
+    )]
+
+    for offset in range(horizon_gw):
+        event = start_event + offset
+        next_states: list[_BeamState] = []
+
+        for state in states:
+            # Option 1: roll - no transfer this GW
+            next_states.append(_BeamState(
+                squad_ids=state.squad_ids,
+                free_transfers=min(state.free_transfers + 1, max_banked),
+                bank_tenths=state.bank_tenths,
+                cumulative_ev=state.cumulative_ev + _squad_gw_ev(conn, state.squad_ids, event, cache),
+                hit_cost_total=state.hit_cost_total,
+                steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False),),
+            ))
+
+            # Option 2: single transfer this GW, for each current squad player
+            is_hit = state.free_transfers < 1
+            for player_out_id in state.squad_ids:
+                for cand in best_transfer_for_player(
+                    conn, player_out_id, list(state.squad_ids), state.bank_tenths, is_hit,
+                    n_gw=1, top_n=3, from_event=event,
+                ):
+                    new_squad = tuple(pid for pid in state.squad_ids if pid != player_out_id) + (cand.player_in_id,)
+                    gw_ev = _squad_gw_ev(conn, new_squad, event, cache)
+
+                    if classify_price_change(conn, cand.player_in_id).direction == "RISE_LIKELY":
+                        gw_ev += PRICE_TIEBREAK_BONUS
+                    if classify_price_change(conn, player_out_id).direction == "FALL_LIKELY":
+                        gw_ev += PRICE_TIEBREAK_BONUS
+
+                    hit_cost = HIT_COST if is_hit else 0.0
+                    if is_hit and _wildcard_or_freehit_starting_soon(conn, event):
+                        hit_cost += WILDCARD_PROXIMITY_PENALTY
+
+                    next_states.append(_BeamState(
+                        squad_ids=new_squad,
+                        free_transfers=state.free_transfers if is_hit else state.free_transfers - 1,
+                        bank_tenths=state.bank_tenths - cand.price_delta_tenths,
+                        cumulative_ev=state.cumulative_ev + gw_ev,
+                        hit_cost_total=state.hit_cost_total + hit_cost,
+                        steps=state.steps + (TransferSequenceStep(
+                            event, player_out_id, cand.player_out_name,
+                            cand.player_in_id, cand.player_in_name, is_hit,
+                        ),),
+                    ))
+
+        next_states.sort(key=lambda s: s.cumulative_ev - s.hit_cost_total, reverse=True)
+        states = next_states[:beam_width]
+
+    return [
+        TransferSequence(
+            steps=s.steps, final_squad_ids=s.squad_ids, final_free_transfers=s.free_transfers,
+            final_bank_tenths=s.bank_tenths, total_net_ev=round(s.cumulative_ev - s.hit_cost_total, 2),
+        )
+        for s in states
+    ]
