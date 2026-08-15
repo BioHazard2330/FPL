@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.database.backup import list_backups
+from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.squad import optimise_squad
 
@@ -59,7 +60,7 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
 
     n_history = conn.execute("SELECT COUNT(*) FROM player_season_history").fetchone()[0]
     checks.append(ReadinessCheck(
-        "Player projections", "OK", f"preseason-prior-v1 model, {n_history} season-history row(s)",
+        "Player projections", "OK", f"{MODEL_VERSION} model, {n_history} season-history row(s)",
     ))
 
     squad_result = optimise_squad(conn, n_gw=1)
