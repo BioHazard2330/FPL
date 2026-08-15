@@ -4,6 +4,10 @@ swapping a specific player out for a specific replacement, across 1/3/5-GW
 windows, including the -4 cost of a hit if the transfer exceeds the banked
 free transfers. Never recommends a move on single-GW xP alone (section 62) -
 every comparison here uses expected_points_window, not the single-match model.
+
+Also home to search_transfer_sequences - a beam search over multi-GW transfer
+sequences (Pillar 1 Plan 1a), scoring full-squad EV summed across a rolling
+horizon rather than the single-swap comparison above.
 """
 
 import sqlite3
@@ -58,11 +62,25 @@ def _position(conn: sqlite3.Connection, player_id: int) -> str:
 
 def evaluate_transfer(
     conn: sqlite3.Connection, player_out_id: int, player_in_id: int, is_hit: bool,
-    from_event: int | None = None,
+    from_event: int | None = None, cache: dict[tuple, float] | None = None,
 ) -> TransferCandidate:
+    """cache, when passed, memoizes expected_points_window lookups keyed by
+    (player_id, n, from_event) - opt-in (default None = uncached, identical to
+    the original behaviour) so recommend()'s existing call sites are unaffected.
+    Callers that also use a (player_id, event)-keyed cache (search_transfer_sequences's
+    _player_gw_ev) can safely share the same dict - the key shapes never collide."""
     kwargs = {"from_event": from_event} if from_event is not None else {}
-    ev_out = {n: expected_points_window(conn, player_out_id, n, **kwargs).total_median for n in (1, 3, 5)}
-    ev_in = {n: expected_points_window(conn, player_in_id, n, **kwargs).total_median for n in (1, 3, 5)}
+
+    def _ev(player_id: int, n: int) -> float:
+        if cache is None:
+            return expected_points_window(conn, player_id, n, **kwargs).total_median
+        key = (player_id, n, from_event)
+        if key not in cache:
+            cache[key] = expected_points_window(conn, player_id, n, **kwargs).total_median
+        return cache[key]
+
+    ev_out = {n: _ev(player_out_id, n) for n in (1, 3, 5)}
+    ev_in = {n: _ev(player_in_id, n) for n in (1, 3, 5)}
     ev_delta = {n: round(ev_in[n] - ev_out[n], 2) for n in (1, 3, 5)}
 
     hit = HIT_COST if is_hit else 0
@@ -90,11 +108,14 @@ def best_transfer_for_player(
     n_gw: int = 3,
     top_n: int = 5,
     from_event: int | None = None,
+    cache: dict[tuple, float] | None = None,
 ) -> list[TransferCandidate]:
     """Best same-position replacements for player_out, respecting bank + club limit
     (same club limit enforced implicitly by squad_optimiser at squad-build time -
     this only checks budget, since a like-for-like swap doesn't change club counts
-    unless the replacement is from a club already at the 3-player cap)."""
+    unless the replacement is from a club already at the 3-player cap). cache is
+    forwarded to evaluate_transfer unchanged - see its docstring; default None
+    means uncached, so existing callers (recommend()) are unaffected."""
     position = _position(conn, player_out_id)
     price_out = _current_price(conn, player_out_id)
     budget_tenths = price_out + bank_tenths
@@ -119,7 +140,7 @@ def best_transfer_for_player(
         price_in = _current_price(conn, c["id"])
         if price_in > budget_tenths:
             continue
-        results.append(evaluate_transfer(conn, player_out_id, c["id"], is_hit, from_event=from_event))
+        results.append(evaluate_transfer(conn, player_out_id, c["id"], is_hit, from_event=from_event, cache=cache))
 
     key = {1: "net_ev_1gw", 3: "net_ev_3gw", 5: "net_ev_5gw"}[n_gw]
     results.sort(key=lambda t: getattr(t, key), reverse=True)
@@ -195,14 +216,18 @@ class _BeamState:
     steps: tuple[TransferSequenceStep, ...]
 
 
-def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: dict) -> float:
+def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: dict[tuple, float]) -> float:
+    """Keyed by (player_id, event) - a 2-tuple, deliberately a different shape from
+    evaluate_transfer's (player_id, n, from_event) 3-tuple cache keys, so the two
+    lookup families can share one dict (as search_transfer_sequences does) with no
+    collision risk."""
     key = (player_id, event)
     if key not in cache:
         cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median
     return cache[key]
 
 
-def _squad_gw_ev(conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: int, cache: dict) -> float:
+def _squad_gw_ev(conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: int, cache: dict[tuple, float]) -> float:
     return sum(_player_gw_ev(conn, pid, event, cache) for pid in squad_ids)
 
 
@@ -237,16 +262,31 @@ def search_transfer_sequences(
 
     Cost note (see this task's brief, Algorithm point 7): _squad_gw_ev is cached
     per (player_id, event) across the whole search, since the same pair recurs
-    across many competing beam states. best_transfer_for_player's own internal
-    position-pool scan is NOT memoized here - that's a separate, larger cost
-    (bounded by top_n=3 candidates returned, but scanning the full position pool
-    internally) that a full memoization layer would need to address; out of scope
-    for this task, documented rather than silently left unbounded.
+    across many competing beam states. The same cache dict is also threaded into
+    best_transfer_for_player/evaluate_transfer, memoizing their (player_id, n,
+    from_event) expected_points_window lookups too (a different key shape, so both
+    families coexist in one dict with no collision risk) - this is the dominant
+    cost (each candidate evaluation calls expected_points_window 6 times, across
+    the full position pool, not just the top_n returned) so caching it is what
+    makes beam_width=8/horizon_gw=5 practical to actually run. Two smaller,
+    per-step-invariant lookups (_wildcard_or_freehit_starting_soon, and
+    classify_price_change on player_out_id) are hoisted out of the innermost
+    per-candidate loop below rather than cached, since they're already cheap once
+    hoisted one loop level. best_transfer_for_player's own internal position-pool
+    *scan* (as opposed to the expected_points_window calls within it, now cached)
+    is not memoized - out of scope for this task, documented rather than silently
+    left unbounded.
+
+    Known gap, deliberately not addressed here (see best_transfer_for_player's own
+    docstring for the pre-existing single-swap version of this limitation): a
+    generated multi-step sequence is not validated for club-limit legality (max 3
+    players from one real-world club) across the squad as it evolves - only
+    per-swap budget is checked.
     """
     season = current_season(conn)
     max_banked = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)
     start_event = _reference_event(conn)
-    cache: dict[tuple[int, int], float] = {}
+    cache: dict[tuple, float] = {}
 
     states = [_BeamState(
         squad_ids=tuple(squad_ids), free_transfers=free_transfers, bank_tenths=bank_tenths,
@@ -255,6 +295,7 @@ def search_transfer_sequences(
 
     for offset in range(horizon_gw):
         event = start_event + offset
+        wildcard_soon = _wildcard_or_freehit_starting_soon(conn, event)
         next_states: list[_BeamState] = []
 
         for state in states:
@@ -271,25 +312,36 @@ def search_transfer_sequences(
             # Option 2: single transfer this GW, for each current squad player
             is_hit = state.free_transfers < 1
             for player_out_id in state.squad_ids:
+                player_out_falling = classify_price_change(conn, player_out_id).direction == "FALL_LIKELY"
                 for cand in best_transfer_for_player(
                     conn, player_out_id, list(state.squad_ids), state.bank_tenths, is_hit,
-                    n_gw=1, top_n=3, from_event=event,
+                    n_gw=1, top_n=3, from_event=event, cache=cache,
                 ):
                     new_squad = tuple(pid for pid in state.squad_ids if pid != player_out_id) + (cand.player_in_id,)
                     gw_ev = _squad_gw_ev(conn, new_squad, event, cache)
 
                     if classify_price_change(conn, cand.player_in_id).direction == "RISE_LIKELY":
                         gw_ev += PRICE_TIEBREAK_BONUS
-                    if classify_price_change(conn, player_out_id).direction == "FALL_LIKELY":
+                    if player_out_falling:
                         gw_ev += PRICE_TIEBREAK_BONUS
 
                     hit_cost = HIT_COST if is_hit else 0.0
-                    if is_hit and _wildcard_or_freehit_starting_soon(conn, event):
+                    if is_hit and wildcard_soon:
                         hit_cost += WILDCARD_PROXIMITY_PENALTY
+
+                    # FPL grants +1 free transfer at every deadline regardless of
+                    # whether a transfer was made. A free (non-hit) transfer spends
+                    # the banked FT but next week's +1 still arrives, netting back
+                    # to the same (capped) count; a hit spends no banked FT (there
+                    # was none) but next week's +1 still arrives.
+                    next_free_transfers = (
+                        min(state.free_transfers + 1, max_banked) if is_hit
+                        else min(state.free_transfers, max_banked)
+                    )
 
                     next_states.append(_BeamState(
                         squad_ids=new_squad,
-                        free_transfers=state.free_transfers if is_hit else state.free_transfers - 1,
+                        free_transfers=next_free_transfers,
                         bank_tenths=state.bank_tenths - cand.price_delta_tenths,
                         cumulative_ev=state.cumulative_ev + gw_ev,
                         hit_cost_total=state.hit_cost_total + hit_cost,
