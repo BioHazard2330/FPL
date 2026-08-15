@@ -3,12 +3,6 @@ toward the position-average rate, weighted by sample size (minutes played) -
 a player with 1 match isn't as reliable a signal as one with 15.
 PRIOR_STRENGTH_MATCHES is a fixed pseudo-sample-size, not fit to data yet -
 same "flag the assumption" pattern as the rest of the model layer.
-
-`position_average_per90` excludes the player being evaluated from its own
-prior (see `player_shrunk_rates`): without that exclusion a player's own
-hot streak would inflate the very baseline used to shrink that player's
-estimate back down, which is circular and understates how much a small
-sample should be distrusted.
 """
 import sqlite3
 from dataclasses import dataclass
@@ -43,18 +37,16 @@ def position_average_per90(
     stat: str,
     season: str,
     as_of_date: str | None = None,
-    exclude_player_id: int | None = None,
 ) -> float:
     if stat not in _SUPPORTED_STATS:
         raise ValueError(f"unsupported stat: {stat}")
     clause, extra = _date_clause(as_of_date)
-    exclude_clause, exclude_extra = ("AND pm.player_id != ?", (exclude_player_id,)) if exclude_player_id is not None else ("", ())
     row = conn.execute(
         f"SELECT SUM(pm.{stat}) AS total, SUM(pm.minutes) AS minutes "
         "FROM player_match_stats_history pm JOIN players p ON p.id = pm.player_id "
         "JOIN element_types et ON et.id = p.element_type "
-        f"WHERE et.singular_name_short = ? AND pm.season = ? {clause} {exclude_clause}",
-        (position, season) + extra + exclude_extra,
+        f"WHERE et.singular_name_short = ? AND pm.season = ? {clause}",
+        (position, season) + extra,
     ).fetchone()
     if not row or not row["minutes"]:
         return 0.0
@@ -82,7 +74,7 @@ def player_shrunk_rates(conn: sqlite3.Connection, player_id: int, season: str, a
     result = {}
     for stat in _SUPPORTED_STATS:
         total = (row[stat] if row else 0) or 0.0
-        prior = position_average_per90(conn, position, stat, season, as_of_date, exclude_player_id=player_id)
+        prior = position_average_per90(conn, position, stat, season, as_of_date)
         key = "cards" if stat == "yellow_cards" else stat
         result[key] = shrink_rate(total, minutes, prior)
     return result

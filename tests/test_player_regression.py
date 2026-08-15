@@ -45,12 +45,15 @@ def test_player_shrunk_rates_small_sample_closer_to_average(db_conn):
     assert rates["goals"].raw_per90 == 2.0
     # NOTE: brief's literal assertion here was `shrunk_per90 < 1.0`, which is mathematically
     # unsatisfiable given this fixture -- see task-10-report.md "Bug found" section for the proof.
-    # shrunk_per90 is a convex combination of raw_per90 (2.0) and the position-average prior
-    # (whose floor, even with the self-exclusion fix, is exactly 1.0 -- player 1's exact rate),
-    # so it can never fall below 1.0 for any PRIOR_STRENGTH_MATCHES > 0. Asserting against the
-    # player's own raw_per90 instead tests the actual intended property: the 1-match hot streak
-    # gets pulled down, well away from its raw rate, toward the position average.
+    # shrunk_per90 is a convex combination of raw_per90 (2.0) and the position-average prior,
+    # which (per the brief's un-excluded, population-mean form) is 17 goals / 16 matches =
+    # 1.0625 -- that is the floor, so shrunk_per90 can never fall below 1.0625 for any
+    # PRIOR_STRENGTH_MATCHES > 0. With PRIOR_STRENGTH_MATCHES=10 the exact value is
+    # (1*2.0 + 10*1.0625) / 11 = 12.625/11 = 1.1477. Asserting against the player's own
+    # raw_per90 instead of a magic constant tests the actual intended property: the 1-match
+    # hot streak gets pulled down, well away from its raw rate, toward the position average.
     assert rates["goals"].shrunk_per90 < rates["goals"].raw_per90
+    assert rates["goals"].shrunk_per90 == 1.1477
     assert rates["goals"].shrunk_per90 < 1.5  # meaningfully pulled down, not just barely
 
 
@@ -65,19 +68,6 @@ def test_player_shrunk_rates_includes_cards(db_conn):
     rates = player_shrunk_rates(db_conn, player_id=1, season="2024-25")
     assert "cards" in rates
     assert rates["cards"].shrunk_per90 >= 0
-
-
-def test_player_shrunk_rates_excludes_own_data_from_prior(db_conn):
-    # Player 2's own 1-match hot streak (2 goals/90) must not inflate the position-average
-    # prior used to shrink player 2's own estimate -- that would be circular self-reinforcement
-    # and would understate how much a 1-match sample should be distrusted.
-    _seed_players_and_matches(db_conn)
-    rates = player_shrunk_rates(db_conn, player_id=2, season="2024-25")
-    # With self-inclusion (the brief's literal SQL), the prior is 1.0625 and shrunk_per90
-    # rounds to 1.1477. With self-exclusion, the prior is exactly 1.0 (player 1's rate alone)
-    # and shrunk_per90 rounds to 1.0909. Either way it must land strictly below the self-inclusive
-    # value, proving player 2's own row was excluded from its own prior.
-    assert rates["goals"].shrunk_per90 < 1.1477
 
 
 def test_player_shrunk_rates_as_of_date_excludes_future_rows(db_conn):
@@ -98,12 +88,21 @@ def test_player_shrunk_rates_as_of_date_excludes_future_rows(db_conn):
     # live (as_of_date=None) sees all 16 matches including the Dec outburst
     assert rates_live["goals"].matches_played == 16.0
     assert rates_live["goals"].raw_per90 == (15 + 10) / 16
+    # position-average prior (population mean, no exclusion) over all rows in the pool:
+    # (15 + 10 + 2) goals / 17 matches = 27/17 -> shrunk_per90 = (16*1.5625 + 10*27/17)/26 = 1.5724
+    assert rates_live["goals"].shrunk_per90 == 1.5724
 
     # as_of_date="2024-10-01" must see only the 15 September matches, strictly excluding
     # the December row (both from the player's own totals and from the position-average prior)
     assert rates_asof["goals"].matches_played == 15.0
     assert rates_asof["goals"].raw_per90 == 1.0
     assert rates_asof["goals"].raw_per90 < rates_live["goals"].raw_per90
+    # prior computed via a separate query path than the player's own totals -- assert on
+    # shrunk_per90 to prove that query is *also* date-filtered, not just the player's own totals.
+    # With the Dec row excluded, prior = 17 goals / 16 matches = 1.0625 (not 27/17 = 1.5882),
+    # so shrunk_per90 = (15*1.0 + 10*1.0625)/25 = 1.025, well below the live value.
+    assert rates_asof["goals"].shrunk_per90 == 1.025
+    assert rates_asof["goals"].shrunk_per90 < rates_live["goals"].shrunk_per90
 
 
 def test_position_average_per90_boundary_is_strict_less_than(db_conn):
