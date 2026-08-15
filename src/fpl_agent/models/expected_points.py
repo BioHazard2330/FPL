@@ -13,6 +13,12 @@ heuristics component by component:
   - when no odds exist for a fixture (common for future fixtures; the odds
     source is mainly historical/closing lines, not a live pre-match feed),
     the blend degrades gracefully to Dixon-Coles-only rather than crashing.
+  player_share_of_team_xg returns an ACCUMULATED volume ratio (season xG over
+  team season xG), which already embeds the player's own historical minutes
+  fraction. It is therefore divided by that historical fraction here to
+  recover a per-90-equivalent share before this fixture's minutes fraction is
+  applied - otherwise minutes would be discounted twice, which under-projects
+  rotation-risk players by exactly their historical minutes fraction.
 - Clean-sheet and goals-conceded-band probabilities: read directly off the
   blended Poisson distribution, not a linear heuristic on fixture difficulty.
 - Bonus: still last-season per-90 prior (models/player_regression.py's shot
@@ -32,17 +38,25 @@ heuristics component by component:
   (calibrated) median - the spec's Pillar 0 scope didn't require rebuilding
   these, only the components feeding the median.
 
-Two interface notes, both deliberate:
+Three interface notes, all deliberate:
 
-- expected_points()'s `n_gw` argument is kept for backwards compatibility
-  (optimization/squad.py, optimization/chips.py, models/differentials.py,
-  models/breakouts.py and the CLI all pass it) but is no longer read. v1
-  used it only to average fixture difficulty across a window while still
-  returning a single-match estimate; v2 reads the actual next fixture
-  instead, so there is nothing left for it to select. Use
-  expected_points_window() for genuine multi-gameweek totals.
+- expected_points()'s `n_gw` keeps v1's semantics: it still returns a
+  single-match estimate, but the fixture-level goals inputs are AVERAGED
+  across the player's next `n_gw` unfinished fixtures rather than read off
+  the very next one only. v1 did the same thing with fixture difficulty.
+  This is what lets optimization/chips.py tell a wildcard (n_gw=5) apart
+  from a free hit (n_gw=1). Use expected_points_window() for genuine
+  multi-gameweek totals.
 - Every number here is still a per-match estimate. Nothing in this module
   multiplies by fixture count except expected_points_window().
+- expected_points()/expected_points_window() have locked public signatures
+  and always run in "live" mode (all available data). Code that needs a
+  leakage-free, as-of-a-past-date estimate - the walk-forward backtest
+  harness - calls core_expected_points(conn, player_id, as_of_date=...),
+  which takes the same player-layer components (appearance/goals/assists/
+  cards) with every underlying query bounded to strictly-before that date.
+  It deliberately omits the team blend (clean sheet / goals conceded), which
+  the harness doesn't reconstruct per historical match anyway.
 """
 
 import sqlite3
@@ -104,46 +118,73 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
     return model
 
 
+# Every odds column is nullable in the schema, so require the full 1X2 +
+# over/under set before devigging rather than trusting the ingester's
+# current guarantee that 1X2 is always populated.
+_ODDS_KEYS = ("home_win_odds", "draw_odds", "away_win_odds", "over_2_5_odds", "under_2_5_odds")
+
+
+def _fixture_odds_row(conn: sqlite3.Connection, home_market_id: int, away_market_id: int, fixture_date: str):
+    """Odds for THIS fixture only - matched on the fixture's own date, never on
+    "the most recent prior meeting". match_results_history holds played matches
+    only, so a genuinely future fixture correctly finds nothing here and the
+    caller degrades to Dixon-Coles-only, rather than silently blending in a
+    completely different match's closing line (e.g. last season's meeting
+    between the same two clubs)."""
+    match_row = conn.execute(
+        "SELECT id FROM match_results_history WHERE home_team_id=? AND away_team_id=? AND match_date=? "
+        "ORDER BY id DESC LIMIT 1",
+        (home_market_id, away_market_id, fixture_date),
+    ).fetchone()
+    if match_row is None:
+        return None
+    return conn.execute(
+        "SELECT * FROM team_match_odds_history WHERE match_id=? ORDER BY retrieved_at DESC LIMIT 1",
+        (match_row["id"],),
+    ).fetchone()
+
+
 def _blended_fixture_goals(
-    conn: sqlite3.Connection, fixture_id: int, team_id: int, opponent_team_id: int, as_of_date: str
+    conn: sqlite3.Connection, fixture_id: int, team_id: int, opponent_team_id: int, fixture_date: str
 ) -> tuple[float, float]:
-    """(team expected goals, opponent expected goals) for one fixture."""
+    """(team expected goals, opponent expected goals) for one fixture.
+
+    `fixture_date` is a plain YYYY-MM-DD date (not a kickoff timestamp): it is
+    both the as-of cutoff for the Dixon-Coles fit (strictly-before, so a match
+    played on the same day can't leak into its own prediction) and the exact
+    key the fixture's own odds row is looked up by."""
     home_row = conn.execute("SELECT team_h, team_a FROM fixtures WHERE id=?", (fixture_id,)).fetchone()
     is_home = home_row is not None and home_row["team_h"] == team_id
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, team_id))
     opp_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, opponent_team_id))
 
-    dc_model = _get_or_fit_dc_model(conn, as_of_date)
+    home_id, away_id = (team_market_id, opp_market_id) if is_home else (opp_market_id, team_market_id)
+
+    dc_model = _get_or_fit_dc_model(conn, fixture_date)
     if dc_model is not None and team_market_id in dc_model.teams and opp_market_id in dc_model.teams:
-        home_id, away_id = (team_market_id, opp_market_id) if is_home else (opp_market_id, team_market_id)
         dc_home, dc_away = dc_expected_goals(dc_model, home_id, away_id)
     else:
         dc_home = dc_away = _LEAGUE_AVERAGE_GOALS
 
-    ordered = (team_market_id, opp_market_id) if is_home else (opp_market_id, team_market_id)
-    match_row = conn.execute(
-        "SELECT id FROM match_results_history WHERE (home_team_id=? AND away_team_id=?) "
-        "AND match_date < ? ORDER BY match_date DESC LIMIT 1",
-        ordered + (as_of_date,),
-    ).fetchone()
-    odds_row = None
-    if match_row:
-        odds_row = conn.execute(
-            "SELECT * FROM team_match_odds_history WHERE match_id=? ORDER BY retrieved_at DESC LIMIT 1",
-            (match_row["id"],),
-        ).fetchone()
+    odds_row = _fixture_odds_row(conn, home_id, away_id, fixture_date)
 
-    # Every odds column is nullable in the schema, so require the full 1X2 +
-    # over/under set before devigging rather than trusting the ingester's
-    # current guarantee that 1X2 is always populated.
-    _odds_keys = ("home_win_odds", "draw_odds", "away_win_odds", "over_2_5_odds", "under_2_5_odds")
-    if odds_row is not None and all(odds_row[k] for k in _odds_keys):
-        outcome = devig_match_odds(odds_row["home_win_odds"], odds_row["draw_odds"], odds_row["away_win_odds"])
-        totals = devig_totals_odds(odds_row["over_2_5_odds"], odds_row["under_2_5_odds"])
-        market = market_implied_fixture_goals(outcome, totals)
-        blended = blend_fixture_goals(dc_home, dc_away, market.home_expected_goals, market.away_expected_goals)
-    else:
+    blended = None
+    if odds_row is not None and all(odds_row[k] for k in _ODDS_KEYS):
+        try:
+            outcome = devig_match_odds(odds_row["home_win_odds"], odds_row["draw_odds"], odds_row["away_win_odds"])
+            totals = devig_totals_odds(odds_row["over_2_5_odds"], odds_row["under_2_5_odds"])
+            market = market_implied_fixture_goals(outcome, totals)
+            blended = blend_fixture_goals(dc_home, dc_away, market.home_expected_goals, market.away_expected_goals)
+        except ValueError:
+            # One malformed CSV row (odds <= 1.0, or a totals line too lopsided
+            # to invert) must not abort a whole projections run - the DC-only
+            # fallback below is the honest answer for that fixture. Note the
+            # Dixon-Coles RuntimeError is deliberately NOT caught anywhere:
+            # that fit is one joint optimization over the entire league, so
+            # non-convergence means the league model failed and must fail loud.
+            blended = None
+    if blended is None:
         blended = blend_fixture_goals(dc_home, dc_away, dc_home, dc_away, weight=1.0)  # no odds -> DC only
 
     if is_home:
@@ -169,6 +210,29 @@ def _goals_conceded_penalty(
     )
 
 
+def _historical_minutes_fraction(
+    conn: sqlite3.Connection, player_id: int, market_team_id: int, season: str, as_of_date: str | None
+) -> float:
+    """The player's own minutes / (their team's matches x 90) over the season so
+    far. This is the factor already baked into player_share_of_team_xg's
+    accumulated ratio, so dividing that share by this recovers a per-90-
+    equivalent share."""
+    clause, extra = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
+    player_minutes = conn.execute(
+        f"SELECT SUM(minutes) AS total FROM player_match_stats_history "
+        f"WHERE player_id=? AND season=? {clause}",
+        (player_id, season) + extra,
+    ).fetchone()["total"] or 0
+    team_matches = conn.execute(
+        f"SELECT COUNT(DISTINCT understat_match_id) AS n FROM player_match_stats_history "
+        f"WHERE market_team_id=? AND season=? {clause}",
+        (market_team_id, season) + extra,
+    ).fetchone()["n"] or 0
+    if not team_matches:
+        return 0.0
+    return player_minutes / (team_matches * 90)
+
+
 def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None) -> dict:
     player = conn.execute(
         "SELECT p.team_id, et.singular_name_short AS position FROM players p "
@@ -189,20 +253,31 @@ def _player_match_rates(conn: sqlite3.Connection, player_id: int, as_of_date: st
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
     player_share = player_share_of_team_xg(conn, player_id, team_market_id, season, as_of_date)
+    minutes_fraction = _historical_minutes_fraction(conn, player_id, team_market_id, season, as_of_date)
+    # Accumulated share -> per-90-equivalent share. Capped at 1.0: a player
+    # cannot own more than all of their team's xG per 90, and a tiny sample
+    # (one start out of ten team matches) can otherwise blow the ratio up.
+    share_per90 = min(player_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
 
     prior = conn.execute(
         "SELECT bonus, minutes FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
         (player_id,),
     ).fetchone()
-    bonus90 = (prior["bonus"] / prior["minutes"] * 90) if prior and prior["minutes"] else 0.0
+    # bonus is nullable in player_season_history (the normalizer writes None
+    # through when history_past omits it), so guard it as well as minutes.
+    has_bonus_prior = prior is not None and prior["minutes"] and prior["bonus"] is not None
+    bonus90 = (prior["bonus"] / prior["minutes"] * 90) if has_bonus_prior else 0.0
 
     yellow_card_rate = get_rule(conn, season, "scoring.yellow_cards", -1) or -1
 
     return {
         "position": position, "team_id": player["team_id"],
         "goals_rate": goals_rate, "assists_rate": assists_rate, "clean_sheet_pts": clean_sheet_pts,
+        "shrunk_goals90": shrunk["goals"].shrunk_per90,
         "shrunk_xa90": shrunk["xa"].shrunk_per90, "shrunk_cards90": shrunk["cards"].shrunk_per90,
-        "yellow_card_rate": yellow_card_rate, "player_share": player_share,
+        "yellow_card_rate": yellow_card_rate,
+        "player_share": player_share, "player_share_per90": share_per90,
+        "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs, "season": season,
     }
 
@@ -216,22 +291,36 @@ def _match_components(
     effective_minutes_fraction = (probs.p_partial / 3 + probs.p_full) * damping
 
     appearance = expected_appearance_points(probs) * damping
-    goals = team_goals * rates["player_share"] * effective_minutes_fraction * rates["goals_rate"]
+    # player_share_per90 (not the accumulated player_share) - see module docstring.
+    goals = team_goals * rates["player_share_per90"] * effective_minutes_fraction * rates["goals_rate"]
     assists = rates["shrunk_xa90"] * rates["assists_rate"] * effective_minutes_fraction
     bonus = rates["bonus90"] * effective_minutes_fraction
     cards = rates["shrunk_cards90"] * rates["yellow_card_rate"] * effective_minutes_fraction
 
-    played = min(effective_minutes_fraction, 1.0)
-    clean_sheet = clean_sheet_probability(opp_goals) * rates["clean_sheet_pts"] * played
-    conceded = _goals_conceded_penalty(conn, rates["season"], rates["position"], opp_goals) * played
+    # A clean sheet is a hard 60-minute threshold, not something a partial
+    # appearance earns a fraction of, so it uses p_full rather than the blended
+    # minutes fraction. The goals-conceded penalty genuinely does scale with
+    # time on the pitch, so that one keeps the blended fraction.
+    p_sixty_plus = min(probs.p_full * damping, 1.0)
+    clean_sheet = clean_sheet_probability(opp_goals) * rates["clean_sheet_pts"] * p_sixty_plus
+    conceded = _goals_conceded_penalty(conn, rates["season"], rates["position"], opp_goals) * min(
+        effective_minutes_fraction, 1.0
+    )
 
     return appearance + goals + assists + bonus + clean_sheet + cards + conceded
 
 
+def _fixture_date(fixture_row) -> str:
+    """Plain YYYY-MM-DD. Truncating the kickoff timestamp matters: match_date in
+    match_results_history is date-only, and '2026-08-21' < '2026-08-21T19:00Z'
+    compares True as a string, so an untruncated cutoff would let a match played
+    the same day leak into its own prediction."""
+    return (fixture_row["kickoff_time"] or "2099-01-01")[:10]
+
+
 def _fixture_goals_for(conn: sqlite3.Connection, fixture_row, team_id: int) -> tuple[float, float]:
     opponent_id = fixture_row["team_a"] if fixture_row["team_h"] == team_id else fixture_row["team_h"]
-    as_of = fixture_row["kickoff_time"] or "2099-01-01"
-    return _blended_fixture_goals(conn, fixture_row["id"], team_id, opponent_id, as_of)
+    return _blended_fixture_goals(conn, fixture_row["id"], team_id, opponent_id, _fixture_date(fixture_row))
 
 
 @dataclass(frozen=True)
@@ -247,22 +336,32 @@ class ExpectedPoints:
 
 
 def expected_points(conn: sqlite3.Connection, player_id: int, n_gw: int = 1) -> ExpectedPoints:
-    """Single-match expected points for the player's next unfinished fixture.
-    `n_gw` is accepted for backwards compatibility and unused - see module
-    docstring."""
+    """Single-match expected points, with the fixture-level goals inputs averaged
+    over the player's next `n_gw` unfinished fixtures (v1's `n_gw` semantics -
+    a window of context, not a multi-match total). Use expected_points_window()
+    for a genuine cumulative total across a window."""
     rates = _player_match_rates(conn, player_id)
     em = expected_minutes(conn, player_id)
     probs = rates["minutes_probs"]
     effective_minutes_fraction = probs.p_partial / 3 + probs.p_full
 
-    fixture = conn.execute(
-        "SELECT id, team_h, team_a, kickoff_time FROM fixtures WHERE (team_h=? OR team_a=?) AND finished=0 "
-        "ORDER BY event LIMIT 1",
+    upcoming = conn.execute(
+        "SELECT id, team_h, team_a, kickoff_time, event FROM fixtures "
+        "WHERE (team_h=? OR team_a=?) AND finished=0 ORDER BY event",
         (rates["team_id"], rates["team_id"]),
-    ).fetchone()
+    ).fetchall()
+    # Window by gameweek, not by row count, so a double gameweek contributes both
+    # of its fixtures to the average rather than eating the whole n_gw budget.
+    first_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
+    fixtures = [
+        f for f in upcoming
+        if first_event is None or f["event"] is None or f["event"] < first_event + max(n_gw, 1)
+    ]
 
-    if fixture:
-        team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
+    if fixtures:
+        goals_pairs = [_fixture_goals_for(conn, f, rates["team_id"]) for f in fixtures]
+        team_goals = sum(g[0] for g in goals_pairs) / len(goals_pairs)
+        opp_goals = sum(g[1] for g in goals_pairs) / len(goals_pairs)
     else:
         team_goals = opp_goals = _LEAGUE_AVERAGE_GOALS
 
@@ -308,4 +407,53 @@ def expected_points_window(
     return WindowExpectedPoints(
         player_id=player_id, n_gw=n_gw, fixture_count=len(fixtures),
         total_median=round(total, 2), model_version=MODEL_VERSION,
+    )
+
+
+@dataclass(frozen=True)
+class CoreExpectedPoints:
+    player_id: int
+    position: str
+    appearance: float
+    goals: float
+    assists: float
+    cards: float
+    total: float
+    model_version: str
+
+
+def core_expected_points(
+    conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None
+) -> CoreExpectedPoints:
+    """Team-blend-free "core" per-match points - appearance + goals + assists +
+    cards - for one player, computed only from data strictly before
+    `as_of_date` (None = live, all data).
+
+    This is the leakage-free entry point the walk-forward backtest harness
+    scores against. expected_points()'s public signature is locked to
+    (conn, player_id, n_gw), so `as_of_date` cannot be threaded through it;
+    this function exists so a no-leakage path is reachable from outside the
+    module without a caller having to reimplement the player layer.
+
+    Deliberately excluded, matching what the harness can actually reconstruct
+    from historical rows: bonus (Understat carries no BPS), clean sheets and
+    the goals-conceded penalty (both need the opponent's blended goals
+    distribution for that specific historical fixture). The goals term here
+    uses the shrunk per-90 goal rate directly rather than the team-goals x
+    xG-share route the live model takes, for the same reason."""
+    rates = _player_match_rates(conn, player_id, as_of_date)
+    probs = rates["minutes_probs"]
+    effective_minutes_fraction = probs.p_partial / 3 + probs.p_full
+
+    appearance = expected_appearance_points(probs)
+    goals = rates["shrunk_goals90"] * effective_minutes_fraction * rates["goals_rate"]
+    assists = rates["shrunk_xa90"] * effective_minutes_fraction * rates["assists_rate"]
+    cards = rates["shrunk_cards90"] * effective_minutes_fraction * rates["yellow_card_rate"]
+
+    return CoreExpectedPoints(
+        player_id=player_id, position=rates["position"],
+        appearance=round(appearance, 4), goals=round(goals, 4),
+        assists=round(assists, 4), cards=round(cards, 4),
+        total=round(appearance + goals + assists + cards, 4),
+        model_version=MODEL_VERSION,
     )

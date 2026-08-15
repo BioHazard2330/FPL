@@ -231,10 +231,11 @@ def run_scheduled():
 @cli.command()
 @click.option("--limit", default=20, help="max players to show")
 @click.option("--position", default=None, help="filter by GKP/DEF/MID/FWD")
-@click.option("--gw-window", default=1, help="fixture window size for clean-sheet calc")
+@click.option("--gw-window", default=1, help="fixtures averaged into the per-match estimate")
 def projections(limit: int, position: str | None, gw_window: int):
-    """Top players by expected points. Preseason-prior model - see CLAUDE.md for
-    the exact heuristics/assumptions behind these numbers."""
+    """Top players by expected points. Calibrated model (Dixon-Coles + devigged
+    odds + shrinkage-regressed player rates) - see models/expected_points.py's
+    docstring for what each component is and is not."""
     conn = get_connection()
     results = []
     for r in conn.execute("SELECT id, web_name FROM players WHERE removed=0").fetchall():
@@ -245,7 +246,7 @@ def projections(limit: int, position: str | None, gw_window: int):
     conn.close()
 
     results.sort(key=lambda x: x[1].median, reverse=True)
-    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)")
+    click.echo(f"model_version={MODEL_VERSION} (see models/expected_points.py for component caveats)")
     for name, ep in results[:limit]:
         click.echo(
             f"{name:<20} {ep.position:<4} floor={ep.floor:>5} median={ep.median:>5} "
@@ -379,7 +380,7 @@ def build_team(sync: bool):
     """Section 92-94: full first-team workflow. Three structures (best EV / best
     flexibility / best upside), captain/vice, risks, narrowly-missed players,
     pre-GW1 watchlist. This is section 61's optimiser plus context - not a
-    separate model, so it inherits every caveat of the preseason-prior xP model."""
+    separate model, so it inherits every caveat of the calibrated-v2 xP model."""
     if sync:
         try:
             run_sync()
@@ -429,7 +430,7 @@ def build_team(sync: bool):
     )
     conn.close()
 
-    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)  decision_id={decision_id}")
+    click.echo(f"model_version={MODEL_VERSION} (see models/expected_points.py for component caveats)  decision_id={decision_id}")
     click.echo()
     click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'Start%':>7} {'xP':>6}  Risk")
     for c in primary.xi.starting:
@@ -495,7 +496,7 @@ def build_squad(gw_window: int):
     )
     conn.close()
 
-    click.echo(f"model_version={MODEL_VERSION} (preseason prior, uncalibrated - see CLAUDE.md)  decision_id={decision_id}")
+    click.echo(f"model_version={MODEL_VERSION} (see models/expected_points.py for component caveats)  decision_id={decision_id}")
     click.echo(f"total cost: £{result.total_cost_tenths / 10:.1f}m   total xP: {result.total_xp}")
     click.echo()
     click.echo("STARTING XI")
