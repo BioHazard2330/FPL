@@ -67,10 +67,11 @@ against right now; noted as a natural Plan 2 once GW1+ data exists.
 position_average_bonus_per90(conn, position, before_season=None) -> float
 ```
 Population prior: `SUM(bonus)/SUM(minutes/90)` across all players at that position, from
-`player_season_history` joined to `players`/`element_types`. `before_season` (a `"YYYY-YY"`
-string, same convention as `rules.season`/Plan 1c's season scoping) filters to
-`season_name < before_season` for leakage-free holdout evaluation — mirrors `player_regression.py`'s
-`as_of_date` pattern, season-grained since that's the only grain this data has.
+`player_season_history` joined to `players`/`element_types`. `before_season` (a `"YYYY/YY"`
+string, matching `player_season_history.season_name`'s own format — NOT `rules.season`'s
+`"YYYY-YY"` convention) filters to `season_name < before_season` for leakage-free holdout
+evaluation — mirrors `player_regression.py`'s `as_of_date` pattern, season-grained since that's
+the only grain this data has.
 
 ```python
 expected_bonus_per90(conn, player_id, before_season=None) -> ShrunkRate

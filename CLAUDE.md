@@ -249,6 +249,11 @@ check it was started with cwd = `fpl-agent/`, not its parent.
 - `models/player_regression.py` — shrinkage-regressed per-90 goals/assists/cards toward the
   positional mean (population prior, not leave-one-out — see `progress.md` Task 10 ruling), plus
   team-xG-share for the goals term.
+- `models/bonus_regression.py` — same `shrink_rate()` empirical-Bayes treatment as
+  `player_regression.py`, applied to bonus points per-90, but over `player_season_history` SEASON
+  TOTALS (season grain, not match grain — no source has bonus/BPS at match granularity). Scored via
+  its own season-level holdout, `fpl backtest --bonus` (`score_bonus_regression`) — see the
+  bonus-regression limitation below for the live numbers.
 - `models/minutes_distribution.py` — empirical minutes-bucket probability distribution (>=4
   pre-cutoff matches), falling back to the existing `expected_minutes()` estimate below that —
   the fallback path is not leakage-free and is excluded from backtest scoring.
@@ -257,7 +262,7 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   goals-conceded-band probabilities, shrinkage-regressed goals/assists, cards modeled from
   historical per-90 discipline rate. `ExpectedPoints`/`WindowExpectedPoints` field names
   unchanged — `optimization/` callers untouched.
-- `backtesting/harness.py` + `fpl backtest --season YYYY-YY [--model-version VERSION] [--differentials]` —
+- `backtesting/harness.py` + `fpl backtest --season YYYY-YY [--model-version VERSION] [--differentials] [--bonus]` —
   walk-forward evaluation (10-match rounds, chronological, `as_of_date` threaded through every
   query so nothing sees future data) against Understat-reconstructed actual points (core
   scoring only: appearance + goals + assists + yellow cards — bonus/BPS aren't in that source,
@@ -691,7 +696,14 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   0.2228 — shrinkage wins on 60.1% of individual players. A real win on real data, but
   `PRIOR_STRENGTH_MATCHES = 10` is still the goals/assists/cards value carried over unmodified,
   not independently tuned for bonus — worth its own value as a follow-up, not something this
-  result closes off.
+  result closes off. The 328-player holdout is smaller than the real live pool: against the
+  actual synced 587-player pool, 83 players have zero `player_season_history` rows and 123 have
+  exactly one — together ~35% of the pool that this holdout's evidence says nothing about (a
+  leave-one-season-out holdout needs >=2 seasons per player to hold one out). Players with zero
+  season history now get the pure positional-average prior instead of the old hard `0.0` fallback
+  (see `expected_bonus_per90`) — a real behavior change for that ~14% of the pool that this
+  holdout doesn't directly validate, though it's the same honest-fallback pattern used throughout
+  this model layer (e.g. `shrink_rate`'s own zero-matches behavior), not a fabrication.
 - **Live pre-match odds blending is effectively unreachable today.**
   `team_match_odds_history` only has played-match odds from the backfill sources, so live
   `fpl projections`/`build-team` runs always fall back to Dixon-Coles-only until a live odds

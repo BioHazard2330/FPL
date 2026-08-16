@@ -15,9 +15,11 @@ one shared piece of infrastructure rather than two independent samplers).
 
 Bonus points are NOT sampled per trial - no per-trial bonus distribution exists (same
 gap models/expected_points.py::core_expected_points already documents for Pillar 0).
-Only the historical-average bonus90 contribution is added, scaled by the trial's own
-minutes weight. This means trial totals do not capture bonus-point variance, only its
-mean - a known, documented limitation, not a silent gap.
+Only the shrinkage-regressed bonus90 contribution (models/bonus_regression.py's
+expected_bonus_per90, season-grain empirical-Bayes shrinkage toward the positional mean -
+no longer a raw historical average) is added, scaled by the trial's own minutes weight.
+This means trial totals do not capture bonus-point variance, only its mean - a known,
+documented limitation, not a silent gap.
 
 RNG convention: every sampling function here takes an explicit np.random.Generator -
 never global numpy random state - so trials are reproducible under a fixed seed. This
