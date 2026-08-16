@@ -672,9 +672,26 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 
 ## What's still genuinely limited (read before trusting output)
 
-- **`calibrated-v2` still doesn't model bonus/BPS or (outside the shrinkage prior) cards
-  precisely.** Backtest scoring excludes bonus/BPS on both sides (Understat doesn't carry it)
-  rather than faking it — real predictions are honest, just narrower than full FPL scoring.
+- **Bonus is no longer a naive last-season carryover, but it's still not a real BPS model, and
+  the round-level backtest still can't score it at all.** `models/bonus_regression.py` (a Pillar 0
+  addendum, spec `docs/superpowers/specs/2026-08-16-bonus-shrinkage-design.md`, plan
+  `docs/superpowers/plans/2026-08-16-bonus-shrinkage-regression.md`) gives bonus the same
+  `shrink_rate()` empirical-Bayes treatment goals/assists/cards already get, but
+  over `player_season_history` SEASON TOTALS rather than per-match rows — no source this project
+  has carries bonus/BPS at match granularity (BPS is FPL-proprietary; Understat doesn't have it),
+  so it's a season-grain, leave-one-season-out treatment, not the match-grain `as_of_date`
+  walk-forward the rest of `calibrated-v2` uses. `core_expected_points()` and the round-level
+  `fpl backtest` still deliberately exclude bonus entirely: Understat's reconstructed "actual"
+  side has no bonus field, so scoring a predicted bonus term against it would compare the model to
+  information neither side can see, corrupting MAE/RMSE rather than making it more honest. Scored
+  instead via a separate season-level holdout, `fpl backtest --bonus`
+  (`score_bonus_regression`) — live-verified against a freshly synced player pool this session:
+  328 players scored (381 had ≥2 seasons of bonus history in `player_season_history`; 53 dropped
+  for a zero-minute held-out season), shrunk MAE 0.2052 vs naive (unshrunk, prior-season-only) MAE
+  0.2228 — shrinkage wins on 60.1% of individual players. A real win on real data, but
+  `PRIOR_STRENGTH_MATCHES = 10` is still the goals/assists/cards value carried over unmodified,
+  not independently tuned for bonus — worth its own value as a follow-up, not something this
+  result closes off.
 - **Live pre-match odds blending is effectively unreachable today.**
   `team_match_odds_history` only has played-match odds from the backfill sources, so live
   `fpl projections`/`build-team` runs always fall back to Dixon-Coles-only until a live odds
@@ -682,6 +699,21 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - **Backtest baseline is historical-only.** `fpl backtest` proves the model against 2024-25-style
   historical seasons (once backfilled); it says nothing yet about live in-season accuracy —
   revisit once real 2026-27 GW1-5 results exist to compare against.
+- **`fpl backfill-xg` is currently broken on a from-scratch DB — discovered live during the
+  bonus-shrinkage verification, not a bug in this project's code.** Understat's league season page
+  (`understat.com/league/EPL/<year>`) no longer embeds the `datesData`/`teamsData` JSON blob
+  `understat_source.py::extract_json_var` parses out of a `<script>` tag; a direct fetch (with and
+  without a browser User-Agent) returns a normal 200 and an 18KB page, but neither variable name
+  appears in it anywhere — a real site-structure change on Understat's end. Net effect: with no
+  `player_match_stats_history` rows reachable for 2024-25, `fpl backtest --season 2024-25` (with
+  or without `--bonus`) currently reports `predictions scored 0` / `MAE 0.0` / `RMSE 0.0` /
+  `DOES NOT beat naive baseline` for its round-level half on a fresh DB. It degrades gracefully
+  rather than lying about coverage (same `0.0`-not-a-crash pattern `fallback_excluded_count`
+  already uses elsewhere in the harness), but that round-level output is not currently trustworthy
+  evidence of anything until Understat's scraper is fixed for the new page structure — untouched
+  by this plan, since Task 5 was verification-only. The bonus-regression half is unaffected:
+  `score_bonus_regression` reads `player_season_history` only, which comes from FPL's own API via
+  `fpl sync-history`, never from Understat.
 - **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
   detection all need Tier 2-4 sources the user chose not to enable. What's built
   instead (official-status injuries, confirmed-transfer club changes) is real and
