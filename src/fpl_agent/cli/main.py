@@ -257,7 +257,7 @@ def backtest(season: str, model_version: str | None, differentials: bool, bonus:
             bonus_result = score_bonus_regression(conn)
             log_decision(
                 conn, "bonus_regression_backtest",
-                summary=f"{bonus_result.players_evaluated} players evaluated, season {season}",
+                summary=f"{bonus_result.players_evaluated} players evaluated (season-independent holdout)",
                 detail={
                     "players_evaluated": bonus_result.players_evaluated,
                     "shrunk_mae": bonus_result.shrunk_mae, "naive_mae": bonus_result.naive_mae,
