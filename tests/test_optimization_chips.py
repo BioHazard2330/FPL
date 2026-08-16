@@ -151,3 +151,44 @@ def test_schedule_chips_picks_the_higher_value_window(db_conn, monkeypatch):
     assert schedule.baseline_schedule[0].chip_name == "bboost"
     assert schedule.total_expected_value == 10.0
     assert schedule.advisory_hit_recommendations == ()
+
+
+from fpl_agent.optimization.transfers import TransferCandidate
+
+
+def test_advisory_hit_recommendation_can_beat_baseline(db_conn, monkeypatch):
+    import fpl_agent.optimization.chips as chips_mod
+
+    trajectory = TransferSequence(
+        steps=(TransferSequenceStep(event=10, player_out_id=None, player_out_name=None, player_in_id=None, player_in_name=None, uses_hit=False),),
+        final_squad_ids=(1, 2), final_free_transfers=1, final_bank_tenths=0,
+        total_net_ev=0.0, tiebreak_adjustment=0.0,
+    )
+    windows = [ChipWindow(name="bboost", number=1, start_event=10, stop_event=19, chip_type="team", eligible_now=True)]
+
+    def fake_bench_boost(conn, squad_ids, event, scenario_draw):
+        import numpy as np
+        # A hypothetical squad containing player 99 (the hit target) scores much
+        # higher than the baseline [1, 2] squad - proves the advisory path is
+        # actually reachable, not dead code the test suite never exercises.
+        return np.array([20.0, 20.0]) if 99 in squad_ids else np.array([3.0, 3.0])
+
+    monkeypatch.setattr(chips_mod, "_bench_boost_trial_values", fake_bench_boost)
+    monkeypatch.setattr(
+        chips_mod, "best_transfer_for_player",
+        lambda conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=1, top_n=1, from_event=None, cache=None: [
+            TransferCandidate(
+                player_out_id=player_out_id, player_out_name="Out", player_in_id=99, player_in_name="In",
+                price_delta_tenths=0, ev_1gw=0, ev_3gw=0, ev_5gw=0, net_ev_1gw=0, net_ev_3gw=0, net_ev_5gw=0, uses_hit=True,
+            )
+        ],
+    )
+
+    schedule = schedule_chips(db_conn, initial_squad_ids=[1, 2], squad_trajectory=trajectory, chip_windows=windows, scenario_draw=[object(), object()])
+
+    assert schedule.baseline_schedule[0].expected_marginal_value == 3.0
+    assert len(schedule.advisory_hit_recommendations) == 1
+    rec = schedule.advisory_hit_recommendations[0]
+    assert rec.player_in_id == 99
+    assert rec.advisory_expected_marginal_value == 20.0 - 4.0  # hit cost
+    assert rec.delta > 0

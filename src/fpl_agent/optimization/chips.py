@@ -193,6 +193,72 @@ def _squad_ids_by_event(initial_squad_ids: list[int], trajectory) -> dict[int, t
     return by_event
 
 
+# Placeholder attribute (not a real top-level import - see _advisory_hit_recommendations'
+# docstring for why) so tests can monkeypatch this module's best_transfer_for_player.
+best_transfer_for_player = None
+
+
+def _advisory_hit_recommendations(
+    conn: sqlite3.Connection,
+    initial_squad_ids: list[int],
+    squad_trajectory,
+    baseline_schedule: tuple[ChipScheduleEntry, ...],
+    horizon_gw: int,
+    scenario_draw: list[ScenarioOutcome],
+) -> tuple[AdvisoryHitRecommendation, ...]:
+    """For each baseline-scheduled chip event, tries whether an extra hit transfer
+    right before it - a possibility Plan 1a's beam search structurally can't reach
+    beyond horizon step 0, see CLAUDE.md's Pillar 1 Plan 1a section - would raise
+    that chip's expected value. Scored against the SAME scenario_draw as the
+    baseline (correlated comparison, not an independent redraw - see the Plan 1b
+    design doc's Scenario reuse section). Advisory-only: never mutates
+    squad_trajectory. Conservative bank_tenths=0 - see this task's docstring.
+
+    best_transfer_for_player is looked up via this module's own globals rather
+    than a static top-level import: transfers.py already imports eligible_chips
+    from this module, so a top-level `from ...transfers import
+    best_transfer_for_player` here would be circular (and which side of the
+    cycle loads first depends on which module a caller imports first). Checking
+    globals() first still lets tests monkeypatch this module's
+    best_transfer_for_player attribute; the deferred import only runs for real
+    usage, by which point both modules have finished loading."""
+    transfer_fn = globals().get("best_transfer_for_player")
+    if transfer_fn is None:
+        from fpl_agent.optimization.transfers import best_transfer_for_player as transfer_fn
+
+    squad_by_event = _squad_ids_by_event(initial_squad_ids, squad_trajectory)
+    recommendations = []
+    for entry in baseline_schedule:
+        squad_ids = list(squad_by_event[entry.event])
+        best_delta = 0.0
+        best = None
+        for player_out_id in squad_ids:
+            for candidate in transfer_fn(
+                conn, player_out_id, squad_ids, bank_tenths=0, is_hit=True, n_gw=1, top_n=1, from_event=entry.event,
+            ):
+                hypothetical_ids = [candidate.player_in_id if pid == player_out_id else pid for pid in squad_ids]
+                fn = _TRIAL_VALUE_FUNCS[entry.chip_name]
+                trial_values = fn(conn, hypothetical_ids, entry.event, horizon_gw, scenario_draw)
+                advisory_value = float(np.median(trial_values)) - 4.0  # flat hit cost, same rule as transfers.py
+                delta = advisory_value - entry.expected_marginal_value
+                if delta > best_delta:
+                    best_delta = delta
+                    best = (player_out_id, candidate, advisory_value)
+        if best is not None:
+            player_out_id, candidate, advisory_value = best
+            recommendations.append(
+                AdvisoryHitRecommendation(
+                    event=entry.event, chip_name=entry.chip_name,
+                    player_out_id=player_out_id, player_out_name=candidate.player_out_name,
+                    player_in_id=candidate.player_in_id, player_in_name=candidate.player_in_name,
+                    baseline_expected_marginal_value=entry.expected_marginal_value,
+                    advisory_expected_marginal_value=advisory_value,
+                    delta=best_delta,
+                )
+            )
+    return tuple(recommendations)
+
+
 def schedule_chips(
     conn: sqlite3.Connection,
     initial_squad_ids: list[int],
@@ -244,4 +310,5 @@ def schedule_chips(
 
     best_mask = max(dp, key=lambda m: dp[m][0])
     best_value, best_entries = dp[best_mask]
-    return ChipSchedule(baseline_schedule=best_entries, advisory_hit_recommendations=(), total_expected_value=best_value)
+    advisory = _advisory_hit_recommendations(conn, initial_squad_ids, squad_trajectory, best_entries, horizon_gw, scenario_draw)
+    return ChipSchedule(baseline_schedule=best_entries, advisory_hit_recommendations=advisory, total_expected_value=best_value)
