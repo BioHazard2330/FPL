@@ -134,7 +134,7 @@ def test_sample_effective_ownership_aggregates_multiplier_correctly(db_conn, mon
 
     assert result == {
         "skipped": False, "event": 1, "sample_size": 2, "players_sampled": 2,
-        "managers_failed": 0, "unknown_players_dropped": 0,
+        "managers_failed": 0, "unknown_players_dropped": 0, "aborted_early": False,
     }
 
     row_55 = db_conn.execute(
@@ -362,6 +362,66 @@ def test_sample_effective_ownership_drops_picks_for_unsynced_player_ids(db_conn,
     assert result["sample_size"] == 2  # the managers themselves were fine
     rows = db_conn.execute("SELECT player_id FROM player_sample_ownership_history").fetchall()
     assert [r["player_id"] for r in rows] == [55]
+
+
+def test_sample_effective_ownership_circuit_breaker_stops_a_failing_run(db_conn, monkeypatch):
+    """Up to ~765 sequential requests per run, and FPLApiAdapter._get retries 3x with
+    backoff even on permanent failures - a rate-limiting or down API would otherwise burn
+    thousands of requests over tens of minutes. A long unbroken run of failures means the
+    API, not one bad manager: stop, keep what was aggregated, report it honestly."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings",
+                         lambda self, league_id, page: _fake_standings_n(page, 40))
+
+    attempted = []
+
+    def dies_after_two(self, entry_id, event):
+        attempted.append(entry_id)
+        if entry_id > 102:  # first two managers succeed, everything after fails forever
+            raise SourceFetchError("boom")
+        return _fake_picks(entry_id, 55)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", dies_after_two)
+
+    result = eo_sample.sample_effective_ownership(
+        db_conn, event=1, target_sample_size=50, delay=0, max_consecutive_failures=5
+    )
+
+    assert result["aborted_early"] is True
+    assert len(attempted) == 7  # 2 successes + 5 consecutive failures, then stop (not 40)
+    assert result["sample_size"] == 2  # partial results, not a crash and not zero
+    assert result["managers_failed"] == 5
+    assert _health(db_conn)["failure_count"] == 1  # an aborted run is never "healthy"
+    assert "aborted after 5 consecutive failures" in _health(db_conn)["last_error"]
+    row = db_conn.execute("SELECT * FROM player_sample_ownership_history WHERE player_id=55").fetchone()
+    assert row["owned_count"] == 2  # what was aggregated before the abort still commits
+
+
+def test_sample_effective_ownership_circuit_breaker_resets_on_success(db_conn, monkeypatch):
+    """Scattered one-off failures must not accumulate into a false trip - only an
+    unbroken run counts."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings",
+                         lambda self, league_id, page: _fake_standings_n(page, 10))
+
+    def every_other_fails(self, entry_id, event):
+        if entry_id % 2 == 1:
+            raise SourceFetchError("boom")
+        return _fake_picks(entry_id, 55)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", every_other_fails)
+
+    result = eo_sample.sample_effective_ownership(
+        db_conn, event=1, target_sample_size=50, delay=0, max_consecutive_failures=3
+    )
+
+    assert result["aborted_early"] is False
+    assert result["sample_size"] == 5
+    assert result["managers_failed"] == 5
 
 
 def _health(conn):

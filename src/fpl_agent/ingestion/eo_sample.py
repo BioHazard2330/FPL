@@ -17,6 +17,7 @@ _MAX_RANK = 10000
 _DEFAULT_SAMPLE_SIZE = 750
 _DEFAULT_DELAY_SECONDS = 0.15  # same politeness delay as history_sync.py
 _FAILURE_TOLERANCE = 0.10  # >10% of attempted manager fetches failing = a degraded run
+_MAX_CONSECUTIVE_FAILURES = 25  # circuit breaker: this many in a row means the API, not one manager
 
 
 def select_stratified_pages(
@@ -81,6 +82,7 @@ def sample_effective_ownership(
     target_sample_size: int = _DEFAULT_SAMPLE_SIZE,
     force: bool = False,
     delay: float = _DEFAULT_DELAY_SECONDS,
+    max_consecutive_failures: int = _MAX_CONSECUTIVE_FAILURES,
 ) -> dict:
     """Bounded, rank-stratified sample of top-10k Overall league picks for one
     already-locked event. Idempotent per event unless force=True (the whole event's
@@ -96,7 +98,7 @@ def sample_effective_ownership(
     if existing and not force:
         return {
             "skipped": True, "event": event, "sample_size": 0, "players_sampled": 0,
-            "managers_failed": 0, "unknown_players_dropped": 0,
+            "managers_failed": 0, "unknown_players_dropped": 0, "aborted_early": False,
         }
 
     event_row = conn.execute("SELECT deadline_time_epoch FROM events WHERE id=?", (event,)).fetchone()
@@ -124,21 +126,34 @@ def sample_effective_ownership(
     agg: dict[int, dict[str, int]] = {}
     fetched = 0
     failed: list[int] = []
+    consecutive_failures = 0
+    aborted_early = False
     for entry_id in entry_ids:
+        # Circuit breaker. This is the heaviest network pattern in the project (up to
+        # ~765 sequential requests), and FPLApiAdapter._get retries 3x with backoff even
+        # on permanent failures - so a rate-limiting or down API would otherwise burn
+        # thousands of requests over tens of minutes before finishing. A long unbroken
+        # run of failures means the API, not one bad manager: stop and keep whatever was
+        # aggregated so far, with honest sample_size/managers_failed counts.
+        if consecutive_failures >= max_consecutive_failures:
+            aborted_early = True
+            break
+
+        picks = None
         try:
             fetch = adapter.fetch_entry_picks(entry_id, event)
         except SourceFetchError:
-            failed.append(entry_id)
             fetch = None
         finally:
             time.sleep(delay)
-        if fetch is None:
-            continue
+        if fetch is not None:
+            picks = _parse_picks(fetch.data)
 
-        picks = _parse_picks(fetch.data)
         if picks is None:
             failed.append(entry_id)
+            consecutive_failures += 1
             continue
+        consecutive_failures = 0
 
         for pid, mult in picks:
             bucket = agg.setdefault(
@@ -194,15 +209,18 @@ def sample_effective_ownership(
     # normal noise that self-heals on the next run - a genuinely broken or rate-limiting
     # API blows well past the threshold.
     attempted = fetched + len(failed)
-    degraded = attempted > 0 and len(failed) > _FAILURE_TOLERANCE * attempted
+    degraded = aborted_early or (attempted > 0 and len(failed) > _FAILURE_TOLERANCE * attempted)
+    error = f"{len(failed)} of {attempted} manager fetch(es) failed" if failed else None
+    if aborted_early:
+        error = f"{error} - aborted after {max_consecutive_failures} consecutive failures"
     update_source_health(
         conn, "fpl_eo_sample",
         success=(sample_size > 0 and not degraded),
-        error=f"{len(failed)} of {attempted} manager fetch(es) failed" if failed else None,
+        error=error,
     )
 
     return {
         "skipped": False, "event": event, "sample_size": sample_size,
         "players_sampled": len(agg), "managers_failed": len(failed),
-        "unknown_players_dropped": len(unknown_player_ids),
+        "unknown_players_dropped": len(unknown_player_ids), "aborted_early": aborted_early,
     }
