@@ -189,3 +189,49 @@ def test_score_differentials_reports_insufficient_data_for_historical_season(db_
     assert result.insufficient_ownership_data is True
     assert result.differentials_scored == 0
     assert result.mean_delta_vs_template is None
+
+
+def _insert_bonus_season_row(conn, player_id, season_name, bonus, minutes):
+    conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (?,?,?,0,0,0,0,0,0,?,0,0,0,0,0,0,50,55,'t0')",
+        (player_id, season_name, minutes, bonus),
+    )
+
+
+def test_score_bonus_regression_reports_insufficient_data_when_no_multi_season_players(db_conn):
+    _seed_reference_data(db_conn)  # existing helper in this file - teams/element_types/players/rules
+    db_conn.commit()
+
+    from fpl_agent.backtesting.harness import score_bonus_regression
+    result = score_bonus_regression(db_conn)
+
+    assert result.insufficient_data is True
+    assert result.players_evaluated == 0
+
+
+def test_score_bonus_regression_compares_shrunk_vs_naive_against_held_out_season(db_conn):
+    _seed_reference_data(db_conn)
+    # Player 1 (already seeded by _seed_reference_data as a FWD): three seasons.
+    # Held-out (latest): 2024/25, real bonus90 = 15/900*90 = 1.5
+    # Prior (naive baseline source): 2023/24, bonus90 = 1/900*90 = 0.1 - a big swing,
+    # so naive (unshrunk carryover) will be a poor predictor of the held-out season.
+    _insert_bonus_season_row(db_conn, 1, "2022/23", bonus=9, minutes=900)   # 0.9/90, forms part of the prior pool
+    _insert_bonus_season_row(db_conn, 1, "2023/24", bonus=1, minutes=900)   # 0.1/90
+    _insert_bonus_season_row(db_conn, 1, "2024/25", bonus=15, minutes=900)  # held out, actual 1.5/90
+    db_conn.commit()
+
+    from fpl_agent.backtesting.harness import score_bonus_regression
+    result = score_bonus_regression(db_conn)
+
+    assert result.insufficient_data is False
+    assert result.players_evaluated == 1
+    assert result.naive_mae == 1.4  # |0.1 - 1.5|
+    # Shrunk prediction: prior season (2023/24) bonus90=0.1, matches=10; position
+    # prior over seasons before 2024/25 = (9+1)/((900+900)/90) = 10/20 = 0.5;
+    # shrink_rate(1.0, 900, 0.5) -> matches=10, raw=0.1,
+    # shrunk=(10*0.1+10*0.5)/20=0.3 -> |0.3-1.5|=1.2
+    assert result.shrunk_mae == 1.2
+    assert result.shrunk_win_rate == 1.0  # 1.2 < 1.4, the only player in this holdout set

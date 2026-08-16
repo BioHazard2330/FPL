@@ -41,6 +41,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from fpl_agent.models.bonus_regression import expected_bonus_per90
 from fpl_agent.models.differentials import find_differentials
 from fpl_agent.models.minutes_distribution import expected_appearance_points, minutes_bucket_probabilities
 from fpl_agent.models.player_regression import player_shrunk_rates
@@ -288,4 +289,71 @@ def score_differentials(conn, season: str, model_version: str) -> DifferentialBa
         differentials_scored=len(deltas),
         mean_delta_vs_template=(sum(deltas) / len(deltas)) if deltas else None,
         insufficient_ownership_data=False,
+    )
+
+
+@dataclass(frozen=True)
+class BonusRegressionBacktestResult:
+    players_evaluated: int
+    shrunk_mae: float
+    naive_mae: float
+    shrunk_win_rate: float
+    insufficient_data: bool
+
+
+def score_bonus_regression(conn) -> BonusRegressionBacktestResult:
+    """Season-level leave-one-season-out holdout, not a per-round walk-forward
+    series like the rest of calibrated-v2 - player_season_history only has
+    season TOTALS, no per-round bonus data exists anywhere in this project's
+    sources (see models/bonus_regression.py's module docstring). For every
+    player with >=2 season_history rows, the latest season is held out as
+    'actual'; both the naive (unshrunk, most-recent-prior-season - what the
+    live model did before Task 2's wiring change) and the shrinkage-regressed
+    estimate are computed from strictly earlier seasons only, then compared
+    against the held-out season's real bonus90."""
+    rows = conn.execute(
+        "SELECT player_id, COUNT(*) AS n FROM player_season_history "
+        "WHERE bonus IS NOT NULL AND minutes IS NOT NULL GROUP BY player_id HAVING n >= 2"
+    ).fetchall()
+    if not rows:
+        return BonusRegressionBacktestResult(
+            players_evaluated=0, shrunk_mae=0.0, naive_mae=0.0, shrunk_win_rate=0.0, insufficient_data=True,
+        )
+
+    shrunk_errors, naive_errors, shrunk_wins = [], [], 0
+    for r in rows:
+        player_id = r["player_id"]
+        seasons = conn.execute(
+            "SELECT season_name, bonus, minutes FROM player_season_history "
+            "WHERE player_id=? AND bonus IS NOT NULL AND minutes IS NOT NULL ORDER BY season_name DESC",
+            (player_id,),
+        ).fetchall()
+        held_out = seasons[0]
+        if not held_out["minutes"]:
+            continue
+        actual_bonus90 = held_out["bonus"] / held_out["minutes"] * 90
+
+        prior_season = seasons[1]
+        naive_bonus90 = (prior_season["bonus"] / prior_season["minutes"] * 90) if prior_season["minutes"] else 0.0
+
+        shrunk_bonus90 = expected_bonus_per90(conn, player_id, before_season=held_out["season_name"]).shrunk_per90
+
+        shrunk_err = abs(shrunk_bonus90 - actual_bonus90)
+        naive_err = abs(naive_bonus90 - actual_bonus90)
+        shrunk_errors.append(shrunk_err)
+        naive_errors.append(naive_err)
+        if shrunk_err < naive_err:
+            shrunk_wins += 1
+
+    if not shrunk_errors:
+        return BonusRegressionBacktestResult(
+            players_evaluated=0, shrunk_mae=0.0, naive_mae=0.0, shrunk_win_rate=0.0, insufficient_data=True,
+        )
+
+    return BonusRegressionBacktestResult(
+        players_evaluated=len(shrunk_errors),
+        shrunk_mae=round(statistics.mean(shrunk_errors), 4),
+        naive_mae=round(statistics.mean(naive_errors), 4),
+        shrunk_win_rate=round(shrunk_wins / len(shrunk_errors), 4),
+        insufficient_data=False,
     )
