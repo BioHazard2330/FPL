@@ -362,3 +362,38 @@ def test_null_bonus_in_season_history_does_not_crash(db_conn):
     ep = expected_points(db_conn, 1)
 
     assert ep.median >= 0
+
+
+def test_player_match_rates_bonus90_is_shrinkage_regressed_not_naive(db_conn):
+    """Proves the wiring actually took effect - a test against _player_match_rates
+    directly (not just bonus_regression.py in isolation), same lesson Plan 1a's
+    final review taught this project: a pure function working correctly doesn't
+    prove it's actually being called from the live path."""
+    from fpl_agent.models.expected_points import _player_match_rates
+
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    # Target player: 1 match's worth of minutes, high bonus (naive would carry
+    # this raw rate straight through with zero regression toward the population).
+    _insert_season_history(db_conn, player_id=1, minutes=90, bonus=6)
+
+    # A second FWD player.jt with a large sample forms a real, different population
+    # prior - without this row position_average_bonus_per90 would just equal the
+    # target's own rate and the test couldn't distinguish shrinkage from naive.
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (2,202,'BigSample',1,1,'a','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (2,'2025/26',1800,20,0,0,0,0,0,18,0,0,0,0,0,0,50,55,'t0')"
+    )
+    db_conn.commit()
+
+    rates = _player_match_rates(db_conn, player_id=1)
+
+    naive_bonus90 = 6 / 90 * 90  # what the OLD code would have returned: 6.0
+    assert rates["bonus90"] != naive_bonus90
+    assert rates["bonus90"] < naive_bonus90  # pulled down toward the lower population prior

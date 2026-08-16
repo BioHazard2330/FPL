@@ -21,11 +21,15 @@ heuristics component by component:
   rotation-risk players by exactly their historical minutes fraction.
 - Clean-sheet and goals-conceded-band probabilities: read directly off the
   blended Poisson distribution, not a linear heuristic on fixture difficulty.
-- Bonus: still last-season per-90 prior (models/player_regression.py's shot
-  data has no bonus/BPS field - Understat doesn't carry it - so this
-  component is honestly NOT part of the calibration work here; a real BPS
-  regression needs current-season player_stats_snapshot history, which only
-  exists once games are actually played this season).
+- Bonus: shrinkage-regressed per-90 rate (models/bonus_regression.py), same
+  empirical-Bayes treatment as goals/assists/cards but over player_season_history
+  (season TOTALS) rather than per-match Understat rows - no source this project
+  has carries bonus/BPS at match granularity (BPS is FPL-proprietary; Understat
+  doesn't have it). Still not a real BPS event model and still excluded from
+  core_expected_points()/the walk-forward backtest (Understat's "actual" side
+  has no bonus field to compare against - adding one to the predicted side only
+  would corrupt that metric), but no longer a naive unshrunk single-season
+  carryover with zero positional prior.
 - Cards: historical per-90 yellow-card rate (shrinkage-regressed the same
   way as goals/assists, models/player_regression.py), applied flat across
   positions per FPL's own scoring rule. Red cards aren't separately modelled
@@ -72,6 +76,7 @@ from fpl_agent.models.blend import (
     goals_conceded_band_probability,
     market_implied_fixture_goals,
 )
+from fpl_agent.models.bonus_regression import expected_bonus_per90
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.minutes_distribution import (
@@ -285,14 +290,7 @@ def _player_match_rates(
     # (one start out of ten team matches) can otherwise blow the ratio up.
     share_per90 = min(player_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
 
-    prior = conn.execute(
-        "SELECT bonus, minutes FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
-        (player_id,),
-    ).fetchone()
-    # bonus is nullable in player_season_history (the normalizer writes None
-    # through when history_past omits it), so guard it as well as minutes.
-    has_bonus_prior = prior is not None and prior["minutes"] and prior["bonus"] is not None
-    bonus90 = (prior["bonus"] / prior["minutes"] * 90) if has_bonus_prior else 0.0
+    bonus90 = expected_bonus_per90(conn, player_id).shrunk_per90
 
     yellow_card_rate = get_rule(conn, rules_season, "scoring.yellow_cards", -1) or -1
 
