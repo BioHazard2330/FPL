@@ -54,3 +54,44 @@ def _sample_fixture_scorelines(
     flat_index = rng.choice(joint.size, size=n_trials, p=joint.ravel())
     home_goals, away_goals = np.unravel_index(flat_index, joint.shape)
     return home_goals, away_goals
+
+
+def _sample_player_trial_points(
+    rng: np.random.Generator,
+    rates: dict,
+    conceded_rate: float,
+    team_goals: np.ndarray,
+    opp_goals: np.ndarray,
+) -> np.ndarray:
+    """Vectorized per-trial FPL points for one player in one fixture, given that
+    fixture's already-drawn (team_goals, opp_goals) - see module docstring for which
+    terms are sampled vs kept as a deterministic expectation (bonus)."""
+    n_trials = team_goals.shape[0]
+    probs = rates["minutes_probs"]
+    bucket = rng.choice(3, size=n_trials, p=[probs.p_zero, probs.p_partial, probs.p_full])  # 0=none,1=partial,2=full
+    appearance = np.where(bucket == 0, 0.0, np.where(bucket == 1, 1.0, 2.0))
+    # Mirrors _match_components' effective_minutes_fraction blend (p_partial/3 + p_full)
+    # translated from an aggregate expectation into a per-trial indicator weight.
+    weight = np.where(bucket == 0, 0.0, np.where(bucket == 1, 1 / 3, 1.0))
+    played_full = bucket == 2
+
+    goal_prob = np.clip(rates["player_share_per90"] * weight, 0.0, 1.0)
+    player_goals = rng.binomial(team_goals, goal_prob)
+    goals_points = player_goals * rates["goals_rate"]
+
+    assist_rate = np.clip(rates["shrunk_xa90"] * weight, 0.0, None)
+    assists = rng.poisson(assist_rate)
+    assists_points = assists * rates["assists_rate"]
+
+    card_prob = np.clip(rates["shrunk_cards90"] * weight, 0.0, 1.0)
+    card_drawn = rng.random(n_trials) < card_prob
+    cards_points = card_drawn.astype(float) * rates["yellow_card_rate"]
+
+    bonus_points = rates["bonus90"] * weight  # deterministic - see module docstring
+
+    # A clean sheet is a hard 60-minute threshold, same as _match_components - p_full
+    # only, not the blended partial-appearance weight.
+    clean_sheet_points = np.where(played_full & (opp_goals == 0), rates["clean_sheet_pts"], 0.0)
+    conceded_points = (opp_goals // 2) * conceded_rate * np.minimum(weight, 1.0)
+
+    return appearance + goals_points + assists_points + bonus_points + cards_points + clean_sheet_points + conceded_points
