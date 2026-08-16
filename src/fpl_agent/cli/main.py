@@ -17,6 +17,7 @@ from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, r
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
+from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective_ownership
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
@@ -168,6 +169,32 @@ def sync_history(limit: int | None, force: bool):
     click.echo(f"failed               {len(result['failed'])}")
     if result["failed"]:
         click.echo(f"failed player ids: {result['failed']}")
+
+
+@cli.command("sync-eo")
+@click.option("--event", required=True, type=int, help="gameweek to sample (must have already locked)")
+@click.option("--sample-size", default=_DEFAULT_SAMPLE_SIZE, type=int, help="target number of managers to sample")
+@click.option("--force", is_flag=True, help="re-sample even if this event already has EO data")
+def sync_eo(event: int, sample_size: int, force: bool):
+    """Sample effective ownership (captain/triple-captain-weighted) from a bounded,
+    rank-stratified slice of the top-10k Overall league for one locked gameweek.
+    Heaviest network pattern in this project - separate from `fpl sync`, throttled."""
+    conn = get_connection()
+    try:
+        result = sample_effective_ownership(conn, event=event, target_sample_size=sample_size, force=force)
+    except ValueError as e:
+        click.echo(f"sync-eo failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+
+    if result["skipped"]:
+        click.echo(f"event {event} already sampled - use --force to re-sample")
+        return
+    click.echo(f"event            {result['event']}")
+    click.echo(f"sample size      {result['sample_size']}")
+    click.echo(f"players sampled  {result['players_sampled']}")
+    click.echo(f"managers failed  {result['managers_failed']}")
 
 
 @cli.command("backfill-odds")
