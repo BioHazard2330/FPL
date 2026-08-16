@@ -132,7 +132,10 @@ def test_sample_effective_ownership_aggregates_multiplier_correctly(db_conn, mon
 
     result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50)
 
-    assert result == {"skipped": False, "event": 1, "sample_size": 2, "players_sampled": 2, "managers_failed": 0}
+    assert result == {
+        "skipped": False, "event": 1, "sample_size": 2, "players_sampled": 2,
+        "managers_failed": 0, "unknown_players_dropped": 0,
+    }
 
     row_55 = db_conn.execute(
         "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
@@ -294,6 +297,71 @@ def test_sample_effective_ownership_page_level_fetch_failure_is_skipped(db_conn,
         "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
     ).fetchone()
     assert row_55["owned_count"] == 2
+
+
+def test_sample_effective_ownership_survives_a_malformed_picks_payload(db_conn, monkeypatch):
+    """An unexpected response shape for one manager must be counted like any other
+    per-manager failure, not raise an uncaught KeyError that throws away an entire
+    in-progress run of hundreds of requests with no source_health record."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings",
+                         lambda self, league_id, page: _fake_standings(page))
+
+    def malformed_for_101(self, entry_id, event):
+        if entry_id == 101:
+            return RawFetch(
+                source_name="x", data={"detail": "Not found."},  # no "picks" key at all
+                retrieved_at="t1", latency_ms=1, parser_version="1",
+            )
+        return _fake_picks(entry_id, 55)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", malformed_for_101)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["sample_size"] == 1  # only entry 102 contributed
+    assert result["managers_failed"] == 1
+    row = db_conn.execute("SELECT * FROM player_sample_ownership_history WHERE player_id=55").fetchone()
+    assert row["owned_count"] == 1  # the good manager's data still committed
+
+
+def test_sample_effective_ownership_survives_a_malformed_standings_payload(db_conn, monkeypatch):
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1, 2])
+
+    def malformed_page_1(self, league_id, page):
+        if page == 1:
+            return RawFetch(source_name="x", data={"standings": None},
+                            retrieved_at="t1", latency_ms=1, parser_version="1")
+        return _fake_standings(page)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings", malformed_page_1)
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks",
+                         lambda self, entry_id, event: _fake_picks(entry_id, 55))
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["sample_size"] == 2  # page 2's entries only; page 1 contributed nothing
+
+
+def test_sample_effective_ownership_drops_picks_for_unsynced_player_ids(db_conn, monkeypatch):
+    """player_id has a real FK to players(id) with foreign_keys=ON, so a pick naming an
+    element we haven't synced locally yet would fail the whole bulk INSERT and discard
+    the run. It must be dropped instead, and everything else must still commit."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55])  # 999 deliberately NOT seeded - _fake_picks references it
+    _patch_happy_path(monkeypatch)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["players_sampled"] == 1
+    assert result["unknown_players_dropped"] == 1
+    assert result["sample_size"] == 2  # the managers themselves were fine
+    rows = db_conn.execute("SELECT player_id FROM player_sample_ownership_history").fetchall()
+    assert [r["player_id"] for r in rows] == [55]
 
 
 def _health(conn):

@@ -33,6 +33,48 @@ def select_stratified_pages(
     return sorted({1 + round(k * step) for k in range(n_pages)})
 
 
+def _parse_entry_ids(payload) -> list[int]:
+    """Guarded read of one standings page. An unexpected response shape is one skipped
+    page, not an uncaught KeyError/TypeError that discards a whole in-progress run of
+    hundreds of requests. Entry ids are coerced to int here too: they flow into
+    source_name=f"fpl_api_entry_picks_{entry_id}_{event}", which raw_store turns into a
+    filename, so an untrusted payload string must never reach it verbatim."""
+    try:
+        results = payload["standings"]["results"]
+    except (KeyError, TypeError):
+        return []
+    if not isinstance(results, list):
+        return []
+    entry_ids = []
+    for r in results:
+        try:
+            entry_ids.append(int(r["entry"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return entry_ids
+
+
+def _parse_picks(payload) -> list[tuple[int, int]] | None:
+    """Guarded read of one manager's picks, as (element, multiplier) pairs. None means
+    a malformed payload - counted as a manager-level failure like any fetch error,
+    never an uncaught exception that loses the run. A single unparseable pick fails the
+    whole manager rather than contributing a partial squad, which would understate
+    every other player's ownership against a denominator that counted this manager."""
+    try:
+        picks = payload["picks"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(picks, list):
+        return None
+    parsed = []
+    for p in picks:
+        try:
+            parsed.append((int(p["element"]), int(p["multiplier"])))
+        except (KeyError, TypeError, ValueError):
+            return None
+    return parsed
+
+
 def sample_effective_ownership(
     conn: sqlite3.Connection,
     event: int,
@@ -52,7 +94,10 @@ def sample_effective_ownership(
         (event, season),
     ).fetchone()["n"]
     if existing and not force:
-        return {"skipped": True, "event": event, "sample_size": 0, "players_sampled": 0, "managers_failed": 0}
+        return {
+            "skipped": True, "event": event, "sample_size": 0, "players_sampled": 0,
+            "managers_failed": 0, "unknown_players_dropped": 0,
+        }
 
     event_row = conn.execute("SELECT deadline_time_epoch FROM events WHERE id=?", (event,)).fetchone()
     if event_row is None:
@@ -73,7 +118,7 @@ def sample_effective_ownership(
             time.sleep(delay)
         if fetch is None:
             continue
-        entry_ids.extend(r["entry"] for r in fetch.data["standings"]["results"])
+        entry_ids.extend(_parse_entry_ids(fetch.data))
     entry_ids = entry_ids[:target_sample_size]
 
     agg: dict[int, dict[str, int]] = {}
@@ -90,9 +135,12 @@ def sample_effective_ownership(
         if fetch is None:
             continue
 
-        for pick in fetch.data["picks"]:
-            pid = pick["element"]
-            mult = pick["multiplier"]
+        picks = _parse_picks(fetch.data)
+        if picks is None:
+            failed.append(entry_id)
+            continue
+
+        for pid, mult in picks:
             bucket = agg.setdefault(
                 pid, {"owned_count": 0, "captained_count": 0, "sum_multiplier": 0, "sum_multiplier_sq": 0}
             )
@@ -103,6 +151,16 @@ def sample_effective_ownership(
             bucket["sum_multiplier_sq"] += mult * mult
 
         fetched += 1
+
+    # player_id has a real FK to players(id) and foreign_keys=ON is set on every
+    # connection, so an element id we haven't synced locally yet (a player added
+    # between the last `fpl sync` and this run) would fail the whole executemany with
+    # IntegrityError and discard an entire run's worth of requests. Drop just that
+    # player's rows; the aggregation for known players still commits.
+    known_player_ids = {r["id"] for r in conn.execute("SELECT id FROM players")}
+    unknown_player_ids = [pid for pid in agg if pid not in known_player_ids]
+    for pid in unknown_player_ids:
+        del agg[pid]
 
     sample_size = fetched
     if sample_size > 0:
@@ -146,4 +204,5 @@ def sample_effective_ownership(
     return {
         "skipped": False, "event": event, "sample_size": sample_size,
         "players_sampled": len(agg), "managers_failed": len(failed),
+        "unknown_players_dropped": len(unknown_player_ids),
     }
