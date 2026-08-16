@@ -66,12 +66,14 @@ def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int]) -> list[C
         ).fetchone()
         opponent, is_home = _next_opponent(conn, player["team_id"])
 
-        if eo_by_player:
-            eo = eo_by_player.get(player_id)
-            eo_percent = eo.eo_percent if eo is not None else 0.0
-            eo_source = "sampled"
-        else:
-            eo_percent, eo_source = None, "unavailable"
+        # Absent from a non-empty sample means "no measurement was taken for this
+        # player", not a measured zero - ~750 sampled managers can't cover every player.
+        # Captaincy has no raw-ownership fallback to report as EO, so an unmeasured
+        # player is "unavailable" (same as when no sample exists at all), which also
+        # keeps differential_captain_note from firing off a fabricated 0.0%.
+        eo = eo_by_player.get(player_id)
+        eo_percent = eo.eo_percent if eo is not None else None
+        eo_source = "sampled" if eo is not None else "unavailable"
 
         options.append(
             CaptainOption(

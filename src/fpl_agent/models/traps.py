@@ -53,11 +53,15 @@ def find_traps(conn: sqlite3.Connection, min_ownership: float = MIN_OWNERSHIP_PE
 
     results = []
     for r in rows:
-        if eo_by_player:
-            eo = eo_by_player.get(r["id"])
-            filter_ownership = eo.eo_percent if eo is not None else 0.0
+        eo = eo_by_player.get(r["id"])
+        if eo is not None:
+            filter_ownership = eo.eo_percent
             eo_percent, eo_source = filter_ownership, "sampled"
         else:
+            # Absent from a non-empty sample means "no measurement was taken for this
+            # player", not a measured zero - ~750 sampled managers can't cover every
+            # player. Fall back to this row's own raw ownership, exactly as when no
+            # sample exists at all, rather than claiming a fabricated sampled 0.0%.
             filter_ownership = r["selected_by_percent"]
             eo_percent, eo_source = None, "raw"
 

@@ -34,11 +34,15 @@ def get_template(conn: sqlite3.Connection, top_n_per_position: int = DEFAULT_TOP
 
     ranked = []
     for r in rows:
-        if eo_by_player:
-            eo = eo_by_player.get(r["id"])
-            sort_value = eo.eo_percent if eo is not None else 0.0
+        eo = eo_by_player.get(r["id"])
+        if eo is not None:
+            sort_value = eo.eo_percent
             eo_percent, eo_source = sort_value, "sampled"
         else:
+            # Absent from a non-empty sample means "no measurement was taken for this
+            # player", not a measured zero - ~750 sampled managers can't cover every
+            # player. Fall back to this row's own raw ownership, exactly as when no
+            # sample exists at all, rather than claiming a fabricated sampled 0.0%.
             sort_value = r["selected_by_percent"]
             eo_percent, eo_source = None, "raw"
         ranked.append((r["position"], -sort_value, r, eo_percent, eo_source))

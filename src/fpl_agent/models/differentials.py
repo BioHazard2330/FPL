@@ -67,11 +67,16 @@ def find_differentials(
 
     results = []
     for r in rows:
-        if eo_by_player:
-            eo = eo_by_player.get(r["id"])
-            filter_ownership = eo.eo_percent if eo is not None else 0.0
+        eo = eo_by_player.get(r["id"])
+        if eo is not None:
+            filter_ownership = eo.eo_percent
             eo_percent, eo_source = filter_ownership, "sampled"
         else:
+            # Absent from a non-empty sample means "no measurement was taken for this
+            # player", not a measured zero - ~750 sampled managers can't cover every
+            # player. Treating it as 0.0 handed _risk_bucket an "extreme-punt" label for
+            # players who may in fact be widely owned, so fall back to this row's own
+            # raw ownership, exactly as when no sample exists at all.
             filter_ownership = r["selected_by_percent"]
             eo_percent, eo_source = None, "raw"
 

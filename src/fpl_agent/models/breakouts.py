@@ -80,9 +80,13 @@ def find_breakouts(
             reasons.append("price rising")
 
         if reasons:
-            eo = eo_by_player.get(r["id"]) if eo_by_player else None
-            eo_percent = eo.eo_percent if eo is not None else (0.0 if eo_by_player else None)
-            eo_source = "sampled" if eo_by_player else "raw"
+            # Absent from a non-empty sample means "no measurement was taken for this
+            # player", not a measured zero - ~750 sampled managers can't cover every
+            # player. Report it as raw (the value this row already carries) rather than
+            # a fabricated sampled 0.0%.
+            eo = eo_by_player.get(r["id"])
+            eo_percent = eo.eo_percent if eo is not None else None
+            eo_source = "sampled" if eo is not None else "raw"
 
             results.append(
                 Breakout(

@@ -133,3 +133,72 @@ def test_differentials_uses_eo_for_the_max_ownership_filter_when_available(db_co
     assert result[0].eo_source == "sampled"
     assert result[0].effective_ownership_percent == 3.0
     assert result[0].ownership_percent == 8.0  # raw value still reported alongside EO
+
+
+def test_differentials_player_absent_from_the_sample_uses_raw_not_a_fabricated_zero(db_conn, monkeypatch):
+    """A ~750-manager sample can't cover every player. A player with no row in a
+    non-empty sample was previously reported as effective_ownership_percent=0.0 /
+    eo_source="sampled" and bucketed "extreme-punt" - a fabricated measurement claim
+    about a player who may in fact be widely owned. Absent must mean "unmeasured": fall
+    back to that player's own raw ownership, exactly as when no sample exists at all."""
+    _seed(db_conn, ownership=4.0)  # player 1 - never sampled
+    _patch_ep(monkeypatch, median=3.0, confidence="HIGH")
+
+    # player 2 IS sampled, so eo_by_player is non-empty and the absent-player path is
+    # what player 1 takes (rather than the whole-sample-missing fallback).
+    db_conn.execute(
+        "INSERT INTO players (id,code,web_name,team_id,element_type,status,updated_at) "
+        "VALUES (2,200,'Sampled',1,1,'a','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (2, 1.0, 't0', NULL)"
+    )
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (2, 1, 100, 2, 0, 2, 2, 't0')"  # eo_percent = 2.0
+    )
+    db_conn.commit()
+
+    result = {d.player_id: d for d in diff_mod.find_differentials(db_conn, max_ownership=5.0, min_median_xp=2.0)}
+
+    unsampled = result[1]
+    assert unsampled.eo_source == "raw"
+    assert unsampled.effective_ownership_percent is None
+    assert unsampled.risk == "low-risk"  # raw 4.0%, not a fabricated 0.0% "extreme-punt"
+    assert result[2].eo_source == "sampled"  # the sampled player is unaffected
+
+
+def test_differentials_absent_player_above_the_threshold_is_still_excluded(db_conn, monkeypatch):
+    """The same fabrication also let a genuinely popular unsampled player through the
+    max_ownership filter as if it were a 0%-owned punt."""
+    _seed(db_conn, ownership=40.0)  # player 1 - never sampled, and very widely owned
+    _patch_ep(monkeypatch, median=3.0, confidence="HIGH")
+
+    db_conn.execute(
+        "INSERT INTO players (id,code,web_name,team_id,element_type,status,updated_at) "
+        "VALUES (2,200,'Sampled',1,1,'a','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (2, 1.0, 't0', NULL)"
+    )
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (2, 1, 100, 2, 0, 2, 2, 't0')"
+    )
+    db_conn.commit()
+
+    result = diff_mod.find_differentials(db_conn, max_ownership=5.0, min_median_xp=2.0)
+
+    assert [d.player_id for d in result] == [2]

@@ -110,3 +110,28 @@ def test_captaincy_report_no_note_without_eo_sample(db_conn, monkeypatch):
 
     assert report.differential_captain_note is None
     assert report.best.eo_source == "unavailable"
+
+
+def test_captaincy_player_absent_from_the_sample_is_unavailable_not_a_fabricated_zero(db_conn, monkeypatch):
+    """A sample exists, but the best pick was never measured in it. Reporting that as a
+    0.0% sampled EO would fire differential_captain_note off a number nobody measured."""
+    _seed(db_conn)
+    _patch(monkeypatch)
+
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (1, 40.0, 't0', NULL)"
+    )
+    db_conn.execute(  # only player 3 appears in the sample; player 1 (the best pick) doesn't
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (3, 1, 100, 40, 12, 12, 24, 't0')"
+    )
+    db_conn.commit()
+
+    report = captaincy_mod.captaincy_report(db_conn, [1, 2, 3])
+
+    assert report.best.player_id == 1
+    assert report.best.eo_source == "unavailable"
+    assert report.best.effective_ownership_percent is None
+    assert report.differential_captain_note is None
