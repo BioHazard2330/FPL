@@ -28,6 +28,7 @@ from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
+from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
@@ -35,7 +36,6 @@ from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
 from fpl_agent.optimization.build_team import generate_build_team_report
 from fpl_agent.optimization.captaincy import captaincy_report
-from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.optimization.chips import (
     bench_boost_value,
     eligible_chips,
