@@ -1,12 +1,14 @@
 """
 Trap engine (section 60): popular players (high ownership) whose underlying FPL
-case is deteriorating. min_ownership is a documented heuristic threshold.
+case is deteriorating. min_ownership is a documented heuristic threshold. Uses
+sampled effective ownership (Plan 1c) for the ownership filter/sort when a sample
+exists, raw ownership otherwise.
 """
-
 import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.models.availability import classify
+from fpl_agent.models.effective_ownership import get_all_sample_eo
 from fpl_agent.models.expected_minutes import expected_minutes
 
 MIN_OWNERSHIP_PERCENT = 10.0
@@ -19,6 +21,8 @@ class Trap:
     web_name: str
     position: str
     ownership_percent: float
+    effective_ownership_percent: float | None
+    eo_source: str  # "sampled" or "raw"
     reasons: list[str]
 
 
@@ -42,12 +46,24 @@ def find_traps(conn: sqlite3.Connection, min_ownership: float = MIN_OWNERSHIP_PE
         "LEFT JOIN player_stats_snapshot s ON s.id = ("
         "    SELECT id FROM player_stats_snapshot WHERE player_id = p.id ORDER BY retrieved_at DESC LIMIT 1"
         ") "
-        "WHERE p.removed = 0 AND oh.selected_by_percent >= ?",
-        (min_ownership,),
+        "WHERE p.removed = 0"
     ).fetchall()
+
+    eo_by_player = get_all_sample_eo(conn)
 
     results = []
     for r in rows:
+        if eo_by_player:
+            eo = eo_by_player.get(r["id"])
+            filter_ownership = eo.eo_percent if eo is not None else 0.0
+            eo_percent, eo_source = filter_ownership, "sampled"
+        else:
+            filter_ownership = r["selected_by_percent"]
+            eo_percent, eo_source = None, "raw"
+
+        if filter_ownership < min_ownership:
+            continue
+
         reasons = []
         classification = classify(r["status"], r["chance_of_playing_this_round"], r["chance_of_playing_next_round"])
         if classification != "FIT":
@@ -64,9 +80,11 @@ def find_traps(conn: sqlite3.Connection, min_ownership: float = MIN_OWNERSHIP_PE
             results.append(
                 Trap(
                     player_id=r["id"], web_name=r["web_name"], position=r["position"],
-                    ownership_percent=r["selected_by_percent"], reasons=reasons,
+                    ownership_percent=r["selected_by_percent"],
+                    effective_ownership_percent=eo_percent, eo_source=eo_source,
+                    reasons=reasons,
                 )
             )
 
-    results.sort(key=lambda t: t.ownership_percent, reverse=True)
+    results.sort(key=lambda t: t.effective_ownership_percent if t.effective_ownership_percent is not None else t.ownership_percent, reverse=True)
     return results

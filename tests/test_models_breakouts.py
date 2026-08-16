@@ -84,3 +84,33 @@ def test_recent_setpiece_gain_is_flagged(db_conn, monkeypatch):
 
     assert len(result) == 1
     assert any("set-piece" in r for r in result[0].reasons)
+
+
+def test_breakouts_surfaces_eo_informationally_without_changing_selection(db_conn, monkeypatch):
+    _seed(db_conn, ownership=5.0, now_cost=50)  # same fixture as test_high_value_ratio_is_a_breakout
+    _patch_ep(monkeypatch, median=4.0)  # 0.8 xP/£m, above the 0.5 default threshold
+
+    baseline = breakouts_mod.find_breakouts(db_conn, max_ownership=10.0)
+    assert len(baseline) == 1
+    assert baseline[0].eo_source == "raw"
+    assert baseline[0].effective_ownership_percent is None
+
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (1, 1, 100, 5, 0, 5, 5, 't0')"  # eo_percent = 5.0
+    )
+    db_conn.commit()
+
+    with_eo = breakouts_mod.find_breakouts(db_conn, max_ownership=10.0)
+
+    # Same selection and value_ratio-based content as baseline - EO is informational
+    # only here, it must not change which players qualify or their order.
+    assert [b.player_id for b in with_eo] == [b.player_id for b in baseline]
+    assert [b.value_ratio for b in with_eo] == [b.value_ratio for b in baseline]
+    assert with_eo[0].eo_source == "sampled"
+    assert with_eo[0].effective_ownership_percent == 5.0

@@ -84,3 +84,34 @@ def test_price_falling_is_flagged(db_conn, monkeypatch):
 
     assert len(result) == 1
     assert "price falling" in result[0].reasons
+
+
+def test_traps_uses_eo_for_the_min_ownership_filter_when_available(db_conn, monkeypatch):
+    # Player 1 at 8% raw ownership (below the 10% MIN_OWNERSHIP_PERCENT default,
+    # would normally be excluded) but 15% effective ownership (heavily captained) -
+    # should now be INCLUDED because the EO-aware filter uses the higher EO value.
+    # status="a" + low minutes gives it a real trap reason so it survives the
+    # `if reasons:` guard.
+    _seed(db_conn, ownership=8.0, status="a")
+    _patch_em(monkeypatch, minutes=30.0)
+
+    # player_sample_ownership_history.event has a real FK to events(id) - _seed()
+    # above doesn't create one (foreign_keys=ON on every connection).
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (1, 1, 100, 8, 7, 15, 29, 't0')"  # eo_percent = 15.0 (8 owners, 7 of them captain: 1*1+7*2=15, sq: 1*1+7*4=29)
+    )
+    db_conn.commit()
+
+    result = traps_mod.find_traps(db_conn, min_ownership=10.0)
+
+    assert len(result) == 1
+    assert result[0].player_id == 1
+    assert result[0].eo_source == "sampled"
+    assert result[0].effective_ownership_percent == 15.0
+    assert result[0].ownership_percent == 8.0

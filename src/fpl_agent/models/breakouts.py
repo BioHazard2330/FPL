@@ -6,6 +6,7 @@ ratio and value-ratio threshold are documented heuristics, not calibrated.
 import sqlite3
 from dataclasses import dataclass
 
+from fpl_agent.models.effective_ownership import get_all_sample_eo
 from fpl_agent.models.expected_points import expected_points
 
 MAX_OWNERSHIP_PERCENT = 10.0
@@ -18,6 +19,8 @@ class Breakout:
     web_name: str
     position: str
     ownership_percent: float
+    effective_ownership_percent: float | None
+    eo_source: str  # "sampled" or "raw"
     median: float
     value_ratio: float
     reasons: list[str]
@@ -59,6 +62,8 @@ def find_breakouts(
         (max_ownership,),
     ).fetchall()
 
+    eo_by_player = get_all_sample_eo(conn)
+
     results = []
     for r in rows:
         if r["value_tenths"] <= 0:
@@ -75,10 +80,16 @@ def find_breakouts(
             reasons.append("price rising")
 
         if reasons:
+            eo = eo_by_player.get(r["id"]) if eo_by_player else None
+            eo_percent = eo.eo_percent if eo is not None else (0.0 if eo_by_player else None)
+            eo_source = "sampled" if eo_by_player else "raw"
+
             results.append(
                 Breakout(
                     player_id=r["id"], web_name=r["web_name"], position=r["position"],
-                    ownership_percent=r["selected_by_percent"], median=ep.median,
+                    ownership_percent=r["selected_by_percent"],
+                    effective_ownership_percent=eo_percent, eo_source=eo_source,
+                    median=ep.median,
                     value_ratio=round(value_ratio, 2), reasons=reasons,
                 )
             )
