@@ -17,10 +17,14 @@ pretends to plan the whole season now.
 
 import sqlite3
 from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
 
 from fpl_agent.models.expected_points import expected_points
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.rules import current_season
+from fpl_agent.models.scenario_engine import ScenarioOutcome
 from fpl_agent.optimization.captaincy import evaluate_captaincy
 from fpl_agent.optimization.squad import PlayerCandidate, optimise_squad, pick_starting_xi
 
@@ -92,3 +96,61 @@ def _candidates(conn: sqlite3.Connection, squad_ids: list[int]):
             median=ep.median, floor=ep.floor, ceiling=ep.ceiling, confidence=ep.confidence,
             expected_minutes=ep.expected_minutes,
         )
+
+
+def _bench_boost_trial_values(
+    conn: sqlite3.Connection, squad_ids: list[int], event: int, scenario_draw: list[ScenarioOutcome]
+) -> np.ndarray:
+    """Bench composition is a single deterministic pre-match choice (same
+    pick_starting_xi call bench_boost_value already makes) - only the bench's
+    realized points vary per scenario trial."""
+    squad = list(_candidates(conn, squad_ids))
+    xi = pick_starting_xi(conn, squad)
+    bench_ids = [c.player_id for c in xi.bench]
+    return np.array([
+        sum(o.points_by_event_player.get((event, pid), 0.0) for pid in bench_ids) for o in scenario_draw
+    ])
+
+
+def _triple_captain_trial_values(
+    conn: sqlite3.Connection, squad_ids: list[int], event: int, scenario_draw: list[ScenarioOutcome]
+) -> np.ndarray:
+    """Extra points over a normal (2x) captaincy - one more multiple of the best
+    option's realized points, mirroring triple_captain_value's median-based logic."""
+    options = evaluate_captaincy(conn, squad_ids)
+    if not options:
+        return np.zeros(len(scenario_draw))
+    captain_id = options[0].player_id
+    return np.array([o.points_by_event_player.get((event, captain_id), 0.0) for o in scenario_draw])
+
+
+def _wildcard_trial_values(
+    conn: sqlite3.Connection, squad_ids: list[int], event: int, horizon_gw: int, scenario_draw: list[ScenarioOutcome]
+) -> np.ndarray:
+    """The rebuilt squad is a single deterministic ILP solve (same optimise_squad
+    call wildcard_value already makes - re-solving per trial would blow the runtime
+    budget); only the realized-points GAP between it and the current squad varies
+    per trial, summed over the full horizon window."""
+    rebuilt = optimise_squad(conn, n_gw=horizon_gw)
+    rebuilt_ids = [c.player_id for c in rebuilt.squad]
+    events = range(event, event + horizon_gw)
+
+    def _total(ids, outcome):
+        return sum(outcome.points_by_event_player.get((e, pid), 0.0) for e in events for pid in ids)
+
+    return np.array([_total(rebuilt_ids, o) - _total(squad_ids, o) for o in scenario_draw])
+
+
+def _freehit_trial_values(
+    conn: sqlite3.Connection, squad_ids: list[int], event: int, horizon_gw: int, scenario_draw: list[ScenarioOutcome]
+) -> np.ndarray:
+    """Same idea as _wildcard_trial_values but single-GW, mirroring freehit_value."""
+    return _wildcard_trial_values(conn, squad_ids, event, 1, scenario_draw)
+
+
+_TRIAL_VALUE_FUNCS: dict[str, Callable] = {
+    "bboost": lambda conn, squad_ids, event, horizon_gw, scenario_draw: _bench_boost_trial_values(conn, squad_ids, event, scenario_draw),
+    "3xc": lambda conn, squad_ids, event, horizon_gw, scenario_draw: _triple_captain_trial_values(conn, squad_ids, event, scenario_draw),
+    "wildcard": _wildcard_trial_values,
+    "freehit": _freehit_trial_values,
+}
