@@ -468,9 +468,18 @@ check it was started with cwd = `fpl-agent/`, not its parent.
 
 ## Data model / logic (Pillar 1 Plan 1c)
 
-- `player_sample_ownership_history` (migration `0011`) — FACTS only: `sample_size`/`owned_count`/
-  `captained_count`/`sum_multiplier`/`sum_multiplier_sq` per `(player_id, event)`, unique-indexed on
-  that pair. Not a `valid_from`/`valid_until` slowly-changing fact like price/ownership — a
+- `player_sample_ownership_history` (migrations `0011` + `0012`) — FACTS only: `sample_size`/
+  `owned_count`/`captained_count`/`sum_multiplier`/`sum_multiplier_sq` per
+  `(player_id, event, season)`, unique-indexed on that triple. The `season` column came in `0012`
+  after final review caught that `0011`'s `(player_id, event)` key wasn't season-scoped: `events.id`
+  is 1-38 and re-upserted by id every season and FPL reassigns `element` ids between seasons, so
+  next season's GW1 would have been short-circuited by the idempotency `COUNT(*)` or silently mixed
+  with this season's rows, and `get_all_sample_eo`'s `MAX(event)` could have served a stale
+  season's numbers under the new season's player ids labelled `eo_source="sampled"`. Season is the
+  same `"YYYY-YY"` string as `rules.season`, resolved by
+  `models/effective_ownership.py::sample_season()` (a thin wrapper over `models.rules.current_season`
+  with the same `"unknown"` fallback `sync.py::_extract_season` uses), and both the writer and every
+  read path go through it. Not a `valid_from`/`valid_until` slowly-changing fact like price/ownership — a
   point-in-time sample per event, sourced from `entry/{id}/event/{gw}/picks/`, which raw
   `selected_by_percent` can't provide (no captain/triple-captain multiplier weighting). Percent and
   margin of error are derived on read (`models/effective_ownership.py`), never stored — this
@@ -502,6 +511,31 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   on failed requests, and individual manager fetch failures are tolerated (recorded in
   `managers_failed`, not fatal) — `sample_size` is the real fetched-manager count, not the
   requested target, so a run with some failures still produces an honest, if smaller, sample.
+  Four further robustness guards were added in the final-review fix wave, all in `eo_sample.py`:
+  - **Guarded payload parsing** (`_parse_entry_ids`/`_parse_picks`). The standings-results and
+    picks dict access used to be unguarded, so an unexpected response shape raised an uncaught
+    `KeyError`/`TypeError` and discarded a whole in-progress run of hundreds of requests with no
+    `source_health` record at all. A malformed page is now one skipped page and a malformed picks
+    payload one failed manager, exactly like a `SourceFetchError`. `_parse_entry_ids` also coerces
+    entry ids to `int`, since they flow into `source_name=f"fpl_api_entry_picks_{entry_id}_{event}"`
+    which `raw_store` turns into a filename.
+  - **Unknown-element filtering before the bulk INSERT.** `player_id` has a real FK to `players(id)`
+    with `foreign_keys=ON`, so a sampled manager picking an element not yet synced locally raised
+    `IntegrityError` and lost the run. Those ids are dropped and counted in
+    `unknown_players_dropped`; known players still commit.
+  - **Consecutive-failure circuit breaker** (`_MAX_CONSECUTIVE_FAILURES = 25`, overridable via the
+    `max_consecutive_failures` argument). `_get` retries 3x with backoff even on permanent failures,
+    so a rate-limiting API could have turned one run into thousands of requests over tens of
+    minutes. Any success resets the counter, so scattered one-off 404s can't trip it. On a trip the
+    loop stops, partial results still commit, and `aborted_early` is returned.
+  - **Honest `source_health`.** `update_source_health`'s success branch zeroes `failure_count` and
+    ignores its `error` argument entirely (it's shared by every source in this codebase and is
+    deliberately not modified by this plan), so `success=sample_size > 0` recorded a run where 700
+    of 750 manager fetches failed as perfectly healthy. `eo_sample.py` now passes
+    `success=False` when the failure rate exceeds `_FAILURE_TOLERANCE` (10%) or the breaker tripped.
+    The tolerance is deliberate rather than zero-tolerance: `fpl doctor`/`readiness`/`source-status`
+    treat any `failure_count > 0` as DEGRADED for the whole system, and one 404 out of ~750
+    sequential requests is normal noise that self-heals next run.
 - `fpl sync-eo --event N [--sample-size N] [--force]` — the CLI entrypoint. Its own `--help` text
   calls it out as the heaviest network pattern in this project (up to sample-size-plus-page-count
   sequential requests, each throttled) — separate from `fpl sync`, never invoked automatically.
@@ -514,13 +548,15 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   95% CI half-width (`1.96 * sqrt(variance/n) * 100`) off the sampled multiplier distribution — an
   honest margin, not a placeholder, but still a margin: with the default 750-manager sample against
   a ~10,000-manager Overall league, single-player estimates carry real sampling uncertainty,
-  widest for low-owned players. `get_sample_eo(conn, player_id, event=None)` returns `None` only
+  widest for low-owned players. It is **derived on read but not yet surfaced in any CLI output** —
+  no command prints it, so nothing shows a user how uncertain an EO figure is.
+  `get_sample_eo(conn, player_id, event=None)` returns `None` only
   when no sample exists at all for the resolved event; a real `SampleEOEstimate(eo_percent=0.0,
   ...)` when a sample exists but the player had zero owners in it — a genuine measured zero, not a
   data gap.
 - Wired additively into five consumers. `differentials.py`, `traps.py`, `template.py`,
-  `breakouts.py` all use `eo_source` `"sampled"` (a sample exists for the latest event) or `"raw"`
-  (falls back to `selected_by_percent`); `captaincy.py` uses `"sampled"` or `"unavailable"` —
+  `breakouts.py` all use `eo_source` `"sampled"` (this player was measured in the latest sample) or
+  `"raw"` (falls back to `selected_by_percent`); `captaincy.py` uses `"sampled"` or `"unavailable"` —
   captaincy has no raw-ownership value to fall back *into*, so the vocabulary deliberately differs
   (flagged explicitly during Task 10, not an inconsistency). None of the five modules' pre-existing
   logic changed beyond adding the EO fields, except where the plan explicitly meant it to:
@@ -529,8 +565,11 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   docstrings) — a player captained by nearly every sampled manager is correctly *not* flagged as a
   differential even if its raw `selected_by_percent` looks low, which is the whole point of the
   feature (live-verified end-to-end by Task 11's test, which had to raise its own
-  `max_ownership` test parameter to prove this rather than treating it as a bug). `breakouts.py`/
-  `template.py` surface EO informationally without changing their own selection logic.
+  `max_ownership` test parameter to prove this rather than treating it as a bug). `template.py`'s
+  *entire ordering* also switches to EO when a sample exists — that was Task 7's whole point, and
+  its own test asserts the raw-ownership order flips (a player a smaller slice of managers own but
+  nearly all of them captain outranks a more widely-but-passively-owned one). Only `breakouts.py`
+  is informational: it reports EO without changing its own selection logic at all.
   `captaincy.py`'s `captaincy_report` gains `differential_captain_note`, firing only for the
   top-median captain pick when `eo_source == "sampled"` and the field owns it more than 2x what it
   captains it (`effective_ownership_percent < 0.5 * selected_by_percent`) — a real rank-differential
@@ -538,10 +577,36 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   also surfaced one direct collateral break in `tests/test_optimization_chips.py` (a pre-existing
   `CaptainOption(...)` construction site) — fixed as part of Task 10, confirmed in review as the
   only other construction site in the repo and correctly scoped.
+- **Absent from a sample means unmeasured, not zero.** All five consumers originally reported a
+  player with no row in a non-empty sample as `effective_ownership_percent=0.0` with
+  `eo_source="sampled"` — a fabricated claim that a measurement was taken and came back zero, when
+  a ~750-manager sample simply cannot cover every player in the pool. Worst in `differentials.py`,
+  where `_risk_bucket(0.0, ...)` produced a user-facing `"extreme-punt"` label for players that may
+  be widely owned, and the `max_ownership` filter let them through as 0%-owned punts; merely
+  conservative but still wrong elsewhere (`traps.py` silently excluded the most-owned unsampled
+  player from trap detection entirely). Fixed in the final-review wave: the four ownership-facing
+  consumers fall back to that player's own raw `selected_by_percent` with `eo_source="raw"`,
+  identical to the no-sample-at-all case; `captaincy.py` has no raw ownership to report *as* EO, so
+  an unmeasured player is `"unavailable"` there, which also stops `differential_captain_note`
+  firing off a number nobody measured. So `eo_source` is now genuinely per-player: `"sampled"` means
+  *this player* was measured in the latest sample, not merely that some sample exists.
+  `get_all_sample_eo`/`get_sample_eo` are unchanged — their real-zero-for-absent contract is correct
+  for callers that want the raw dict; this is purely how the consumers interpret an absent lookup.
 - `tests/test_e2e_plan1c_lifecycle.py` — one test chaining the actual pipeline: `fpl sync-eo`
-  (mocked network, real DB writes) -> real `get_sample_eo` derivation -> real `find_differentials`
-  -> real `captaincy_report`, same bar the Pillar 0/Plan 1a/Plan 1b E2E tests already set. Full
-  suite: 212 passed (confirmed after Task 11, the last code task before this docs pass).
+  (mocked network, real DB writes) -> real `get_sample_eo` derivation -> all five real consumers
+  (`find_differentials`, `captaincy_report`, `get_template`, `find_traps`, `find_breakouts`), same
+  bar the Pillar 0/Plan 1a/Plan 1b E2E tests already set. Its pool deliberately includes players
+  the sample never covers, asserted explicitly across four consumers — the original version
+  exercised only two consumers and only the sampled player, which is exactly why the
+  fabricated-zero bug above survived to final review. Full suite: 227 passed (after the
+  final-review fix wave).
+- **Known limitation — thresholds are calibrated for the wrong scale.**
+  `MAX_OWNERSHIP_PERCENT`/`MIN_OWNERSHIP_PERCENT` in `differentials.py`/`traps.py`/`breakouts.py`
+  (5.0 / 10.0 / 10.0) were chosen against whole-population *raw* ownership across ~11M managers.
+  Sampled EO is a different scale entirely: top-10k managers only, multiplier-weighted, and
+  legitimately able to exceed 100%. Those thresholds have not been recalibrated for it, so a filter
+  that means "a real differential" on the raw scale does not mean the same thing once `eo_source`
+  is `"sampled"`. Recalibrating them needs real post-GW1 sample data.
 - **Deferred live verification:** `fpl sync-eo --event 1` was verified on 2026-08-16 against the
   live FPL API to fail cleanly and fast (exit code 1, message: `sync-eo failed: event 1 has not
   locked yet (deadline still ahead) - picks aren't available`) because GW1's deadline
