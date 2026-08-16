@@ -7,7 +7,18 @@ import math
 import sqlite3
 from dataclasses import dataclass
 
+from fpl_agent.models.rules import current_season
+
 CONFIDENCE_Z = 1.96  # 95% CI
+UNKNOWN_SEASON = "unknown"
+
+
+def sample_season(conn: sqlite3.Connection) -> str:
+    """The season label sampled-EO rows are written and read under. Same "YYYY-YY"
+    convention as rules.season (and the same "unknown" fallback sync.py's
+    _extract_season uses when the bootstrap hasn't been synced yet), so a row written
+    by one sampling run is always found again by the reader that follows it."""
+    return current_season(conn) or UNKNOWN_SEASON
 
 
 @dataclass(frozen=True)
@@ -23,17 +34,25 @@ class SampleEOEstimate:
 def get_all_sample_eo(conn: sqlite3.Connection, event: int | None = None) -> dict[int, SampleEOEstimate]:
     """Latest (or given) event's sampled EO for every player with >=1 owner in the
     sample. An empty dict means no sampling run has ever produced rows for that
-    event - callers must fall back to raw ownership, never treat this as all-zero EO."""
+    event - callers must fall back to raw ownership, never treat this as all-zero EO.
+
+    Always scoped to the current season: events.id is 1-38 and reused every season, so
+    an unscoped MAX(event) would happily return a previous season's GW38 sample for
+    player ids FPL has since reassigned."""
+    season = sample_season(conn)
     if event is None:
-        row = conn.execute("SELECT MAX(event) AS event FROM player_sample_ownership_history").fetchone()
+        row = conn.execute(
+            "SELECT MAX(event) AS event FROM player_sample_ownership_history WHERE season=?",
+            (season,),
+        ).fetchone()
         event = row["event"] if row and row["event"] is not None else None
         if event is None:
             return {}
 
     rows = conn.execute(
         "SELECT player_id, sample_size, owned_count, sum_multiplier, sum_multiplier_sq "
-        "FROM player_sample_ownership_history WHERE event=?",
-        (event,),
+        "FROM player_sample_ownership_history WHERE event=? AND season=?",
+        (event, season),
     ).fetchall()
 
     result: dict[int, SampleEOEstimate] = {}

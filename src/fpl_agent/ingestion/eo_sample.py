@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.sync import update_source_health
+from fpl_agent.models.effective_ownership import sample_season
 
 OVERALL_LEAGUE_ID = 314
 _ENTRIES_PER_PAGE = 50
@@ -41,9 +42,13 @@ def sample_effective_ownership(
     """Bounded, rank-stratified sample of top-10k Overall league picks for one
     already-locked event. Idempotent per event unless force=True (the whole event's
     rows are one atomic batch from one coherent set of sampled managers, not
-    accumulated row-by-row like sync-history's per-player skip)."""
+    accumulated row-by-row like sync-history's per-player skip). Scoped to the current
+    season throughout - events.id is 1-38 and reused every season, so an event-only key
+    would make next season's GW1 collide with this season's."""
+    season = sample_season(conn)
     existing = conn.execute(
-        "SELECT COUNT(*) AS n FROM player_sample_ownership_history WHERE event=?", (event,)
+        "SELECT COUNT(*) AS n FROM player_sample_ownership_history WHERE event=? AND season=?",
+        (event, season),
     ).fetchone()["n"]
     if existing and not force:
         return {"skipped": True, "event": event, "sample_size": 0, "players_sampled": 0, "managers_failed": 0}
@@ -105,14 +110,17 @@ def sample_effective_ownership(
         # sample_size == 0, update_source_health's own commit() below would otherwise
         # flush the DELETE alone and silently wipe a previously-good sample.
         if force:
-            conn.execute("DELETE FROM player_sample_ownership_history WHERE event=?", (event,))
+            conn.execute(
+                "DELETE FROM player_sample_ownership_history WHERE event=? AND season=?",
+                (event, season),
+            )
         now = datetime.now(timezone.utc).isoformat()
         conn.executemany(
             "INSERT INTO player_sample_ownership_history "
-            "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "(player_id, event, season, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
             [
-                (pid, event, sample_size, b["owned_count"], b["captained_count"], b["sum_multiplier"], b["sum_multiplier_sq"], now)
+                (pid, event, season, sample_size, b["owned_count"], b["captained_count"], b["sum_multiplier"], b["sum_multiplier_sq"], now)
                 for pid, b in agg.items()
             ],
         )

@@ -1,6 +1,17 @@
 import math
 
-from fpl_agent.models.effective_ownership import get_all_sample_eo, get_sample_eo
+from fpl_agent.models.effective_ownership import UNKNOWN_SEASON, get_all_sample_eo, get_sample_eo
+
+
+def _seed_season(conn, season):
+    """current_season() reads rules; with no rules rows the sampled-EO season label
+    falls back to UNKNOWN_SEASON, which is what the other tests here rely on."""
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) "
+        "VALUES ('scoring.assists', ?, 1, 't0', 'test', '3')",
+        (season,),
+    )
+    conn.commit()
 
 
 def _seed_fk_prereqs(conn, player_ids, event_ids):
@@ -27,12 +38,13 @@ def _seed_fk_prereqs(conn, player_ids, event_ids):
     conn.commit()
 
 
-def _insert_sample_row(conn, player_id, event, sample_size, owned_count, sum_multiplier, sum_multiplier_sq, captained_count=0):
+def _insert_sample_row(conn, player_id, event, sample_size, owned_count, sum_multiplier, sum_multiplier_sq,
+                        captained_count=0, season=UNKNOWN_SEASON):
     conn.execute(
         "INSERT INTO player_sample_ownership_history "
-        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
-        "VALUES (?,?,?,?,?,?,?,'t0')",
-        (player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq),
+        "(player_id, event, season, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,'t0')",
+        (player_id, event, season, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq),
     )
     conn.commit()
 
@@ -84,3 +96,29 @@ def test_get_sample_eo_resolves_latest_event_when_not_given(db_conn):
     est = get_sample_eo(db_conn, player_id=55)  # no event given
 
     assert est.event == 3  # latest, not most-recently-inserted
+
+
+def test_get_all_sample_eo_ignores_other_seasons(db_conn):
+    """events.id is 1-38 and re-upserted by id every season, and FPL reassigns player
+    ids between seasons - so "latest event" must never resolve across a season boundary,
+    or a stale season's GW38 would be served as this season's EO under the same ids."""
+    _seed_season(db_conn, "2026-27")
+    _seed_fk_prereqs(db_conn, player_ids=[55], event_ids=[1, 38])
+    _insert_sample_row(db_conn, player_id=55, event=38, sample_size=100, owned_count=90,
+                        sum_multiplier=180, sum_multiplier_sq=360, season="2025-26")
+    _insert_sample_row(db_conn, player_id=55, event=1, sample_size=100, owned_count=10,
+                        sum_multiplier=10, sum_multiplier_sq=10, season="2026-27")
+
+    result = get_all_sample_eo(db_conn)
+
+    assert result[55].event == 1  # this season's GW1, not last season's GW38
+    assert result[55].eo_percent == 10.0
+
+
+def test_get_all_sample_eo_empty_when_only_a_previous_season_was_sampled(db_conn):
+    _seed_season(db_conn, "2026-27")
+    _seed_fk_prereqs(db_conn, player_ids=[55], event_ids=[38])
+    _insert_sample_row(db_conn, player_id=55, event=38, sample_size=100, owned_count=90,
+                        sum_multiplier=180, sum_multiplier_sq=360, season="2025-26")
+
+    assert get_all_sample_eo(db_conn) == {}  # fall back to raw, not a stale season's numbers

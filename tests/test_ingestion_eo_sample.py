@@ -51,6 +51,18 @@ def _seed_players(conn, player_ids):
     conn.commit()
 
 
+def _seed_season(conn, season):
+    """Sampled-EO rows are keyed by season, resolved from rules via
+    models.effective_ownership.sample_season(); with no rules rows it falls back to
+    "unknown", which is what the tests that don't call this rely on."""
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) "
+        "VALUES ('scoring.assists', ?, 1, 't0', 'test', '3')",
+        (season,),
+    )
+    conn.commit()
+
+
 def _fake_standings(page):
     return RawFetch(
         source_name=f"fpl_api_league_standings_314_p{page}",
@@ -68,6 +80,14 @@ def _fake_picks(entry_id, captain_pid):
         ]},
         retrieved_at="t1", latency_ms=1, parser_version="1",
     )
+
+
+def _patch_happy_path(monkeypatch, captain_pid=55):
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings",
+                         lambda self, league_id, page: _fake_standings(page))
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks",
+                         lambda self, entry_id, event: _fake_picks(entry_id, captain_pid))
 
 
 def test_sample_effective_ownership_rejects_unlocked_event(db_conn):
@@ -266,3 +286,43 @@ def test_sample_effective_ownership_page_level_fetch_failure_is_skipped(db_conn,
         "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
     ).fetchone()
     assert row_55["owned_count"] == 2
+
+
+def test_sample_effective_ownership_writes_the_current_season(db_conn, monkeypatch):
+    """Rows are keyed (player_id, event, season) - events.id 1-38 is reused every season,
+    so the season written has to be the live one from rules, not a placeholder."""
+    _seed_season(db_conn, "2026-27")
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    _patch_happy_path(monkeypatch)
+
+    eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50)
+
+    seasons = {r["season"] for r in db_conn.execute("SELECT season FROM player_sample_ownership_history")}
+    assert seasons == {"2026-27"}
+
+
+def test_sample_effective_ownership_is_not_skipped_by_another_seasons_rows(db_conn, monkeypatch):
+    """The idempotency short-circuit must be season-scoped: a previous season's GW1 rows
+    must not make this season's GW1 sample look already-done - and --force must delete only
+    this season's rows."""
+    _seed_season(db_conn, "2026-27")
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, season, sample_size, owned_count, captained_count, sum_multiplier, "
+        "sum_multiplier_sq, retrieved_at) VALUES (55,1,'2025-26',100,50,0,50,50,'t0')"
+    )
+    db_conn.commit()
+    _patch_happy_path(monkeypatch)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, force=True)
+
+    assert result["skipped"] is False
+    assert result["sample_size"] == 2
+    stale = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE season='2025-26'"
+    ).fetchall()
+    assert len(stale) == 1  # last season's row survives untouched
+    assert stale[0]["sum_multiplier"] == 50
