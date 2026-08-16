@@ -71,6 +71,14 @@ def _fake_standings(page):
     )
 
 
+def _fake_standings_n(page, n):
+    return RawFetch(
+        source_name=f"fpl_api_league_standings_314_p{page}",
+        data={"standings": {"page": page, "results": [{"entry": page * 100 + i} for i in range(1, n + 1)]}},
+        retrieved_at="t1", latency_ms=1, parser_version="1",
+    )
+
+
 def _fake_picks(entry_id, captain_pid):
     return RawFetch(
         source_name=f"fpl_api_entry_picks_{entry_id}_1",
@@ -286,6 +294,70 @@ def test_sample_effective_ownership_page_level_fetch_failure_is_skipped(db_conn,
         "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
     ).fetchone()
     assert row_55["owned_count"] == 2
+
+
+def _health(conn):
+    return conn.execute("SELECT * FROM source_health WHERE source_name='fpl_eo_sample'").fetchone()
+
+
+def _patch_partial_failure(monkeypatch, n_entries, n_failures):
+    """n_entries managers on one standings page, the first n_failures of which 404."""
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings",
+                         lambda self, league_id, page: _fake_standings_n(page, n_entries))
+
+    def flaky(self, entry_id, event):
+        if entry_id <= 100 + n_failures:
+            raise SourceFetchError("boom")
+        return _fake_picks(entry_id, 55)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", flaky)
+
+
+def test_sample_effective_ownership_records_a_degraded_run_in_source_health(db_conn, monkeypatch):
+    """A run where most manager fetches failed still writes rows (the aggregation is
+    honest about its smaller sample_size), but must NOT be recorded as a healthy source -
+    update_source_health's success branch zeroes failure_count and drops `error`, so
+    passing success=sample_size>0 would report 18-of-20-failed as perfectly fine."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    _patch_partial_failure(monkeypatch, n_entries=20, n_failures=18)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["sample_size"] == 2
+    assert result["managers_failed"] == 18
+    health = _health(db_conn)
+    assert health["failure_count"] == 1
+    assert health["last_failure"] is not None
+    assert "18 of 20" in health["last_error"]
+
+
+def test_sample_effective_ownership_tolerates_a_few_transient_manager_failures(db_conn, monkeypatch):
+    """One-off 404s across ~750 sequential requests are normal noise. `fpl doctor` and
+    `readiness` treat any failure_count > 0 as DEGRADED for the whole system, so a
+    zero-tolerance rule here would flag everything on a single bad request."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    _patch_partial_failure(monkeypatch, n_entries=20, n_failures=1)  # 5%, under the 10% tolerance
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["managers_failed"] == 1
+    health = _health(db_conn)
+    assert health["failure_count"] == 0
+    assert health["last_success"] is not None
+
+
+def test_sample_effective_ownership_total_failure_is_not_healthy(db_conn, monkeypatch):
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    _patch_partial_failure(monkeypatch, n_entries=4, n_failures=4)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, delay=0)
+
+    assert result["sample_size"] == 0
+    assert _health(db_conn)["failure_count"] == 1
 
 
 def test_sample_effective_ownership_writes_the_current_season(db_conn, monkeypatch):

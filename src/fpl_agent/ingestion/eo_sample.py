@@ -16,6 +16,7 @@ _ENTRIES_PER_PAGE = 50
 _MAX_RANK = 10000
 _DEFAULT_SAMPLE_SIZE = 750
 _DEFAULT_DELAY_SECONDS = 0.15  # same politeness delay as history_sync.py
+_FAILURE_TOLERANCE = 0.10  # >10% of attempted manager fetches failing = a degraded run
 
 
 def select_stratified_pages(
@@ -126,10 +127,20 @@ def sample_effective_ownership(
         )
         conn.commit()
 
+    # update_source_health's success branch (shared by every source in this codebase,
+    # not this plan's to change) zeroes failure_count and ignores `error` entirely - so
+    # success=sample_size>0 would record a run where 700 of 750 manager fetches failed
+    # as perfectly healthy. Report degradation instead, but with a tolerance rather than
+    # zero-tolerance: `fpl doctor`/`readiness`/`source-status` treat any failure_count>0
+    # as DEGRADED for the whole system, and one 404 out of ~750 sequential requests is
+    # normal noise that self-heals on the next run - a genuinely broken or rate-limiting
+    # API blows well past the threshold.
+    attempted = fetched + len(failed)
+    degraded = attempted > 0 and len(failed) > _FAILURE_TOLERANCE * attempted
     update_source_health(
         conn, "fpl_eo_sample",
-        success=sample_size > 0,
-        error=f"{len(failed)} manager fetch(es) failed" if failed else None,
+        success=(sample_size > 0 and not degraded),
+        error=f"{len(failed)} of {attempted} manager fetch(es) failed" if failed else None,
     )
 
     return {
