@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import click
+import numpy as np
 
 # Windows consoles default to a legacy codepage that can't encode player
 # names/news text pulled straight from the FPL API — force UTF-8 output.
@@ -34,10 +35,12 @@ from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
 from fpl_agent.optimization.build_team import generate_build_team_report
 from fpl_agent.optimization.captaincy import captaincy_report
+from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.optimization.chips import (
     bench_boost_value,
     eligible_chips,
     freehit_value,
+    schedule_chips,
     triple_captain_value,
     wildcard_value,
 )
@@ -683,6 +686,72 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
             f"1gw={c.net_ev_1gw:+.2f} 3gw={c.net_ev_3gw:+.2f} 5gw={c.net_ev_5gw:+.2f}  "
             f"price_delta=£{c.price_delta_tenths/10:+.1f}m  hit={c.uses_hit}"
         )
+
+
+@cli.command("season-sim")
+@click.option("--squad", required=True, help="comma-separated player ids")
+@click.option("--trials", default=1000, type=int, help="number of Monte Carlo scenario trials")
+@click.option("--horizon", default=5, type=int, help="horizon in GWs")
+def season_sim(squad: str, trials: int, horizon: int):
+    """Season-long risk bands (P10/P50/P90) and chip timing from real sampled
+    scenarios, not a single point estimate (Pillar 1 Plan 1b)."""
+    conn = get_connection()
+    squad_ids = _parse_squad_option(squad)
+    if not squad_ids:
+        click.echo("no squad provided")
+        conn.close()
+        return
+
+    from_event = _reference_event(conn)
+    sequences = search_transfer_sequences(conn, squad_ids, free_transfers=1, bank_tenths=0, horizon_gw=horizon)
+    if not sequences:
+        click.echo("no transfer sequence found")
+        conn.close()
+        return
+    trajectory = sequences[0]
+
+    scenario_draw = sample_season_scenarios(conn, squad_ids, from_event, horizon, n_trials=trials)
+    events = range(from_event, from_event + horizon)
+    season_totals = np.array([
+        sum(o.points_by_event_player.get((e, pid), 0.0) for e in events for pid in squad_ids)
+        for o in scenario_draw
+    ])
+    p10, p50, p90 = np.percentile(season_totals, [10, 50, 90])
+    click.echo(f"P10={p10:.1f}  P50={p50:.1f}  P90={p90:.1f}  ({trials} trials, GW{from_event}-{from_event + horizon - 1})")
+
+    squad_team_ids = {conn.execute("SELECT team_id FROM players WHERE id=?", (pid,)).fetchone()["team_id"] for pid in squad_ids}
+    for a in detect_blank_double_gws(conn, from_event, horizon):
+        if a.team_id in squad_team_ids:
+            click.echo(f"GW{a.event}  {a.kind.upper()}  {a.team_short_name} (affects your squad)")
+
+    windows = eligible_chips(conn, event=from_event)
+    schedule = schedule_chips(conn, squad_ids, trajectory, windows, scenario_draw)
+    for entry in schedule.baseline_schedule:
+        click.echo(f"GW{entry.event}  {entry.chip_name}  median +{entry.expected_marginal_value:.1f}")
+    for rec in schedule.advisory_hit_recommendations:
+        click.echo(
+            f"advisory: hit {rec.player_out_name}->{rec.player_in_name} before GW{rec.event} "
+            f"{rec.chip_name} (+{rec.delta:.1f} over baseline)"
+        )
+
+    detail = {
+        "squad_ids": squad_ids, "from_event": from_event, "horizon_gw": horizon, "trials": trials,
+        "p10": float(p10), "p50": float(p50), "p90": float(p90),
+        "chip_schedule": [
+            {"event": e.event, "chip_name": e.chip_name, "expected_marginal_value": e.expected_marginal_value}
+            for e in schedule.baseline_schedule
+        ],
+        "advisory_hit_recommendations": [
+            {"event": r.event, "chip_name": r.chip_name, "player_out_id": r.player_out_id, "player_in_id": r.player_in_id, "delta": r.delta}
+            for r in schedule.advisory_hit_recommendations
+        ],
+    }
+    decision_id = log_decision(
+        conn, "season_sim", summary=f"P50={p50:.1f} over GW{from_event}-{from_event + horizon - 1}",
+        detail=detail, confidence="low",
+    )
+    click.echo(f"decision_id={decision_id}")
+    conn.close()
 
 
 @cli.command()
