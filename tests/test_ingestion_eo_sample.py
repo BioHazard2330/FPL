@@ -196,3 +196,73 @@ def test_sample_effective_ownership_force_replaces_existing_rows(db_conn, monkey
     assert row_999["owned_count"] == 2
     assert row_999["captained_count"] == 2
     assert row_999["sum_multiplier"] == 4
+
+
+def test_sample_effective_ownership_force_total_failure_preserves_existing_rows(db_conn, monkeypatch):
+    """A forced re-run whose fetches all fail must not destroy the previously-good sample.
+    Root cause this guards against: force's DELETE and the eventual INSERT must commit as
+    one atomic unit. If DELETE ran unconditionally up front (in its own implicit
+    transaction, since get_connection() doesn't set isolation_level=None) and the re-fetch
+    then totally failed (sample_size == 0, so the INSERT/commit block never runs),
+    update_source_health's own unconditional conn.commit() at the end would still flush
+    that pending DELETE - silently wiping good data and returning normally with no
+    exception. Prior rows must survive this scenario untouched."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings", lambda self, league_id, page: _fake_standings(page))
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", lambda self, entry_id, event: _fake_picks(entry_id, 55))
+
+    first = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50)
+    assert first["skipped"] is False
+    assert first["sample_size"] == 2
+
+    def always_fails(self, entry_id, event):
+        raise SourceFetchError("boom")
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", always_fails)
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, force=True)
+
+    assert result["sample_size"] == 0
+    assert result["managers_failed"] == 2
+
+    row_55 = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
+    ).fetchone()
+    assert row_55 is not None  # prior good row must survive a totally-failed forced re-run
+    assert row_55["owned_count"] == 2
+    assert row_55["sum_multiplier"] == 4
+
+    row_999 = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE player_id=999 AND event=1"
+    ).fetchone()
+    assert row_999 is not None
+    assert row_999["owned_count"] == 2
+
+
+def test_sample_effective_ownership_page_level_fetch_failure_is_skipped(db_conn, monkeypatch):
+    """A failed standings page fetch (as opposed to a failed manager picks fetch) must be
+    skipped, not abort the run - mirrors the manager-level failure handling."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1, 2])
+
+    def flaky_standings(self, league_id, page):
+        if page == 1:
+            raise SourceFetchError("boom")
+        return _fake_standings(page)
+
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings", flaky_standings)
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", lambda self, entry_id, event: _fake_picks(entry_id, 55))
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50)
+
+    # page 1 (entries 101,102) is skipped entirely; only page 2 (entries 201,202) contributes
+    assert result["sample_size"] == 2
+    assert result["managers_failed"] == 0
+
+    row_55 = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
+    ).fetchone()
+    assert row_55["owned_count"] == 2

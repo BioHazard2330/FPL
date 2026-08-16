@@ -55,9 +55,6 @@ def sample_effective_ownership(
     if event_row["deadline_time_epoch"] > now_epoch:
         raise ValueError(f"event {event} has not locked yet (deadline still ahead) - picks aren't available")
 
-    if force:
-        conn.execute("DELETE FROM player_sample_ownership_history WHERE event=?", (event,))
-
     adapter = FPLApiAdapter()
     pages = select_stratified_pages(target_sample_size)
     entry_ids: list[int] = []
@@ -65,9 +62,12 @@ def sample_effective_ownership(
         try:
             fetch = adapter.fetch_league_standings(OVERALL_LEAGUE_ID, page)
         except SourceFetchError:
+            fetch = None
+        finally:
+            time.sleep(delay)
+        if fetch is None:
             continue
         entry_ids.extend(r["entry"] for r in fetch.data["standings"]["results"])
-        time.sleep(delay)
     entry_ids = entry_ids[:target_sample_size]
 
     agg: dict[int, dict[str, int]] = {}
@@ -78,6 +78,10 @@ def sample_effective_ownership(
             fetch = adapter.fetch_entry_picks(entry_id, event)
         except SourceFetchError:
             failed.append(entry_id)
+            fetch = None
+        finally:
+            time.sleep(delay)
+        if fetch is None:
             continue
 
         for pick in fetch.data["picks"]:
@@ -93,10 +97,15 @@ def sample_effective_ownership(
             bucket["sum_multiplier_sq"] += mult * mult
 
         fetched += 1
-        time.sleep(delay)
 
     sample_size = fetched
     if sample_size > 0:
+        # Delete-then-insert must be one atomic unit committed together: if force's
+        # DELETE landed in a prior implicit transaction and total fetch failure left
+        # sample_size == 0, update_source_health's own commit() below would otherwise
+        # flush the DELETE alone and silently wipe a previously-good sample.
+        if force:
+            conn.execute("DELETE FROM player_sample_ownership_history WHERE event=?", (event,))
         now = datetime.now(timezone.utc).isoformat()
         conn.executemany(
             "INSERT INTO player_sample_ownership_history "
