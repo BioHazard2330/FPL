@@ -12,7 +12,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
-from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_differentials
+from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -229,7 +229,8 @@ def backfill_xg(season: str):
 @click.option("--season", required=True, help="e.g. 2024-25 - must already be backfilled via backfill-odds/backfill-xg")
 @click.option("--model-version", default=None, help="defaults to the current MODEL_VERSION")
 @click.option("--differentials", is_flag=True, default=False, help="also score the differential heuristic vs template pick")
-def backtest(season: str, model_version: str | None, differentials: bool):
+@click.option("--bonus", is_flag=True, default=False, help="also score the bonus-regression shrinkage vs naive baseline")
+def backtest(season: str, model_version: str | None, differentials: bool, bonus: bool):
     """Walk-forward backtest of the calibrated model against a historical
     season - no future leakage, scores against Understat-reconstructed
     actual points (core components only; bonus/BPS unavailable in that source)."""
@@ -251,6 +252,20 @@ def backtest(season: str, model_version: str | None, differentials: bool):
                 },
                 confidence="low",
             )
+        bonus_result = None
+        if bonus:
+            bonus_result = score_bonus_regression(conn)
+            log_decision(
+                conn, "bonus_regression_backtest",
+                summary=f"{bonus_result.players_evaluated} players evaluated, season {season}",
+                detail={
+                    "players_evaluated": bonus_result.players_evaluated,
+                    "shrunk_mae": bonus_result.shrunk_mae, "naive_mae": bonus_result.naive_mae,
+                    "shrunk_win_rate": bonus_result.shrunk_win_rate,
+                    "insufficient_data": bonus_result.insufficient_data,
+                },
+                confidence="low",
+            )
     finally:
         conn.close()
 
@@ -268,6 +283,15 @@ def backtest(season: str, model_version: str | None, differentials: bool):
             click.echo("differentials: insufficient historical ownership data to score")
         else:
             click.echo(f"differentials scored {diff_result.differentials_scored}, mean delta vs template {diff_result.mean_delta_vs_template}")
+    if bonus_result is not None:
+        if bonus_result.insufficient_data:
+            click.echo("bonus regression: insufficient season-history data to score (need >=2 seasons per player)")
+        else:
+            click.echo(
+                f"bonus regression: {bonus_result.players_evaluated} players, "
+                f"shrunk MAE {bonus_result.shrunk_mae} vs naive MAE {bonus_result.naive_mae}, "
+                f"shrunk wins {bonus_result.shrunk_win_rate * 100:.1f}%"
+            )
 
 
 @cli.command("run-scheduled")
