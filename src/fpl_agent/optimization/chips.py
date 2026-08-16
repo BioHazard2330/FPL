@@ -154,3 +154,94 @@ _TRIAL_VALUE_FUNCS: dict[str, Callable] = {
     "wildcard": _wildcard_trial_values,
     "freehit": _freehit_trial_values,
 }
+
+
+@dataclass(frozen=True)
+class ChipScheduleEntry:
+    event: int
+    chip_name: str
+    expected_marginal_value: float  # median across scenario_draw's trials
+
+
+@dataclass(frozen=True)
+class AdvisoryHitRecommendation:
+    event: int
+    chip_name: str
+    player_out_id: int
+    player_out_name: str
+    player_in_id: int
+    player_in_name: str
+    baseline_expected_marginal_value: float
+    advisory_expected_marginal_value: float
+    delta: float
+
+
+@dataclass(frozen=True)
+class ChipSchedule:
+    baseline_schedule: tuple[ChipScheduleEntry, ...]
+    advisory_hit_recommendations: tuple[AdvisoryHitRecommendation, ...]
+    total_expected_value: float
+
+
+def _squad_ids_by_event(initial_squad_ids: list[int], trajectory) -> dict[int, tuple[int, ...]]:
+    current = list(initial_squad_ids)
+    by_event = {}
+    for step in trajectory.steps:
+        if step.player_out_id is not None and step.player_in_id is not None:
+            current = [step.player_in_id if pid == step.player_out_id else pid for pid in current]
+        by_event[step.event] = tuple(current)
+    return by_event
+
+
+def schedule_chips(
+    conn: sqlite3.Connection,
+    initial_squad_ids: list[int],
+    squad_trajectory,
+    chip_windows: list[ChipWindow],
+    scenario_draw: list[ScenarioOutcome],
+) -> ChipSchedule:
+    """DP over remaining chip_windows-eligible GWs, state = (used-window bitmask,
+    event). Existing single-decision-point functions (bench_boost_value etc.) are
+    untouched - this answers WHEN across the season, not is-it-worth-it this GW.
+    Advisory hit-week reasoning (Task 7) is layered on top, never mutating this
+    baseline's squad_trajectory."""
+    squad_by_event = _squad_ids_by_event(initial_squad_ids, squad_trajectory)
+    if not squad_by_event:
+        return ChipSchedule(baseline_schedule=(), advisory_hit_recommendations=(), total_expected_value=0.0)
+
+    horizon_gw = len(squad_by_event)
+    events = sorted(squad_by_event)
+    usable_windows = [w for w in chip_windows if w.name in _TRIAL_VALUE_FUNCS]
+
+    window_event_median: dict[tuple[int, int], float] = {}
+    for wi, w in enumerate(usable_windows):
+        for event in events:
+            if not (w.start_event <= event <= w.stop_event):
+                continue
+            fn = _TRIAL_VALUE_FUNCS[w.name]
+            trial_values = fn(conn, list(squad_by_event[event]), event, horizon_gw, scenario_draw)
+            window_event_median[(wi, event)] = float(np.median(trial_values))
+
+    dp: dict[int, tuple[float, tuple[ChipScheduleEntry, ...]]] = {0: (0.0, ())}
+    for event in events:
+        next_dp: dict[int, tuple[float, tuple[ChipScheduleEntry, ...]]] = {}
+        for mask, (value, entries) in dp.items():
+            if mask not in next_dp or next_dp[mask][0] < value:
+                next_dp[mask] = (value, entries)
+            for wi, w in enumerate(usable_windows):
+                bit = 1 << wi
+                if mask & bit:
+                    continue
+                marginal = window_event_median.get((wi, event))
+                if marginal is None:
+                    continue
+                new_mask = mask | bit
+                new_value = value + marginal
+                if new_mask not in next_dp or next_dp[new_mask][0] < new_value:
+                    entry = ChipScheduleEntry(event=event, chip_name=w.name, expected_marginal_value=marginal)
+                    next_dp[new_mask] = (new_value, entries + (entry,))
+        dp = next_dp
+
+    best_mask = max(dp, key=lambda m: dp[m][0])
+    best_value, best_entries = dp[best_mask]
+    return ChipSchedule(baseline_schedule=best_entries, advisory_hit_recommendations=(), total_expected_value=best_value)

@@ -118,3 +118,36 @@ def test_triple_captain_trial_values_reads_best_captain_points(db_conn, monkeypa
 
     values = _triple_captain_trial_values(db_conn, [1, 2, 3], event=10, scenario_draw=scenario_draw)
     assert list(values) == [12.0, 3.0]
+
+
+from fpl_agent.optimization.chips import ChipWindow, schedule_chips
+from fpl_agent.optimization.transfers import TransferSequence, TransferSequenceStep
+
+
+def test_schedule_chips_picks_the_higher_value_window(db_conn, monkeypatch):
+    import fpl_agent.optimization.chips as chips_mod
+
+    trajectory = TransferSequence(
+        steps=(
+            TransferSequenceStep(event=10, player_out_id=None, player_out_name=None, player_in_id=None, player_in_name=None, uses_hit=False),
+            TransferSequenceStep(event=11, player_out_id=None, player_out_name=None, player_in_id=None, player_in_name=None, uses_hit=False),
+        ),
+        final_squad_ids=(1, 2, 3), final_free_transfers=1, final_bank_tenths=0,
+        total_net_ev=0.0, tiebreak_adjustment=0.0,
+    )
+    windows = [ChipWindow(name="bboost", number=1, start_event=10, stop_event=19, chip_type="team", eligible_now=True)]
+
+    def fake_bench_boost(conn, squad_ids, event, scenario_draw):
+        import numpy as np
+        return np.array([10.0, 10.0]) if event == 10 else np.array([2.0, 2.0])
+
+    monkeypatch.setattr(chips_mod, "_bench_boost_trial_values", fake_bench_boost)
+
+    scenario_draw = [object(), object()]  # opaque - the fake value fn ignores it
+    schedule = schedule_chips(db_conn, initial_squad_ids=[1, 2, 3], squad_trajectory=trajectory, chip_windows=windows, scenario_draw=scenario_draw)
+
+    assert len(schedule.baseline_schedule) == 1
+    assert schedule.baseline_schedule[0].event == 10  # median 10.0 beats median 2.0 at GW11
+    assert schedule.baseline_schedule[0].chip_name == "bboost"
+    assert schedule.total_expected_value == 10.0
+    assert schedule.advisory_hit_recommendations == ()
