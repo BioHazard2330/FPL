@@ -37,6 +37,8 @@ from fpl_agent.monitoring.storage import measure_storage
 from fpl_agent.optimization.build_team import generate_build_team_report
 from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.optimization.chips import (
+    _cached_optimise_squad,
+    _squad_ids_by_event,
     bench_boost_value,
     eligible_chips,
     freehit_value,
@@ -45,7 +47,7 @@ from fpl_agent.optimization.chips import (
     wildcard_value,
 )
 from fpl_agent.optimization.squad import build_player_pool, optimise_squad, pick_starting_xi
-from fpl_agent.optimization.transfers import recommend as recommend_transfer, search_transfer_sequences
+from fpl_agent.optimization.transfers import best_transfer_for_player, recommend as recommend_transfer, search_transfer_sequences
 
 
 @click.group()
@@ -712,66 +714,112 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
 @click.option("--squad", required=True, help="comma-separated player ids")
 @click.option("--trials", default=1000, type=int, help="number of Monte Carlo scenario trials")
 @click.option("--horizon", default=5, type=int, help="horizon in GWs")
-def season_sim(squad: str, trials: int, horizon: int):
+@click.option("--used-chips", default="", help="comma-separated chip names already used this season (e.g. wildcard,bboost) - excluded from scheduling")
+def season_sim(squad: str, trials: int, horizon: int, used_chips: str):
     """Season-long risk bands (P10/P50/P90) and chip timing from real sampled
     scenarios, not a single point estimate (Pillar 1 Plan 1b)."""
     conn = get_connection()
-    squad_ids = _parse_squad_option(squad)
-    if not squad_ids:
-        click.echo("no squad provided")
-        conn.close()
-        return
+    try:
+        squad_ids = _parse_squad_option(squad)
+        if not squad_ids:
+            click.echo("no squad provided")
+            return
 
-    from_event = _reference_event(conn)
-    sequences = search_transfer_sequences(conn, squad_ids, free_transfers=1, bank_tenths=0, horizon_gw=horizon)
-    if not sequences:
-        click.echo("no transfer sequence found")
-        conn.close()
-        return
-    trajectory = sequences[0]
+        from_event = _reference_event(conn)
+        sequences = search_transfer_sequences(conn, squad_ids, free_transfers=1, bank_tenths=0, horizon_gw=horizon)
+        if not sequences:
+            click.echo("no transfer sequence found")
+            return
+        trajectory = sequences[0]
 
-    scenario_draw = sample_season_scenarios(conn, squad_ids, from_event, horizon, n_trials=trials)
-    events = range(from_event, from_event + horizon)
-    season_totals = np.array([
-        sum(o.points_by_event_player.get((e, pid), 0.0) for e in events for pid in squad_ids)
-        for o in scenario_draw
-    ])
-    p10, p50, p90 = np.percentile(season_totals, [10, 50, 90])
-    click.echo(f"P10={p10:.1f}  P50={p50:.1f}  P90={p90:.1f}  ({trials} trials, GW{from_event}-{from_event + horizon - 1})")
+        # The scenario draw must cover every player any downstream evaluation might
+        # score, not just the starting squad - schedule_chips's wildcard/freehit
+        # comparison scores a rebuilt squad from the full player pool, its
+        # post-transfer squads (from the trajectory) can differ from squad_ids, and
+        # advisory hit-candidates are players outside the squad by definition. A
+        # player missing from the draw silently scores 0.0 on every trial via the
+        # dict .get(..., 0.0) fallback used throughout - undercounting real value,
+        # not just being conservative. Gather the full superset before sampling once.
+        squad_by_event = _squad_ids_by_event(squad_ids, trajectory)
+        superset_ids = set(squad_ids)
+        for ids in squad_by_event.values():
+            superset_ids.update(ids)
+        # Both rebuild horizons: wildcard rebuilds over the full horizon, freehit
+        # over a single GW, and they generally pick different players. Routed
+        # through chips.py's memo so schedule_chips reuses these exact solves
+        # instead of re-running the ILP.
+        for rebuild_n_gw in (horizon, 1):
+            superset_ids.update(c.player_id for c in _cached_optimise_squad(conn, rebuild_n_gw).squad)
+        # Shared expected_points_window memo across all of these probes - keyed by
+        # (player_id, n, from_event) inside evaluate_transfer, so it's safe to reuse
+        # across events and keeps this scan from re-deriving the same player's window
+        # EV once per candidate comparison.
+        ev_cache: dict[tuple, float] = {}
+        for event, ids in squad_by_event.items():
+            for player_out_id in ids:
+                for candidate in best_transfer_for_player(
+                    conn, player_out_id, list(ids), bank_tenths=0, is_hit=True, n_gw=1, top_n=1,
+                    from_event=event, cache=ev_cache,
+                ):
+                    superset_ids.add(candidate.player_in_id)
 
-    squad_team_ids = {conn.execute("SELECT team_id FROM players WHERE id=?", (pid,)).fetchone()["team_id"] for pid in squad_ids}
-    for a in detect_blank_double_gws(conn, from_event, horizon):
-        if a.team_id in squad_team_ids:
-            click.echo(f"GW{a.event}  {a.kind.upper()}  {a.team_short_name} (affects your squad)")
+        scenario_draw = sample_season_scenarios(conn, list(superset_ids), from_event, horizon, n_trials=trials)
+        events = range(from_event, from_event + horizon)
+        season_totals = np.array([
+            sum(o.points_by_event_player.get((e, pid), 0.0) for e in events for pid in squad_ids)
+            for o in scenario_draw
+        ])
+        p10, p50, p90 = np.percentile(season_totals, [10, 50, 90])
+        if season_totals.max() == 0.0:
+            click.echo(
+                "WARNING: every sampled trial scored exactly zero - the scenario draw likely has no usable "
+                "player data for this squad/horizon (e.g. missing sync-history or backfill data), not a real "
+                "zero-point forecast"
+            )
+        click.echo(f"P10={p10:.1f}  P50={p50:.1f}  P90={p90:.1f}  ({trials} trials, GW{from_event}-{from_event + horizon - 1})")
 
-    windows = eligible_chips(conn, event=from_event)
-    schedule = schedule_chips(conn, squad_ids, trajectory, windows, scenario_draw)
-    for entry in schedule.baseline_schedule:
-        click.echo(f"GW{entry.event}  {entry.chip_name}  median +{entry.expected_marginal_value:.1f}")
-    for rec in schedule.advisory_hit_recommendations:
-        click.echo(
-            f"advisory: hit {rec.player_out_name}->{rec.player_in_name} before GW{rec.event} "
-            f"{rec.chip_name} (+{rec.delta:.1f} over baseline)"
+        squad_team_ids = {conn.execute("SELECT team_id FROM players WHERE id=?", (pid,)).fetchone()["team_id"] for pid in squad_ids}
+        for a in detect_blank_double_gws(conn, from_event, horizon):
+            if a.team_id in squad_team_ids:
+                click.echo(f"GW{a.event}  {a.kind.upper()}  {a.team_short_name} (affects your squad)")
+
+        windows = eligible_chips(conn, event=from_event)
+        max_window_event = max((w.stop_event for w in windows), default=0)
+        if from_event + horizon - 1 > max_window_event:
+            click.echo(
+                f"WARNING: horizon extends to GW{from_event + horizon - 1}, beyond the last known chip "
+                f"window (GW{max_window_event}) - chip scheduling for GWs beyond that is not considered"
+            )
+
+        used_chip_names = {c.strip() for c in used_chips.split(",") if c.strip()}
+        schedule = schedule_chips(conn, squad_ids, trajectory, windows, scenario_draw, used_chip_names=used_chip_names)
+        for entry in schedule.baseline_schedule:
+            click.echo(f"GW{entry.event}  {entry.chip_name}  median +{entry.expected_marginal_value:.1f}")
+        for rec in schedule.advisory_hit_recommendations:
+            click.echo(
+                f"advisory: hit {rec.player_out_name}->{rec.player_in_name} before GW{rec.event} "
+                f"{rec.chip_name} (+{rec.delta:.1f} over baseline)"
+            )
+
+        detail = {
+            "squad_ids": squad_ids, "from_event": from_event, "horizon_gw": horizon, "trials": trials,
+            "p10": float(p10), "p50": float(p50), "p90": float(p90),
+            "chip_schedule": [
+                {"event": e.event, "chip_name": e.chip_name, "expected_marginal_value": e.expected_marginal_value}
+                for e in schedule.baseline_schedule
+            ],
+            "advisory_hit_recommendations": [
+                {"event": r.event, "chip_name": r.chip_name, "player_out_id": r.player_out_id, "player_in_id": r.player_in_id, "delta": r.delta}
+                for r in schedule.advisory_hit_recommendations
+            ],
+        }
+        decision_id = log_decision(
+            conn, "season_sim", summary=f"P50={p50:.1f} over GW{from_event}-{from_event + horizon - 1}",
+            detail=detail, confidence="low",
         )
-
-    detail = {
-        "squad_ids": squad_ids, "from_event": from_event, "horizon_gw": horizon, "trials": trials,
-        "p10": float(p10), "p50": float(p50), "p90": float(p90),
-        "chip_schedule": [
-            {"event": e.event, "chip_name": e.chip_name, "expected_marginal_value": e.expected_marginal_value}
-            for e in schedule.baseline_schedule
-        ],
-        "advisory_hit_recommendations": [
-            {"event": r.event, "chip_name": r.chip_name, "player_out_id": r.player_out_id, "player_in_id": r.player_in_id, "delta": r.delta}
-            for r in schedule.advisory_hit_recommendations
-        ],
-    }
-    decision_id = log_decision(
-        conn, "season_sim", summary=f"P50={p50:.1f} over GW{from_event}-{from_event + horizon - 1}",
-        detail=detail, confidence="low",
-    )
-    click.echo(f"decision_id={decision_id}")
-    conn.close()
+        click.echo(f"decision_id={decision_id}")
+    finally:
+        conn.close()
 
 
 @cli.command()

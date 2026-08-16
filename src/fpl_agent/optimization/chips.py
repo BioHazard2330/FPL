@@ -98,12 +98,38 @@ def _candidates(conn: sqlite3.Connection, squad_ids: list[int]):
         )
 
 
+_squad_rebuild_cache: dict[tuple[int, int], tuple[object, object]] = {}
+
+
+def _cached_optimise_squad(conn: sqlite3.Connection, n_gw: int):
+    """Memoized optimise_squad - the rebuilt squad depends only on (conn, n_gw),
+    never on squad_ids or event, but schedule_chips' DP calls the wildcard/freehit
+    trial-value function once per (window, event) pair, which would otherwise
+    re-run an identical ILP solve every time. Same module-level cache pattern
+    models/expected_points.py::_get_or_fit_dc_model already uses for its own
+    expensive fit; the stored conn is compared by identity so a recycled id()
+    can't hand back another connection's result."""
+    key = (id(conn), n_gw)
+    cached = _squad_rebuild_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    result = optimise_squad(conn, n_gw=n_gw)
+    _squad_rebuild_cache[key] = (conn, result)
+    return result
+
+
 def _bench_boost_trial_values(
     conn: sqlite3.Connection, squad_ids: list[int], event: int, scenario_draw: list[ScenarioOutcome]
 ) -> np.ndarray:
     """Bench composition is a single deterministic pre-match choice (same
     pick_starting_xi call bench_boost_value already makes) - only the bench's
-    realized points vary per scenario trial."""
+    realized points vary per scenario trial.
+
+    Known approximation: the bench is picked from TODAY's live expected-points
+    evaluation (pick_starting_xi takes no event/as_of_date), so the same bench is
+    assumed for every candidate event even though schedule_chips exists precisely
+    to compare different events - biasing the DP toward whichever event scores
+    best for today's bench rather than a genuinely event-specific one."""
     squad = list(_candidates(conn, squad_ids))
     xi = pick_starting_xi(conn, squad)
     bench_ids = [c.player_id for c in xi.bench]
@@ -116,7 +142,13 @@ def _triple_captain_trial_values(
     conn: sqlite3.Connection, squad_ids: list[int], event: int, scenario_draw: list[ScenarioOutcome]
 ) -> np.ndarray:
     """Extra points over a normal (2x) captaincy - one more multiple of the best
-    option's realized points, mirroring triple_captain_value's median-based logic."""
+    option's realized points, mirroring triple_captain_value's median-based logic.
+
+    Known approximation: the captain is picked from TODAY's live captaincy
+    evaluation (evaluate_captaincy takes no event/as_of_date), so the same captain
+    is assumed for every candidate event even though schedule_chips exists
+    precisely to compare different events - biasing the DP toward whichever event
+    scores best for today's captain rather than a genuinely event-specific one."""
     options = evaluate_captaincy(conn, squad_ids)
     if not options:
         return np.zeros(len(scenario_draw))
@@ -130,8 +162,13 @@ def _wildcard_trial_values(
     """The rebuilt squad is a single deterministic ILP solve (same optimise_squad
     call wildcard_value already makes - re-solving per trial would blow the runtime
     budget); only the realized-points GAP between it and the current squad varies
-    per trial, summed over the full horizon window."""
-    rebuilt = optimise_squad(conn, n_gw=horizon_gw)
+    per trial, summed over the full horizon window.
+
+    Every player scored here must be present in scenario_draw - the rebuilt squad
+    comes from the FULL player pool, so it is generally not a subset of squad_ids.
+    Callers are responsible for sampling the superset (see cli/main.py's
+    season-sim); a missing player silently contributes 0.0 via the .get fallback."""
+    rebuilt = _cached_optimise_squad(conn, horizon_gw)
     rebuilt_ids = [c.player_id for c in rebuilt.squad]
     events = range(event, event + horizon_gw)
 
@@ -180,6 +217,9 @@ class AdvisoryHitRecommendation:
 class ChipSchedule:
     baseline_schedule: tuple[ChipScheduleEntry, ...]
     advisory_hit_recommendations: tuple[AdvisoryHitRecommendation, ...]
+    # Sum of each scheduled window's own per-trial median - an approximation, NOT
+    # the joint median of the summed trials (which would need the DP to carry
+    # trial arrays rather than scalars).
     total_expected_value: float
 
 
@@ -272,19 +312,25 @@ def schedule_chips(
     squad_trajectory,
     chip_windows: list[ChipWindow],
     scenario_draw: list[ScenarioOutcome],
+    used_chip_names: set[str] = frozenset(),
 ) -> ChipSchedule:
     """DP over remaining chip_windows-eligible GWs, state = (used-window bitmask,
     event). Existing single-decision-point functions (bench_boost_value etc.) are
     untouched - this answers WHEN across the season, not is-it-worth-it this GW.
     Advisory hit-week reasoning (Task 7) is layered on top, never mutating this
-    baseline's squad_trajectory."""
+    baseline's squad_trajectory.
+
+    used_chip_names excludes chips already played this season from the DP state
+    space. It has to be told, not inferred: there is no live FPL account
+    integration in this project (a standing declined-scope decision), so nothing
+    here can know what the user has already burned. Defaults to empty."""
     squad_by_event = _squad_ids_by_event(initial_squad_ids, squad_trajectory)
     if not squad_by_event:
         return ChipSchedule(baseline_schedule=(), advisory_hit_recommendations=(), total_expected_value=0.0)
 
     horizon_gw = len(squad_by_event)
     events = sorted(squad_by_event)
-    usable_windows = [w for w in chip_windows if w.name in _TRIAL_VALUE_FUNCS]
+    usable_windows = [w for w in chip_windows if w.name in _TRIAL_VALUE_FUNCS and w.name not in used_chip_names]
 
     window_event_median: dict[tuple[int, int], float] = {}
     for wi, w in enumerate(usable_windows):

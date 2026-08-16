@@ -192,3 +192,91 @@ def test_advisory_hit_recommendation_can_beat_baseline(db_conn, monkeypatch):
     assert rec.player_in_id == 99
     assert rec.advisory_expected_marginal_value == 20.0 - 4.0  # hit cost
     assert rec.delta > 0
+
+
+def test_schedule_chips_never_schedules_an_already_used_chip(db_conn, monkeypatch):
+    """used_chip_names removes a window from the DP state space entirely - a chip
+    already played this season can't be scheduled again no matter how well it
+    scores. Deliberately makes the excluded chip the higher-value one, so a filter
+    that silently did nothing would show up as bboost still winning."""
+    import fpl_agent.optimization.chips as chips_mod
+
+    trajectory = TransferSequence(
+        steps=(TransferSequenceStep(event=10, player_out_id=None, player_out_name=None, player_in_id=None, player_in_name=None, uses_hit=False),),
+        final_squad_ids=(1, 2, 3), final_free_transfers=1, final_bank_tenths=0,
+        total_net_ev=0.0, tiebreak_adjustment=0.0,
+    )
+    windows = [
+        ChipWindow(name="bboost", number=1, start_event=10, stop_event=19, chip_type="team", eligible_now=True),
+        ChipWindow(name="3xc", number=1, start_event=10, stop_event=19, chip_type="team", eligible_now=True),
+    ]
+    monkeypatch.setattr(chips_mod, "_bench_boost_trial_values", lambda conn, squad_ids, event, scenario_draw: np.array([50.0, 50.0]))
+    monkeypatch.setattr(chips_mod, "_triple_captain_trial_values", lambda conn, squad_ids, event, scenario_draw: np.array([7.0, 7.0]))
+    monkeypatch.setattr(chips_mod, "best_transfer_for_player", lambda *a, **k: [])
+
+    scenario_draw = [object(), object()]
+    schedule = schedule_chips(
+        db_conn, initial_squad_ids=[1, 2, 3], squad_trajectory=trajectory, chip_windows=windows,
+        scenario_draw=scenario_draw, used_chip_names={"bboost"},
+    )
+
+    scheduled_names = {e.chip_name for e in schedule.baseline_schedule}
+    assert "bboost" not in scheduled_names
+    assert scheduled_names == {"3xc"}
+    assert schedule.total_expected_value == 7.0
+
+
+def test_wildcard_trial_values_scores_rebuilt_members_outside_the_sampled_squad(db_conn, monkeypatch):
+    """Regression guard for the whole-branch review's Critical finding, at the
+    chips.py end: the rebuilt squad comes from the FULL player pool and is generally
+    disjoint from squad_ids, so its members' per-trial points must come from the
+    scenario draw for the wildcard/freehit comparison to mean anything. Before the
+    fix at the season-sim call site those players were never sampled, so _total()
+    scored the whole rebuilt squad as 0.0 and wildcard/freehit marginal value was
+    provably <= 0 on every trial - the chip could never be scheduled. Exercises the
+    real (unmocked) _wildcard_trial_values arithmetic, which had no coverage at all.
+    """
+    import fpl_agent.optimization.chips as chips_mod
+    from types import SimpleNamespace
+
+    chips_mod._squad_rebuild_cache.clear()
+    # Rebuilt squad is entirely disjoint from the held squad [1, 2] - exactly the
+    # case optimise_squad produces in real use, since it rebuilds from scratch.
+    monkeypatch.setattr(
+        chips_mod, "optimise_squad",
+        lambda conn, n_gw: SimpleNamespace(squad=[SimpleNamespace(player_id=3), SimpleNamespace(player_id=4)]),
+    )
+
+    # One event in the horizon, held squad worth 4.0, rebuilt squad worth 20.0.
+    scenario_draw = [
+        ScenarioOutcome(trial_index=0, points_by_event_player={(10, 1): 1.0, (10, 2): 3.0, (10, 3): 12.0, (10, 4): 8.0}),
+        ScenarioOutcome(trial_index=1, points_by_event_player={(10, 1): 0.0, (10, 2): 0.0, (10, 3): 6.0, (10, 4): 2.0}),
+    ]
+
+    values = chips_mod._wildcard_trial_values(db_conn, [1, 2], event=10, horizon_gw=1, scenario_draw=scenario_draw)
+
+    assert list(values) == [16.0, 8.0]  # (12+8)-(1+3), (6+2)-(0+0)
+    assert float(np.median(values)) > 0.0  # the DP can actually schedule a wildcard now
+    chips_mod._squad_rebuild_cache.clear()
+
+
+def test_cached_optimise_squad_solves_once_per_n_gw(db_conn, monkeypatch):
+    import fpl_agent.optimization.chips as chips_mod
+    from types import SimpleNamespace
+
+    chips_mod._squad_rebuild_cache.clear()
+    calls = []
+
+    def counting_optimise(conn, n_gw):
+        calls.append(n_gw)
+        return SimpleNamespace(squad=[])
+
+    monkeypatch.setattr(chips_mod, "optimise_squad", counting_optimise)
+
+    first = chips_mod._cached_optimise_squad(db_conn, 5)
+    second = chips_mod._cached_optimise_squad(db_conn, 5)
+    chips_mod._cached_optimise_squad(db_conn, 1)
+
+    assert first is second
+    assert calls == [5, 1]  # the repeat 5-GW solve came from the memo, not a re-solve
+    chips_mod._squad_rebuild_cache.clear()
