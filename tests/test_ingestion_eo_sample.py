@@ -152,3 +152,47 @@ def test_sample_effective_ownership_partial_manager_failure_still_commits(db_con
 
     assert result["sample_size"] == 1  # only entry 102 succeeded
     assert result["managers_failed"] == 1
+
+
+def test_sample_effective_ownership_force_replaces_existing_rows(db_conn, monkeypatch):
+    """--force deletes and re-inserts the event's rows rather than upserting/accumulating
+    row-by-row (design doc: 'Rows for a given event are written atomically as one batch by
+    a single sampling run ... --force deletes and re-inserts that event's rows'). A stale
+    row for a player who drops out of the new sample entirely must not survive the re-run."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [55, 999])
+    monkeypatch.setattr(eo_sample, "select_stratified_pages", lambda target_sample_size: [1])
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_league_standings", lambda self, league_id, page: _fake_standings(page))
+    monkeypatch.setattr(eo_sample.FPLApiAdapter, "fetch_entry_picks", lambda self, entry_id, event: _fake_picks(entry_id, 55))
+
+    first = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50)
+    assert first["skipped"] is False
+
+    def fake_picks_captain_999(entry_id):
+        return RawFetch(
+            source_name=f"fpl_api_entry_picks_{entry_id}_1",
+            data={"active_chip": None, "picks": [{"element": 999, "multiplier": 2, "is_captain": True}]},
+            retrieved_at="t1", latency_ms=1, parser_version="1",
+        )
+
+    monkeypatch.setattr(
+        eo_sample.FPLApiAdapter, "fetch_entry_picks",
+        lambda self, entry_id, event: fake_picks_captain_999(entry_id),
+    )
+
+    result = eo_sample.sample_effective_ownership(db_conn, event=1, target_sample_size=50, force=True)
+
+    assert result["skipped"] is False
+    assert result["players_sampled"] == 1  # only player 999 appears in the new sample
+
+    row_55 = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE player_id=55 AND event=1"
+    ).fetchone()
+    assert row_55 is None  # stale row from the first run must not survive
+
+    row_999 = db_conn.execute(
+        "SELECT * FROM player_sample_ownership_history WHERE player_id=999 AND event=1"
+    ).fetchone()
+    assert row_999["owned_count"] == 2
+    assert row_999["captained_count"] == 2
+    assert row_999["sum_multiplier"] == 4
