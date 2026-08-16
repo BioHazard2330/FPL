@@ -67,3 +67,12 @@ class FPLApiAdapter:
 
     def fetch_element_summary(self, player_id: int) -> RawFetch:
         return self._get(f"fpl_api_element_summary_{player_id}", f"/element-summary/{player_id}/")
+
+    def fetch_league_standings(self, league_id: int, page: int) -> RawFetch:
+        return self._get(
+            f"fpl_api_league_standings_{league_id}_p{page}",
+            f"/leagues-classic/{league_id}/standings/?page_standings={page}",
+        )
+
+    def fetch_entry_picks(self, entry_id: int, event: int) -> RawFetch:
+        return self._get(f"fpl_api_entry_picks_{entry_id}_{event}", f"/entry/{entry_id}/event/{event}/picks/")
