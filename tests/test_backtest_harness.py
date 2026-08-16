@@ -1,5 +1,11 @@
 from fpl_agent.backtesting import harness
-from fpl_agent.backtesting.harness import reconstruct_actual_points, run_backtest, save_backtest_run
+from fpl_agent.backtesting.harness import (
+    DifferentialBacktestResult,
+    reconstruct_actual_points,
+    run_backtest,
+    save_backtest_run,
+    score_differentials,
+)
 
 
 def _seed_reference_data(conn):
@@ -174,3 +180,12 @@ def test_predictions_use_only_data_strictly_before_each_round_start(db_conn, mon
         ).fetchone()["n"]
         assert rates["goals"].matches_played == round(prior_matches * 90 / 90, 2)
         assert (probs.source == "empirical") == (prior_matches >= 4)
+
+
+def test_score_differentials_reports_insufficient_data_for_historical_season(db_conn):
+    _seed_season(db_conn)  # no player_ownership_history rows seeded - real, honest gap
+    result = score_differentials(db_conn, "2024-25", model_version="calibrated-v2")
+    assert isinstance(result, DifferentialBacktestResult)
+    assert result.insufficient_ownership_data is True
+    assert result.differentials_scored == 0
+    assert result.mean_delta_vs_template is None

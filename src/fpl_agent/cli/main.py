@@ -12,7 +12,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
-from fpl_agent.backtesting.harness import run_backtest, save_backtest_run
+from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_differentials
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -199,7 +199,8 @@ def backfill_xg(season: str):
 @cli.command("backtest")
 @click.option("--season", required=True, help="e.g. 2024-25 - must already be backfilled via backfill-odds/backfill-xg")
 @click.option("--model-version", default=None, help="defaults to the current MODEL_VERSION")
-def backtest(season: str, model_version: str | None):
+@click.option("--differentials", is_flag=True, default=False, help="also score the differential heuristic vs template pick")
+def backtest(season: str, model_version: str | None, differentials: bool):
     """Walk-forward backtest of the calibrated model against a historical
     season - no future leakage, scores against Understat-reconstructed
     actual points (core components only; bonus/BPS unavailable in that source)."""
@@ -207,6 +208,20 @@ def backtest(season: str, model_version: str | None):
     try:
         result = run_backtest(conn, season, model_version or MODEL_VERSION)
         run_id = save_backtest_run(conn, result)
+        diff_result = None
+        if differentials:
+            diff_result = score_differentials(conn, season, model_version or MODEL_VERSION)
+            log_decision(
+                conn, "differential_backtest",
+                summary=f"{diff_result.differentials_scored} differentials scored, season {season}",
+                detail={
+                    "season": diff_result.season, "rounds_evaluated": diff_result.rounds_evaluated,
+                    "rounds_scored": diff_result.rounds_scored, "differentials_scored": diff_result.differentials_scored,
+                    "mean_delta_vs_template": diff_result.mean_delta_vs_template,
+                    "insufficient_ownership_data": diff_result.insufficient_ownership_data,
+                },
+                confidence="low",
+            )
     finally:
         conn.close()
 
@@ -219,6 +234,11 @@ def backtest(season: str, model_version: str | None):
     click.echo(f"baseline MAE         {result.baseline_mae}")
     click.echo(f"{'beats' if result.mae < result.baseline_mae else 'DOES NOT beat'} naive baseline")
     click.echo(f"saved as run #{run_id}")
+    if diff_result is not None:
+        if diff_result.insufficient_ownership_data:
+            click.echo("differentials: insufficient historical ownership data to score")
+        else:
+            click.echo(f"differentials scored {diff_result.differentials_scored}, mean delta vs template {diff_result.mean_delta_vs_template}")
 
 
 @cli.command("run-scheduled")

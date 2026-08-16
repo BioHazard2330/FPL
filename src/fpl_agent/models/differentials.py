@@ -6,8 +6,9 @@ differential-success data (none exists yet this season).
 
 import sqlite3
 from dataclasses import dataclass
+from types import SimpleNamespace
 
-from fpl_agent.models.expected_points import expected_points
+from fpl_agent.models.expected_points import core_expected_points, expected_points
 
 MAX_OWNERSHIP_PERCENT = 5.0
 MIN_MEDIAN_XP = 2.0
@@ -40,19 +41,30 @@ def find_differentials(
     n_gw: int = 1,
     max_ownership: float = MAX_OWNERSHIP_PERCENT,
     min_median_xp: float = MIN_MEDIAN_XP,
+    as_of_date: str | None = None,
 ) -> list[Differential]:
+    if as_of_date is None:
+        ownership_clause, ownership_params = "oh.valid_until IS NULL", ()
+    else:
+        ownership_clause = "oh.valid_from <= ? AND (oh.valid_until IS NULL OR oh.valid_until > ?)"
+        ownership_params = (as_of_date, as_of_date)
+
     rows = conn.execute(
-        "SELECT p.id, p.web_name, et.singular_name_short AS position, oh.selected_by_percent "
-        "FROM players p "
-        "JOIN element_types et ON et.id = p.element_type "
-        "JOIN player_ownership_history oh ON oh.player_id = p.id AND oh.valid_until IS NULL "
-        "WHERE p.removed = 0 AND oh.selected_by_percent < ?",
-        (max_ownership,),
+        f"SELECT p.id, p.web_name, et.singular_name_short AS position, oh.selected_by_percent "
+        f"FROM players p "
+        f"JOIN element_types et ON et.id = p.element_type "
+        f"JOIN player_ownership_history oh ON oh.player_id = p.id AND {ownership_clause} "
+        f"WHERE p.removed = 0 AND oh.selected_by_percent < ?",
+        ownership_params + (max_ownership,),
     ).fetchall()
 
     results = []
     for r in rows:
-        ep = expected_points(conn, r["id"], n_gw=n_gw)
+        if as_of_date is None:
+            ep = expected_points(conn, r["id"], n_gw=n_gw)
+        else:
+            core = core_expected_points(conn, r["id"], as_of_date=as_of_date)
+            ep = SimpleNamespace(median=core.total, ceiling=core.total, confidence="historical")
         if ep.median < min_median_xp:
             continue
         results.append(

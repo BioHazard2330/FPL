@@ -41,6 +41,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from fpl_agent.models.differentials import find_differentials
 from fpl_agent.models.minutes_distribution import expected_appearance_points, minutes_bucket_probabilities
 from fpl_agent.models.player_regression import player_shrunk_rates
 from fpl_agent.models.rules import get_rule
@@ -202,3 +203,89 @@ def save_backtest_run(conn, result: BacktestResult) -> int:
     )
     conn.commit()
     return cur.lastrowid
+
+
+@dataclass(frozen=True)
+class DifferentialBacktestResult:
+    season: str
+    rounds_evaluated: int
+    rounds_scored: int
+    differentials_scored: int
+    mean_delta_vs_template: float | None
+    insufficient_ownership_data: bool
+
+
+def _template_pick_as_of(conn, position: str, as_of_date: str, exclude_player_id: int | None = None):
+    exclude_clause = "AND p.id != ? " if exclude_player_id is not None else ""
+    exclude_params = (exclude_player_id,) if exclude_player_id is not None else ()
+    row = conn.execute(
+        "SELECT p.id FROM players p "
+        "JOIN element_types et ON et.id = p.element_type "
+        "JOIN player_ownership_history oh ON oh.player_id = p.id "
+        "WHERE p.removed = 0 AND et.singular_name_short = ? "
+        "AND oh.valid_from <= ? AND (oh.valid_until IS NULL OR oh.valid_until > ?) " + exclude_clause +
+        "ORDER BY oh.selected_by_percent DESC LIMIT 1",
+        (position, as_of_date, as_of_date) + exclude_params,
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def _first_match_row_in_round(conn, player_id: int, season: str, as_of_date: str, round_end: str | None):
+    date_clause, date_params = ("AND match_date < ?", (round_end,)) if round_end else ("", ())
+    return conn.execute(
+        f"SELECT * FROM player_match_stats_history WHERE player_id=? AND season=? AND match_date >= ? {date_clause} "
+        f"ORDER BY match_date LIMIT 1",
+        (player_id, season, as_of_date) + date_params,
+    ).fetchone()
+
+
+def score_differentials(conn, season: str, model_version: str) -> DifferentialBacktestResult:
+    """Honestly documents how the differential heuristic has historically performed
+    vs the template pick - doesn't need to perfectly tune the heuristic, just to not
+    fabricate a comparison when the data to make one doesn't exist yet (real gap:
+    player_ownership_history is only populated going forward from each live sync,
+    no historical backfill exists for a replayed season like 2024-25)."""
+    starts = _round_start_dates(conn, season)
+    if not starts:
+        raise ValueError(f"no match_results_history rows for season {season}")
+
+    has_ownership = conn.execute(
+        "SELECT 1 FROM player_ownership_history WHERE valid_from <= ? LIMIT 1", (starts[-1],)
+    ).fetchone()
+    if not has_ownership:
+        return DifferentialBacktestResult(
+            season=season, rounds_evaluated=len(starts), rounds_scored=0,
+            differentials_scored=0, mean_delta_vs_template=None, insufficient_ownership_data=True,
+        )
+
+    boundaries = starts + [None]
+    deltas = []
+    rounds_scored = 0
+    for i, as_of_date in enumerate(starts):
+        round_end = boundaries[i + 1]
+        flagged = find_differentials(conn, as_of_date=as_of_date)
+        if not flagged:
+            continue
+        rounds_scored += 1
+        for d in flagged:
+            diff_row = _first_match_row_in_round(conn, d.player_id, season, as_of_date, round_end)
+            if diff_row is None:
+                continue
+            diff_actual = reconstruct_actual_points(conn, diff_row, season)
+            template_id = _template_pick_as_of(conn, d.position, as_of_date, exclude_player_id=d.player_id)
+            if template_id is None or diff_actual is None:
+                continue
+            template_row = _first_match_row_in_round(conn, template_id, season, as_of_date, round_end)
+            if template_row is None:
+                continue
+            template_actual = reconstruct_actual_points(conn, template_row, season)
+            if template_actual is None:
+                continue
+            deltas.append(diff_actual - template_actual)
+
+    return DifferentialBacktestResult(
+        season=season, rounds_evaluated=len(starts), rounds_scored=rounds_scored,
+        differentials_scored=len(deltas),
+        mean_delta_vs_template=(sum(deltas) / len(deltas)) if deltas else None,
+        insufficient_ownership_data=False,
+    )
