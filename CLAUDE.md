@@ -49,7 +49,7 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-eo --event N [--sample-size N] [--force]`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
 
 ## Data model (Phase 2)
 
@@ -466,9 +466,101 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   ran cleanly to completion and correctly printed the `insufficient_ownership_data` result described
   above.
 
+## Data model / logic (Pillar 1 Plan 1c)
+
+- `player_sample_ownership_history` (migration `0011`) — FACTS only: `sample_size`/`owned_count`/
+  `captained_count`/`sum_multiplier`/`sum_multiplier_sq` per `(player_id, event)`, unique-indexed on
+  that pair. Not a `valid_from`/`valid_until` slowly-changing fact like price/ownership — a
+  point-in-time sample per event, sourced from `entry/{id}/event/{gw}/picks/`, which raw
+  `selected_by_percent` can't provide (no captain/triple-captain multiplier weighting). Percent and
+  margin of error are derived on read (`models/effective_ownership.py`), never stored — this
+  file's own FACTS/DERIVED/REASONING rule.
+- `FPLApiAdapter.fetch_league_standings(league_id, page)` / `.fetch_entry_picks(entry_id, event)`
+  (`ingestion/fpl_api.py`) — two new thin adapter methods over `leagues-classic/{id}/standings/`
+  and `entry/{id}/event/{gw}/picks/`, same `RawFetch`/caching/`SourceFetchError` pattern as every
+  other adapter method.
+- `ingestion/eo_sample.py::select_stratified_pages(target_sample_size, entries_per_page=50,
+  max_rank=10000)` — evenly spreads standings-page numbers across the full rank 1-10000 range
+  (never clusters at the top of the list, which would be extreme overperformers, not a
+  representative top-10k sample). `sample_effective_ownership(conn, event, target_sample_size=750,
+  force=False, delay=0.15)` — fetches the stratified pages of Overall-league (`314`) standings,
+  extracts entry ids, fetches each entry's picks for that event, aggregates owned/captained counts
+  and multiplier sums per player, then one atomic `executemany` insert + `conn.commit()`. Two real
+  guards, both load-bearing:
+  - **Event-lock validation before any network call.** Raises `ValueError` if the event's
+    `deadline_time_epoch` is still in the future — `picks/` 404s pre-lock, so this fails fast
+    rather than issuing hundreds of doomed requests. This is the exact path Task 13 verified live
+    (see below).
+  - **Idempotent per event unless `force=True`** — a `COUNT(*)` short-circuit returns
+    `{"skipped": True, ...}` if the event already has rows. A real bug was caught and fixed here
+    during implementation (commit `18fa9ce`): the original `force=True` delete-then-insert
+    straddled two transactions, so a re-sample that failed to fetch a single manager
+    (`sample_size == 0`) could still flush the bare `DELETE` via `update_source_health`'s own
+    `commit()`, silently wiping a previously-good sample. Fixed by only issuing the `DELETE`
+    inside the same conditional block as the insert+commit, so it's one atomic unit.
+  The per-request politeness delay (`0.15s`, same constant pattern as `sync-history`) applies even
+  on failed requests, and individual manager fetch failures are tolerated (recorded in
+  `managers_failed`, not fatal) — `sample_size` is the real fetched-manager count, not the
+  requested target, so a run with some failures still produces an honest, if smaller, sample.
+- `fpl sync-eo --event N [--sample-size N] [--force]` — the CLI entrypoint. Its own `--help` text
+  calls it out as the heaviest network pattern in this project (up to sample-size-plus-page-count
+  sequential requests, each throttled) — separate from `fpl sync`, never invoked automatically.
+- `models/effective_ownership.py::SampleEOEstimate` (frozen dataclass: `player_id`, `event`,
+  `sample_size`, `eo_percent`, `raw_owned_percent`, `margin_of_error_pp`). `get_all_sample_eo(conn,
+  event=None)` defaults to the latest sampled event and returns `{}` if no sampling run has ever
+  produced rows for it — callers must treat that as "fall back to raw ownership," never as
+  "all-zero EO." `eo_percent` is `mean(multiplier) * 100`, so captaincy's 2x/3x weighting is baked
+  directly into the percentage, unlike raw `selected_by_percent`. `margin_of_error_pp` is a real
+  95% CI half-width (`1.96 * sqrt(variance/n) * 100`) off the sampled multiplier distribution — an
+  honest margin, not a placeholder, but still a margin: with the default 750-manager sample against
+  a ~10,000-manager Overall league, single-player estimates carry real sampling uncertainty,
+  widest for low-owned players. `get_sample_eo(conn, player_id, event=None)` returns `None` only
+  when no sample exists at all for the resolved event; a real `SampleEOEstimate(eo_percent=0.0,
+  ...)` when a sample exists but the player had zero owners in it — a genuine measured zero, not a
+  data gap.
+- Wired additively into five consumers. `differentials.py`, `traps.py`, `template.py`,
+  `breakouts.py` all use `eo_source` `"sampled"` (a sample exists for the latest event) or `"raw"`
+  (falls back to `selected_by_percent`); `captaincy.py` uses `"sampled"` or `"unavailable"` —
+  captaincy has no raw-ownership value to fall back *into*, so the vocabulary deliberately differs
+  (flagged explicitly during Task 10, not an inconsistency). None of the five modules' pre-existing
+  logic changed beyond adding the EO fields, except where the plan explicitly meant it to:
+  `differentials.py`'s `max_ownership` filter and `traps.py`'s `min_ownership` filter/sort now key
+  off sampled EO instead of raw ownership when a sample exists (documented in both module
+  docstrings) — a player captained by nearly every sampled manager is correctly *not* flagged as a
+  differential even if its raw `selected_by_percent` looks low, which is the whole point of the
+  feature (live-verified end-to-end by Task 11's test, which had to raise its own
+  `max_ownership` test parameter to prove this rather than treating it as a bug). `breakouts.py`/
+  `template.py` surface EO informationally without changing their own selection logic.
+  `captaincy.py`'s `captaincy_report` gains `differential_captain_note`, firing only for the
+  top-median captain pick when `eo_source == "sampled"` and the field owns it more than 2x what it
+  captains it (`effective_ownership_percent < 0.5 * selected_by_percent`) — a real rank-differential
+  armband signal, not just a popular pick. Wiring `captaincy.py`'s two new `CaptainOption` fields
+  also surfaced one direct collateral break in `tests/test_optimization_chips.py` (a pre-existing
+  `CaptainOption(...)` construction site) — fixed as part of Task 10, confirmed in review as the
+  only other construction site in the repo and correctly scoped.
+- `tests/test_e2e_plan1c_lifecycle.py` — one test chaining the actual pipeline: `fpl sync-eo`
+  (mocked network, real DB writes) -> real `get_sample_eo` derivation -> real `find_differentials`
+  -> real `captaincy_report`, same bar the Pillar 0/Plan 1a/Plan 1b E2E tests already set. Full
+  suite: 212 passed (confirmed after Task 11, the last code task before this docs pass).
+- **Deferred live verification:** `fpl sync-eo --event 1` was verified on 2026-08-16 against the
+  live FPL API to fail cleanly and fast (exit code 1, message: `sync-eo failed: event 1 has not
+  locked yet (deadline still ahead) - picks aren't available`) because GW1's deadline
+  (`2026-08-21T17:30:00Z`) had not yet passed — this is preseason, so picks/standings data
+  genuinely isn't available yet from FPL's API. This is a calendar constraint, not a gap in this
+  plan's testing: the event-lock validation itself is fully verified (fast-fails before issuing any
+  of the hundreds of doomed per-manager network requests it would otherwise make).
+
+  A genuine end-to-end `fpl sync-eo --event 1` run against real sampled ownership data has to wait
+  until after GW1's deadline passes (2026-08-21). When the user next returns to the project after
+  that date, run `fpl sync-eo --event 1` for real and confirm sane, non-degenerate output: real
+  (non-zero, plausible) `sample_size`, plausible `eo_percent` values across sampled players, and
+  `fpl doctor` / `fpl source-status` showing the `fpl_eo_sample` source as healthy. That is the
+  actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
+  preseason session.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a and 1b (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`) complete.**
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete.**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -500,8 +592,18 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   (11/11 tasks, plus one whole-branch review fix wave — full implementer+reviewer ledger in
   `.superpowers/sdd/2026-08-16-decision-intelligence-plan1b-scenario-chip-dp/progress.md`).
   Sampled effective ownership was originally scoped into this plan but split out to its
-  own **Plan 1c** — a separate, still-unbuilt plan, own future brainstorm cycle — since
-  it's functionally independent and nothing in Plan 1b's cluster consumes it.
+  own **Plan 1c** (below) — functionally independent, nothing in Plan 1b's cluster
+  consumed it, and it's now built.
+- [x] Pillar 1 Plan 1c — Sampled effective ownership (rank-stratified sample of
+  Overall-league manager picks, captain/triple-captain-weighted EO with a real margin of
+  error, wired additively into `differentials`/`traps`/`template`/`breakouts`/`captaincy`).
+  Spec: `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`, Pillar 1
+  section (design judgment calls in
+  `docs/superpowers/specs/2026-08-16-decision-intelligence-plan1c-design.md`). Plan:
+  `docs/superpowers/plans/2026-08-16-decision-intelligence-plan1c-sampled-eo.md`
+  (11/11 code tasks + 1 live-verification task + this docs task = 13/13, full
+  implementer+reviewer ledger in
+  `.superpowers/sdd/2026-08-16-decision-intelligence-plan1c-sampled-eo/progress.md`).
 
 ## What's still genuinely limited (read before trusting output)
 
@@ -566,10 +668,31 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   has no shipped test coverage yet — it was verified out-of-band by the reviewer with
   a standalone harness during Task 9, not by a committed test — worth adding one if
   this path is touched again.
-- **Sampled effective ownership is deferred to Plan 1c.** Chip decisions and
-  differential scoring both still use raw `selected_by_percent` from the FPL API,
-  not a sampled/inferred EO — Plan 1c (separate, still-unbuilt, own future
-  brainstorm cycle) is where that would land.
+- **Sampled effective ownership is real, but bounded and preseason-unverified end-to-end.**
+  `fpl sync-eo --event N` samples ~750 of the ~10,000 Overall-league managers (rank-stratified,
+  not a full census) — `eo_percent` carries a real, reported margin of error
+  (`SampleEOEstimate.margin_of_error_pp`, 95% CI), tightest for high-owned players and widest for
+  low-owned ones, never an exact figure. EO only exists for events `sync-eo` has actually been run
+  against — there's no historical/prior-season backfill, and a gameweek `sync-eo` hasn't touched
+  falls back to raw `selected_by_percent` (`eo_source="raw"`/`"unavailable"` depending on the
+  consumer, see above). Wired additively into `differentials`/`traps`/`template`/`breakouts`/
+  `captaincy` - all five preserve their prior raw-ownership behavior when no sample exists.
+
+  **Deferred live verification:** `fpl sync-eo --event 1` was verified on 2026-08-16 against the
+  live FPL API to fail cleanly and fast (exit code 1, message: `sync-eo failed: event 1 has not
+  locked yet (deadline still ahead) - picks aren't available`) because GW1's deadline
+  (`2026-08-21T17:30:00Z`) had not yet passed — this is preseason, so picks/standings data
+  genuinely isn't available yet from FPL's API. This is a calendar constraint, not a gap in this
+  plan's testing: the event-lock validation itself is fully verified (fast-fails before issuing any
+  of the hundreds of doomed per-manager network requests it would otherwise make).
+
+  A genuine end-to-end `fpl sync-eo --event 1` run against real sampled ownership data has to wait
+  until after GW1's deadline passes (2026-08-21). When the user next returns to the project after
+  that date, run `fpl sync-eo --event 1` for real and confirm sane, non-degenerate output: real
+  (non-zero, plausible) `sample_size`, plausible `eo_percent` values across sampled players, and
+  `fpl doctor` / `fpl source-status` showing the `fpl_eo_sample` source as healthy. That is the
+  actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
+  preseason session.
 
 ## Skill/subagent guidance
 
