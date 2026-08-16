@@ -214,15 +214,22 @@ def _advisory_hit_recommendations(
     design doc's Scenario reuse section). Advisory-only: never mutates
     squad_trajectory. Conservative bank_tenths=0 - see this task's docstring.
 
-    best_transfer_for_player is looked up via this module's own globals rather
-    than a static top-level import: transfers.py already imports eligible_chips
-    from this module, so a top-level `from ...transfers import
+    best_transfer_for_player is referenced by its bare name rather than via a
+    static top-level import: transfers.py already imports eligible_chips from
+    this module, so a top-level `from ...transfers import
     best_transfer_for_player` here would be circular (and which side of the
-    cycle loads first depends on which module a caller imports first). Checking
-    globals() first still lets tests monkeypatch this module's
-    best_transfer_for_player attribute; the deferred import only runs for real
-    usage, by which point both modules have finished loading."""
-    transfer_fn = globals().get("best_transfer_for_player")
+    cycle loads first depends on which module a caller imports first). The
+    module-level placeholder above keeps this module's own
+    best_transfer_for_player attribute patchable by tests; the bare-name
+    reference below resolves it via ordinary global lookup at call time, so a
+    monkeypatched attribute is picked up automatically. The best_transfer_for_player
+    deferred import only runs for real usage (when the attribute is still the
+    placeholder), by which point both modules have finished loading. HIT_COST
+    is imported the same deferred way, purely to dodge the same circularity,
+    and is always fetched for real (it isn't monkeypatched by tests)."""
+    from fpl_agent.optimization.transfers import HIT_COST
+
+    transfer_fn = best_transfer_for_player
     if transfer_fn is None:
         from fpl_agent.optimization.transfers import best_transfer_for_player as transfer_fn
 
@@ -239,7 +246,7 @@ def _advisory_hit_recommendations(
                 hypothetical_ids = [candidate.player_in_id if pid == player_out_id else pid for pid in squad_ids]
                 fn = _TRIAL_VALUE_FUNCS[entry.chip_name]
                 trial_values = fn(conn, hypothetical_ids, entry.event, horizon_gw, scenario_draw)
-                advisory_value = float(np.median(trial_values)) - 4.0  # flat hit cost, same rule as transfers.py
+                advisory_value = float(np.median(trial_values)) - HIT_COST  # flat hit cost, same rule as transfers.py
                 delta = advisory_value - entry.expected_marginal_value
                 if delta > best_delta:
                     best_delta = delta
