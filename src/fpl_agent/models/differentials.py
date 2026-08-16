@@ -1,13 +1,16 @@
 """
 Differential engine (section 58). Ownership thresholds and the risk-bucket mapping
 below are deliberate, documented heuristics - not calibrated against any historical
-differential-success data (none exists yet this season).
+differential-success data (none exists yet this season). Uses sampled effective
+ownership (Plan 1c) for the live (as_of_date=None) path when a sample exists; the
+as_of_date historical/backtest path stays on raw ownership (EO backfill only covers
+the current season's already-elapsed events, not general backtest integration).
 """
-
 import sqlite3
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from fpl_agent.models.effective_ownership import get_all_sample_eo
 from fpl_agent.models.expected_points import core_expected_points, expected_points
 
 MAX_OWNERSHIP_PERCENT = 5.0
@@ -20,6 +23,8 @@ class Differential:
     web_name: str
     position: str
     ownership_percent: float
+    effective_ownership_percent: float | None
+    eo_source: str  # "sampled" or "raw"
     median: float
     ceiling: float
     confidence: str
@@ -54,12 +59,25 @@ def find_differentials(
         f"FROM players p "
         f"JOIN element_types et ON et.id = p.element_type "
         f"JOIN player_ownership_history oh ON oh.player_id = p.id AND {ownership_clause} "
-        f"WHERE p.removed = 0 AND oh.selected_by_percent < ?",
-        ownership_params + (max_ownership,),
+        f"WHERE p.removed = 0",
+        ownership_params,
     ).fetchall()
+
+    eo_by_player = get_all_sample_eo(conn) if as_of_date is None else {}
 
     results = []
     for r in rows:
+        if eo_by_player:
+            eo = eo_by_player.get(r["id"])
+            filter_ownership = eo.eo_percent if eo is not None else 0.0
+            eo_percent, eo_source = filter_ownership, "sampled"
+        else:
+            filter_ownership = r["selected_by_percent"]
+            eo_percent, eo_source = None, "raw"
+
+        if filter_ownership >= max_ownership:
+            continue
+
         if as_of_date is None:
             ep = expected_points(conn, r["id"], n_gw=n_gw)
         else:
@@ -71,8 +89,9 @@ def find_differentials(
             Differential(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 ownership_percent=r["selected_by_percent"],
+                effective_ownership_percent=eo_percent, eo_source=eo_source,
                 median=ep.median, ceiling=ep.ceiling, confidence=ep.confidence,
-                risk=_risk_bucket(r["selected_by_percent"], ep.confidence),
+                risk=_risk_bucket(filter_ownership, ep.confidence),
             )
         )
     results.sort(key=lambda d: d.median, reverse=True)

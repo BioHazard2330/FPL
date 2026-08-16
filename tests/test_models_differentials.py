@@ -104,3 +104,32 @@ def test_find_differentials_as_of_date_uses_historical_ownership_window(db_conn,
 
     result_later = diff_mod.find_differentials(db_conn, max_ownership=5.0, min_median_xp=2.0, as_of_date="2025-02-15")
     assert result_later == []  # 8.0% is above max_ownership=5.0 by then
+
+
+def test_differentials_uses_eo_for_the_max_ownership_filter_when_available(db_conn, monkeypatch):
+    # Player 1 at 8% raw ownership (above the 5% MAX_OWNERSHIP_PERCENT default, would
+    # normally be excluded) but only 3% effective ownership (rarely captained) - should
+    # now be INCLUDED because the EO-aware filter uses the lower EO value.
+    _seed(db_conn, ownership=8.0)
+    _patch_ep(monkeypatch, median=3.0, confidence="HIGH")
+
+    # player_sample_ownership_history.event has a real FK to events(id) - _seed() above
+    # doesn't create one (foreign_keys=ON on every connection), so this test needs its own.
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (1, 1, 100, 8, 0, 3, 3, 't0')"  # eo_percent = 3.0
+    )
+    db_conn.commit()
+
+    result = diff_mod.find_differentials(db_conn, max_ownership=5.0, min_median_xp=2.0)
+
+    assert len(result) == 1
+    assert result[0].player_id == 1
+    assert result[0].eo_source == "sampled"
+    assert result[0].effective_ownership_percent == 3.0
+    assert result[0].ownership_percent == 8.0  # raw value still reported alongside EO
