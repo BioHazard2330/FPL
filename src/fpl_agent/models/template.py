@@ -1,10 +1,12 @@
 """
-Template detection (section 76): the highest-owned players per position, purely
-from current ownership data - no modelling involved.
+Template detection (section 76): the highest-owned players per position. Uses
+sampled effective ownership (Plan 1c) when a sample exists for the latest event,
+falling back to raw current ownership otherwise - never silently blank.
 """
-
 import sqlite3
 from dataclasses import dataclass
+
+from fpl_agent.models.effective_ownership import get_all_sample_eo
 
 DEFAULT_TOP_N_PER_POSITION = 3
 
@@ -15,6 +17,8 @@ class TemplatePlayer:
     web_name: str
     position: str
     ownership_percent: float
+    effective_ownership_percent: float | None
+    eo_source: str  # "sampled" or "raw"
 
 
 def get_template(conn: sqlite3.Connection, top_n_per_position: int = DEFAULT_TOP_N_PER_POSITION) -> list[TemplatePlayer]:
@@ -23,22 +27,34 @@ def get_template(conn: sqlite3.Connection, top_n_per_position: int = DEFAULT_TOP
         "FROM players p "
         "JOIN element_types et ON et.id = p.element_type "
         "JOIN player_ownership_history oh ON oh.player_id = p.id AND oh.valid_until IS NULL "
-        "WHERE p.removed = 0 "
-        "ORDER BY et.singular_name_short, oh.selected_by_percent DESC"
+        "WHERE p.removed = 0"
     ).fetchall()
 
-    by_position: dict[str, list[TemplatePlayer]] = {}
+    eo_by_player = get_all_sample_eo(conn)
+
+    ranked = []
     for r in rows:
+        if eo_by_player:
+            eo = eo_by_player.get(r["id"])
+            sort_value = eo.eo_percent if eo is not None else 0.0
+            eo_percent, eo_source = sort_value, "sampled"
+        else:
+            sort_value = r["selected_by_percent"]
+            eo_percent, eo_source = None, "raw"
+        ranked.append((r["position"], -sort_value, r, eo_percent, eo_source))
+
+    ranked.sort(key=lambda t: (t[0], t[1]))
+
+    by_position: dict[str, list[TemplatePlayer]] = {}
+    result = []
+    for _, _, r, eo_percent, eo_source in ranked:
         bucket = by_position.setdefault(r["position"], [])
         if len(bucket) < top_n_per_position:
-            bucket.append(
-                TemplatePlayer(
-                    player_id=r["id"], web_name=r["web_name"], position=r["position"],
-                    ownership_percent=r["selected_by_percent"],
-                )
+            player = TemplatePlayer(
+                player_id=r["id"], web_name=r["web_name"], position=r["position"],
+                ownership_percent=r["selected_by_percent"],
+                effective_ownership_percent=eo_percent, eo_source=eo_source,
             )
-
-    result = []
-    for players in by_position.values():
-        result.extend(players)
+            bucket.append(player)
+            result.append(player)
     return result
