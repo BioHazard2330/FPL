@@ -1,5 +1,5 @@
 from fpl_agent.ingestion.sync import _upsert_many
-from fpl_agent.models.fixtures import fixture_difficulty, fixture_window_score
+from fpl_agent.models.fixtures import fixture_difficulty, fixture_window_score, detect_blank_double_gws
 
 _TEAMS = [
     {
@@ -70,3 +70,40 @@ def test_fixture_window_score_empty_when_no_fixtures_in_range(db_conn):
 
     assert window.fixture_count == 0
     assert window.avg_attack_difficulty == 0.0
+
+
+def _seed_teams_and_fixtures(conn):
+    # 3 teams. GW10: team1 vs team2 (team3 has no GW10 fixture -> blank). GW11:
+    # team1 vs team3, then team1 vs team2 again (team1 has two GW11 fixtures ->
+    # double; team2 and team3 each have exactly one GW11 fixture -> normal).
+    conn.executemany(
+        "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,?)",
+        [(1, 100, "Team A", "TMA", "t0"), (2, 101, "Team B", "TMB", "t0"), (3, 102, "Team C", "TMC", "t0")],
+    )
+    conn.executemany(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, average_entry_score, highest_score, updated_at) VALUES (?,?,?,?,0,0,0,0,?,?,?)",
+        [
+            (10, "GW10", "2026-08-28T17:30:00Z", 100, None, None, "t0"),
+            (11, "GW11", "2026-09-04T17:30:00Z", 200, None, None, "t0"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO fixtures (id, code, event, team_h, team_a, finished, started, updated_at) VALUES (?,?,?,?,?,0,0,'t0')",
+        [
+            (1, 1, 10, 1, 2),  # GW10: team1 vs team2
+            (2, 2, 11, 1, 3),  # GW11: team1 vs team3
+            (3, 3, 11, 1, 2),  # GW11: team1 vs team2 again -> team1's double
+        ],
+    )
+    conn.commit()
+
+
+def test_detects_blank_and_double(db_conn):
+    _seed_teams_and_fixtures(db_conn)
+
+    anomalies = detect_blank_double_gws(db_conn, start_event=10, n_gw=2)
+
+    by_key = {(a.event, a.team_id): a.kind for a in anomalies}
+    assert by_key[(10, 3)] == "blank"   # team 3 has no GW10 fixture
+    assert by_key[(11, 1)] == "double"  # team 1 has two GW11 fixtures (ids 2 and 3)
+    assert (11, 2) not in by_key        # team 2 has exactly one GW11 fixture - not an anomaly

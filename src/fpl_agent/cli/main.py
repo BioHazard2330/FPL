@@ -26,7 +26,7 @@ from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
-from fpl_agent.models.fixtures import _reference_event
+from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
@@ -715,18 +715,11 @@ def fixture_watch(n_gw: int):
     """Blank/double gameweek detection per team over the next N gameweeks (sections 67-68)."""
     conn = get_connection()
     start = _reference_event(conn)
-    teams = conn.execute("SELECT id, short_name FROM teams ORDER BY short_name").fetchall()
-
-    for event in range(start, start + n_gw):
-        for t in teams:
-            count = conn.execute(
-                "SELECT COUNT(*) AS c FROM fixtures WHERE (team_h=? OR team_a=?) AND event=?",
-                (t["id"], t["id"], event),
-            ).fetchone()["c"]
-            if count == 0:
-                click.echo(f"GW{event}  BLANK   {t['short_name']}")
-            elif count >= 2:
-                click.echo(f"GW{event}  DOUBLE  {t['short_name']} ({count} fixtures)")
+    for a in detect_blank_double_gws(conn, start, n_gw):
+        if a.kind == "blank":
+            click.echo(f"GW{a.event}  BLANK   {a.team_short_name}")
+        else:
+            click.echo(f"GW{a.event}  DOUBLE  {a.team_short_name} ({a.fixture_count} fixtures)")
     conn.close()
 
 

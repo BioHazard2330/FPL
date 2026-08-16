@@ -88,6 +88,34 @@ def _reference_event(conn: sqlite3.Connection) -> int:
     return 1
 
 
+@dataclass(frozen=True)
+class FixtureCountAnomaly:
+    event: int
+    team_id: int
+    team_short_name: str
+    kind: str  # "blank" or "double"
+    fixture_count: int
+
+
+def detect_blank_double_gws(conn: sqlite3.Connection, start_event: int, n_gw: int = 5) -> list[FixtureCountAnomaly]:
+    """Per-team fixture-count anomalies over [start_event, start_event+n_gw). Extracted
+    from the fixture-watch CLI command's inline loop so season-sim (Plan 1b) can reuse
+    it without duplicating the query."""
+    teams = conn.execute("SELECT id, short_name FROM teams ORDER BY short_name").fetchall()
+    anomalies = []
+    for event in range(start_event, start_event + n_gw):
+        for t in teams:
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM fixtures WHERE (team_h=? OR team_a=?) AND event=?",
+                (t["id"], t["id"], event),
+            ).fetchone()["c"]
+            if count == 0:
+                anomalies.append(FixtureCountAnomaly(event, t["id"], t["short_name"], "blank", count))
+            elif count >= 2:
+                anomalies.append(FixtureCountAnomaly(event, t["id"], t["short_name"], "double", count))
+    return anomalies
+
+
 def fixture_window_score(conn: sqlite3.Connection, team_id: int, n_gw: int, from_event: int | None = None) -> FixtureWindow:
     start = from_event if from_event is not None else _reference_event(conn)
     fixture_ids = [
