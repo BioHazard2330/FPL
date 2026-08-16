@@ -187,28 +187,49 @@ inspected output.
 
 ### Plan 1c — Sampled effective ownership
 
-Deferred to its own brainstorm cycle when its turn comes — the design below (from the original
-2026-08-15 session) stands as-is; only its plan grouping and migration number changed.
+**Update (brainstormed 2026-08-16):** the 2026-08-15 sketch below is superseded by a dedicated
+design doc, `docs/superpowers/specs/2026-08-16-decision-intelligence-plan1c-design.md` — same
+reasoning that gave Plan 1b its own doc once real design judgment calls needed a home. Four real
+upgrades over the sketch, each detailed there: multiplier-weighted EO (not an owned/captained
+count pair — the picks payload's `multiplier` field already carries captain 2x/triple-captain 3x
+for free), rank-stratified sampling across the full rank 1-10000 range (not top-of-list, which
+would bias toward extreme overperformers), sampling uncertainty stored as FACTS and derived as a
+margin-of-error on read (not a bare percentage, per this project's own labeled-not-fabricated-
+confidence posture), and `captaincy.py` added as a fourth consumer — confirmed by reading it in
+full during the brainstorm that `selected_by_percent` is already fetched onto `CaptainOption` but
+never used in any ranking/labeling logic today, and rank-differential captaincy is EO's highest-
+leverage use case in this codebase.
 
 **Sampled effective ownership (`ingestion/eo_sample.py`, migration `0011`):** real top-10k EO is
 not a single API field — it requires paginating `leagues-classic/314/standings/` (the official
 Overall league) and fetching `entry/{id}/event/{gw}/picks/` per sampled manager, still Tier-1
-official domain but a materially heavier request pattern than anything built so far. Per the
-brainstorm decision, this ships as a **bounded sample** (target ~500-1000 managers, not the full
-10k), a separate throttled command in the `fpl sync-history` mold (not part of regular `fpl
-sync`), with an explicit per-request politeness delay and its own `source_health` row so a
-throttle/block from FPL surfaces as a degraded source, not a silent gap. `player_sample_ownership_history`
-stores `(player_id, event, sample_size, owned_count, captained_count, sample_eo_percent,
-retrieved_at)`. `models/differentials.py`/`traps.py`/`template.py` switch their ownership input
-from raw `selected_by_percent` to this sampled EO where available, falling back to raw ownership
-(flagged) when no sample exists yet for that GW — never silently blank.
+official public-endpoint domain (no FPL account login involved — distinct from the declined
+`mini-league` feature, which needed the *user's own* account) but a materially heavier request
+pattern than anything built so far. Ships as a **bounded, rank-stratified sample** (target ~750
+managers by default), a separate throttled command (`fpl sync-eo --event N`) in the `fpl
+sync-history` mold (not part of regular `fpl sync`), with the same per-request politeness delay
+`sync-history` already uses and its own `source_health` row so a throttle/block from FPL surfaces
+as a degraded source, not a silent gap. `player_sample_ownership_history` stores FACTS only
+(`player_id, event, sample_size, owned_count, captained_count, sum_multiplier,
+sum_multiplier_sq, retrieved_at`) — `models/effective_ownership.py` derives EO percent and its
+margin of error on read, keeping the FACTS/DERIVED split CLAUDE.md mandates.
+`models/differentials.py`/`traps.py`/`template.py`/`captaincy.py` gain an additive
+`effective_ownership` field, used when a sample exists for the resolved event, falling back to
+raw ownership (flagged) when no sample exists yet — never silently blank. Backfill-capable across
+the current season's already-elapsed events (not forward-only like `player_ownership_history`),
+avoiding Plan 1b's `insufficient_ownership_data` trap for at least the current season once GWs
+exist; prior seasons stay out of scope (unverified whether old-season league standings are
+retrievable the same way).
 
-Sampled EO is the heaviest network pattern this project has attempted (hundreds of paginated
-requests per sync, per the brainstorm-approved sample size). Design must not let it block or slow
-the regular `fpl sync` path — separate throttled command, off by default until explicitly run,
-same `source_health`-backed degrade-don't-crash posture as every other source. Storage impact is
-small (sampled rows, not full picks payloads retained beyond normalization) and stays inside the
-Pillar-0-raised 1-2GB budget.
+Sampled EO is the heaviest network pattern this project has attempted (roughly 15 standings-page
+requests plus ~750 picks requests per sampled event). Design must not let it block or slow the
+regular `fpl sync` path — separate throttled command, off by default until explicitly run, same
+`source_health`-backed degrade-don't-crash posture as every other source. Storage impact is small
+(sampled aggregate rows, not full picks payloads retained beyond normalization) and stays inside
+the Pillar-0-raised 1-2GB budget. **Constraint carried into the plan:** this is preseason 2026-27,
+no GW has locked yet, so live-verification of `sync-eo` against real data has to wait for GW1's
+deadline to pass — the plan should sequence around that explicitly rather than assume a locked
+event exists.
 
 ## Pillar 2 — Tier 2-4 data breadth
 
