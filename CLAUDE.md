@@ -735,9 +735,10 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   this path is touched again.
 - **Sampled effective ownership is real, but bounded and preseason-unverified end-to-end.**
   `fpl sync-eo --event N` samples ~750 of the ~10,000 Overall-league managers (rank-stratified,
-  not a full census) — `eo_percent` carries a real, reported margin of error
+  not a full census) — `eo_percent` carries a real margin of error
   (`SampleEOEstimate.margin_of_error_pp`, 95% CI), tightest for high-owned players and widest for
-  low-owned ones, never an exact figure. EO only exists for events `sync-eo` has actually been run
+  low-owned ones, never an exact figure. That margin is derived on read but not yet surfaced in
+  any CLI output — nothing prints it today. EO only exists for events `sync-eo` has actually been run
   against — there's no historical/prior-season backfill, and a gameweek `sync-eo` hasn't touched
   falls back to raw `selected_by_percent` (`eo_source="raw"`/`"unavailable"` depending on the
   consumer, see above). Wired additively into `differentials`/`traps`/`template`/`breakouts`/
