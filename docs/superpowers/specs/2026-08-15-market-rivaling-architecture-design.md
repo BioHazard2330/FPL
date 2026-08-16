@@ -77,13 +77,20 @@ Unit tests per new pure function (Dixon-Coles fit, devig method, shrinkage regre
 Depends on Pillar 0 being live (calibrated per-fixture probabilities, not preseason heuristics) —
 **live as of this writing** (`MODEL_VERSION="calibrated-v2"`, merged to master).
 
-Split into two sequential implementation plans (each roughly Pillar-0-sized, ~10-14 tasks) sharing
-this one spec section, decided during brainstorming to keep any single SDD dispatch pass
-reviewable: **Plan 1a** (multi-GW transfer search + price-change forecast — deterministic,
-no new stochastic infra needed) ships first; **Plan 1b** (shared scenario-sampling engine + chip
-DP scheduler + Monte Carlo `season-sim` + effective-ownership sampling + heuristic backtest) is
-built on top of it. Migrations are split the same way (0010 for 1a, 0011 for 1b) so neither
-implementer edits a migration the other has already applied against the dev DB.
+Split into implementation plans (each roughly Pillar-0-sized, ~10-14 tasks) sharing this one spec
+section, decided during brainstorming to keep any single SDD dispatch pass reviewable: **Plan 1a**
+(multi-GW transfer search + price-change forecast — deterministic, no new stochastic infra
+needed) shipped first. **Update (brainstormed 2026-08-16):** the originally-combined Plan 1b was
+split again, since sampled EO is functionally independent of the scenario-sampling/chip-DP/
+season-sim cluster (nothing in that cluster consumes EO) — splitting keeps each plan's
+whole-branch review focused, same reasoning that motivated the original 1a/1b split. **Plan 1b**
+(shared scenario-sampling engine + chip DP scheduler + Monte Carlo `season-sim` + heuristic
+backtest) is next. **Plan 1c** (sampled effective ownership) follows, deferred to its own
+brainstorm cycle when its turn comes. Migration numbering: `0011` (originally slated for the
+combined Plan 1b) now belongs to Plan 1c's EO table — Plan 1b itself needs no new migration
+(`schedule_chips`/`season-sim` are pure computation over existing tables; `season-sim` logs to
+the existing `decisions` table, whose evidence JSON already supports arbitrary structured output,
+confirmed against the actual Phase 8 schema rather than assumed).
 
 ### Plan 1a — Multi-GW transfer search + price-change forecast
 
@@ -119,20 +126,13 @@ existing single-swap `recommend()` stays as the 1-GW-comparison entrypoint `fpl 
 already uses (this doesn't change command output shape, `fpl transfers` gains the new search as
 an option, not a breaking rewrite).
 
-### Plan 1b — Scenario engine, chip scheduling, effective ownership, risk output
+### Plan 1b — Scenario engine, chip scheduling, risk output
 
-**Sampled effective ownership (`ingestion/eo_sample.py`, migration `0011`):** real top-10k EO is
-not a single API field — it requires paginating `leagues-classic/314/standings/` (the official
-Overall league) and fetching `entry/{id}/event/{gw}/picks/` per sampled manager, still Tier-1
-official domain but a materially heavier request pattern than anything built so far. Per the
-brainstorm decision, this ships as a **bounded sample** (target ~500-1000 managers, not the full
-10k), a separate throttled command in the `fpl sync-history` mold (not part of regular `fpl
-sync`), with an explicit per-request politeness delay and its own `source_health` row so a
-throttle/block from FPL surfaces as a degraded source, not a silent gap. `player_sample_ownership_history`
-stores `(player_id, event, sample_size, owned_count, captained_count, sample_eo_percent,
-retrieved_at)`. `models/differentials.py`/`traps.py`/`template.py` switch their ownership input
-from raw `selected_by_percent` to this sampled EO where available, falling back to raw ownership
-(flagged) when no sample exists yet for that GW — never silently blank.
+Design detail beyond what's spec'd below (chip-DP hit-week mechanism, scenario-reuse strategy,
+runtime budget, testing lessons carried from Plan 1a) is in the dedicated
+`docs/superpowers/specs/2026-08-16-decision-intelligence-plan1b-design.md`, written when this
+split was decided — that doc is the one to hand to `writing-plans`, this section is the
+higher-level pillar context it builds on.
 
 **Shared scenario-sampling engine (`models/scenario_engine.py`, new module, first consumer of
 Pillar 0's fitted Dixon-Coles distributions rather than just their point-estimates):**
@@ -147,14 +147,17 @@ independently (the approach decided during brainstorming, specifically to avoid 
 scheduler and the risk-band simulator silently disagreeing about the same fixture's odds).
 
 **Season-long chip scheduling (extends `optimization/chips.py`):** `schedule_chips(conn,
-squad_trajectory, chip_windows) -> ChipSchedule` — DP over remaining `chip_windows`-eligible GWs,
-state = (chips-still-available flags, GW index), evaluating each chip's expected marginal value
-at each eligible GW from `sample_season_scenarios`' trial outcomes rather than a single
-point-estimate. Bounded state space (a handful of chip flags × ~30 remaining GWs), tractable
-without approximation. Existing single-decision-point functions
+squad_trajectory, chip_windows, scenario_draw) -> ChipSchedule` — DP over remaining
+`chip_windows`-eligible GWs, state = (chips-still-available flags, GW index), evaluating each
+chip's expected marginal value at each eligible GW from `sample_season_scenarios`' trial outcomes
+rather than a single point-estimate. Bounded state space (a handful of chip flags × ~30 remaining
+GWs), tractable without approximation. Existing single-decision-point functions
 (`bench_boost_value`/`triple_captain_value`/`wildcard_value`/`freehit_value`) are kept as-is —
 `fpl chips` still answers "is it worth it *this* GW"; `schedule_chips` answers "*when* across the
-season," a genuinely different question, not a replacement.
+season," a genuinely different question, not a replacement. Also reasons about hit-weeks
+independently rather than trusting Plan 1a's beam-search trajectory's fixed (and, per that plan's
+own carried-forward note, hit-limited) transfer placement — mechanism detail in the 2026-08-16
+design doc referenced above.
 
 **Risk-adjusted output — new `fpl season-sim --squad <path> [--trials N]` command:** per the
 brainstorm decision, this ships as its own command rather than bolted onto
@@ -172,7 +175,33 @@ actually outperform the template pick, historically — producing a calibration 
 how they've historically performed, consistent with the project's existing
 labeled-not-fabricated-confidence posture.
 
-### Resource/reliability notes carried into Plan 1b specifically
+### Plan 1b testing
+
+Unit test per new pure function (Poisson scoreline sampling, chip DP transition, advisory
+hit-week evaluation), one new integration test extending `test_e2e_pillar0_lifecycle.py`'s
+pattern to prove Plan 1b's pieces compose. Full testing detail (including the two mutation-
+testing lessons carried forward from Plan 1a's final review) is in the 2026-08-16 design doc.
+Live-verification step at the end of the plan against the real player pool, same bar every prior
+phase/pillar used before being marked done — not just green tests, a real run producing sane,
+inspected output.
+
+### Plan 1c — Sampled effective ownership
+
+Deferred to its own brainstorm cycle when its turn comes — the design below (from the original
+2026-08-15 session) stands as-is; only its plan grouping and migration number changed.
+
+**Sampled effective ownership (`ingestion/eo_sample.py`, migration `0011`):** real top-10k EO is
+not a single API field — it requires paginating `leagues-classic/314/standings/` (the official
+Overall league) and fetching `entry/{id}/event/{gw}/picks/` per sampled manager, still Tier-1
+official domain but a materially heavier request pattern than anything built so far. Per the
+brainstorm decision, this ships as a **bounded sample** (target ~500-1000 managers, not the full
+10k), a separate throttled command in the `fpl sync-history` mold (not part of regular `fpl
+sync`), with an explicit per-request politeness delay and its own `source_health` row so a
+throttle/block from FPL surfaces as a degraded source, not a silent gap. `player_sample_ownership_history`
+stores `(player_id, event, sample_size, owned_count, captained_count, sample_eo_percent,
+retrieved_at)`. `models/differentials.py`/`traps.py`/`template.py` switch their ownership input
+from raw `selected_by_percent` to this sampled EO where available, falling back to raw ownership
+(flagged) when no sample exists yet for that GW — never silently blank.
 
 Sampled EO is the heaviest network pattern this project has attempted (hundreds of paginated
 requests per sync, per the brainstorm-approved sample size). Design must not let it block or slow
@@ -180,15 +209,6 @@ the regular `fpl sync` path — separate throttled command, off by default until
 same `source_health`-backed degrade-don't-crash posture as every other source. Storage impact is
 small (sampled rows, not full picks payloads retained beyond normalization) and stays inside the
 Pillar-0-raised 1-2GB budget.
-
-### Testing
-
-Same bar as every prior phase/pillar: unit test per new pure function (beam search scoring,
-price-forecast heuristic, Poisson scoreline sampling, chip DP transition), one new integration
-test extending `test_e2e_pillar0_lifecycle.py`'s pattern to prove Plan 1a's pieces compose, and a
-second for Plan 1b once its own migration/engine exist. Live-verification step at the end of each
-plan against the real player pool, same bar Phase 9 and Pillar 0 both used before being marked
-done — not just green tests, a real run producing sane, inspected output.
 
 ## Pillar 2 — Tier 2-4 data breadth
 
