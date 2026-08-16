@@ -1,11 +1,17 @@
 """
 End-to-end lifecycle test for Plan 1c (sampled effective ownership): proves
 `fpl sync-eo` (mocked network) -> real DB rows -> EO derivation
-(models/effective_ownership.py) -> multiple real consumers (differentials.py,
-captaincy.py) compose correctly. Per-task unit tests (Tasks 1-10) already cover
-each piece in isolation; this test is the one that would have caught a
-cross-task wiring bug (wrong column name, wrong sign, wrong keyword) that no
-single task's tests could see.
+(models/effective_ownership.py) -> all five real consumers (differentials.py,
+captaincy.py, template.py, traps.py, breakouts.py) compose correctly. Per-task
+unit tests (Tasks 1-10) already cover each piece in isolation; this test is the
+one that would have caught a cross-task wiring bug (wrong column name, wrong
+sign, wrong keyword) that no single task's tests could see.
+
+The pool deliberately contains players the sample never covers, and every
+consumer is asserted on one of them: a ~750-manager sample can't cover every
+player, and "absent from the sample" silently reported as a measured 0.0% EO
+was exactly the bug this file's original two-consumer, sampled-player-only
+coverage missed.
 """
 from click.testing import CliRunner
 
@@ -24,11 +30,18 @@ def _seed_pool(conn):
     )
     conn.executemany(
         "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) VALUES (?,?,?,1,1,'a','t0')",
-        [(1, 1, "Popular"), (2, 2, "Differential")],
+        # Only player 2 ever appears in the sample below. Players 1 and 3 are the
+        # unsampled ones - the case that must fall back to raw ownership rather than
+        # being reported as a measured 0.0%.
+        [(1, 1, "Popular"), (2, 2, "Differential"), (3, 3, "Fringe")],
     )
     conn.execute(
         "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) VALUES "
-        "(1, 50.0, 't0', NULL), (2, 3.0, 't0', NULL)"
+        "(1, 50.0, 't0', NULL), (2, 3.0, 't0', NULL), (3, 2.0, 't0', NULL)"
+    )
+    conn.execute(  # breakouts.py joins price history and needs a live row per candidate
+        "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES "
+        "(1, 100, 't0', NULL), (2, 50, 't0', NULL), (3, 50, 't0', NULL)"
     )
     conn.execute(
         "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
@@ -110,3 +123,43 @@ def test_plan1c_pipeline_composes_end_to_end(db_conn, monkeypatch):
     involved = {o.player_id: o for o in (report.best, report.second) if o is not None}
     assert involved[2].eo_source == "sampled"
     assert involved[2].effective_ownership_percent == 200.0
+    # player 1 was never sampled: captaincy has no raw ownership to report as EO, so it
+    # stays "unavailable" rather than claiming a measured 0.0% (which would also make
+    # differential_captain_note fire off a number nobody measured).
+    assert involved[1].eo_source == "unavailable"
+    assert involved[1].effective_ownership_percent is None
+
+    # The remaining three wired consumers, against the same real sampled data.
+    from fpl_agent.models.template import get_template
+    template = {p.player_id: p for p in get_template(db_conn, top_n_per_position=3)}
+    # EO reorders the template: player 2's 200% EO beats player 1's 50% raw ownership,
+    # which is Task 7's whole point (template ordering switches to EO when available).
+    assert [p.player_id for p in get_template(db_conn, top_n_per_position=3)] == [2, 1, 3]
+    assert template[2].eo_source == "sampled"
+    assert template[2].effective_ownership_percent == 200.0
+    assert template[1].eo_source == "raw"  # unsampled -> its own raw 50%, not a fake 0.0%
+    assert template[1].effective_ownership_percent is None
+
+    from fpl_agent.models.traps import find_traps
+    traps = {t.player_id: t for t in find_traps(db_conn, min_ownership=10.0)}
+    # Player 1 clears the 10% ownership filter only because the unsampled fallback is
+    # its real 50% raw ownership - a fabricated 0.0% would have silently excluded the
+    # single most-owned player in the pool from trap detection entirely.
+    assert traps[1].eo_source == "raw"
+    assert traps[1].effective_ownership_percent is None
+    assert traps[2].eo_source == "sampled"
+    assert traps[2].effective_ownership_percent == 200.0
+
+    from fpl_agent.models.breakouts import find_breakouts
+    monkeypatch.setattr(
+        "fpl_agent.models.breakouts.expected_points",
+        lambda conn, pid, n_gw=1: ExpectedPoints(
+            player_id=pid, position="GKP", floor=2.0, median=5.0, ceiling=8.0,
+            confidence="MEDIUM", expected_minutes=90.0, model_version="test",
+        ),
+    )
+    breakouts = {b.player_id: b for b in find_breakouts(db_conn)}
+    assert breakouts[2].eo_source == "sampled"
+    assert breakouts[2].effective_ownership_percent == 200.0
+    assert breakouts[3].eo_source == "raw"  # unsampled
+    assert breakouts[3].effective_ownership_percent is None
