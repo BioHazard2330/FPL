@@ -49,7 +49,7 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
 
 ## Data model (Phase 2)
 
@@ -257,7 +257,7 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   goals-conceded-band probabilities, shrinkage-regressed goals/assists, cards modeled from
   historical per-90 discipline rate. `ExpectedPoints`/`WindowExpectedPoints` field names
   unchanged — `optimization/` callers untouched.
-- `backtesting/harness.py` + `fpl backtest --season YYYY-YY [--model-version VERSION]` —
+- `backtesting/harness.py` + `fpl backtest --season YYYY-YY [--model-version VERSION] [--differentials]` —
   walk-forward evaluation (10-match rounds, chronological, `as_of_date` threaded through every
   query so nothing sees future data) against Understat-reconstructed actual points (core
   scoring only: appearance + goals + assists + yellow cards — bonus/BPS aren't in that source,
@@ -340,9 +340,95 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   open a fresh connection to the same temp db file each call, exactly like
   production.
 
+## Data model / logic (Pillar 1 Plan 1b)
+
+- `models/scenario_engine.py` — `sample_season_scenarios(conn, squad_ids, from_event, horizon_gw,
+  n_trials=1000, rng=None) -> list[ScenarioOutcome]`. Draws real scorelines from Dixon-Coles
+  Poisson distributions per fixture (not point estimates), vectorized with numpy across trials
+  rather than a per-trial Python loop. Each fixture's `(home_goals, away_goals)` draw is cached
+  once per `fixture_id` and reused for both teams' players, so opposing players correctly see the
+  same realized scoreline in a given trial rather than independently-sampled ones. Blank/double
+  GWs need no special-casing — the same `fixtures` query `fixture-watch` already uses naturally
+  returns 0 rows (blank) or 2+ rows (double) per event. `rng` is an explicit parameter, not
+  module-global state, specifically so tests can pin a seed and assert distributional properties.
+  Bonus points are `rates["bonus90"] * weight` — the historical per-90 bonus rate applied
+  deterministically every trial, not itself sampled — the module says so directly in a code
+  comment (`# deterministic - see module docstring`). That means `ScenarioOutcome`'s per-trial
+  spread reflects real variance in appearance/goals/assists/cards/clean-sheets, but bonus only
+  ever contributes its mean, never its own variance — see limitation below.
+- `optimization/chips.py::schedule_chips(conn, initial_squad_ids, squad_trajectory, chip_windows,
+  scenario_draw) -> ChipSchedule` — DP over remaining chip-window-eligible GWs (state = used-window
+  bitmask x event), scoring the beam-search trajectory's (Plan 1a) marginal value per window as the
+  median across `scenario_draw`'s trials, via a `_TRIAL_VALUE_FUNCS` dispatch table keyed on the
+  real `chip_windows.name` values (`bboost`/`3xc`/`wildcard`/`freehit`). The existing
+  single-decision-point functions (`bench_boost_value`/`triple_captain_value`/`wildcard_value`/
+  `freehit_value`) are untouched — `schedule_chips` answers *when* across the season, not
+  *is-it-worth-it-this-GW*.
+- Advisory hit-week mechanism (design doc's central decision) — reuses Plan 1a's existing
+  single-swap `best_transfer_for_player`/`evaluate_transfer` evaluators rather than a new search
+  algorithm, generating local hit-transfer candidates at each chip-window-eligible GW and scoring
+  them against the *same* `scenario_draw` as the baseline (a correlated comparison, the
+  statistically correct choice for ranking candidates against each other, not independent
+  uncertainty per candidate). This specifically closes a blind spot in Plan 1a's beam search: free
+  transfer accrual means a hit (`is_hit=True`) is realistically only reachable at horizon step 0
+  (see Plan 1a section above), so the beam search's own trajectory can never surface "a hit two GWs
+  from now would unlock a much better bench-boost window." Advisory-only: never mutates
+  `squad_trajectory` — divergent recommendations are reported as a separate
+  `ChipSchedule.advisory_hit_recommendations` field (`AdvisoryHitRecommendation`, carrying both
+  `baseline_expected_marginal_value` and `advisory_expected_marginal_value` as distinct fields,
+  same FACTS/DERIVED/REASONING layering rule Plan 1a's `total_net_ev`/`tiebreak_adjustment` split
+  used), never merged into the baseline schedule.
+- Scenario-reuse/runtime decision — one shared scenario draw per `schedule_chips`/`season-sim`
+  call, reused across every chip-window and hit-candidate evaluation within that call, rather than
+  an independent redraw per candidate (rejected: statistically purer in isolation, but multiplies
+  sampling cost by the number of candidates evaluated and would blow the seconds-to-low-tens-of-
+  seconds CLI runtime target).
+- `fpl season-sim --squad <ids> [--trials N] [--horizon N]` — runs `sample_season_scenarios` over
+  the horizon, reports P10/P50/P90 via `numpy.percentile`, flags blank/double GWs affecting the
+  squad's own teams, prints the DP's baseline chip schedule plus any advisory hit-week
+  recommendations, and logs the run to the `decisions` journal (`confidence="low"`, consistent with
+  every other uncalibrated-heuristic output in this project).
+- `backtesting/harness.py::score_differentials(conn, season, model_version) ->
+  DifferentialBacktestResult` + `fpl backtest --season YYYY-YY --differentials` — the Task 9
+  heuristic-backtest extension. Honesty gate first: checks whether `player_ownership_history` has
+  any row at or before the season's last round-start date; since that table is only populated
+  going forward from live syncs (no historical backfill source exists for it), the gate currently
+  always returns `insufficient_ownership_data=True` for any historical season — confirmed live
+  against 2024-25 (`fpl backfill-odds --season 2024-25` succeeded, 380 rows, but ownership was
+  never backfilled for it). When ownership data does exist, walks forward round-by-round (same
+  `as_of_date`-threaded no-future-leakage pattern as the core backtest) scoring `find_differentials`
+  -flagged players' Understat-reconstructed actual points against the same-position top-owned
+  template pick, persisting `mean_delta_vs_template` to the decision journal. Traps/breakouts/
+  template backtest scoring is explicitly out of this plan's scope — no as-of-date-aware historical
+  replay path exists for them yet, only differentials got one.
+- `tests/test_e2e_plan1b_lifecycle.py` — one test chaining the actual pipeline: scenario sampling
+  -> chip DP scheduling -> `fpl season-sim` -> decision journal, same bar the Pillar 0 and Plan 1a
+  E2E tests already set.
+- **Live-verified against the real synced pool** (`fpl sync`: 20 teams, 587 players, 380 fixtures,
+  38 events; `fpl build-squad`: a real valid 15-man squad, every player `xp=0.00` in the live
+  preseason state — expected, no real match data exists yet). First `season-sim` attempt (before
+  `fpl sync-history` had been run in this fresh worktree) returned degenerate all-zero P10/P50/P90
+  — diagnosed as a genuine data-sequencing issue, not a Plan 1b code bug: `expected_minutes()`'s
+  fallback prior had no last-season minutes/goals data to fall back on yet. After running
+  `fpl sync-history`, the same squad produced sane results: `P10=27.5 P50=37.2 P90=48.9` (500
+  trials, GW1-5), `P10 <= P50 <= P90` as expected. That squad's chip schedule came back empty (no
+  chip recommended, no advisory hit-week recommendation) — hand-traced rather than just trusted:
+  the squad optimizer's ILP, run against a genuinely flat/undifferentiated preseason xP landscape,
+  happened to fill this squad's bench with players whose `expected_minutes()` prior is exactly
+  zero (`p_zero=1.0`), so bench boost's real value for this squad is genuinely zero; the beam
+  search's chosen transfer swap plus preseason tie-breaking in `evaluate_captaincy` (many players
+  tied near 0.00 xp) landed on a similarly zero-expected-minutes "best captain," so triple
+  captain's value is also genuinely zero here; wildcard/free-hit came back negative (rebuilding
+  from scratch offers no improvement when nothing yet differentiates players). A correct, defensible
+  "no chip is worth it this early" conclusion for this squad at this moment, not a bug — a real
+  instance of the preseason-data-degenerate limitation already documented above (the `calibrated-v2`
+  model needs real GW1+ results to differentiate players), not something Plan 1b's own code needs to
+  fix. `fpl backtest --season 2024-25 --differentials` ran cleanly to completion and correctly
+  printed the `insufficient_ownership_data` result described above.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plan 1a (multi-GW transfer search + price forecast) complete.**
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a and 1b (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`) complete.**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -365,8 +451,17 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   section. Plan: `docs/superpowers/plans/2026-08-15-decision-intelligence-plan1a-transfer-search.md`
   (7/7 tasks, full implementer+reviewer ledger in
   `.superpowers/sdd/2026-08-15-decision-intelligence-plan1a-transfer-search/progress.md`).
-  Plan 1b (scenario engine, chip DP scheduling, sampled effective ownership,
-  `fpl season-sim`) is a separate, still-unbuilt plan — see below.
+- [x] Pillar 1 Plan 1b — Scenario engine + chip DP scheduling + `fpl season-sim`
+  (Dixon-Coles Monte Carlo scenario sampling, DP chip-window scheduling with advisory
+  hit-week recommendations, differential heuristic backtest extension). Spec:
+  `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`, Pillar 1
+  section (design judgment calls in `docs/superpowers/specs/2026-08-16-decision-intelligence-plan1b-design.md`).
+  Plan: `docs/superpowers/plans/2026-08-16-decision-intelligence-plan1b-scenario-chip-dp.md`
+  (10/10 tasks, full implementer+reviewer ledger in
+  `.superpowers/sdd/2026-08-16-decision-intelligence-plan1b-scenario-chip-dp/progress.md`).
+  Sampled effective ownership was originally scoped into this plan but split out to its
+  own **Plan 1c** — a separate, still-unbuilt plan, own future brainstorm cycle — since
+  it's functionally independent and nothing in Plan 1b's cluster consumes it.
 
 ## What's still genuinely limited (read before trusting output)
 
@@ -398,11 +493,32 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   point, not empirically fit — this is preseason, so no real FPL price rise/fall
   has happened yet to validate the heuristic against, in either direction.
   Revisit once real in-season price movements exist to compare predictions to.
-- **Plan 1b is still unbuilt.** The scenario engine, chip DP scheduling, sampled
-  effective ownership, and `fpl season-sim` (Pillar 1 spec, beyond Plan 1a) do not
-  exist yet — `fpl transfers --search` only optimises transfer sequences, it does
-  not schedule chips or simulate season trajectories. Needs its own
-  brainstorm-if-needed → plan cycle before starting.
+- **Scenario engine doesn't model bonus-point variance, only its mean.**
+  `sample_season_scenarios`'s per-trial bonus contribution is the historical per-90
+  bonus rate applied deterministically every trial, not itself sampled — so
+  `fpl season-sim`'s P10/P50/P90 spread understates real season-total variance by
+  however much bonus points actually vary game-to-game. Appearance/goals/assists/
+  cards/clean-sheets are genuinely stochastic per trial; bonus is not.
+- **Traps/breakouts/template backtest scoring is deferred, not built.** Task 9 only
+  extended the backtest with `score_differentials` — no as-of-date-aware historical
+  replay path exists yet for `models/traps.py`/`breakouts.py`/`template.py`, so
+  `fpl backtest --differentials` scores differentials only, nothing else from the
+  Phase 9 heuristics.
+- **Differential backtest has nothing to score against yet.** `fpl backtest
+  --differentials` currently reports `insufficient_ownership_data=True` for any
+  historical season, including 2024-25, because `player_ownership_history` is only
+  populated going forward from live syncs — no historical ownership backfill source
+  exists. This is the honest, designed result right now, not a bug (live-verified);
+  it will only start reporting real `mean_delta_vs_template` numbers once the live
+  2026-27 season's own ownership history accumulates across enough gameweeks.
+  `score_differentials`'s actual scoring/delta logic (as opposed to this guard) also
+  has no shipped test coverage yet — it was verified out-of-band by the reviewer with
+  a standalone harness during Task 9, not by a committed test — worth adding one if
+  this path is touched again.
+- **Sampled effective ownership is deferred to Plan 1c.** Chip decisions and
+  differential scoring both still use raw `selected_by_percent` from the FPL API,
+  not a sampled/inferred EO — Plan 1c (separate, still-unbuilt, own future
+  brainstorm cycle) is where that would land.
 
 ## Skill/subagent guidance
 
