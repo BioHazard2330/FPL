@@ -108,7 +108,7 @@ def test_triple_captain_trial_values_reads_best_captain_points(db_conn, monkeypa
 
     monkeypatch.setattr(
         chips_mod, "evaluate_captaincy",
-        lambda conn, squad_ids: [CaptainOption(player_id=2, web_name="FWD_starter", position="FWD", floor=1, median=5, ceiling=9, confidence="HIGH", expected_minutes=90, is_penalty_taker=False, opponent_short=None, is_home=None, selected_by_percent=None)],
+        lambda conn, squad_ids: [CaptainOption(player_id=2, web_name="FWD_starter", position="FWD", floor=1, median=5, ceiling=9, confidence="HIGH", expected_minutes=90, is_penalty_taker=False, opponent_short=None, is_home=None, selected_by_percent=None, effective_ownership_percent=None, eo_source="unavailable")],
     )
 
     scenario_draw = [

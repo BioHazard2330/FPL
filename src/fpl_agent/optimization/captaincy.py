@@ -1,11 +1,14 @@
 """
 Captaincy optimiser (section 65). Ranks a given squad's next-fixture options by
-median xP, ceiling, floor, fixture, set-piece role, and rotation risk.
+median xP, ceiling, floor, fixture, set-piece role, and rotation risk. Surfaces
+sampled effective ownership (Plan 1c) when available - real rank-differential
+armband opportunities, not just popular picks.
 """
 
 import sqlite3
 from dataclasses import dataclass
 
+from fpl_agent.models.effective_ownership import get_all_sample_eo
 from fpl_agent.models.expected_points import expected_points
 from fpl_agent.models.fixtures import _reference_event
 
@@ -24,6 +27,8 @@ class CaptainOption:
     opponent_short: str | None
     is_home: bool | None
     selected_by_percent: float | None
+    effective_ownership_percent: float | None
+    eo_source: str  # "sampled" or "unavailable"
 
 
 def _next_opponent(conn: sqlite3.Connection, team_id: int) -> tuple[str | None, bool | None]:
@@ -49,6 +54,7 @@ def _is_penalty_taker(conn: sqlite3.Connection, player_id: int) -> bool:
 
 
 def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int]) -> list[CaptainOption]:
+    eo_by_player = get_all_sample_eo(conn)
     options = []
     for player_id in squad_ids:
         ep = expected_points(conn, player_id, n_gw=1)
@@ -59,6 +65,14 @@ def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int]) -> list[C
             (player_id,),
         ).fetchone()
         opponent, is_home = _next_opponent(conn, player["team_id"])
+
+        if eo_by_player:
+            eo = eo_by_player.get(player_id)
+            eo_percent = eo.eo_percent if eo is not None else 0.0
+            eo_source = "sampled"
+        else:
+            eo_percent, eo_source = None, "unavailable"
+
         options.append(
             CaptainOption(
                 player_id=player_id, web_name=player["web_name"], position=ep.position,
@@ -67,6 +81,7 @@ def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int]) -> list[C
                 is_penalty_taker=_is_penalty_taker(conn, player_id),
                 opponent_short=opponent, is_home=is_home,
                 selected_by_percent=player["selected_by_percent"],
+                effective_ownership_percent=eo_percent, eo_source=eo_source,
             )
         )
     options.sort(key=lambda o: o.median, reverse=True)
@@ -80,12 +95,13 @@ class CaptaincyReport:
     safe: CaptainOption | None
     high_upside: CaptainOption | None
     risks: list[str]
+    differential_captain_note: str | None = None
 
 
 def captaincy_report(conn: sqlite3.Connection, squad_ids: list[int]) -> CaptaincyReport:
     options = evaluate_captaincy(conn, squad_ids)
     if not options:
-        return CaptaincyReport(None, None, None, None, [])
+        return CaptaincyReport(None, None, None, None, [], None)
 
     best = options[0]
     second = options[1] if len(options) > 1 else None
@@ -101,4 +117,20 @@ def captaincy_report(conn: sqlite3.Connection, squad_ids: list[int]) -> Captainc
         if o.opponent_short is None:
             risks.append(f"{o.web_name}: no fixture found in the reference gameweek (blank?)")
 
-    return CaptaincyReport(best=best, second=second, safe=safe, high_upside=high_upside, risks=risks)
+    differential_captain_note = None
+    if (
+        best.eo_source == "sampled"
+        and best.selected_by_percent is not None
+        and best.selected_by_percent > 0
+        and best.effective_ownership_percent < 0.5 * best.selected_by_percent
+    ):
+        differential_captain_note = (
+            f"{best.web_name}: field owns {best.selected_by_percent:.1f}% but only "
+            f"{best.effective_ownership_percent:.1f}% effective ownership - captaining your best pick "
+            f"is a real rank differential, not just a popular pick"
+        )
+
+    return CaptaincyReport(
+        best=best, second=second, safe=safe, high_upside=high_upside, risks=risks,
+        differential_captain_note=differential_captain_note,
+    )

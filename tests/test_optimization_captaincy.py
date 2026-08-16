@@ -74,3 +74,39 @@ def test_captaincy_report_flags_low_confidence_and_rotation_risk(db_conn, monkey
 
     risk_text = " ".join(report.risks)
     assert "Punt" in risk_text  # LOW confidence and <75 expected minutes
+
+
+def test_captaincy_report_flags_real_differential_captain(db_conn, monkeypatch):
+    _seed(db_conn)
+    _patch(monkeypatch)
+
+    # Best (player 1) has 40% raw ownership but only 12% effective ownership -
+    # the field owns it but rarely captains it, a real rank-differential armband.
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (1, 40.0, 't0', NULL)"
+    )
+    db_conn.execute(
+        "INSERT INTO player_sample_ownership_history "
+        "(player_id, event, sample_size, owned_count, captained_count, sum_multiplier, sum_multiplier_sq, retrieved_at) "
+        "VALUES (1, 1, 100, 40, 12, 12, 24, 't0')"  # eo_percent = 12.0
+    )
+    db_conn.commit()
+
+    report = captaincy_mod.captaincy_report(db_conn, [1, 2, 3])
+
+    assert report.best.player_id == 1  # unchanged - still highest median
+    assert report.best.eo_source == "sampled"
+    assert report.best.effective_ownership_percent == 12.0
+    assert report.differential_captain_note is not None
+    assert "Best" in report.differential_captain_note  # web_name of player 1
+
+
+def test_captaincy_report_no_note_without_eo_sample(db_conn, monkeypatch):
+    _seed(db_conn)
+    _patch(monkeypatch)
+
+    report = captaincy_mod.captaincy_report(db_conn, [1, 2, 3])
+
+    assert report.differential_captain_note is None
+    assert report.best.eo_source == "unavailable"
