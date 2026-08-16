@@ -5,6 +5,10 @@ Draws actual scorelines from the Dixon-Coles-fitted Poisson distributions (not t
 point estimates), propagates them through the same per-fixture point formula
 models/expected_points.py::_match_components already uses for its EXPECTATIONS - but
 samples a concrete outcome per trial for each stochastic component instead of averaging.
+"Concrete outcome" is exact for the discrete terms (appearance bucket, goals, assists,
+cards, clean sheet); bonus and the goals-conceded penalty are still expectations scaled by
+the trial's fractional minutes `weight`, so those two are per-trial-weighted means rather
+than literally atomic draws.
 Both the chip DP scheduler and fpl season-sim consume the same trial draws, so they can
 never silently disagree about the same fixture's odds (the reason this module exists as
 one shared piece of infrastructure rather than two independent samplers).

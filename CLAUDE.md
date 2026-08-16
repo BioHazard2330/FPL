@@ -356,14 +356,35 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   comment (`# deterministic - see module docstring`). That means `ScenarioOutcome`'s per-trial
   spread reflects real variance in appearance/goals/assists/cards/clean-sheets, but bonus only
   ever contributes its mean, never its own variance — see limitation below.
+- **The scenario draw must cover a superset of the squad, not just the squad.** Every downstream
+  consumer reads it as `points_by_event_player.get((event, pid), 0.0)`, so a player who wasn't
+  sampled silently scores zero on every trial rather than erroring. Three consumers legitimately
+  score players outside the starting squad: `_wildcard_trial_values`' rebuilt squad (drawn from the
+  whole player pool), `_squad_ids_by_event`'s post-transfer squads (Plan 1a's beam-search
+  transfers-in), and `_advisory_hit_recommendations`' hit candidates (out-of-squad by definition).
+  `fpl season-sim` therefore gathers that full superset — trajectory squads + both ILP rebuild
+  horizons + every hit candidate — *before* the single `sample_season_scenarios` call. This was a
+  real shipped bug caught by the whole-branch review (it made wildcard/free-hit marginal value
+  provably ≤ 0 always and the advisory hit layer structurally unable to fire); regression-guarded by
+  `tests/test_cli_season_sim.py::test_season_sim_samples_scenarios_for_the_full_superset_not_just_the_squad`,
+  which asserts on the ids the sampler is *asked for* — the only assertion that pins it, since the
+  `.get` fallback makes a coverage gap invisible in the output.
 - `optimization/chips.py::schedule_chips(conn, initial_squad_ids, squad_trajectory, chip_windows,
-  scenario_draw) -> ChipSchedule` — DP over remaining chip-window-eligible GWs (state = used-window
+  scenario_draw, used_chip_names=frozenset()) -> ChipSchedule` — DP over remaining chip-window-eligible GWs (state = used-window
   bitmask x event), scoring the beam-search trajectory's (Plan 1a) marginal value per window as the
   median across `scenario_draw`'s trials, via a `_TRIAL_VALUE_FUNCS` dispatch table keyed on the
   real `chip_windows.name` values (`bboost`/`3xc`/`wildcard`/`freehit`). The existing
   single-decision-point functions (`bench_boost_value`/`triple_captain_value`/`wildcard_value`/
   `freehit_value`) are untouched — `schedule_chips` answers *when* across the season, not
-  *is-it-worth-it-this-GW*.
+  *is-it-worth-it-this-GW*. `used_chip_names` drops already-played chips from the DP state space
+  entirely; it has to be *told* (`fpl season-sim --used-chips wildcard,bboost`), never inferred —
+  there's no live FPL account integration in this project (standing declined scope), so nothing here
+  can know what the user has already burned. `ChipSchedule.total_expected_value` is the sum of each
+  scheduled window's own per-trial median, an approximation, not the joint median of the summed
+  trials (that would need the DP to carry trial arrays rather than scalars). The wildcard/free-hit
+  ILP rebuild is memoized module-level on `(id(conn), n_gw)` (`_cached_optimise_squad`, same pattern
+  as `expected_points.py::_get_or_fit_dc_model`) since it depends on neither the squad nor the event,
+  and the DP would otherwise re-solve it once per (window, event) pair.
 - Advisory hit-week mechanism (design doc's central decision) — reuses Plan 1a's existing
   single-swap `best_transfer_for_player`/`evaluate_transfer` evaluators rather than a new search
   algorithm, generating local hit-transfer candidates at each chip-window-eligible GW and scoring
@@ -383,11 +404,14 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   an independent redraw per candidate (rejected: statistically purer in isolation, but multiplies
   sampling cost by the number of candidates evaluated and would blow the seconds-to-low-tens-of-
   seconds CLI runtime target).
-- `fpl season-sim --squad <ids> [--trials N] [--horizon N]` — runs `sample_season_scenarios` over
-  the horizon, reports P10/P50/P90 via `numpy.percentile`, flags blank/double GWs affecting the
-  squad's own teams, prints the DP's baseline chip schedule plus any advisory hit-week
-  recommendations, and logs the run to the `decisions` journal (`confidence="low"`, consistent with
-  every other uncalibrated-heuristic output in this project).
+- `fpl season-sim --squad <ids> [--trials N] [--horizon N] [--used-chips a,b]` — gathers the full
+  superset of scoreable players (see above), runs `sample_season_scenarios` once over the horizon,
+  reports P10/P50/P90 via `numpy.percentile`, flags blank/double GWs affecting the squad's own teams,
+  prints the DP's baseline chip schedule plus any advisory hit-week recommendations, and logs the run
+  to the `decisions` journal (`confidence="low"`, consistent with every other uncalibrated-heuristic
+  output in this project). Two honesty guards print explicitly rather than letting a degenerate
+  result read as a forecast: an all-zero trial set is called out as a probable missing-data
+  condition, and a horizon extending past the last known chip window says so.
 - `backtesting/harness.py::score_differentials(conn, season, model_version) ->
   DifferentialBacktestResult` + `fpl backtest --season YYYY-YY --differentials` — the Task 9
   heuristic-backtest extension. Honesty gate first: checks whether `player_ownership_history` has
@@ -406,25 +430,41 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   E2E tests already set.
 - **Live-verified against the real synced pool** (`fpl sync`: 20 teams, 587 players, 380 fixtures,
   38 events; `fpl build-squad`: a real valid 15-man squad, every player `xp=0.00` in the live
-  preseason state — expected, no real match data exists yet). First `season-sim` attempt (before
-  `fpl sync-history` had been run in this fresh worktree) returned degenerate all-zero P10/P50/P90
-  — diagnosed as a genuine data-sequencing issue, not a Plan 1b code bug: `expected_minutes()`'s
-  fallback prior had no last-season minutes/goals data to fall back on yet. After running
-  `fpl sync-history`, the same squad produced sane results: `P10=27.5 P50=37.2 P90=48.9` (500
-  trials, GW1-5), `P10 <= P50 <= P90` as expected. That squad's chip schedule came back empty (no
-  chip recommended, no advisory hit-week recommendation) — hand-traced rather than just trusted:
-  the squad optimizer's ILP, run against a genuinely flat/undifferentiated preseason xP landscape,
-  happened to fill this squad's bench with players whose `expected_minutes()` prior is exactly
-  zero (`p_zero=1.0`), so bench boost's real value for this squad is genuinely zero; the beam
-  search's chosen transfer swap plus preseason tie-breaking in `evaluate_captaincy` (many players
-  tied near 0.00 xp) landed on a similarly zero-expected-minutes "best captain," so triple
-  captain's value is also genuinely zero here; wildcard/free-hit came back negative (rebuilding
-  from scratch offers no improvement when nothing yet differentiates players). A correct, defensible
-  "no chip is worth it this early" conclusion for this squad at this moment, not a bug — a real
-  instance of the preseason-data-degenerate limitation already documented above (the `calibrated-v2`
-  model needs real GW1+ results to differentiate players), not something Plan 1b's own code needs to
-  fix. `fpl backtest --season 2024-25 --differentials` ran cleanly to completion and correctly
-  printed the `insufficient_ownership_data` result described above.
+  preseason state — expected, no real match data exists yet). An early `season-sim` attempt (before
+  `fpl sync-history` had been run in this fresh worktree) returned degenerate all-zero P10/P50/P90 —
+  diagnosed as a genuine data-sequencing issue, not a Plan 1b code bug: `expected_minutes()`'s
+  fallback prior had no last-season minutes/goals data to fall back on yet. (`season-sim` now prints
+  an explicit WARNING in that all-zero case rather than letting it read as a real zero-point
+  forecast.) The current post-fix run, after `fpl sync-history`,
+  `fpl season-sim --squad 55,120,183,184,185,300,328,347,439,458,459,504,508,509,564 --trials 500
+  --horizon 5`:
+
+  ```
+  P10=26.9  P50=36.9  P90=47.8  (500 trials, GW1-5)
+  GW2  wildcard  median +98.8
+  GW3  freehit  median +20.1
+  GW4  3xc  median +1.4
+  GW5  bboost  median +2.2
+  advisory: hit Dubravka->Palmer before GW2 wildcard (+1.9 over baseline)
+  decision_id=6
+  ```
+
+  `P10 <= P50 <= P90` as expected. **This supersedes an earlier, wrong narrative in this file** that
+  reported an empty chip schedule and explained the negative wildcard/free-hit values as "rebuilding
+  from scratch offers no improvement when nothing yet differentiates players — a correct, defensible
+  conclusion, not a bug." That causal claim was false. The negative values were an artifact of the
+  scenario-coverage bug described above (the rebuilt squad's players were never sampled, so the
+  whole rebuilt side of the comparison scored 0.0 on every trial), not a preference signal about the
+  preseason xP landscape. With the superset fix in place the DP schedules all four chip types and
+  the advisory hit-week layer fires for the first time. Caveats that remain real: the magnitudes are
+  still uncalibrated preseason numbers off a flat xP landscape (the +98.8 wildcard figure in
+  particular is a full-horizon rebuilt-vs-held gap, not a per-GW one, and inherits every
+  `calibrated-v2` preseason limitation documented above), and chip *selection* within each week is
+  still event-invariant — see the limitation below. `fpl season-sim ... --used-chips wildcard,bboost`
+  on the same squad correctly drops both from the schedule, leaving
+  `GW2 freehit median +22.7` / `GW3 3xc median +2.4`. `fpl backtest --season 2024-25 --differentials`
+  ran cleanly to completion and correctly printed the `insufficient_ownership_data` result described
+  above.
 
 ## Build status
 
@@ -457,7 +497,7 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   `docs/superpowers/specs/2026-08-15-market-rivaling-architecture-design.md`, Pillar 1
   section (design judgment calls in `docs/superpowers/specs/2026-08-16-decision-intelligence-plan1b-design.md`).
   Plan: `docs/superpowers/plans/2026-08-16-decision-intelligence-plan1b-scenario-chip-dp.md`
-  (10/10 tasks, full implementer+reviewer ledger in
+  (11/11 tasks, plus one whole-branch review fix wave — full implementer+reviewer ledger in
   `.superpowers/sdd/2026-08-16-decision-intelligence-plan1b-scenario-chip-dp/progress.md`).
   Sampled effective ownership was originally scoped into this plan but split out to its
   own **Plan 1c** — a separate, still-unbuilt plan, own future brainstorm cycle — since
@@ -499,6 +539,17 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   `fpl season-sim`'s P10/P50/P90 spread understates real season-total variance by
   however much bonus points actually vary game-to-game. Appearance/goals/assists/
   cards/clean-sheets are genuinely stochastic per trial; bonus is not.
+- **Chip *selection* inside `schedule_chips` is event-invariant, even though the DP's
+  whole job is comparing events.** `_bench_boost_trial_values` picks the bench via
+  `pick_starting_xi` and `_triple_captain_trial_values` picks the captain via
+  `evaluate_captaincy` — neither takes an `event`/`as_of_date`, so both use *today's*
+  live expected-points evaluation and then assume that same bench/captain for every
+  candidate gameweek. Only the sampled realized points vary by event. That biases the
+  schedule toward whichever event happens to score best for today's selection rather
+  than a genuinely event-specific one. Fixing it means threading `event`/`as_of_date`
+  through `expected_points`/`evaluate_captaincy`/`pick_starting_xi` — real scope,
+  deliberately not attempted in the Plan 1b fix wave. Documented in both functions'
+  docstrings so it can't be mistaken for correct-by-construction.
 - **Traps/breakouts/template backtest scoring is deferred, not built.** Task 9 only
   extended the backtest with `score_differentials` — no as-of-date-aware historical
   replay path exists yet for `models/traps.py`/`breakouts.py`/`template.py`, so

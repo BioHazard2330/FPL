@@ -75,7 +75,7 @@ def test_low_confidence_above_one_percent_is_high_risk(db_conn, monkeypatch):
     assert result[0].risk == "high-risk"
 
 
-def test_find_differentials_as_of_date_uses_historical_ownership_window(db_conn):
+def test_find_differentials_as_of_date_uses_historical_ownership_window(db_conn, monkeypatch):
     bootstrap = make_bootstrap()
     _upsert_many(db_conn, "teams", normalize_teams(bootstrap), "t0")
     _upsert_many(db_conn, "element_types", normalize_element_types(bootstrap), "t0")
@@ -93,7 +93,10 @@ def test_find_differentials_as_of_date_uses_historical_ownership_window(db_conn)
     db_conn.commit()
 
     import fpl_agent.models.differentials as diff_mod
-    diff_mod.core_expected_points = lambda conn, pid, as_of_date=None, season=None: SimpleNamespace(total=3.0)
+    monkeypatch.setattr(
+        diff_mod, "core_expected_points",
+        lambda conn, pid, as_of_date=None, season=None: SimpleNamespace(total=3.0),
+    )
 
     result = diff_mod.find_differentials(db_conn, max_ownership=5.0, min_median_xp=2.0, as_of_date="2025-01-15")
     assert len(result) == 1
