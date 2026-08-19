@@ -1,8 +1,9 @@
 """Tier 2-4 (strong-reporter) journalism ingestion: BBC Sport's free Premier
 League RSS feed. FACTS only - see the module-level linkage functions below for
 why player/team matching is a heuristic index, never a classified fact."""
+import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import timezone
 from email.utils import parsedate_to_datetime
 
 import requests
@@ -59,3 +60,47 @@ def parse_rss_items(xml_text: str) -> list[dict]:
             "published_at": published_at,
         })
     return items
+
+
+_MIN_NAME_LENGTH = 4
+
+
+def match_players(conn, text: str) -> list[int]:
+    """Case-insensitive substring match against players.web_name, falling back to
+    second_name only if web_name matched nothing. Heuristic, documented in the
+    design doc as best-effort indexing only - never treat this as a confirmed
+    identification."""
+    text_lower = text.lower()
+    rows = conn.execute("SELECT id, web_name, second_name FROM players").fetchall()
+
+    matched = {
+        row["id"] for row in rows
+        if row["web_name"] and len(row["web_name"]) >= _MIN_NAME_LENGTH and row["web_name"].lower() in text_lower
+    }
+    if matched:
+        return sorted(matched)
+
+    matched = {
+        row["id"] for row in rows
+        if row["second_name"] and len(row["second_name"]) >= _MIN_NAME_LENGTH
+        and row["second_name"].lower() in text_lower
+    }
+    return sorted(matched)
+
+
+def match_teams(conn, text: str) -> list[int]:
+    """Full team name substring match first (long enough to be safe); falls back to
+    short_name only with a word-boundary regex, since 3-letter codes are otherwise
+    prone to matching inside unrelated words."""
+    text_lower = text.lower()
+    rows = conn.execute("SELECT id, name, short_name FROM teams").fetchall()
+
+    matched = {row["id"] for row in rows if row["name"] and row["name"].lower() in text_lower}
+    if matched:
+        return sorted(matched)
+
+    matched = {
+        row["id"] for row in rows
+        if row["short_name"] and re.search(rf"\b{re.escape(row['short_name'].lower())}\b", text_lower)
+    }
+    return sorted(matched)
