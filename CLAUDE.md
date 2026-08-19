@@ -49,7 +49,7 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `team-news`/`audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-eo --event N [--sample-size N] [--force]`, `fpl sync-history`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `audit` (Tier 2-4 / not yet needed). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-eo --event N [--sample-size N] [--force]`, `fpl sync-history`, `fpl sync-news [--limit N]`, `fpl team-news [--limit N]`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
 
 ## Data model (Phase 2)
 
@@ -628,9 +628,45 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
   preseason session.
 
+## Data model / logic (Pillar 2 Plan 2a — Tier 2-4 journalism connector)
+
+- `news_items`/`news_item_players`/`news_item_teams` (migration `0013`) — the first
+  Tier 2-4 (`strong_reporter`) source this project has ever ingested; everything
+  before this was Tier 1 (official FPL API). FACTS only: a row is "this article
+  exists, says this, as of this time," never a classified status change - it does
+  not feed `change_events` or `players.status`.
+- `ingestion/news_source.py` — BBC Sport Premier League RSS
+  (`https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml`), parsed with
+  stdlib `xml.etree.ElementTree` (no new dependency). Idempotent on the feed's own
+  guid. `match_players`/`match_teams` link articles to players/teams by
+  case-insensitive name-substring matching (web_name/full team name first, falling
+  back to second_name/short_name with a word-boundary guard on the latter) -
+  explicitly documented as a best-effort heuristic index, not a confirmed
+  identification, and never written into any table CLAUDE.md's Data Integrity
+  section covers.
+- `fpl sync-news [--limit N]` - opt-in, same mold as `sync-history`/`sync-eo`, not
+  part of regular `fpl sync`. `fpl team-news [--limit N]` - prints recent articles
+  with their matched players/teams inline for grep filtering, same pattern
+  `fpl projections`/`fpl prices` already use.
+- `team-news-monitor` skill - was deferred in Phase 6/9 pending a Tier 2-4 source,
+  now built. Surfaces raw article text for Claude to read and judge; never asserts a
+  fact from an article alone.
+- `config/storage.yaml news_retention_days` (default 90) - `fpl cleanup` now prunes
+  `news_items` older than this (cascading the two linkage tables), so an
+  all-season sync schedule doesn't grow the DB unbounded. Rows with no
+  `published_at` (a malformed feed item) are never pruned by this clause.
+- **Deliberately out of scope, deferred to Plan 2b:** predicted lineups (no
+  reliable free, no-signup source found in this session's research - the sole
+  no-key option found is marked deprecated by its own listing) and the
+  manager-change engine (needs a second source to corroborate against per
+  CLAUDE.md's precedence policy - one journalism source alone isn't enough to
+  build a corroboration detector around).
+- Spec: `docs/superpowers/specs/2026-08-20-pillar2-plan2a-tier2-news-connector-design.md`.
+  Plan: `docs/superpowers/plans/2026-08-20-pillar2-plan2a-tier2-news-connector.md`.
+
 ## Build status
 
-Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete.**
+Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**
 
 - [x] Phase 1 — Foundation (DB, migrations, storage governor, config, logging, doctor)
 - [x] Phase 2 — FPL Core (players, clubs, fixtures, prices, ownership, rules/scoring via official API)
@@ -674,6 +710,14 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   (11/11 code tasks + 1 live-verification task + this docs task = 13/13, full
   implementer+reviewer ledger in
   `.superpowers/sdd/2026-08-16-decision-intelligence-plan1c-sampled-eo/progress.md`).
+- [x] Pillar 2 Plan 2a — Tier 2-4 journalism source connector (BBC Sport Premier
+  League RSS, name-matched to players/teams, `fpl sync-news`/`fpl team-news`,
+  `team-news-monitor` skill). Spec:
+  `docs/superpowers/specs/2026-08-20-pillar2-plan2a-tier2-news-connector-design.md`.
+  Plan: `docs/superpowers/plans/2026-08-20-pillar2-plan2a-tier2-news-connector.md`
+  (8/8 tasks). Predicted lineups and the manager-change engine remain open —
+  Plan 2b, pending a viable free source for the former and a second corroborating
+  source for the latter.
 
 ## What's still genuinely limited (read before trusting output)
 
