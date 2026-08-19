@@ -118,13 +118,13 @@ def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) ->
         update_source_health(conn, _SOURCE_NAME, success=False, error=str(exc))
         raise NewsFetchError(str(exc)) from exc
 
-    if limit is not None:
-        items = items[:limit]
-
     now = datetime.now(timezone.utc).isoformat()
     new_items = players_linked = teams_linked = 0
 
     for item in items:
+        if limit is not None and new_items >= limit:
+            break
+
         existing = conn.execute(
             "SELECT id FROM news_items WHERE source=? AND external_id=?",
             (_SOURCE_NAME, item["external_id"]),

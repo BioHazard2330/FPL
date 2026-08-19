@@ -77,6 +77,42 @@ def test_sync_news_respects_limit(db_conn, monkeypatch):
     assert result["new_items"] == 1
 
 
+def test_sync_news_limit_counts_new_items_not_inspected_items(db_conn, monkeypatch):
+    """limit must cap NEW items processed, not how many fetched items are inspected.
+
+    First item in the feed is already synced; the second is genuinely new. A
+    limit=1 call must still find and insert that new item rather than
+    stopping after inspecting (and skipping) the already-synced one.
+    """
+    _seed_haaland(db_conn)
+    import fpl_agent.ingestion.news_source as news_mod
+
+    first_feed = """<?xml version="1.0"?>
+<rss version="2.0"><channel>
+<item>
+<title>Haaland scores hat-trick</title>
+<description>Manchester City striker on fire again.</description>
+<link>https://example.com/a1</link>
+<guid>guid-a1</guid>
+<pubDate>Wed, 19 Aug 2026 19:04:37 GMT</pubDate>
+</item>
+</channel></rss>"""
+    monkeypatch.setattr(news_mod, "fetch_rss", lambda url: first_feed)
+    seed_result = sync_news(db_conn)
+    assert seed_result["new_items"] == 1
+
+    # Now the feed has the already-synced item first, followed by a new one.
+    monkeypatch.setattr(news_mod, "fetch_rss", lambda url: _FEED)
+    result = sync_news(db_conn, limit=1)
+
+    assert result["fetched"] == 2
+    assert result["new_items"] == 1
+
+    rows = db_conn.execute("SELECT external_id FROM news_items ORDER BY external_id").fetchall()
+    external_ids = {r["external_id"] for r in rows}
+    assert external_ids == {"guid-a1", "guid-a2"}  # the new item (a2) was actually inserted
+
+
 def test_sync_news_records_source_health_on_fetch_failure(db_conn, monkeypatch):
     import fpl_agent.ingestion.news_source as news_mod
     from fpl_agent.ingestion.news_source import NewsFetchError
