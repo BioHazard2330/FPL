@@ -2,9 +2,13 @@
 requests/day, no cost, requires a free API key - see .env.example). Feeds the
 existing devig/blend math in models/odds_devig.py and models/blend.py, which
 this module does not touch."""
+from datetime import datetime, timezone
+
 import requests
 
 from fpl_agent.config import get_odds_api_key
+from fpl_agent.ingestion.market_identity import get_or_create_market_team
+from fpl_agent.ingestion.sync import update_source_health
 
 _ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/"
 _TIMEOUT_SECONDS = 15
@@ -76,3 +80,70 @@ def parse_live_odds_event(event: dict) -> dict | None:
         "over_2_5_odds": over_2_5,
         "under_2_5_odds": under_2_5,
     }
+
+
+_SOURCE_NAME = "odds_api"
+
+
+def match_fixture(conn, home_team_name: str, away_team_name: str, commence_time: str) -> int | None:
+    home_market_id = get_or_create_market_team(conn, _SOURCE_NAME, home_team_name)
+    away_market_id = get_or_create_market_team(conn, _SOURCE_NAME, away_team_name)
+
+    home_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (home_market_id,)).fetchone()
+    away_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (away_market_id,)).fetchone()
+    if home_row is None or away_row is None or home_row["fpl_team_id"] is None or away_row["fpl_team_id"] is None:
+        return None
+
+    candidates = conn.execute(
+        "SELECT id, kickoff_time FROM fixtures WHERE team_h=? AND team_a=? AND finished=0",
+        (home_row["fpl_team_id"], away_row["fpl_team_id"]),
+    ).fetchall()
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]["id"]
+
+    target = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+
+    def _delta(row):
+        kt = datetime.fromisoformat(row["kickoff_time"].replace("Z", "+00:00"))
+        return abs((kt - target).total_seconds())
+
+    return min(candidates, key=_delta)["id"]
+
+
+def sync_live_odds(conn) -> dict:
+    try:
+        payload = fetch_live_odds_payload()
+    except OddsLiveFetchError as exc:
+        update_source_health(conn, _SOURCE_NAME, success=False, error=str(exc))
+        raise
+
+    now = datetime.now(timezone.utc).isoformat()
+    matched = unmatched = 0
+
+    for event in payload:
+        parsed = parse_live_odds_event(event)
+        if parsed is None:
+            unmatched += 1
+            continue
+        fixture_id = match_fixture(conn, parsed["home_team"], parsed["away_team"], parsed["commence_time"])
+        if fixture_id is None:
+            unmatched += 1
+            continue
+
+        conn.execute(
+            "INSERT INTO fixture_odds_live "
+            "(fixture_id, source, bookmaker, home_win_odds, draw_odds, away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(fixture_id, source, bookmaker) DO UPDATE SET "
+            "home_win_odds=excluded.home_win_odds, draw_odds=excluded.draw_odds, away_win_odds=excluded.away_win_odds, "
+            "over_2_5_odds=excluded.over_2_5_odds, under_2_5_odds=excluded.under_2_5_odds, retrieved_at=excluded.retrieved_at",
+            (fixture_id, _SOURCE_NAME, parsed["bookmaker"], parsed["home_win_odds"], parsed["draw_odds"],
+             parsed["away_win_odds"], parsed["over_2_5_odds"], parsed["under_2_5_odds"], now),
+        )
+        matched += 1
+
+    conn.commit()
+    update_source_health(conn, _SOURCE_NAME, success=True, error=None)
+    return {"fetched": len(payload), "matched": matched, "unmatched": unmatched}
