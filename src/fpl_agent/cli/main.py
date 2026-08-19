@@ -13,6 +13,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
+from fpl_agent.config import load_dotenv
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -54,6 +55,7 @@ from fpl_agent.optimization.transfers import best_transfer_for_player, recommend
 
 @click.group()
 def cli():
+    load_dotenv()
     setup_logging()
     conn = get_connection()
     run_migrations(conn)

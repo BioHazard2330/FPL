@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,25 @@ CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 DB_PATH = DATA_DIR / "fpl.db"
+
+
+def load_dotenv() -> None:
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def get_odds_api_key() -> str | None:
+    return os.environ.get("ODDS_API_KEY")
 
 
 def _load_yaml(name: str) -> dict:
