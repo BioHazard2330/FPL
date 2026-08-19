@@ -163,3 +163,16 @@ def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) ->
         "players_linked": players_linked,
         "teams_linked": teams_linked,
     }
+
+
+def list_recent_news(conn, limit: int = 20) -> list[dict]:
+    rows = conn.execute(
+        "SELECT n.id, n.title, n.link, n.source_tier, n.published_at, "
+        "(SELECT GROUP_CONCAT(p.web_name, ', ') FROM news_item_players nip "
+        " JOIN players p ON p.id = nip.player_id WHERE nip.news_item_id = n.id) AS players, "
+        "(SELECT GROUP_CONCAT(t.short_name, ', ') FROM news_item_teams nit "
+        " JOIN teams t ON t.id = nit.team_id WHERE nit.news_item_id = n.id) AS teams "
+        "FROM news_items n ORDER BY n.published_at DESC, n.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
