@@ -3,13 +3,17 @@ League RSS feed. FACTS only - see the module-level linkage functions below for
 why player/team matching is a heuristic index, never a classified fact."""
 import re
 import xml.etree.ElementTree as ET
-from datetime import timezone
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import requests
 
+from fpl_agent.ingestion.sync import update_source_health
+
 BBC_PL_RSS_URL = "https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml"
 _TIMEOUT_SECONDS = 15
+_SOURCE_NAME = "bbc_sport_rss"
+_SOURCE_TIER = "strong_reporter"
 
 
 class NewsFetchError(Exception):
@@ -104,3 +108,58 @@ def match_teams(conn, text: str) -> list[int]:
         if row["short_name"] and re.search(rf"\b{re.escape(row['short_name'].lower())}\b", text_lower)
     }
     return sorted(matched)
+
+
+def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) -> dict:
+    try:
+        xml_text = fetch_rss(feed_url)
+        items = parse_rss_items(xml_text)
+    except (NewsFetchError, ET.ParseError) as exc:
+        update_source_health(conn, _SOURCE_NAME, success=False, error=str(exc))
+        raise NewsFetchError(str(exc)) from exc
+
+    if limit is not None:
+        items = items[:limit]
+
+    now = datetime.now(timezone.utc).isoformat()
+    new_items = players_linked = teams_linked = 0
+
+    for item in items:
+        existing = conn.execute(
+            "SELECT id FROM news_items WHERE source=? AND external_id=?",
+            (_SOURCE_NAME, item["external_id"]),
+        ).fetchone()
+        if existing is not None:
+            continue
+
+        cur = conn.execute(
+            "INSERT INTO news_items (source, source_tier, external_id, title, link, summary, published_at, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (_SOURCE_NAME, _SOURCE_TIER, item["external_id"], item["title"], item["link"],
+             item["summary"], item["published_at"], now),
+        )
+        news_item_id = cur.lastrowid
+        new_items += 1
+
+        match_text = item["title"] + " " + (item["summary"] or "")
+        for player_id in match_players(conn, match_text):
+            conn.execute(
+                "INSERT OR IGNORE INTO news_item_players (news_item_id, player_id) VALUES (?, ?)",
+                (news_item_id, player_id),
+            )
+            players_linked += 1
+        for team_id in match_teams(conn, match_text):
+            conn.execute(
+                "INSERT OR IGNORE INTO news_item_teams (news_item_id, team_id) VALUES (?, ?)",
+                (news_item_id, team_id),
+            )
+            teams_linked += 1
+
+    conn.commit()
+    update_source_health(conn, _SOURCE_NAME, success=True, error=None)
+    return {
+        "fetched": len(items),
+        "new_items": new_items,
+        "players_linked": players_linked,
+        "teams_linked": teams_linked,
+    }
