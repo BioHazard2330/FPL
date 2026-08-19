@@ -643,7 +643,15 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   back to second_name/short_name with a word-boundary guard on the latter) -
   explicitly documented as a best-effort heuristic index, not a confirmed
   identification, and never written into any table CLAUDE.md's Data Integrity
-  section covers.
+  section covers. **Live-verification method:** `match_players`/`match_teams`
+  were called directly against real synced player/team data and real fetched
+  BBC article text, not via a single unbroken `fpl sync-news` CLI run showing
+  nonzero `players_linked`/`teams_linked` in its own output — that combination
+  needs a pre-populated players/teams DB before the first `sync-news` run in a
+  given environment, and this verification worktree's DB was empty on first run
+  with no clean way to reset and retry (this project's own safety hook blocks
+  unscoped DB deletes). The matching logic itself is genuinely verified against
+  real data either way.
 - `fpl sync-news [--limit N]` - opt-in, same mold as `sync-history`/`sync-eo`, not
   part of regular `fpl sync`. `fpl team-news [--limit N]` - prints recent articles
   with their matched players/teams inline for grep filtering, same pattern
