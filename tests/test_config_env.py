@@ -12,8 +12,12 @@ def test_load_dotenv_sets_missing_var(tmp_path, monkeypatch):
     config_mod.load_dotenv()
 
     assert os.environ["ODDS_API_KEY"] == "test-key-123"
-    monkeypatch.delenv("ODDS_API_KEY", raising=False)
-    monkeypatch.delenv("SOME_OTHER", raising=False)
+    # load_dotenv() writes directly to os.environ, bypassing monkeypatch's
+    # tracked undo stack. monkeypatch.delenv() here would capture this leaked
+    # value as the "restore" target and put it back into the real process
+    # environment at teardown. Pop directly instead.
+    os.environ.pop("ODDS_API_KEY", None)
+    os.environ.pop("SOME_OTHER", None)
 
 
 def test_load_dotenv_never_overwrites_real_env_var(tmp_path, monkeypatch):
