@@ -23,6 +23,7 @@ from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_news
+from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
@@ -218,6 +219,24 @@ def sync_news_cmd(limit: int | None):
     click.echo(f"new items       {result['new_items']}")
     click.echo(f"players linked  {result['players_linked']}")
     click.echo(f"teams linked    {result['teams_linked']}")
+
+
+@cli.command("sync-live-odds")
+def sync_live_odds_cmd():
+    """Fetch live pre-match odds for upcoming fixtures (the-odds-api.com, free
+    tier, requires ODDS_API_KEY - see .env.example) and match them to FPL
+    fixtures. Separate from `fpl sync`, opt-in."""
+    conn = get_connection()
+    try:
+        result = sync_live_odds(conn)
+    except OddsLiveFetchError as e:
+        click.echo(f"sync-live-odds failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"fetched          {result['fetched']}")
+    click.echo(f"matched          {result['matched']}")
+    click.echo(f"unmatched        {result['unmatched']}")
 
 
 @cli.command("team-news")
