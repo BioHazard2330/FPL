@@ -21,6 +21,7 @@ from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
+from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_news
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
@@ -195,6 +196,49 @@ def sync_eo(event: int, sample_size: int, force: bool):
     click.echo(f"sample size      {result['sample_size']}")
     click.echo(f"players sampled  {result['players_sampled']}")
     click.echo(f"managers failed  {result['managers_failed']}")
+
+
+@cli.command("sync-news")
+@click.option("--limit", default=None, type=int, help="max new items to process this run (omit for all)")
+def sync_news_cmd(limit: int | None):
+    """Ingest BBC Sport Premier League RSS (strong-reporter tier journalism) - real
+    articles matched to players/teams by name, never auto-classified into a status
+    change. Separate from `fpl sync`, opt-in."""
+    conn = get_connection()
+    try:
+        result = sync_news(conn, limit=limit)
+    except NewsFetchError as e:
+        click.echo(f"sync-news failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"fetched         {result['fetched']}")
+    click.echo(f"new items       {result['new_items']}")
+    click.echo(f"players linked  {result['players_linked']}")
+    click.echo(f"teams linked    {result['teams_linked']}")
+
+
+@cli.command("team-news")
+@click.option("--limit", default=20, type=int, help="max articles to show")
+def team_news_cmd(limit: int):
+    """Recent Tier 2-4 journalism (strong-reporter tier), matched to players/teams by
+    name. Filter with grep for a specific player/team - matching is a best-effort
+    heuristic, not a confirmed identification."""
+    conn = get_connection()
+    try:
+        items = list_recent_news(conn, limit=limit)
+    finally:
+        conn.close()
+    if not items:
+        click.echo("no news items synced yet - run `fpl sync-news` first")
+        return
+    for item in items:
+        players = item["players"] or "-"
+        teams = item["teams"] or "-"
+        published = item["published_at"] or "unknown date"
+        click.echo(f"{published:25} [{item['source_tier']}] players={players} teams={teams}")
+        click.echo(f"  {item['title']}")
+        click.echo(f"  {item['link']}")
 
 
 @cli.command("backfill-odds")
