@@ -37,6 +37,25 @@ def test_match_players_no_hit_returns_empty(db_conn):
     assert match_players(db_conn, "Nothing relevant here at all") == []
 
 
+def test_match_players_excludes_removed_player(db_conn):
+    # A player removed from FPL's dataset (e.g. left the league) must never be
+    # linked, even if their name substring-matches - consistent with every other
+    # players query in this codebase filtering WHERE removed = 0.
+    bootstrap = make_bootstrap()
+    bootstrap["elements"][0].update({
+        "web_name": "Sterling", "second_name": "Sterling", "removed": True,
+    })
+
+    _upsert_many(db_conn, "teams", normalize_teams(bootstrap), "t0")
+    _upsert_many(db_conn, "element_types", normalize_element_types(bootstrap), "t0")
+    _upsert_many(db_conn, "players", normalize_players(bootstrap), "t0")
+    db_conn.commit()
+
+    ids = match_players(db_conn, "Sterling scores again for Chelsea")
+    assert 1 not in ids
+    assert ids == []
+
+
 def test_match_players_short_name_guard_prevents_noise():
     # names under the 4-character floor are never matched, even on an exact
     # substring hit - documented false-negative tradeoff, not a bug.

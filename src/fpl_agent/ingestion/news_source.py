@@ -75,7 +75,7 @@ def match_players(conn, text: str) -> list[int]:
     design doc as best-effort indexing only - never treat this as a confirmed
     identification."""
     text_lower = text.lower()
-    rows = conn.execute("SELECT id, web_name, second_name FROM players").fetchall()
+    rows = conn.execute("SELECT id, web_name, second_name FROM players WHERE removed = 0").fetchall()
 
     matched = {
         row["id"] for row in rows
