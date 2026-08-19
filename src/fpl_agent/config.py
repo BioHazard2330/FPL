@@ -29,6 +29,7 @@ class StorageBudget:
     cache_target_mb: float
     cache_max_mb: float
     raw_retention_hours: float
+    news_retention_days: float
 
 
 def load_freshness() -> dict:
@@ -44,6 +45,7 @@ def load_storage_budget() -> StorageBudget:
         cache_target_mb=raw["cache"]["target_mb"],
         cache_max_mb=raw["cache"]["max_mb"],
         raw_retention_hours=raw["raw_retention_hours"],
+        news_retention_days=raw["news_retention_days"],
     )
 
 

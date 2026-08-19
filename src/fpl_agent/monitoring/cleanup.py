@@ -5,6 +5,7 @@ free-space reclamation - never core tables (players, decisions, rules, user stat
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from fpl_agent.config import DATA_DIR, DB_PATH, load_storage_budget
 from fpl_agent.ingestion.raw_store import prune_raw
@@ -30,16 +31,39 @@ def _vacuum(conn: sqlite3.Connection) -> float:
     return round(max(0.0, before_mb - after_mb), 3)
 
 
+def _prune_news(conn: sqlite3.Connection, retention_days: float) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    ids = [
+        row["id"] for row in conn.execute(
+            "SELECT id FROM news_items WHERE published_at IS NOT NULL AND published_at < ?",
+            (cutoff,),
+        ).fetchall()
+    ]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(f"DELETE FROM news_item_players WHERE news_item_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM news_item_teams WHERE news_item_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM news_items WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    return len(ids)
+
+
 @dataclass(frozen=True)
 class CleanupReport:
     raw_files_pruned: int
     temp_files_cleared: int
     vacuum_freed_mb: float
+    news_items_pruned: int
 
 
 def run_cleanup(conn: sqlite3.Connection) -> CleanupReport:
     budget = load_storage_budget()
     raw_pruned = prune_raw(budget.raw_retention_hours)
     temp_cleared = _clear_temp_dir()
+    news_pruned = _prune_news(conn, budget.news_retention_days)
     freed_mb = _vacuum(conn)
-    return CleanupReport(raw_files_pruned=raw_pruned, temp_files_cleared=temp_cleared, vacuum_freed_mb=freed_mb)
+    return CleanupReport(
+        raw_files_pruned=raw_pruned, temp_files_cleared=temp_cleared,
+        vacuum_freed_mb=freed_mb, news_items_pruned=news_pruned,
+    )

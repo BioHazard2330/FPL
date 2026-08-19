@@ -1014,6 +1014,7 @@ def cleanup():
     conn.close()
     click.echo(f"raw files pruned:  {report.raw_files_pruned}")
     click.echo(f"temp files cleared: {report.temp_files_cleared}")
+    click.echo(f"news items pruned: {report.news_items_pruned}")
     click.echo(f"DB space reclaimed: {report.vacuum_freed_mb}MB")
 
 
