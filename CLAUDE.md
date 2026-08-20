@@ -943,6 +943,64 @@ call, but because of two real, confirmed bugs, found by refusing to accept
   confidence either way - this is a legitimate, disclosed divergence, not
   silently glossed over.
 
+## Competitor-scope check, part 2: double-gameweek captain armband value (2026-08-20)
+
+Continuing the same research thread with the user's explicit next check: does
+this project handle DGW/BGW effective captain value the way real tools do -
+i.e. does a captain who has TWO fixtures in one gameweek get credited for
+both matches (summed) before the 2x multiplier, the way real FPL scoring
+actually works?
+
+- **Confirmed real bug, `models/expected_points.py::expected_points()`.** Its
+  documented contract deliberately AVERAGES fixture-level goals inputs over
+  a window ("single-match expected points... not a multi-match total") -
+  correct and unchanged for its `from_event=None` "next n_gw fixtures from
+  right now" rolling-context-window callers (squad building, wildcard-value
+  price context). But `optimization/captaincy.py::evaluate_captaincy` and
+  `optimization/chips.py::_candidates` both call it with `from_event=<a
+  specific event>` and always `n_gw=1`, to evaluate one exact candidate
+  gameweek - and for a genuine double gameweek (2 fixtures sharing that
+  event id), the averaging path collapsed both matches into one
+  match-equivalent snapshot instead of summing them. Real FPL scoring sums
+  a DGW player's two matches' points, then applies the captain's 2x on top
+  of that sum - averaging instead of summing would make a DGW captain look
+  no better than a single-fixture player, when a double gameweek captain
+  pick is one of the best-known, most-discussed real strategic plays in the
+  game (every competitor site covers it explicitly).
+- **Fixed by branching only the `from_event is not None` path to sum
+  `_match_components` per fixture instead of averaging.** Verified every
+  real caller of `from_event` always passes `n_gw=1` targeting exactly one
+  event (grepped, confirmed - `captaincy.py`/`chips.py`, nothing else), so
+  this is a precise, contained fix, not a behavior change to the separate
+  multi-GW context-window path. Single-fixture events (the overwhelming
+  common case, and blank-gameweek fallback) fall through to the same
+  averaging branch as before - summing one item equals averaging one item,
+  zero behavior change there, confirmed live against the real GW1 pool
+  (Haaland's `from_event=1` median: 6.85 before and after, GW1 has no
+  doubles this season).
+- **Live-verified as a genuine bug, not just reasoned about**: a real
+  regression test (`test_from_event_sums_a_double_gameweek_instead_of_averaging`)
+  was proven to fail against the pre-fix code first (3.42 vs the required
+  >6.05, a clean ~2x understatement) before confirming it passes post-fix -
+  the actual before/after numbers, not an assumption. 367/367 tests.
+- **Not yet triggered live** - GW1 2026-27 has no double gameweeks (they
+  typically arise mid-season from postponed/rescheduled fixtures), so this
+  fix has no effect on any current recommendation. It's correctness
+  infrastructure for whenever the season's first DGW/BGW actually appears,
+  fixed proactively now rather than left as a landmine, per this project's
+  "verify with a synthetic case now" standard rather than "wait for real
+  data" where a synthetic case can genuinely prove the mechanism (unlike
+  e.g. the EO-threshold recalibration gap, which structurally cannot be
+  tested without real post-GW1 sample data).
+- **Also checked, correctly not a gap**: bench boost's interaction with the
+  DefCon scoring rule (bench players earn DefCon points too when boosted).
+  `chips.py::bench_boost_value` sums `c.xp for c in xi.bench`, where each
+  bench candidate's `.xp` already comes from the same `expected_points()`
+  call that has carried the DefCon term since the DefCon closure earlier
+  this session (`_match_components`) - no separate wiring needed, DefCon is
+  already inside every xP number bench boost sums. Confirmed by reading the
+  call chain, not assumed.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**

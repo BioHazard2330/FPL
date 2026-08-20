@@ -565,14 +565,34 @@ def expected_points(
 
     if fixtures:
         goals_pairs = [_fixture_goals_for(conn, f, rates["team_id"]) for f in fixtures]
+    else:
+        goals_pairs = [(_LEAGUE_AVERAGE_GOALS, _LEAGUE_AVERAGE_GOALS)]
+
+    if from_event is not None and len(goals_pairs) > 1:
+        # from_event always targets exactly one specific gameweek in every real
+        # caller (captaincy.py/chips.py's per-candidate-GW evaluation, always
+        # n_gw=1) - a double gameweek's two fixtures must SUM into that
+        # gameweek's real total (real FPL scoring sums both matches' points
+        # before any captain multiplier applies), not collapse into one
+        # averaged match-equivalent snapshot. The averaging path below is
+        # correct and untouched for the from_event=None "next n_gw fixtures
+        # from now" rolling context-window case (squad-building/wildcard-value
+        # callers), which is deliberately a smoothed single-match-equivalent
+        # signal, not a specific gameweek's total - see the module docstring.
+        # len(goals_pairs)==1 (the overwhelming common case, and the blank-
+        # gameweek league-average fallback) always falls through to the
+        # average branch below, which is identical to summing for one item -
+        # zero behavior change for every non-double-gameweek caller.
+        median = sum(_match_components(conn, rates, tg, og) for tg, og in goals_pairs)
+        ceiling_matches = len(goals_pairs)
+    else:
         team_goals = sum(g[0] for g in goals_pairs) / len(goals_pairs)
         opp_goals = sum(g[1] for g in goals_pairs) / len(goals_pairs)
-    else:
-        team_goals = opp_goals = _LEAGUE_AVERAGE_GOALS
+        median = _match_components(conn, rates, team_goals, opp_goals)
+        ceiling_matches = 1
 
-    median = _match_components(conn, rates, team_goals, opp_goals)
     floor = round(median * 0.5, 2)
-    ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction, 2)
+    ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction * ceiling_matches, 2)
 
     return ExpectedPoints(
         player_id=player_id, position=rates["position"], floor=floor, median=round(median, 2),

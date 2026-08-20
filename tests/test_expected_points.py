@@ -457,6 +457,23 @@ def test_from_event_targets_a_specific_future_gameweek(db_conn):
     assert gw1.median == default_call.median
 
 
+def test_from_event_sums_a_double_gameweek_instead_of_averaging(db_conn):
+    """Real FPL scoring sums both of a double gameweek's fixtures before any
+    captain multiplier applies - captaincy.py/chips.py's per-candidate-GW
+    evaluation (always n_gw=1 + from_event) needs that real total, not the
+    from_event=None rolling-context-window path's deliberate per-match
+    average. Player's team plays twice in event 1; without the fix this
+    would collapse to roughly the same value as a single fixture instead of
+    genuinely summing - the bug this regression-guards."""
+    _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_fixture(db_conn, 2, 1, 2, 1, date="2026-08-21")  # second fixture, same event=1, team 1 away
+
+    dgw = expected_points(db_conn, 1, n_gw=1, from_event=1)
+    single_fixture_only = expected_points(db_conn, 1, n_gw=1, from_event=99)  # no fixture -> single-match fallback
+
+    assert dgw.median > single_fixture_only.median * 1.7
+
+
 def test_core_expected_points_is_leakage_free(db_conn):
     # Task 13's walk-forward backtest needs a reachable as_of_date path.
     # Adding matches AFTER the cutoff must not move an as-of-cutoff estimate.
