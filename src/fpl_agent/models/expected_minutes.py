@@ -2,6 +2,26 @@ import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.models.availability import classify
+from fpl_agent.models.rules import current_season
+
+# A season gap of 2+ (i.e. missing at least one full season between the most
+# recent player_season_history row and now) means that row is NOT genuinely
+# "last season" - treated as stale rather than a fresh, trustworthy prior.
+_STALE_SEASON_GAP_THRESHOLD = 2
+
+
+def _season_start_year(season_str: str | None) -> int | None:
+    """Accepts player_season_history's "YYYY/YY" or rules.season's "YYYY-YY" -
+    both start with a 4-digit year before the separator."""
+    if not season_str:
+        return None
+    for sep in ("/", "-"):
+        if sep in season_str:
+            head = season_str.split(sep, 1)[0]
+            if head.isdigit():
+                return int(head)
+    return None
+
 
 _AVAILABILITY_DAMPING = {
     "FIT": 1.0,
@@ -61,10 +81,17 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         current_per_gw = min(current_minutes / finished_events, 90)
 
     prior_row = conn.execute(
-        "SELECT minutes FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
+        "SELECT minutes, season_name FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
         (player_id,),
     ).fetchone()
     prior_per_gw = min(prior_row["minutes"] / 38, 90) if prior_row and prior_row["minutes"] is not None else None
+
+    prior_is_stale = False
+    if prior_row is not None:
+        prior_year = _season_start_year(prior_row["season_name"])
+        this_year = _season_start_year(current_season(conn))
+        if prior_year is not None and this_year is not None and this_year - prior_year >= _STALE_SEASON_GAP_THRESHOLD:
+            prior_is_stale = True
 
     if current_per_gw is not None and prior_per_gw is not None:
         weight_current = min(finished_events / 10, 0.8)
@@ -75,10 +102,27 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         base = current_per_gw
         confidence = "MEDIUM" if finished_events < 5 else "HIGH"
         basis = "current_season_only"
-    elif prior_per_gw is not None:
+    elif prior_per_gw is not None and not prior_is_stale:
         base = prior_per_gw
         confidence = "LOW"
         basis = "last_season_prior_no_current_data"
+    elif prior_per_gw is not None and prior_is_stale:
+        # Real gap found 2026-08-20: `ORDER BY season_name DESC LIMIT 1` always
+        # grabs the single most recent AVAILABLE row, regardless of how old it
+        # actually is - silently treating a several-seasons-old cameo the same
+        # as a genuine "last season" figure. Caught by hand-checking a real,
+        # moderately-owned (~20%) player (Tzolis) whose only history_past row -
+        # confirmed live against the real FPL API, not just this project's DB -
+        # was from 2021/22: produced an absurd ~9min expected-minutes figure for
+        # a player real managers clearly aren't treating as a bit-part squad
+        # member. Same discount/confidence posture as a genuinely-new-to-the-
+        # league cross-league signing below - a multi-season gap carries the
+        # same "no trustworthy recent read on this player's real role"
+        # uncertainty, whatever caused the gap (loan abroad in an untracked
+        # league, injury absence, reserve-team years).
+        base = prior_per_gw * _NEW_SIGNING_MINUTES_DISCOUNT
+        confidence = "LOW"
+        basis = "stale_prior_season"
     else:
         cross_league_row = conn.execute(
             "SELECT minutes FROM player_cross_league_prior WHERE player_id=?", (player_id,)

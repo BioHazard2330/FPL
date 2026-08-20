@@ -20,13 +20,22 @@ def _seed(conn, bootstrap, now):
     conn.commit()
 
 
-def _insert_season_history(conn, player_id, minutes=3420, starts=38, expected_goals=10.0, expected_assists=8.0, bonus=25):
+def _insert_season_history(conn, player_id, minutes=3420, starts=38, expected_goals=10.0, expected_assists=8.0, bonus=25, season_name="2025/26"):
     conn.execute(
         "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, goals_scored, "
         "assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
         "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
-        "VALUES (?,'2025/26',?,?,0,0,0,0,0,?,0,?,?,0,0,0,50,55,'t0')",
-        (player_id, minutes, starts, bonus, expected_goals, expected_assists),
+        "VALUES (?,?,?,?,0,0,0,0,0,?,0,?,?,0,0,0,50,55,'t0')",
+        (player_id, season_name, minutes, starts, bonus, expected_goals, expected_assists),
+    )
+    conn.commit()
+
+
+def _set_current_season(conn, season="2026-27"):
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.squad_total_spend', ?, 1, 't0', 'fpl_api_bootstrap', '1000')",
+        (season,),
     )
     conn.commit()
 
@@ -65,6 +74,40 @@ def test_injury_damps_expected_minutes_to_zero(db_conn):
 
     assert result.classification == "CONFIRMED UNAVAILABLE"
     assert result.expected_minutes == 0.0
+
+
+def test_fresh_last_season_prior_is_not_treated_as_stale(db_conn):
+    """The common case: a real last-season row (one season back from the
+    current one) must keep the existing, undiscounted behavior - the stale
+    check must not regress the overwhelming majority case."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_current_season(db_conn, "2026-27")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, season_name="2025/26")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"
+    assert 85 <= result.expected_minutes <= 90
+
+
+def test_multi_season_stale_prior_is_discounted_not_treated_as_fresh(db_conn):
+    """Real gap found 2026-08-20 (Tzolis): a player's only player_season_history
+    row can be several seasons old (returned from a loan/league this project
+    has no source for) - `ORDER BY season_name DESC LIMIT 1` used to grab it
+    as if it were "last season" with zero discount, producing an absurd
+    expected-minutes figure for a player real managers meaningfully own."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_current_season(db_conn, "2026-27")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, season_name="2021/22")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "stale_prior_season"
+    assert result.confidence == "LOW"
+    # 3420/38=90 undiscounted vs 90*0.6=54 discounted - must be meaningfully lower
+    assert result.expected_minutes < 60
 
 
 def test_cross_league_prior_used_when_genuinely_new_to_the_league(db_conn):
