@@ -21,12 +21,9 @@ def _seed_reference_data(conn):
         "VALUES (1,201,'Scorer',1,1,'a','2026-01-01T00:00:00Z')"
     )
     conn.execute("INSERT INTO market_teams (id, canonical_name, fpl_team_id) VALUES (1, 'Team A', 1), (2, 'Team B', NULL)")
-    conn.execute(
-        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
-        "('scoring.goals_scored.FWD','2024-25',1,'2024-08-01','fpl_api','4'), "
-        "('scoring.assists','2024-25',1,'2024-08-01','fpl_api','3'), "
-        "('scoring.yellow_cards','2024-25',1,'2024-08-01','fpl_api','-1')"
-    )
+    # No rules INSERT needed here - migrations/0018 now seeds real 2024-25
+    # scoring.goals_scored.FWD/assists/yellow_cards rows for every test DB
+    # automatically (this project's own real, sourced historical rules).
 
 
 def _seed_matches(conn, dates):
