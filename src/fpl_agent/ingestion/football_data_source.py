@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from fpl_agent.ingestion.market_identity import get_or_create_market_team
+from fpl_agent.ingestion.market_identity import get_or_create_market_team, normalize_common_team_name
 from fpl_agent.ingestion.sync import update_source_health
 
 
@@ -78,8 +78,17 @@ def fetch_season_csv(season: str) -> str:
 
 
 def _upsert_match_and_odds(conn, season: str, parsed: dict) -> bool:
-    home_id = get_or_create_market_team(conn, "football_data", parsed["home_team_name"])
-    away_id = get_or_create_market_team(conn, "football_data", parsed["away_team_name"])
+    # football-data.co.uk's own naming happens to already match FPL's short
+    # display form for most clubs, which is exactly what let this bug hide:
+    # "Man United" (not "Manchester United") and "Tottenham" (not "Tottenham
+    # Hotspur") are the two real divergences, and skipping this normalize call
+    # silently created disconnected duplicate market_teams rows for both,
+    # never linked to the fpl_team_id the live prediction path resolves
+    # through - Dixon-Coles then had zero fitted history for either club, see
+    # CLAUDE.md. odds_live_source.py/understat_source.py already normalize
+    # before resolving; this was the one connector that didn't.
+    home_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["home_team_name"]))
+    away_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["away_team_name"]))
     now = datetime.now(timezone.utc).isoformat()
 
     conn.execute(

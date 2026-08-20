@@ -1,4 +1,5 @@
 from fpl_agent.ingestion.football_data_source import backfill_football_data, parse_football_data_row
+from fpl_agent.ingestion.market_identity import get_or_create_market_team
 
 
 def test_parse_row_prefers_avg_odds_and_iso_date():
@@ -82,3 +83,28 @@ def test_backfill_football_data_idempotent(db_conn):
     arsenal_match_id = next(mid for mid, g in matches_by_id.items() if g == (3, 1))
     assert odds_by_match[man_city_match_id] == 1.45
     assert odds_by_match[arsenal_match_id] == 1.3
+
+
+def test_football_data_team_names_resolve_to_the_same_market_team_as_fpl(db_conn):
+    """Regression guard for a real bug: football-data.co.uk emits "Man United"
+    and "Tottenham" while FPL's own teams.name is "Man Utd"/"Spurs" - without
+    normalizing through market_identity.normalize_common_team_name first (the
+    same treatment odds_live_source.py/understat_source.py already apply),
+    get_or_create_market_team created disconnected duplicate market_teams
+    rows for both clubs, silently zeroing their Dixon-Coles fit (see
+    CLAUDE.md). This asserts football_data resolves to the identical
+    market_team_id the live prediction path (source="fpl") resolves to."""
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (16, 1, 'Man Utd', 'MUN', 't0')")
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (19, 2, 'Spurs', 'TOT', 't0')")
+    fpl_mun_id = get_or_create_market_team(db_conn, "fpl", "Man Utd")
+    fpl_tot_id = get_or_create_market_team(db_conn, "fpl", "Spurs")
+
+    csv_text = (
+        "Date,HomeTeam,AwayTeam,FTHG,FTAG\n"
+        "17/08/24,Man United,Tottenham,2,1\n"
+    )
+    backfill_football_data(db_conn, "2024-25", csv_text=csv_text)
+
+    match = db_conn.execute("SELECT home_team_id, away_team_id FROM match_results_history").fetchone()
+    assert match["home_team_id"] == fpl_mun_id
+    assert match["away_team_id"] == fpl_tot_id

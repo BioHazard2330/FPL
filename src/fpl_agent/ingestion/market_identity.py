@@ -20,6 +20,7 @@ import sqlite3
 # e.g. "Arsenal", "Chelsea", "Liverpool" need no translation at all).
 COMMON_TEAM_NAME_ALIASES = {
     "manchester united": "Man Utd",
+    "man united": "Man Utd",  # football-data.co.uk's own short form - distinct from the full "Manchester United" key above
     "manchester city": "Man City",
     "newcastle united": "Newcastle",
     "tottenham hotspur": "Spurs",

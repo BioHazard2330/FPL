@@ -937,6 +937,40 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
   preseason session.
 
+- **Fixed 2026-08-20: Dixon-Coles team strength had silently never fitted real history for Man
+  Utd or Spurs, since Pillar 0.** Found while researching season-transition/squad-churn handling
+  (not reported by the user this time - caught by direct verification of `match_results_history`
+  team coverage). Root cause: `ingestion/football_data_source.py` (the only ingester of
+  `match_results_history`, football-data.co.uk's historical CSV) called `get_or_create_market_team`
+  with the source's raw team name, never routing it through `market_identity.normalize_common_team_name`
+  the way `odds_live_source.py`/`understat_source.py` already do. football-data.co.uk's own naming
+  happens to already equal FPL's short display form for every club except two - "Man United" (not
+  "Manchester United", the only variant the alias dict had a key for) and "Tottenham" (not "Tottenham
+  Hotspur") - so this created two disconnected duplicate `market_teams` rows holding the real 38-match
+  history each, never linked to the `fpl_team_id` the live prediction path (`expected_points.py`,
+  source="fpl") always resolves through. `_blended_fixture_goals`'s own guard
+  (`team_market_id in dc_model.teams`) degrades gracefully rather than crashing, which is exactly why
+  this went undetected by every prior review and by `fpl backtest`: it silently returned flat
+  `_LEAGUE_AVERAGE_GOALS` (1.3) for both clubs' attack AND defence, every fixture, since Pillar 0 -
+  losing all Dixon-Coles clean-sheet/goals-conceded signal specifically for Man Utd and Spurs (as both
+  the team and the opponent). `fpl backtest`'s MAE/RMSE could not have caught this: that harness
+  explicitly excludes goals-conceded/clean-sheet from core scoring by design (see the harness
+  docstring), so this bug was invisible to it regardless. **Fixed**: added the missing `"man united"`
+  alias key and routed `football_data_source.py` through `normalize_common_team_name` like the other
+  two connectors (`tests/test_football_data_source.py::test_football_data_team_names_resolve_to_the_same_market_team_as_fpl`
+  regression-guards it). The live dev DB's existing 74 misrouted rows were repaired in place (remapped
+  `home_team_id`/`away_team_id` off the two orphan ids onto the correct ones, no row duplication - `380`
+  match rows before and after). **Live-verified**: before the fix, `9 in model.teams` / `14 in
+  model.teams` was `False`/`False`; after, both `True`, with real fitted attack/defence (Man Utd
+  defence -0.36, Spurs defence -0.21) replacing the flat 1.3 fallback - e.g. Man City (home) vs Man Utd
+  (away) now projects 2.04/1.11 expected goals instead of a flat 1.3/1.3. `fpl build-team` still runs
+  clean (GW1 total 59.32, in the same plausible range as the pre-fix 57.22 baseline - a small, credible
+  shift, not a discontinuity). 308/308 tests. This is a real, previously-undiscovered accuracy gap for
+  two specific, high-profile clubs, not a hypothetical one - worth remembering as a general lesson:
+  `_blended_fixture_goals`'s missing-team fallback is honest in intent (degrade gracefully rather than
+  crash) but exactly the kind of silent degradation this project's own Data Integrity section warns
+  about when it isn't cross-checked against real per-team coverage.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
