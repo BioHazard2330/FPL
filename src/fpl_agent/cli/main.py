@@ -19,6 +19,7 @@ from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective_ownership
+from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
@@ -289,6 +290,28 @@ def backfill_xg(season: str):
         conn.close()
     click.echo(f"matches processed   {summary['matches_processed']}")
     click.echo(f"player rows upserted {summary['player_rows_inserted']}")
+
+
+@cli.command("backfill-cross-league")
+@click.option("--season", default=None, help="defaults to the current season - the players checked are always this season's genuinely-new-to-the-English-top-flight signings")
+def backfill_cross_league(season: str | None):
+    """One-time (or refresh) cross-league prior for players with zero PL
+    history at all - searches Understat's other 5 top-league player lists
+    for a name match, real per-90 rates scaled by a real league-quality
+    factor. See docs/superpowers/specs/2026-08-20-preseason-calibration-
+    design.md. Safe to re-run, upserts idempotently."""
+    from fpl_agent.models.rules import current_season as _current_season
+
+    conn = get_connection()
+    try:
+        resolved_season = season or _current_season(conn)
+        if resolved_season is None:
+            raise click.ClickException("no season available - run `fpl sync` first or pass --season explicitly")
+        summary = backfill_cross_league_priors(conn, resolved_season)
+    finally:
+        conn.close()
+    click.echo(f"candidates checked (zero PL history)  {summary['candidates_checked']}")
+    click.echo(f"cross-league matches found            {summary['matched']}")
 
 
 @cli.command("backtest")

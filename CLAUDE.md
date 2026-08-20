@@ -682,6 +682,86 @@ check it was started with cwd = `fpl-agent/`, not its parent.
 - Spec: `docs/superpowers/specs/2026-08-20-pillar2-plan2a-tier2-news-connector-design.md`.
   Plan: `docs/superpowers/plans/2026-08-20-pillar2-plan2a-tier2-news-connector.md`.
 
+## Data model / logic (Preseason calibration: squad churn + cross-league priors)
+
+Not a roadmap pillar - a direct accuracy hardening prompted by the user asking
+explicitly how this project handles the still-open 2026-27 transfer window
+(new signings with no PL history, squad churn shifting real team strength
+before real matches exist to show it). Researched first (arxiv Glicko-2
+"structural shock" framework, cross-league transfer-forecasting literature,
+FPL-community xPoints methodology), then checked what's actually buildable
+free with this project's real data sources - full design doc:
+`docs/superpowers/specs/2026-08-20-preseason-calibration-design.md`.
+
+- **`models/squad_churn.py::team_churn_ratio()`** - minutes-weighted fraction
+  of a team's real last-season contributors (>=450 minutes, via
+  `player_match_stats_history`) no longer registered there this season (via
+  current `players`/`teams`), no new external source needed. Returns `None`
+  (not `0.0`) when there's insufficient history to compute honestly - covers
+  genuinely promoted teams cleanly (Coventry/Hull/Ipswich in the current
+  pool: real, confirmed via direct DB check, not a bug - their whole squads
+  have zero `player_season_history`, correctly absent from the Dixon-Coles
+  fit entirely, same flat-average fallback as before). Wired into
+  `expected_points.py::_shrink_for_squad_churn`, called right after the
+  Dixon-Coles fit succeeds: discounts `dc_home`/`dc_away` toward flat
+  `_LEAGUE_AVERAGE_GOALS` proportional to the average of both sides' churn
+  ratios, capped at `_CHURN_SHRINK_CAP=0.4` (a team never loses more than 40%
+  of its fitted signal even at total squad turnover). Explicitly an
+  uncalibrated heuristic (same honesty posture as `price_forecast.py`) - no
+  in-season 2026-27 evidence yet to fit the shrink strength against.
+  Live-verified against the real synced pool: Coventry/Hull/Ipswich
+  correctly return `None`; every other team returns a real ratio in a
+  plausible 0.17-0.60 range (Sunderland lowest at 0.17 - a newly-promoted
+  side keeping continuity from its promotion campaign; Man City highest at
+  0.60, capped to 0.4 when applied). `fpl build-team` still runs clean
+  post-wiring (GW1 total 59.32 -> 58.52, a small, credible shift).
+- **`ingestion/cross_league_source.py::backfill_cross_league_priors()`** +
+  `fpl backfill-cross-league [--season YYYY-YY]` - for a player with zero
+  `player_season_history` AND zero `player_match_stats_history` this season
+  (genuinely new to the English top flight, not just new to Understat's EPL
+  coverage), searches Understat's other 5 top-league player lists
+  (`La_liga`/`Bundesliga`/`Serie_A`/`Ligue_1`/`RFPL`) for a name match.
+  Discovered live while building this that `getLeagueData`'s own `"players"`
+  field already carries season-aggregate per-player stats
+  (games/time/goals/xG/assists/xA/team_title) - confirmed by a real fetch,
+  not assumed - so this needed no per-match backfill at all, just one cheap
+  request per league. Real per-90 rates are scaled by a **league-quality
+  factor** (ratio of the two leagues' minutes-weighted goals-per-90, both
+  computed from real fetched data, not a fixed constant) - a documented
+  crude heuristic, not a trained cross-league model (that's a real, further
+  step beyond this free, from-scratch project's current scope). Stored in
+  `player_cross_league_prior` (migration `0015`, one row per player,
+  idempotent upsert). Wired into `expected_points.py::_player_match_rates`
+  as a new fallback tier tried before the pure positional-average guess
+  `season_shrunk_rate` falls through to when a player has no PL history at
+  all - both goals and xA are taken from the same cross-league row together,
+  never mixed component-by-component with the positional-average fallback.
+  **Live-verified against the real Understat API and the real synced pool**:
+  92 candidates checked, 14 real cross-league matches found, e.g. Fulham's
+  Gonzalo (ex-Real Madrid, 0.59 goals/90 off 923 minutes) and Man City's
+  Rulli (ex-Marseille, 0.0 goals/assists per 90 off 2610 minutes - a real
+  goalkeeper, correctly near-zero, a genuine sanity-check pass, not a bug).
+  Quality factors moved in the expected real-world direction: Bundesliga
+  (traditionally higher-scoring than the EPL) discounted to ~0.83, Serie A
+  (traditionally more defensive) boosted to ~1.12. `fpl build-team` still
+  runs clean post-wiring.
+- **Deliberately out of scope, real and valuable, documented rather than
+  silently dropped** (same pattern as Plan 2b): Championship-level (or other
+  EFL-division) team-strength calibration for genuinely promoted teams.
+  football-data.co.uk does carry English second-tier results (division code
+  `E1`), which could seed a promoted team's Dixon-Coles attack/defence via an
+  empirically-fit Championship->PL scaling factor - but fitting that factor
+  honestly needs a real multi-season historical promoted-team analysis
+  (comparing past promoted teams' final-Championship-season fit against
+  their actual first-PL-season fit), which is its own piece of work, not
+  attempted this pass. Also checked and ruled out cleanly (not silently
+  skipped): the-odds-api.com has no EPL outright/futures market at any tier
+  (`has_outrights: false` for `soccer_epl`, confirmed live against the real
+  `/v4/sports` endpoint with the project's own key; the only outright markets
+  offered at all are NFL/NBA/MLB/NHL/NCAA/golf/politics/World Cup) - a
+  market-based team-strength signal for the squad-churn problem is a dead
+  end for this free source, not a gap in this implementation.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**
@@ -743,6 +823,18 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   fixes found live-verifying against real GW1 data - see the limitations section
   above for what they were). Live-verified 2026-08-20: 10/10 GW1 fixtures matched
   and blended.
+- [x] Preseason calibration: squad-churn-aware team strength + cross-league
+  new-signing priors. Spec:
+  `docs/superpowers/specs/2026-08-20-preseason-calibration-design.md`. Built:
+  `models/squad_churn.py`, `ingestion/cross_league_source.py` +
+  `fpl backfill-cross-league`, migration `0015`. Live-verified against the
+  real Understat API and the real synced pool (14/92 real cross-league
+  matches found; churn ratios in a plausible 0.17-0.60 range). Championship-
+  level promoted-team calibration remains open, documented above as a real,
+  scoped follow-up.
+- [x] Fixed a real, previously-undiscovered Dixon-Coles gap for Man Utd/Spurs
+  (name-crosswalk bug, invisible to `fpl backtest` by design) - found while
+  researching the above. See "What's still genuinely limited" below.
 
 ## What's still genuinely limited (read before trusting output)
 

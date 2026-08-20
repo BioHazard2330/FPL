@@ -206,6 +206,40 @@ def test_expected_points_uses_blended_market_and_model_when_data_exists(db_conn)
     assert player_share_of_team_xg(db_conn, 1, arsenal, season) > 0
 
 
+def test_squad_churn_shrinks_the_dixon_coles_signal(db_conn):
+    from fpl_agent.models.squad_churn import prior_season
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    baseline = _blended_fixture_goals(db_conn, 1, 1, 2, _FIXTURE_DATE)
+
+    # A meaningful contributor (>=450 minutes) for Arsenal last season who has
+    # since left for a different club - team_churn_ratio should read this as
+    # real turnover and _shrink_for_squad_churn should discount the fitted
+    # Dixon-Coles estimate toward flat league-average as a result.
+    last_season = prior_season(season)
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        "VALUES (999, 999, 'Departed', 2, 1, 'a', 0, 't0')"
+    )
+    db_conn.commit()
+    _insert_match_stat(db_conn, last_season, "old-m0", 999, arsenal, "2025-05-01", minutes=1000, xg=0.0, goals=0)
+
+    # team_churn_ratio caches its result per (connection, team, season) for the
+    # life of the process - correct within one real fpl invocation (data
+    # doesn't change mid-run), same tradeoff _get_or_fit_dc_model documents,
+    # but this test mutates data mid-test, so the cache from the baseline call
+    # above (which correctly found no churn data yet) must be cleared here.
+    from fpl_agent.models import squad_churn
+
+    squad_churn._churn_cache.clear()
+    shrunk = _blended_fixture_goals(db_conn, 1, 1, 2, _FIXTURE_DATE)
+
+    assert shrunk != baseline
+    # Shrinking toward the flat league-average narrows the gap between the two
+    # sides' expected goals for this heavy-home-favourite fixture.
+    assert (shrunk[0] - shrunk[1]) < (baseline[0] - baseline[1])
+
+
 def test_odds_from_a_different_match_are_never_blended_in(db_conn):
     # Regression: the lookup used to be "most recent prior meeting between these
     # two teams", unbounded in age, so an unplayed fixture silently picked up a
@@ -515,3 +549,45 @@ def test_player_match_rates_falls_back_to_season_history_when_understat_empty(db
 
     ep = expected_points(db_conn, 1)
     assert ep.median > 2.0  # appearance points alone (~1.7-2.0 for a nailed starter) can't reach this
+
+
+def test_player_match_rates_uses_cross_league_prior_before_positional_average(db_conn):
+    """A player genuinely new to the English top flight (zero
+    player_season_history, zero player_match_stats_history) should use a real
+    cross-league signal (ingestion/cross_league_source.py) instead of falling
+    all the way through to the pure positional-average guess, when a
+    backfilled cross-league match exists for them."""
+    from fpl_agent.models.expected_points import _player_match_rates
+
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    # A second FWD with real season history, so the positional average isn't
+    # accidentally zero/undefined - this is what player 1 falls back to
+    # WITHOUT a cross-league match.
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (2,202,'Established',1,1,'a','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (2,'2025/26',1800,20,0,4,2,0,0,0,0,0,1.8,0,0,0,50,55,'t0')"
+    )
+    db_conn.commit()
+
+    positional_average_rates = _player_match_rates(db_conn, player_id=1)
+    assert positional_average_rates["goals_source"] == "season_fallback"
+
+    db_conn.execute(
+        "INSERT INTO player_cross_league_prior (player_id, source_league, source_season, source_team_name, "
+        "minutes, goals_per90, assists_per90, xg_per90, xa_per90, league_quality_factor, retrieved_at) "
+        "VALUES (1, 'La_liga', '2025-26', 'Real Madrid', 2000, 0.9, 0.3, 0.85, 0.35, 1.1, 't0')"
+    )
+    db_conn.commit()
+
+    rates = _player_match_rates(db_conn, player_id=1)
+    assert rates["goals_source"] == "cross_league"
+    assert rates["shrunk_goals90"] == 0.9
+    assert rates["shrunk_xa90"] == 0.35
+    assert rates["shrunk_goals90"] != positional_average_rates["shrunk_goals90"]

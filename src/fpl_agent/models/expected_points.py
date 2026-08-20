@@ -69,6 +69,7 @@ Three interface notes, all deliberate:
 import sqlite3
 from dataclasses import dataclass
 
+from fpl_agent.ingestion.cross_league_source import get_cross_league_prior
 from fpl_agent.ingestion.market_identity import get_or_create_market_team
 from fpl_agent.models.blend import (
     blend_fixture_goals,
@@ -90,6 +91,7 @@ from fpl_agent.models.player_regression import (
     season_shrunk_rate,
 )
 from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.models.squad_churn import team_churn_ratio
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
 
@@ -99,6 +101,12 @@ _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
 _LEAGUE_AVERAGE_GOALS = 1.3  # used when there isn't enough history to fit Dixon-Coles yet
 _MIN_MATCHES_TO_FIT_DC = 10
+# Never discount more than this fraction of the fitted Dixon-Coles signal
+# toward flat league-average, even for total squad turnover - an
+# uncalibrated heuristic ceiling (see docs/superpowers/specs/2026-08-20-
+# preseason-calibration-design.md), not fit to real data. A team with heavy
+# squad churn still has real fixture context worth more than zero signal.
+_CHURN_SHRINK_CAP = 0.4
 
 # Keyed by (id(conn), as_of_date); the connection itself is stored alongside the
 # model so its id() can't be recycled into a false cache hit after it's closed.
@@ -167,6 +175,35 @@ def _fixture_odds_row(
     ).fetchone()
 
 
+def _shrink_for_squad_churn(conn: sqlite3.Connection, dc_home: float, dc_away: float, home_row) -> tuple[float, float]:
+    """Discount the fitted Dixon-Coles goals estimate toward flat league-
+    average, proportional to how much of each side's contributing squad has
+    turned over since last season - a real, computable signal
+    (models/squad_churn.py) for how much to trust a stale historical fit
+    before real matches this season re-earn that trust. A no-op when there's
+    no churn data for either side (e.g. mid-season, when churn stops being
+    the dominant source of team-strength uncertainty and match results
+    speak for themselves)."""
+    if home_row is None:
+        return dc_home, dc_away
+    season = current_season(conn)
+    ratios = [
+        r for r in (
+            team_churn_ratio(conn, home_row["team_h"], season),
+            team_churn_ratio(conn, home_row["team_a"], season),
+        ) if r is not None
+    ]
+    if not ratios:
+        return dc_home, dc_away
+    shrink = min(sum(ratios) / len(ratios), _CHURN_SHRINK_CAP)
+    if not shrink:
+        return dc_home, dc_away
+    return (
+        dc_home * (1 - shrink) + _LEAGUE_AVERAGE_GOALS * shrink,
+        dc_away * (1 - shrink) + _LEAGUE_AVERAGE_GOALS * shrink,
+    )
+
+
 def _blended_fixture_goals(
     conn: sqlite3.Connection, fixture_id: int, team_id: int, opponent_team_id: int, fixture_date: str
 ) -> tuple[float, float]:
@@ -187,6 +224,7 @@ def _blended_fixture_goals(
     dc_model = _get_or_fit_dc_model(conn, fixture_date)
     if dc_model is not None and team_market_id in dc_model.teams and opp_market_id in dc_model.teams:
         dc_home, dc_away = dc_expected_goals(dc_model, home_id, away_id)
+        dc_home, dc_away = _shrink_for_squad_churn(conn, dc_home, dc_away, home_row)
     else:
         dc_home = dc_away = _LEAGUE_AVERAGE_GOALS
 
@@ -337,6 +375,24 @@ def _player_match_rates(
         before_season = season.replace("-", "/") if season else None
         shrunk_goals90 = season_shrunk_rate(conn, player_id, "goals_scored", before_season).shrunk_per90
         shrunk_xa90 = season_shrunk_rate(conn, player_id, "expected_assists", before_season).shrunk_per90
+        goals_source = "season_fallback"
+
+        # season_shrunk_rate falls through to a pure positional average when
+        # player_season_history is also empty (a player genuinely new to the
+        # English top flight this season - no PL history to shrink at all).
+        # Before accepting that positional-average guess, check whether this
+        # is a real transfer-window signing with a real cross-league record
+        # (models/squad_churn.py's sibling, ingestion/cross_league_source.py -
+        # see docs/superpowers/specs/2026-08-20-preseason-calibration-design.md).
+        # Both rates are taken from the same cross-league row together, not
+        # mixed component-by-component with the positional-average fallback -
+        # a real signal about this specific player beats a population guess.
+        cross_league = get_cross_league_prior(conn, player_id)
+        if cross_league is not None:
+            shrunk_goals90 = cross_league["goals_per90"]
+            shrunk_xa90 = cross_league["xa_per90"]
+            goals_source = "cross_league"
+
         player_share = 0.0
         minutes_fraction = 0.0
         # No shot-level data to derive a real team-xG share from, so this
@@ -347,7 +403,6 @@ def _player_match_rates(
         # still lets the existing team_goals * share_per90 formula respond to
         # fixture difficulty via team_goals, just with a coarser baseline.
         share_per90 = min(shrunk_goals90 / _LEAGUE_AVERAGE_GOALS, 1.0)
-        goals_source = "season_fallback"
 
     bonus90 = expected_bonus_per90(conn, player_id).shrunk_per90
 
