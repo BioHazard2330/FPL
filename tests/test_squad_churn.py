@@ -13,7 +13,7 @@ def _seed_team_and_rules(conn, season="2026-27"):
     conn.execute("INSERT INTO market_teams (id, canonical_name, fpl_team_id) VALUES (1, 'Team A', 1)")
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) "
-        "VALUES ('x', ?, 1, 't0', 'fpl_api', '1')",
+        "VALUES ('x', ?, 1, 't0', 'fpl_api_bootstrap', '1')",
         (season,),
     )
     conn.commit()

@@ -8,7 +8,7 @@ def _seed_season(conn, season):
     falls back to UNKNOWN_SEASON, which is what the other tests here rely on."""
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) "
-        "VALUES ('scoring.assists', ?, 1, 't0', 'test', '3')",
+        "VALUES ('scoring.assists', ?, 1, 't0', 'fpl_api_bootstrap', '3')",
         (season,),
     )
     conn.commit()

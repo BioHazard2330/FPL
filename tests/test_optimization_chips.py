@@ -13,7 +13,7 @@ def _seed(conn):
     now = "t0"
     conn.execute(
         "INSERT INTO rules (rule_key,season,version,effective_date,source,value) VALUES ('dummy','2026-27',1,?,?,?)",
-        (now, "test", "1"),
+        (now, "fpl_api_bootstrap", "1"),
     )
     for id_, name, number, start, stop, ctype in _ROWS:
         conn.execute(

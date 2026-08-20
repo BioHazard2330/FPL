@@ -34,7 +34,7 @@ def _seed_two_team_pool(conn: sqlite3.Connection):
     )
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
-        "('rules.max_extra_free_transfers','2026-27',1,'2026-08-01','fpl_api','4')"
+        "('rules.max_extra_free_transfers','2026-27',1,'2026-08-01','fpl_api_bootstrap','4')"
     )
     conn.commit()
 

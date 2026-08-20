@@ -24,7 +24,8 @@ def _seed_reference_data(conn):
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
         "('scoring.goals_scored.FWD','2024-25',1,'2024-08-01','fpl_api','4'), "
-        "('scoring.assists','2024-25',1,'2024-08-01','fpl_api','3')"
+        "('scoring.assists','2024-25',1,'2024-08-01','fpl_api','3'), "
+        "('scoring.yellow_cards','2024-25',1,'2024-08-01','fpl_api','-1')"
     )
 
 
@@ -55,6 +56,20 @@ def _seed_season(conn):
     _seed_matches(conn, dates)
     _seed_player_matches(conn, 1, dates, tag="m")
     conn.commit()
+
+
+def test_scoring_rates_fails_loudly_for_an_unseeded_season(db_conn):
+    """Regression guard: the rules table is only ever populated for the CURRENT
+    season by live sync - a historical season with no seeded scoring rules used
+    to silently default every goals/assists rate to 0 (canceling out of both
+    the predicted and actual sides of the comparison identically), reducing the
+    backtest to an almost-meaningless cards-only measurement. Confirmed live: a
+    real 2025-26 goal (Gakpo, MID, 90 mins) reconstructed to 2.0 points instead
+    of the real 7.0 before this fix. Must now raise instead of silently lying."""
+    import pytest
+
+    with pytest.raises(ValueError, match="no scoring rules seeded"):
+        harness._scoring_rates(db_conn, "1999-00", "FWD")
 
 
 def test_reconstruct_actual_points_excludes_bonus(db_conn):

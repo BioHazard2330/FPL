@@ -67,12 +67,12 @@ def _seed(conn, budget_tenths=950, club_limit=2):
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
         "('rules.squad_total_spend','2026-27',1,?,?,?)",
-        (now, "test", str(budget_tenths)),
+        (now, "fpl_api_bootstrap", str(budget_tenths)),
     )
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
         "('rules.squad_team_limit','2026-27',1,?,?,?)",
-        (now, "test", str(club_limit)),
+        (now, "fpl_api_bootstrap", str(club_limit)),
     )
     conn.commit()
 

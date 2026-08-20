@@ -1034,6 +1034,135 @@ in-season data exists to check the sample's predictive value against.
 next-roadmap candidate (a Pillar 2/3 follow-up plan) rather than either
 ignored or rushed into a shallow, unvalidated version.
 
+## Major correction: the backtest's "beats naive baseline" claim was largely vacuous (2026-08-20)
+
+Found while researching real competitor architecture (see the OpenFPL comparison
+below) and deciding whether to check our own model's accuracy on a specific
+real-return bucket. Cross-checking that analysis surfaced the most severe bug
+found this session - **the round-level walk-forward backtest has been silently
+measuring almost nothing since Pillar 0 first shipped (2026-08-15).**
+
+- **Root cause**: `rules` is only ever populated for the CURRENT live season by
+  `fpl_api_bootstrap` sync (FPL's own API has no historical-rules endpoint) -
+  it never had rows for any past season. `backtesting/harness.py`'s
+  `_scoring_rates()` silently defaulted `scoring.goals_scored.{position}` and
+  `scoring.assists` to `0` whenever a season's rules weren't found - which was
+  every historical season ever backtested, including the "2025-26, MAE 0.4112
+  vs naive baseline 0.4152, beats naive baseline" result reported earlier this
+  session and treated as proof the shrinkage-regressed goals/assists engine
+  works. Since the SAME broken zero-rate was applied identically to both the
+  predicted side and the reconstructed-actual side, goals and assists
+  cancelled out of the comparison entirely - the reported MAE gap was actually
+  measuring almost nothing but card-rate shrinkage quality (appearance points
+  are identical on both sides too, by the harness's own design). **Confirmed
+  live, not just reasoned about**: a real 2025-26 match row (Gakpo, MID, 90
+  minutes, 1 real goal) reconstructed to `2.0` points via the broken path
+  instead of the real `7.0`.
+- **Fixed two ways.** (1) `_scoring_rates()` now fails loudly (`ValueError`)
+  instead of silently defaulting when a season's scoring rules aren't seeded -
+  this class of silent corruption can't recur invisibly for any future
+  backtested season. (2) `migrations/0017_historical_scoring_rules_2025_26.sql`
+  seeds the real, sourced 2025-26 values (verified against Fantasy Football
+  Scout's official rules explainer, fetched 2026-08-20 - the position-
+  differentiated goal-scoring table introduced alongside DefCon in the 2025-26
+  rule overhaul, unchanged into 2026-27) with `source='tier2_ffs_reconstructed'`,
+  explicitly disclosed as a Tier-2 reconstruction, never conflated with a real
+  `fpl_api_bootstrap` row.
+- **This fix's own migration then exposed a second, independent, higher-severity
+  bug already live in production**: `models/rules.py::current_season()` picked
+  whichever `rules` row had the highest autoincrement `id`, not the row that
+  actually reflects "what the live API most recently reported." The moment
+  migration 0017 inserted historical 2025-26 rows (with a higher `id` than the
+  already-synced 2026-27 rows), `current_season(conn)` started returning
+  `'2025-26'` instead of `'2026-27'` **on the real production DB** - confirmed
+  live before the fix. Every live command that reads budget/club-limit/
+  free-transfer rules through it (`fpl build-team`, `transfers`, `squad`) would
+  have silently used the wrong season's rule scope. Fixed by scoping the query
+  to `source='fpl_api_bootstrap'` specifically - re-verified live afterward
+  (`current_season()` correctly returns `'2026-27'` again), and `fpl doctor`/
+  `fpl build-team` re-run clean with byte-identical output to before the fix
+  (zero behavioral regression to the live GW1 recommendation).
+- **The real, corrected backtest result**: `fpl backtest --season 2025-26` -
+  MAE **1.1776** vs naive baseline **1.2402**, still genuinely beats naive
+  baseline (real goals/assists differentiation actually being measured this
+  time, not cancelled out). The magnitude was wrong by roughly 3x before this
+  fix (0.41 vs the real 1.18) and the improvement margin is now a more
+  believable ~5% (was an artificially tight ~1%, itself a symptom of comparing
+  two near-identical mostly-zeroed formulas). The core claim survives - the
+  model genuinely beats a naive per-90 baseline - but every previously-reported
+  absolute MAE/RMSE number from this session predating this fix should be
+  read as invalid, not just imprecise.
+- **Scope confirmed contained**: `score_bonus_regression`'s separate season-
+  totals holdout doesn't use `_scoring_rates`/season-scoped rule lookups at all
+  (bonus values are already real points, no rate conversion needed) - unaffected,
+  its own reported 60.1% shrunk-win-rate result stands as originally reported.
+  `score_differentials` shares `reconstruct_actual_points` but has never scored
+  anything yet regardless (`insufficient_ownership_data=True` for every
+  historical season) - moot until ownership backfill exists, but now correct
+  when it eventually does. 371/371 tests (4 new regression tests added: two
+  proving `current_season()`'s source-scoping live, one proving the loud-fail
+  on an unseeded season, one confirming `get_rule()` itself stayed
+  source-agnostic by design).
+- **Lesson for this project, stated plainly**: this is the same class of miss
+  as the Understat/backfill-xg incident and the live-odds bookmaker-index bug -
+  a feature that looked completely fine through per-task review, whole-branch
+  review, and every mocked test, because nothing in that review chain ever
+  asked "does the ACTUAL NUMBER make sense" against a real, hand-computed
+  example. Every one of this project's real, previously-undiscovered bugs
+  found this session (Man Utd/Spurs, Understat scraper, the churn NULL-grouping
+  bug, this one) was found the same way: pick one real row, compute the
+  expected answer by hand, compare against what the code actually produced.
+
+## Competitor architecture check: what "state of the art" actually looks like (2026-08-20)
+
+Per the user's explicit ask to check the real level of competitor architecture
+and surpass it, not just their feature scope. Researched real, disclosed
+methodology (not just marketing pages) for FPL Review, LiveFPL, Fantasy
+Football Scout, and a genuinely load-bearing find: **OpenFPL**
+(arxiv 2508.09992, "An open-source forecasting method rivaling state-of-the-art
+Fantasy Premier League services") - an academic paper that benchmarks itself
+directly against a leading commercial FPL prediction service.
+
+- **OpenFPL's real architecture**: position-specific ensemble gradient-boosted
+  models (XGBoost + Random Forest, Optuna-tuned hyperparameters), trained on
+  four prior seasons (2020-21 to 2023-24) of official FPL + Understat data,
+  validated **prospectively** on a genuinely held-out season (2024-25) - not a
+  retrospective in-sample fit. Its headline claim: accuracy comparable to a
+  leading commercial service overall, and it **surpasses that commercial
+  benchmark specifically for high-return players (>2 points)** - the tail
+  cases that matter most for captaincy and rank-climbing differentials.
+- **This project's architecture is structurally different**: `calibrated-v2`
+  is a hand-built statistical/Bayesian system (Dixon-Coles Poisson team
+  strength, empirical-Bayes shrinkage toward positional priors, an empirical
+  minutes-bucket distribution, a devigged bookmaker-odds blend) - interpretable
+  and individually well-tested, but not a learned ensemble, and its
+  ceiling/floor bands are a hand-tuned multiplicative heuristic
+  (`median * 1.8 + ...`) rather than something fit to real tail-outcome data.
+  This is a genuine, disclosed architectural gap against the actual
+  state-of-the-art approach, not just a feature-scope one.
+- **Multi-season training data is genuinely feasible to build, checked
+  before committing to anything**: `player_season_history` (official FPL
+  career totals) already goes back to 2006/07 (2031 rows, already synced) -
+  but the MATCH-GRAIN data an ML ensemble actually needs
+  (`match_results_history`/`player_match_stats_history`, football-data.co.uk
+  odds + Understat xG) is currently backfilled for **2025-26 only**. Extending
+  to 3-4 more seasons uses the exact same already-built, already-live-verified
+  `fpl backfill-odds`/`fpl backfill-xg` commands - no new data source needed.
+  `xgboost` is installable (confirmed via `pip install --dry-run`, free/
+  open-source, no new heavy transitive dependencies beyond already-present
+  numpy/scipy) - real DB storage headroom confirmed too (~30MB current total
+  vs the ~1-2GB approved budget).
+- **Not built this session - correctly scoped as its own initiative, not
+  rushed.** A genuine ML-ensemble challenger model is comparable in size to
+  Pillar 0 itself (new dependency, feature-engineering pipeline, a proper
+  train/held-out-season validation matching OpenFPL's own prospective-testing
+  discipline, and a real head-to-head comparison against `calibrated-v2` on
+  the same held-out data before ever being promoted to the live default -
+  never claim a win without genuine evidence, this project's own standing
+  rule). Flagged as the highest-leverage next architectural initiative,
+  proposed as its own brainstorm/spec/plan cycle rather than half-built
+  under time pressure.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**

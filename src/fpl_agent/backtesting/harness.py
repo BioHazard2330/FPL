@@ -66,17 +66,28 @@ class BacktestResult:
     fallback_excluded_count: int = 0
 
 
-def _rule(conn: sqlite3.Connection, season: str, rule_key: str, default):
-    value = get_rule(conn, season, rule_key, default)
-    return default if value is None else value
-
-
 def _scoring_rates(conn: sqlite3.Connection, season: str, position: str) -> tuple[float, float, float]:
-    return (
-        _rule(conn, season, f"scoring.goals_scored.{position}", 0),
-        _rule(conn, season, "scoring.assists", 0),
-        _rule(conn, season, "scoring.yellow_cards", -1),
-    )
+    """Deliberately no default-substitution here. The `rules` table is only ever
+    populated for the CURRENT season by fpl_api_bootstrap sync (FPL's API has no
+    historical-rules endpoint) - a silent 0-default for a season with no seeded
+    rows previously let goals/assists rates silently vanish on BOTH the predicted
+    and actual sides of the comparison identically, reducing the backtest's
+    "beats naive baseline" result to an almost-meaningless comparison of card-rate
+    shrinkage alone. Confirmed live: a real 2025-26 goal (Gakpo, MID) reconstructed
+    to 2.0 points instead of the real 7.0 before this fix. Fail loudly instead -
+    see migrations/0017_historical_scoring_rules_2025_26.sql for how a historical
+    season's real, sourced values get seeded before it can be backtested."""
+    goals = get_rule(conn, season, f"scoring.goals_scored.{position}")
+    assists = get_rule(conn, season, "scoring.assists")
+    yellow = get_rule(conn, season, "scoring.yellow_cards")
+    if goals is None or assists is None or yellow is None:
+        raise ValueError(
+            f"no scoring rules seeded for season {season!r} - cannot backtest it "
+            "without real season-scoped scoring.goals_scored.*/assists/yellow_cards "
+            "rows in the rules table (see migrations/0017_historical_scoring_rules_2025_26.sql "
+            "for the pattern to add them for another season)"
+        )
+    return goals, assists, yellow
 
 
 def _position(conn: sqlite3.Connection, player_id: int) -> str | None:

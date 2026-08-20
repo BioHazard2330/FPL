@@ -27,7 +27,8 @@ def _seed_fpl_core(conn):
     conn.execute(
         "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
         "('scoring.goals_scored.FWD','2024-25',1,'2024-08-01','fpl_api','4'), "
-        "('scoring.assists','2024-25',1,'2024-08-01','fpl_api','3')"
+        "('scoring.assists','2024-25',1,'2024-08-01','fpl_api','3'), "
+        "('scoring.yellow_cards','2024-25',1,'2024-08-01','fpl_api','-1')"
     )
     conn.commit()
 
