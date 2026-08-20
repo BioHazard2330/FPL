@@ -140,8 +140,8 @@ def test_sync_all_news_sources_aggregates_both_sources(db_conn, monkeypatch):
     monkeypatch.setattr(news_mod, "fetch_rss", lambda url: _FEED)
     result = sync_all_news_sources(db_conn)
 
-    assert result["fetched"] == 4  # 2 items x 2 sources
-    assert result["new_items"] == 4
+    assert result["fetched"] == 2 * len(NEWS_SOURCES)  # 2 items x every registered source
+    assert result["new_items"] == 2 * len(NEWS_SOURCES)
     assert result["errors"] == {}
     sources = {r["source"] for r in db_conn.execute("SELECT DISTINCT source FROM news_items").fetchall()}
     assert sources == {name for name, _url, _tier in NEWS_SOURCES}
@@ -159,5 +159,5 @@ def test_sync_all_news_sources_one_source_failing_does_not_abort_the_other(db_co
     monkeypatch.setattr(news_mod, "fetch_rss", flaky_fetch)
     result = sync_all_news_sources(db_conn)
 
-    assert result["fetched"] == 2  # only the BBC feed succeeded
+    assert result["fetched"] == 2 * (len(NEWS_SOURCES) - 1)  # every source except Sky Sports succeeded
     assert result["errors"] == {"sky_sports_rss": "boom"}

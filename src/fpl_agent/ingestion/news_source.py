@@ -20,16 +20,28 @@ from fpl_agent.ingestion.sync import update_source_health
 
 BBC_PL_RSS_URL = "https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml"
 SKY_SPORTS_PL_RSS_URL = "https://www.skysports.com/rss/11095"
+# General BBC football feed (all competitions - Champions League, Europa
+# League, Carabao Cup, internationals, not just the Premier League) - added
+# 2026-08-20 per the user's explicit ask that injuries/news from cup and
+# European competitions get tracked too, not just league fixtures. Confirmed
+# live and genuinely distinct from the PL-specific feed (real dated content,
+# e.g. a live Champions League article the PL-only feed didn't carry) before
+# adding, not assumed. Kept as a THIRD source alongside the two PL-specific
+# ones rather than replacing either - broader competition coverage without
+# diluting the PL-specific corroboration signal manager_change.py depends on.
+BBC_FOOTBALL_ALL_RSS_URL = "https://feeds.bbci.co.uk/sport/football/rss.xml"
 _TIMEOUT_SECONDS = 15
 _SOURCE_NAME = "bbc_sport_rss"
 _SOURCE_TIER = "strong_reporter"
 _SKY_SPORTS_SOURCE_NAME = "sky_sports_rss"
+_BBC_FOOTBALL_ALL_SOURCE_NAME = "bbc_sport_football_all_rss"
 
-# (source_name, feed_url, source_tier) - both strong_reporter tier (established
+# (source_name, feed_url, source_tier) - all strong_reporter tier (established
 # sports journalism outlets, same trust level, see CLAUDE.md's precedence policy).
 NEWS_SOURCES = (
     (_SOURCE_NAME, BBC_PL_RSS_URL, _SOURCE_TIER),
     (_SKY_SPORTS_SOURCE_NAME, SKY_SPORTS_PL_RSS_URL, _SOURCE_TIER),
+    (_BBC_FOOTBALL_ALL_SOURCE_NAME, BBC_FOOTBALL_ALL_RSS_URL, _SOURCE_TIER),
 )
 
 

@@ -1736,6 +1736,51 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   crash) but exactly the kind of silent degradation this project's own Data Integrity section warns
   about when it isn't cross-checked against real per-team coverage.
 
+## Cross-competition news coverage closed (2026-08-20)
+
+User asked explicitly: injuries/news from Carabao Cup, Champions League, and
+other side competitions need tracking too, not just Premier League news.
+Checked first (not assumed): both existing Tier 2-4 sources
+(`BBC_PL_RSS_URL`, `SKY_SPORTS_PL_RSS_URL`) are Premier-League-scoped feeds -
+a Champions League or Carabao Cup story would only reach this project once
+(if ever) it resurfaced in PL-specific coverage. Found and added a third,
+genuinely distinct, live-confirmed source: `feeds.bbci.co.uk/sport/football/rss.xml`
+(BBC's general football feed - all competitions, not just the Premier
+League) - verified live before adding (real, dated 2026-08-20 content,
+distinct from the PL-specific feed's items, not assumed to exist). Kept as
+an ADDITIONAL third source rather than replacing either PL-specific one -
+broadens competition coverage without diluting the PL-specific corroboration
+signal `models/manager_change.py` depends on (still needs 2+ distinct
+sources agreeing).
+
+Two tests in `test_news_source_sync.py` hardcoded "2 sources" - fixed to key
+off `len(NEWS_SOURCES)` instead, so they no longer need updating if a fourth
+source is ever added. **Live-verified**: `fpl sync-news` now pulls 133 items
+(up from 52 with two sources), 83 new, 53 players linked - and genuinely
+carries real cross-competition content (a live Champions League draw
+article), not just added noise. 378/378 tests.
+
+Also confirmed, not just assumed: FPL's own official `players.status`/
+`chance_of_playing_*` fields (this project's Tier 1 availability source,
+`models/availability.py`) are competition-agnostic by construction - the
+live API reflects a player's current fitness regardless of which competition
+caused an injury, so a Carabao Cup or Champions League injury was already
+correctly reflected here even before this news-coverage broadening; what was
+genuinely missing was the Tier 2-4 *context* (why, expected return date,
+severity) for an injury sustained outside the Premier League specifically -
+which this fix closes.
+
+**Press conferences, addressed honestly rather than promised as new scope**:
+there is no distinct free source for structured press-conference transcripts
+separate from general football journalism - a manager's presser quotes reach
+the public exactly through outlets like BBC/Sky Sport's own match/team-news
+articles (e.g. "Arteta confident Lewis-Skelly stays at Arsenal" is
+press-conference-derived content already flowing through the existing
+pipeline). The now-three-source news pipeline above IS the closest
+available proxy to dedicated press-conference tracking a free-resources-only
+project can reach - not a gap silently left open, a real architecture
+boundary named plainly.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
