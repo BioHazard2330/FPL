@@ -2033,6 +2033,144 @@ before the GW1 deadline.
   news - Tier 1 only, user's own standing choice). Screenshot-reviewed in a
   real browser, not just asserted from HTML strings.
 
+## Session 2026-08-20/21: pre-GW1 hardening, chip-horizon correction, squad finalization
+
+Continuation of the same 2026-08-20 session above, picked up after the dashboard
+redesign/live-watch work already documented. Covers a long, adversarial back-and-forth
+with the user challenging real numbers - most findings below came from the user naming
+a specific real player or citing a real competitor screenshot, not from this project's
+own review. That pattern (a real name + a real number beats abstract code review) is
+worth carrying into future sessions.
+
+**Real bugs found and fixed, in order:**
+- **`current_live_event`/`live_or_reference_event`** (`models/fixtures.py`) - the
+  single highest-impact fix this session. `_reference_event()` (is_next=1) is correct
+  for planning callers (transfers/captaincy/projections genuinely want "next actionable
+  deadline") but flips to the FOLLOWING gameweek the moment a deadline passes, well
+  before kickoff or full-time - meaning every live-tracking entry point (`fpl
+  live-bonus`, `fpl live-watch`, the dashboard's Live Tracking panel) would have
+  silently checked the wrong, not-yet-started gameweek for the entire real GW1 match
+  window. Fixed with a real `started=1 AND finished=0` check, independent of
+  is_next/is_current entirely. All three live-tracking call sites rewired;
+  `_reference_event` itself untouched (still correct for planning).
+- **Club-limit legality in transfer search** (`optimization/transfers.py`) - found
+  live while planning a real GW2 transfer: our own squad was already at the 3-cap on
+  three different clubs, and `search_transfer_sequences` recommended a swap that would
+  have pushed a club to 4 - an illegal squad. `best_transfer_for_player` now filters
+  candidates against the real remaining club count after the outgoing player leaves.
+  A previously-disclosed-but-never-verified gap (best_transfer_for_player's own
+  docstring already said "club limits are not checked here") that turned out to be
+  real the first time it was actually exercised against a real squad state.
+- **`expected_minutes()` stale-season fix** - `ORDER BY season_name DESC LIMIT 1`
+  treated a several-seasons-old row (Tzolis: only history_past row from 2021/22,
+  confirmed live against the real FPL API) identically to a genuine last season -
+  produced an absurd ~9min estimate for a player 19.7% of managers own. Added a
+  `stale_prior_season` basis (2+ season gap) with the same 0.6x discount a genuinely-
+  new-to-the-league signing gets.
+- **`expected_minutes()` market-conviction override** - a user-shared competitor tool
+  screenshot showed a real, non-trivial minutes assumption for a player this project
+  had near-zero signal on; their own UI has a "Default minutes" toggle, confirming
+  it's a disclosed editorial assumption, not hidden data. Added the same mechanism
+  here: when the current estimate comes from a weak-evidence branch AND real ownership
+  clears 10.0% (matching traps.py's own convention), bump to a disclosed 60min default
+  - deliberately more conservative than the competitor's 82'. Only fires on
+  already-weak bases, never overrides a well-evidenced low estimate (e.g. Havertz, a
+  real backup). Caught and fixed one real regression this surfaced: traps.py's
+  `LOW_MINUTES_THRESHOLD` is also 60.0, so a synthetic no-data test player lost its
+  only trap reason - fixed by giving that test a genuine, independent reason (a real
+  price drop) instead of relying on the no-data artifact.
+- **`expected_minutes()` multi-season blend** - the deepest of the three minutes fixes.
+  Checked against a real user-shared community squad screenshot: Isak projected at
+  just 18.3 expected minutes despite being a real, currently-FIT, £9.0m player 16.3%
+  of managers own. His single most recent season (694 min) was a genuine outlier
+  (real transfer-saga/injury disruption) against 3 prior seasons of 1500-2800 minutes
+  as an established starter - the single-season-only prior had no way to know the
+  latest year was atypical. Now blends the last 3 seasons (weights 0.55/0.30/0.15,
+  renormalised over however many exist) - a real disruption still dominates (highest
+  weight) but an established track record can push back against one bad year.
+  Live-verified against a genuine sustained-decline case (White: 2987->1195->699
+  minutes over 3 real seasons) to confirm the blend doesn't paper over a real trend -
+  it correctly stays low there, since the decline itself is the real signal.
+- **`fpl live-watch` raw-file accumulation** - `save_raw()` writes a fresh timestamped
+  file every `fetch_event_live()` call (never overwrites); at a 75s default interval
+  over a multi-hour match that's ~150 files/session, and the regular scheduler's own
+  prune cycle isn't guaranteed to run inside one watch session. Now self-prunes every
+  15 minutes of wall-clock time.
+- **Double-gameweek duplicate live notifications** (`models/live_bonus.py`) - a DGW
+  player produces one `LiveBonusRow` per fixture from `compute_live_bonus`, but
+  goals/assists in FPL's live stats are whole-gameweek totals (identical on both
+  rows) - `diff_live_rows` would have fired the same real goal twice in one poll.
+  Fixed with a dedupe-by-player_id pass before diffing; bonus (genuinely
+  fixture-scoped) takes the higher of the player's two fixture values, a disclosed
+  simplification. Zero live impact this GW1 (confirmed no doubles exist in GW1-5),
+  fixed proactively per this project's own standing discipline.
+
+**Real, disclosed limitation found, not yet fixed in code:** a short
+`fpl season-sim --horizon` makes the chip DP's placement decision an artifact of the
+simulated window, not genuine season-long advice - the DP correctly finds the best
+chip placement WITHIN what it can see, but a 5-GW horizon has zero visibility into
+where a real double gameweek will land later (the actual reason bench boost/triple
+captain have value). Confirmed live: a real `--horizon 5` run recommended
+bboost/3xc/wildcard all inside GW2-4, and there is zero blank/double GW anywhere in
+GW1-5, with those chips real-eligible through GW19 - nothing forced the early
+placement. `fpl season-sim` now has no code-level guard against this - a real
+follow-up (warn on a too-short horizon relative to the nearest chip window, or default
+chip-scheduling horizon to a full chip half) is scoped but not built. Standard real
+FPL strategy (hold chips through the first month barring an obvious, visible reason)
+is the correct read until this is fixed.
+
+**Two new, real, reusable `optimise_squad` parameters** (`optimization/squad.py`),
+both real, standing user preferences rather than one-off hacks:
+- `must_include_ids` - hard-locks specific players via an ILP equality constraint
+  (real, disclosed override of pure EV-per-cost optimisation: rank-variance/
+  ownership-protection value on a near-mandatory premium isn't captured by the
+  default objective at all). Raises `ValueError` if a requested id isn't in the
+  filtered pool rather than silently ignoring an impossible request.
+- `bench_weight` - overrides `_BENCH_WEIGHT` (default 0.1) for one solve. The default
+  produces a genuinely dead bench (0.05-1.9 xP fillers) when locked into two big
+  premiums (Haaland+Fernandes = £27.5m) - raising it to ~0.5 trades real starting-XI
+  ceiling (56.61 vs 57.92 headline, a real, disclosed -1.31 cost) for a bench that's
+  actually playable (2.4-2.9 xP each, 56-80 real expected minutes, no fodder).
+
+**Squad decision status at session end: NOT YET FINALLY LOCKED.** The last built
+candidate (Haaland forced captain, Fernandes forced vice, `bench_weight=0.5`,
+£100.0m exactly): GKP Raya; DEF Guéhi/Dalot/N.Williams/Shaw; MID Fernandes/Anderson/
+Zubimendi; FWD Haaland/Gyökeres/Thiago; bench Dubravka/Hume/Yarmoliuk/Gomez (headline
+56.61). This was presented to the user but not yet explicitly confirmed as final -
+the conversation moved into comparing real community-tool GW1 squads (three
+screenshots: FPL Harry with Bench Boost active, a Free Hit squad, and an fpl.page
+normal squad) against ours instead. All three community squads scored meaningfully
+LOWER than ours through our own model (41.74-43.53 vs our 56.61) once computed
+directly - the opposite of what the user was worried about - and a spot-check of the
+most suspicious individual number in their picks (White, a real declining-minutes
+Arsenal defender) confirmed our number was correct, not a bug. Two player names from
+that comparison (Muharemovic, Sangare) are not in this project's database at all -
+disclosed, not chased further this session. **Next session should re-confirm the
+squad choice explicitly with the user before the GW1 deadline**, factoring in
+whatever real news/price movement has happened since, then move to executing the
+season-long plan (GW2 transfer: currently Gyökeres->João Pedro per the last real
+search against a similar squad, needs re-running against whatever squad is actually
+locked).
+
+**Zubimendi vs Rice**, raised and left open: real data says Rice is the stronger pick
+on both reliability (exp_min 81.4 vs 78.7) and median (4.71 vs 4.24) - Zubimendi's
+repeated appearance in this session's scans is specifically because of his much lower
+real ownership (1.2% vs Rice's 18.9%), a genuine rank-differential trade-off, not
+Rice being an inferior option. Not resolved either way at session end.
+
+**Cross-league coverage gap, precisely quantified this session:** of the 18
+genuinely-new-to-PL signings checked, exactly 5 came from one of the 6 free-source
+leagues (`cross_league_source.py`'s La Liga/Bundesliga/Serie A/Ligue 1/Russia, via
+Understat) and got real signal; 13 came from elsewhere (confirmed for Tzolis: Club
+Brugge, Belgian Pro League - not covered) and got none. Across the full pool,
+486 available players checked: 76.1% well-evidenced, 24% some form of weak/no
+signal, but narrowed to real ownership >=1% it's ~20 players, and >=5% exactly 5
+named players (Thomas/van Ewijk at Coventry, Palmer/Davis at Ipswich, Tzolis at
+Arsenal). Real, bounded, disclosed - not the systemic failure it could have looked
+like before this was quantified. Closing it fully needs new per-league source
+integration (Eredivisie, Belgian Pro League, Championship, etc.) - correctly scoped
+out as a future initiative, not rushed.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
