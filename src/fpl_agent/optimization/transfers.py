@@ -11,6 +11,7 @@ horizon rather than the single-swap comparison above.
 """
 
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 
 from fpl_agent.models.expected_points import expected_points_window
@@ -110,16 +111,27 @@ def best_transfer_for_player(
     from_event: int | None = None,
     cache: dict[tuple, float] | None = None,
 ) -> list[TransferCandidate]:
-    """Best same-position replacements for player_out, respecting bank only - club
-    limits are not checked here (same club limit enforced implicitly by
-    squad_optimiser at squad-build time - this only checks budget, since a
-    like-for-like swap doesn't change club counts unless the replacement is from a
-    club already at the 3-player cap). cache is forwarded to evaluate_transfer
-    unchanged - see its docstring; default None means uncached, so existing callers
-    (recommend()) are unaffected."""
+    """Best same-position replacements for player_out, respecting bank AND the
+    real 3-per-club cap. Real gap found live 2026-08-20: a squad already sitting
+    at the cap on 3 separate clubs (a real, unremarkable state, not a contrived
+    edge case) had search_transfer_sequences recommend swapping a player OUT of
+    one already-at-cap club and IN a player from a DIFFERENT already-at-cap club
+    - an illegal squad, not caught anywhere before this. cache is forwarded to
+    evaluate_transfer unchanged - see its docstring; default None means
+    uncached, so existing callers (recommend()) are unaffected."""
     position = _position(conn, player_out_id)
     price_out = _current_price(conn, player_out_id)
     budget_tenths = price_out + bank_tenths
+
+    season = current_season(conn)
+    club_limit = get_rule(conn, season, "rules.squad_team_limit", 3)
+    remaining_team_counts = Counter(
+        r["team_id"] for r in conn.execute(
+            "SELECT id, team_id FROM players WHERE id IN ({})".format(",".join("?" * len(squad_ids))),
+            squad_ids,
+        ).fetchall()
+        if r["id"] != player_out_id
+    )
 
     candidates = conn.execute(
         "SELECT p.id, p.team_id FROM players p "
@@ -135,6 +147,8 @@ def best_transfer_for_player(
             continue
         price_in = _current_price(conn, c["id"])
         if price_in > budget_tenths:
+            continue
+        if remaining_team_counts.get(c["team_id"], 0) >= club_limit:
             continue
         results.append(evaluate_transfer(conn, player_out_id, c["id"], is_hit, from_event=from_event, cache=cache))
 
@@ -299,11 +313,12 @@ def search_transfer_sequences(
     is not memoized - out of scope for this task, documented rather than silently
     left unbounded.
 
-    Known gap, deliberately not addressed here (see best_transfer_for_player's own
-    docstring for the pre-existing single-swap version of this limitation): a
-    generated multi-step sequence is not validated for club-limit legality (max 3
-    players from one real-world club) across the squad as it evolves - only
-    per-swap budget is checked.
+    Closed 2026-08-20 (see best_transfer_for_player's own docstring for the real
+    scenario that surfaced this): candidate generation now respects the real
+    3-per-club cap at every step, not just budget - each step's candidates are
+    filtered against the squad's actual remaining club counts AT that point in
+    the sequence, which propagates correctly step to step since `new_squad` is
+    threaded through unchanged.
     """
     season = current_season(conn)
     max_banked = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)

@@ -319,3 +319,66 @@ def test_price_tiebreak_bonus_prefers_rising_player_among_equal_ev_candidates(db
     best = sequences[0]
     swap_step = next(s for s in best.steps if s.player_in_id is not None)
     assert swap_step.player_in_id == 4
+
+
+def test_search_transfer_sequences_never_recommends_an_illegal_club_count(db_conn, monkeypatch):
+    """Real scenario found live 2026-08-20: a squad already at the 3-player cap
+    on multiple clubs had search_transfer_sequences recommend bringing in a
+    player from a DIFFERENT already-at-cap club - an illegal squad. Reproduces
+    it at minimal scale: club A already has 3 squad members (10,11,12, all
+    strong - no reason to swap any of them out), club B's squad member (20) is
+    clearly the weakest and the obvious swap-out target. The highest-EV
+    replacement candidate (13) is ALSO from club A - illegal for the 20-out
+    swap specifically (club A stays at 3 among the remaining squad, so adding
+    13 would make it 4) - so the search must settle for the legal, lower-EV
+    club-C candidate (30) instead. 20->30 (net +5.0) still beats any
+    within-club-A reshuffle (net +4.0 at best), so this isolates the real
+    question: does the search ever pick the illegal option, not just "does it
+    prefer a different swap overall"."""
+    now = "2026-01-01T00:00:00Z"
+    for tid, name in ((1, "Club A"), (2, "Club B"), (3, "Club C")):
+        db_conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES ({tid},{tid},'{name}','{name[:3].upper()}','{now}')")
+    db_conn.execute(
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        f"VALUES (1,'Forward','FWD','Forwards','{now}')"
+    )
+    for pid, team_id, price in ((10, 1, 50), (11, 1, 50), (12, 1, 50), (20, 2, 50), (13, 1, 50), (30, 3, 50)):
+        db_conn.execute(
+            f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'P{pid}',{team_id},1,'a',0,'{now}')"
+        )
+        db_conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, {price}, '{now}', NULL)"
+        )
+    db_conn.execute(
+        f"INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        f"is_current, is_next, updated_at) VALUES (1,'GW1','{now}',0,0,0,1,1,'{now}')"
+    )
+    db_conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.max_extra_free_transfers','2026-27',1,'2026-08-01','fpl_api_bootstrap','4')"
+    )
+    db_conn.commit()
+
+    # 10/11/12 (club A, in squad) strong at 5.0 - no incentive to disturb them.
+    # 20 (club B, in squad) weak at 1.0 - the obvious swap-out target.
+    # 13 (club A candidate) highest EV at 9.0 - illegal for the 20-out swap.
+    # 30 (club C candidate) at 6.0 - legal, the correct pick.
+    ev_by_id = {10: 5.0, 11: 5.0, 12: 5.0, 20: 1.0, 13: 9.0, 30: 6.0}
+
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=ev_by_id[player_id])
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=[10, 11, 12, 20], free_transfers=1, bank_tenths=100, horizon_gw=1, beam_width=4,
+    )
+
+    best = sequences[0]
+    swap_step = next(s for s in best.steps if s.player_in_id is not None)
+    assert swap_step.player_out_id == 20
+    assert swap_step.player_in_id == 30, (
+        "picked the illegal club-A candidate (13) instead of the legal club-C one (30) "
+        "- club A would have 4 members after this swap"
+    )

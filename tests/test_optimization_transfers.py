@@ -108,3 +108,78 @@ def test_best_transfer_for_player_accepts_from_event(db_conn, monkeypatch):
     )
     assert len(results) == 1
     assert results[0].ev_1gw == 8.0
+
+
+def _seed_three_clubs_at_cap(conn):
+    """Real scenario found live 2026-08-20: a squad already sitting at the
+    3-player cap on club A, with the player being transferred out from a
+    DIFFERENT club (B). Candidates include one more player from club A
+    (would push it to 4 - illegal) and one from club C (still has room)."""
+    now = "t0"
+    for tid, name in ((1, "Club A"), (2, "Club B"), (3, "Club C")):
+        conn.execute(
+            "INSERT INTO teams (id,code,name,short_name,strength_overall_home,strength_overall_away,"
+            "strength_attack_home,strength_attack_away,strength_defence_home,strength_defence_away,pulse_id,updated_at) "
+            "VALUES (?,?,?,?,3,3,0,0,0,0,?,?)",
+            (tid, tid, name, name[:3].upper(), tid, now),
+        )
+    conn.execute(
+        "INSERT INTO element_types (id,singular_name,singular_name_short,plural_name,squad_min_play,"
+        "squad_max_play,squad_select,updated_at) VALUES (1,'Midfielder','MID','Midfielders',2,5,5,?)",
+        (now,),
+    )
+    # Squad: 3 players from club A (10,11,12) + the outgoing player from club B (20).
+    # Candidate pool: 13 (club A - would make 4, illegal), 30 (club C - legal).
+    for pid, team_id, price in ((10, 1, 45), (11, 1, 45), (12, 1, 45), (20, 2, 50), (13, 1, 50), (30, 3, 50)):
+        conn.execute(
+            "INSERT INTO players (id,code,web_name,team_id,element_type,status,removed,updated_at) "
+            "VALUES (?,?,?,?,1,'a',0,?)",
+            (pid, pid, f"P{pid}", team_id, now),
+        )
+        conn.execute(
+            "INSERT INTO player_price_history (player_id,value_tenths,valid_from,valid_until) VALUES (?,?,?,NULL)",
+            (pid, price, now),
+        )
+    conn.commit()
+
+
+def test_best_transfer_for_player_excludes_candidates_that_would_break_the_club_cap(db_conn, monkeypatch):
+    _seed_three_clubs_at_cap(db_conn)
+
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=float(player_id))  # higher id = higher EV, so 13 would rank first if allowed
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+    results = transfers_mod.best_transfer_for_player(
+        db_conn, player_out_id=20, squad_ids=[10, 11, 12, 20], bank_tenths=100, is_hit=False,
+        n_gw=1, top_n=5,
+    )
+
+    result_ids = {r.player_in_id for r in results}
+    assert 13 not in result_ids  # would push club A to 4 - illegal, must be excluded
+    assert 30 in result_ids      # club C has room - legal, must still be offered
+
+
+def test_best_transfer_for_player_allows_a_same_club_replacement(db_conn, monkeypatch):
+    """Replacing a club-A player with another club-A player keeps club A at
+    exactly 3, not 4 - must still be offered as a candidate."""
+    _seed_three_clubs_at_cap(db_conn)
+    db_conn.execute(
+        "INSERT INTO players (id,code,web_name,team_id,element_type,status,removed,updated_at) "
+        "VALUES (14,14,'P14',1,1,'a',0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_price_history (player_id,value_tenths,valid_from,valid_until) VALUES (14,45,'t0',NULL)"
+    )
+    db_conn.commit()
+
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=float(player_id))
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+    results = transfers_mod.best_transfer_for_player(
+        db_conn, player_out_id=10, squad_ids=[10, 11, 12, 20], bank_tenths=100, is_hit=False,
+        n_gw=1, top_n=5,
+    )
+
+    assert 14 in {r.player_in_id for r in results}
