@@ -73,6 +73,35 @@ _MARKET_CONVICTION_DEFAULT_MINUTES = 60.0
 # inflated just because of unrelated ownership noise).
 _WEAK_EVIDENCE_BASES = {"no_data_available", "stale_prior_season", "cross_league_prior_new_signing"}
 
+# Real gap found 2026-08-20 (a real, named player checked against a
+# user-shared community squad screenshot - Isak): the most-recent-season-only
+# prior collapsed a real, currently-FIT, established nailed starter to ~18
+# expected minutes, because his single most recent season (694 minutes) was
+# a genuine outlier (injury/transfer-saga disruption) against 3+ prior
+# seasons of 1500-2800 minutes. `ORDER BY season_name DESC LIMIT 1` only
+# ever sees that one anomalous season and has no way to know it was atypical.
+# Blending the last 3 seasons with declining weights lets an established
+# track record push back against one disrupted year, without ever ignoring
+# the most recent season entirely (still weighted highest - a real, current
+# rotation/form change is still respected, just not from one data point
+# alone). Renormalised over however many seasons actually exist (1-3), so a
+# player with only one real season is unaffected (same result as before).
+_RECENT_SEASON_BLEND_WEIGHTS = (0.55, 0.30, 0.15)
+
+
+def _blended_recent_seasons_per_gw(conn: sqlite3.Connection, player_id: int) -> float | None:
+    rows = conn.execute(
+        "SELECT minutes FROM player_season_history WHERE player_id=? "
+        "ORDER BY season_name DESC LIMIT ?",
+        (player_id, len(_RECENT_SEASON_BLEND_WEIGHTS)),
+    ).fetchall()
+    usable = [r["minutes"] for r in rows if r["minutes"] is not None]
+    if not usable:
+        return None
+    weights = _RECENT_SEASON_BLEND_WEIGHTS[: len(usable)]
+    total_weight = sum(weights)
+    return sum(w * min(m / 38, 90) for w, m in zip(weights, usable)) / total_weight
+
 
 @dataclass(frozen=True)
 class ExpectedMinutes:
@@ -108,7 +137,6 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         "SELECT minutes, season_name FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
         (player_id,),
     ).fetchone()
-    prior_per_gw = min(prior_row["minutes"] / 38, 90) if prior_row and prior_row["minutes"] is not None else None
 
     prior_is_stale = False
     if prior_row is not None:
@@ -116,6 +144,22 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         this_year = _season_start_year(current_season(conn))
         if prior_year is not None and this_year is not None and this_year - prior_year >= _STALE_SEASON_GAP_THRESHOLD:
             prior_is_stale = True
+
+    if prior_row is not None and prior_row["minutes"] is not None and not prior_is_stale:
+        # The most recent season is genuinely recent (not stale) - blend it
+        # with up to 2 earlier seasons rather than trusting it alone, so one
+        # anomalous year (injury, transfer-saga absence) doesn't fully
+        # override an established track record. See _blended_recent_seasons_per_gw's
+        # own docstring for the real case this closes (Isak).
+        prior_per_gw = _blended_recent_seasons_per_gw(conn, player_id)
+    elif prior_row is not None and prior_row["minutes"] is not None:
+        # Stale case: every available row is old, so blending across them
+        # doesn't address the real problem (no trustworthy recent read at
+        # all) - keep using the single most-recent (still stale) row's own
+        # value, unchanged, for the existing stale-discount branch below.
+        prior_per_gw = min(prior_row["minutes"] / 38, 90)
+    else:
+        prior_per_gw = None
 
     if current_per_gw is not None and prior_per_gw is not None:
         weight_current = min(finished_events / 10, 0.8)

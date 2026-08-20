@@ -100,6 +100,48 @@ def test_fresh_last_season_prior_is_not_treated_as_stale(db_conn):
     assert 85 <= result.expected_minutes <= 90
 
 
+def test_blends_multiple_recent_seasons_rather_than_trusting_the_latest_alone(db_conn):
+    """Real case found 2026-08-20 (checked against a user-shared community
+    squad screenshot - Isak): a real, currently-FIT, established nailed
+    starter's single most recent season was a genuine anomaly (694 real
+    minutes vs 2500-2800 in each of the 3 seasons before it - a real
+    transfer-saga/injury disruption) - trusting only that one row collapsed
+    him to ~18 expected minutes. Blending the last 3 seasons (weights
+    0.55/0.30/0.15) should pull the estimate meaningfully above what the
+    single anomalous season alone would give."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_current_season(db_conn, "2026-27")
+    _insert_season_history(db_conn, player_id=1, minutes=694, season_name="2025/26")
+    _insert_season_history(db_conn, player_id=1, minutes=2758, season_name="2024/25")
+    _insert_season_history(db_conn, player_id=1, minutes=2253, season_name="2023/24")
+
+    result = expected_minutes(db_conn, 1)
+
+    single_season_only = min(694 / 38, 90)  # 18.3 - what the old, unblended logic gave
+    # Hand-computed: 0.55*min(694/38,90) + 0.30*min(2758/38,90) + 0.15*min(2253/38,90), /1.0
+    expected_blend = 0.55 * min(694 / 38, 90) + 0.30 * min(2758 / 38, 90) + 0.15 * min(2253 / 38, 90)
+    assert result.basis == "last_season_prior_no_current_data"
+    assert result.expected_minutes > single_season_only + 10  # meaningfully pulled up, not a rounding artifact
+    assert abs(result.expected_minutes - round(expected_blend, 1)) < 0.2
+
+
+def test_single_season_history_is_unaffected_by_blending(db_conn):
+    """Only one real season exists - the blend must renormalise to give it
+    full weight, reproducing the exact pre-blend behavior (no regression
+    for the overwhelming common case of a player with just one prior
+    season on record so far)."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_current_season(db_conn, "2026-27")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, season_name="2025/26")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"
+    assert 85 <= result.expected_minutes <= 90  # same range the pre-blend test already asserted
+
+
 def test_multi_season_stale_prior_is_discounted_not_treated_as_fresh(db_conn):
     """Real gap found 2026-08-20 (Tzolis): a player's only player_season_history
     row can be several seasons old (returned from a loan/league this project
