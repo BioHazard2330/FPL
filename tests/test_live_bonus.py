@@ -169,3 +169,38 @@ def test_diff_live_rows_no_change_fires_nothing():
     events, _ = diff_live_rows(previous, current)
 
     assert events == []
+
+
+def test_diff_live_rows_double_gameweek_player_does_not_fire_the_same_goal_twice():
+    """Real bug found 2026-08-20: compute_live_bonus emits one LiveBonusRow
+    per fixture for a double-gameweek player, but goals_scored/assists in
+    FPL's own live stats are whole-gameweek totals - identical on both
+    rows. Diffing each row independently against the same previous snapshot
+    used to fire the same real goal twice in one poll."""
+    previous = {1: _row(1, fixture_id=100, goals_scored=0)}
+    # Same real goal (0->1), reported identically on both of this DGW player's fixture rows.
+    current = [
+        _row(1, fixture_id=100, goals_scored=1, provisional_bonus=0, bps=10),
+        _row(1, fixture_id=200, goals_scored=1, provisional_bonus=2, bps=30),
+    ]
+
+    events, new_state = diff_live_rows(previous, current)
+
+    goal_events = [e for e in events if e.kind == "goal"]
+    assert len(goal_events) == 1
+    assert new_state[1].goals_scored == 1
+
+
+def test_diff_live_rows_double_gameweek_bonus_takes_the_higher_fixture_value():
+    previous = {1: _row(1, fixture_id=100, provisional_bonus=0)}
+    current = [
+        _row(1, fixture_id=100, provisional_bonus=1, bps=15),
+        _row(1, fixture_id=200, provisional_bonus=3, bps=40),
+    ]
+
+    events, new_state = diff_live_rows(previous, current)
+
+    bonus_events = [e for e in events if e.kind == "bonus"]
+    assert len(bonus_events) == 1
+    assert "+3" in bonus_events[0].detail
+    assert new_state[1].provisional_bonus == 3

@@ -15,7 +15,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from fpl_agent.alerts.engine import Alert, TerminalNotifier, configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
-from fpl_agent.config import DATA_DIR, load_dotenv
+from fpl_agent.config import DATA_DIR, load_dotenv, load_storage_budget
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -25,6 +25,7 @@ from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
+from fpl_agent.ingestion.raw_store import prune_raw
 from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_all_news_sources
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
@@ -705,6 +706,16 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
     adapter = FPLApiAdapter()
     poll_state: dict[int, LiveBonusRow] = {}
     stop_at = time.monotonic() + max_hours * 3600
+    # Each poll's fetch_event_live() call writes a fresh timestamped raw file
+    # (save_raw() never overwrites, same pattern every adapter call uses for
+    # its audit trail) - fine for a single fpl live-bonus call, but at a 75s
+    # default interval over up to --max-hours this loop can poll ~150 times,
+    # and the regular scheduler's own prune_raw() cycle (15-60min, see
+    # scheduler/adaptive.py) isn't guaranteed to run inside a single watch
+    # session. Pruning here too keeps this session self-contained rather than
+    # silently relying on a concurrent process to clean up after it.
+    next_prune_at = time.monotonic()
+    _PRUNE_INTERVAL_SECONDS = 900
     click.echo(
         f"watching event {event_num}, squad {sorted(squad_ids)}, every {interval}s "
         f"(max {max_hours}h) - Ctrl+C to stop"
@@ -727,6 +738,13 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
                 time.sleep(interval)
                 continue
             update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+
+            if time.monotonic() >= next_prune_at:
+                try:
+                    prune_raw(load_storage_budget().raw_retention_hours)
+                except Exception:
+                    pass  # storage housekeeping must never interrupt live tracking
+                next_prune_at = time.monotonic() + _PRUNE_INTERVAL_SECONDS
 
             rows = [r for r in compute_live_bonus(conn, payload) if r.player_id in squad_ids]
             events, poll_state = diff_live_rows(poll_state, rows)
@@ -1191,6 +1209,24 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str):
             click.echo(
                 f"WARNING: horizon extends to GW{from_event + horizon - 1}, beyond the last known chip "
                 f"window (GW{max_window_event}) - chip scheduling for GWs beyond that is not considered"
+            )
+        elif from_event + horizon - 1 < max_window_event:
+            # Real gap found 2026-08-20 (the user caught this live, not this project's
+            # own review): a short horizon starves schedule_chips' DP of visibility
+            # into most of a real chip window (e.g. bboost/3xc/wildcard eligible
+            # through GW19, horizon=5 only shows it GW1-5) - it still finds the best
+            # placement WITHIN what it can see, but that's an artifact of the
+            # simulated window, not genuine season-long chip timing (it can't know
+            # whether a real double gameweek exists later, the actual reason bench
+            # boost/triple captain have value). The chip schedule below should not
+            # be treated as trustworthy season-long advice when this fires.
+            click.echo(
+                f"WARNING: horizon only covers GW{from_event}-{from_event + horizon - 1}, but the "
+                f"nearest chip window stays open through GW{max_window_event} - any chip placement "
+                f"below is only optimal within this short window, not a genuine season-long "
+                f"recommendation (it has no visibility into later fixture swings or double gameweeks, "
+                f"the real reason bench boost/triple captain have value). Standard real FPL strategy - "
+                f"hold chips barring an obvious, visible reason - is usually the safer read this early."
             )
 
         used_chip_names = {c.strip() for c in used_chips.split(",") if c.strip()}

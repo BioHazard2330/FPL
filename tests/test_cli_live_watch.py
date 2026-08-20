@@ -115,6 +115,39 @@ def test_live_watch_no_deliver_uses_terminal_only(db_conn, monkeypatch):
     assert result.exit_code == 0, result.output
 
 
+def test_live_watch_prunes_raw_files_so_a_long_session_does_not_accumulate_them(db_conn, monkeypatch):
+    """Real gap found 2026-08-20: fetch_event_live's save_raw() writes a
+    fresh timestamped file every call (never overwrites) - at a 75s default
+    interval over a multi-hour match, that's ~150 files per session, and
+    the regular scheduler's own prune_raw() cycle isn't guaranteed to run
+    inside a single watch session. live-watch must prune its own raw
+    output rather than relying on a concurrent process to clean up after it."""
+    import fpl_agent.cli.main as main_mod
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_fixture(db_conn, finished=0)
+
+    payloads = [{"elements": [{"id": 1, "stats": {"minutes": 45, "bps": 20, "goals_scored": 0, "assists": 0}, "explain": [{"fixture": 1}]}]}]
+    monkeypatch.setattr(main_mod, "FPLApiAdapter", lambda: _FakeAdapter(payloads))
+    monkeypatch.setattr(main_mod, "configured_notifiers", lambda conn: _RecordingNotifier())
+
+    prune_calls = []
+    monkeypatch.setattr(main_mod, "prune_raw", lambda hours: prune_calls.append(hours))
+
+    class _FakeBudget:
+        raw_retention_hours = 48
+    monkeypatch.setattr(main_mod, "load_storage_budget", lambda: _FakeBudget())
+
+    def _fake_sleep(_seconds):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(main_mod.time, "sleep", _fake_sleep)
+
+    result = CliRunner().invoke(cli, ["live-watch", "--squad", "1", "--interval", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert prune_calls == [48]
+
+
 def test_live_watch_defaults_to_the_recommended_squad_when_none_given(db_conn, monkeypatch):
     import fpl_agent.cli.main as main_mod
 

@@ -123,7 +123,26 @@ def diff_live_rows(
     watch began. Only a genuine increase in a stat fires an event; a
     provisional bonus can also legitimately DECREASE mid-match as BPS
     swings - that never fires an event (nothing to celebrate about a
-    bonus going down, and it would be a confusing false alarm)."""
+    bonus going down, and it would be a confusing false alarm).
+
+    Deduped by player_id before diffing: a double-gameweek player gets one
+    LiveBonusRow per fixture from compute_live_bonus, but goals_scored/
+    assists/red_cards in FPL's own live stats are whole-gameweek totals
+    (identical across that player's fixture rows) - diffing per fixture-row
+    would fire the same real goal/assist/red-card event twice in a single
+    poll. A real, disclosed simplification for bonus specifically: this
+    takes the higher of the player's fixture-scoped provisional_bonus
+    values rather than tracking both fixtures' bonus independently (a fully
+    correct version would need per-(player, fixture) state, not just
+    per-player) - fine given GW1 has no doubles; revisit if this ever needs
+    to fire for a real double-gameweek captain."""
+    deduped: dict[int, LiveBonusRow] = {}
+    for row in current:
+        existing = deduped.get(row.player_id)
+        if existing is None or row.provisional_bonus > existing.provisional_bonus:
+            deduped[row.player_id] = row
+    current = list(deduped.values())
+
     events: list[LiveMatchEvent] = []
     new_state: dict[int, LiveBonusRow] = {}
     first_observation = not previous
