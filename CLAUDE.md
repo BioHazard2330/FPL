@@ -1546,7 +1546,13 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   not a bug). **Predicted lineups remain genuinely open** - re-researched this session
   (2026-08-20), same conclusion as Plan 2a: the one no-key option found
   (Apify's Premier League lineups scraper) is still marked deprecated by its own listing.
-  Revisit if a new free source appears.
+  **Re-checked a third time, same day** (per the user's "nothing remaining before
+  deadline" directive): `starting11.com`'s "free, no signup" predicted lineups turned
+  out to be a crowd-sourced prediction GAME (users submit their own guesses, scored
+  against the real lineup afterward), not an algorithmic/editorial publisher - no API,
+  no structured data, and zero predictions submitted yet this season (useless even if
+  it were scrapable). Confirmed structurally blocked, not under-researched - revisit
+  only if a genuinely new free source appears.
 - **No real squad exists yet.** Nothing here has ever been run against the
   user's actual FPL team, because there isn't one - this is a from-scratch
   build. `fpl build-team` produces a genuine first-XV recommendation from the
