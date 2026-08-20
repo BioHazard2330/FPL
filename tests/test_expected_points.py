@@ -231,6 +231,55 @@ def test_malformed_odds_fall_back_to_dixon_coles_only(db_conn):
     assert expected_points(db_conn, 1).median > 0
 
 
+def test_blended_fixture_goals_uses_live_odds_for_unplayed_fixture(db_conn):
+    # A fixture with no match_results_history row (never played) but a
+    # fixture_odds_live row - the fallback path, not the historical one.
+    _seed_two_team_world(db_conn, with_player_stats=False)
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, updated_at) VALUES (2,'Gameweek 2','2026-08-28T17:30:00Z',1756400000,0,0,0,0,'t0')"
+    )
+    _insert_fixture(db_conn, 2, 2, 1, 2, date="2026-08-28")
+
+    dc_only = _blended_fixture_goals(db_conn, 2, 1, 2, "2026-08-28")
+
+    db_conn.execute(
+        "INSERT INTO fixture_odds_live (fixture_id, source, bookmaker, home_win_odds, draw_odds, "
+        "away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
+        "VALUES (2,'test','avg',1.5,4.5,6.0,1.8,2.0,'t0')"
+    )
+    db_conn.commit()
+
+    with_live_odds = _blended_fixture_goals(db_conn, 2, 1, 2, "2026-08-28")
+
+    # Proves the live-odds row was actually read and blended in, not ignored:
+    # a lopsided home favourite (1.5 vs 4.5/6.0) moves the answer away from the
+    # DC-only (weight=1.0) baseline computed before the row existed.
+    assert with_live_odds != dc_only
+    assert with_live_odds[0] > with_live_odds[1]
+
+
+def test_blended_fixture_goals_historical_path_unaffected_by_live_table(db_conn):
+    # Regression guard for this task's global constraint: a fixture that already
+    # has a match_results_history + team_match_odds_history row must resolve via
+    # the historical path only, even when fixture_odds_live also has a row for
+    # the SAME fixture_id with clearly different odds.
+    _seed_two_team_world(db_conn)
+
+    historical_only = _blended_fixture_goals(db_conn, 1, 1, 2, _FIXTURE_DATE)
+
+    db_conn.execute(
+        "INSERT INTO fixture_odds_live (fixture_id, source, bookmaker, home_win_odds, draw_odds, "
+        "away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
+        "VALUES (1,'test','avg',9.0,9.0,1.05,5.0,1.05,'t0')"
+    )
+    db_conn.commit()
+
+    with_live_table_present = _blended_fixture_goals(db_conn, 1, 1, 2, _FIXTURE_DATE)
+
+    assert with_live_table_present == historical_only
+
+
 def test_player_share_is_normalized_to_per90_before_fixture_minutes(db_conn):
     # Regression for the double-discount bug: player_share_of_team_xg is an
     # ACCUMULATED ratio that already embeds the player's historical minutes

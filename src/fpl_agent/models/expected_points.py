@@ -132,23 +132,34 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
 _ODDS_KEYS = ("home_win_odds", "draw_odds", "away_win_odds", "over_2_5_odds", "under_2_5_odds")
 
 
-def _fixture_odds_row(conn: sqlite3.Connection, home_market_id: int, away_market_id: int, fixture_date: str):
+def _fixture_odds_row(
+    conn: sqlite3.Connection, home_market_id: int, away_market_id: int, fixture_date: str, fixture_id: int
+):
     """Odds for THIS fixture only - matched on the fixture's own date, never on
     "the most recent prior meeting". match_results_history holds played matches
-    only, so a genuinely future fixture correctly finds nothing here and the
-    caller degrades to Dixon-Coles-only, rather than silently blending in a
+    only, so a genuinely future fixture correctly finds nothing here and falls
+    back to a live pre-match quote for this exact fixture (fixture_odds_live,
+    populated by `fpl sync-live-odds`), rather than silently blending in a
     completely different match's closing line (e.g. last season's meeting
-    between the same two clubs)."""
+    between the same two clubs). If neither source has a row, the caller
+    degrades to Dixon-Coles-only."""
     match_row = conn.execute(
         "SELECT id FROM match_results_history WHERE home_team_id=? AND away_team_id=? AND match_date=? "
         "ORDER BY id DESC LIMIT 1",
         (home_market_id, away_market_id, fixture_date),
     ).fetchone()
-    if match_row is None:
-        return None
+    if match_row is not None:
+        row = conn.execute(
+            "SELECT * FROM team_match_odds_history WHERE match_id=? ORDER BY retrieved_at DESC LIMIT 1",
+            (match_row["id"],),
+        ).fetchone()
+        if row is not None:
+            return row
+    # No historical (played-match) odds row - fall back to a live pre-match quote
+    # for this exact fixture, if one has been synced (fpl sync-live-odds).
     return conn.execute(
-        "SELECT * FROM team_match_odds_history WHERE match_id=? ORDER BY retrieved_at DESC LIMIT 1",
-        (match_row["id"],),
+        "SELECT * FROM fixture_odds_live WHERE fixture_id=? ORDER BY retrieved_at DESC LIMIT 1",
+        (fixture_id,),
     ).fetchone()
 
 
@@ -175,7 +186,7 @@ def _blended_fixture_goals(
     else:
         dc_home = dc_away = _LEAGUE_AVERAGE_GOALS
 
-    odds_row = _fixture_odds_row(conn, home_id, away_id, fixture_date)
+    odds_row = _fixture_odds_row(conn, home_id, away_id, fixture_date, fixture_id)
 
     blended = None
     if odds_row is not None and all(odds_row[k] for k in _ODDS_KEYS):
