@@ -237,6 +237,7 @@ def sync_live_odds_cmd():
     click.echo(f"fetched          {result['fetched']}")
     click.echo(f"matched          {result['matched']}")
     click.echo(f"unmatched        {result['unmatched']}")
+    click.echo(f"failed           {result['failed']}")
 
 
 @cli.command("team-news")

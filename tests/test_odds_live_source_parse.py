@@ -1,3 +1,4 @@
+import requests
 import pytest
 
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, fetch_live_odds_payload, parse_live_odds_event
@@ -96,3 +97,59 @@ def test_fetch_live_odds_payload_raises_without_api_key(monkeypatch):
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     with pytest.raises(OddsLiveFetchError, match="ODDS_API_KEY"):
         fetch_live_odds_payload()
+
+
+_SECRET_API_KEY = "SECRET123ABC"
+
+
+def test_fetch_live_odds_payload_error_never_leaks_api_key(monkeypatch):
+    """Reproduces the original leak: requests' own HTTPError.__str__() (built by
+    Response.raise_for_status()) includes the full request URL, which carries
+    apiKey=<key> in cleartext. A 401 (invalid key) is the single most likely
+    real-world failure a new user hits, so this constructs the error exactly the
+    way raise_for_status() actually would - with a real response object whose .url
+    carries the secret - to prove the raised OddsLiveFetchError's message is built
+    from safe fields only, never from str(exc)."""
+    monkeypatch.setenv("ODDS_API_KEY", _SECRET_API_KEY)
+
+    response = requests.Response()
+    response.status_code = 401
+    response.reason = "Unauthorized"
+    response.url = (
+        "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/"
+        f"?apiKey={_SECRET_API_KEY}&regions=uk&markets=h2h%2Ctotals&oddsFormat=decimal"
+    )
+
+    def fake_get(*args, **kwargs):
+        return response
+
+    monkeypatch.setattr("fpl_agent.ingestion.odds_live_source.requests.get", fake_get)
+
+    with pytest.raises(OddsLiveFetchError) as excinfo:
+        fetch_live_odds_payload()
+
+    message = str(excinfo.value)
+    assert _SECRET_API_KEY not in message
+    assert "apiKey" not in message
+    assert response.url not in message
+
+
+def test_fetch_live_odds_payload_error_never_leaks_api_key_on_connection_failure(monkeypatch):
+    """Connection-level failures (no response object at all) must also fall back to a
+    fixed generic message rather than str(exc), since requests.ConnectionError can
+    also embed the full request URL (with apiKey) in its own string form."""
+    monkeypatch.setenv("ODDS_API_KEY", _SECRET_API_KEY)
+
+    def fake_get(*args, **kwargs):
+        raise requests.ConnectionError(
+            f"Connection refused for url: https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey={_SECRET_API_KEY}"
+        )
+
+    monkeypatch.setattr("fpl_agent.ingestion.odds_live_source.requests.get", fake_get)
+
+    with pytest.raises(OddsLiveFetchError) as excinfo:
+        fetch_live_odds_payload()
+
+    message = str(excinfo.value)
+    assert _SECRET_API_KEY not in message
+    assert "apiKey" not in message

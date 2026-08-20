@@ -32,7 +32,18 @@ def fetch_live_odds_payload() -> list[dict]:
         )
         resp.raise_for_status()
     except requests.RequestException as exc:
-        raise OddsLiveFetchError(f"failed to fetch live odds: {exc}") from exc
+        # Never interpolate str(exc) or exc's request/response objects here: requests'
+        # own HTTPError/ConnectionError/Timeout __str__() includes the full request URL,
+        # which carries apiKey=<the live key> in cleartext. This message is persisted
+        # verbatim into source_health.last_error (readable via `fpl doctor` / a DB
+        # backup) and echoed to CLI stderr, so it must be built only from known-safe
+        # fields - never the exception's own string form.
+        response = getattr(exc, "response", None)
+        if response is not None:
+            message = f"failed to fetch live odds: the-odds-api.com returned HTTP {response.status_code}"
+        else:
+            message = "failed to fetch live odds: request failed (see network logs)"
+        raise OddsLiveFetchError(message) from exc
     return resp.json()
 
 
@@ -103,13 +114,21 @@ def match_fixture(conn, home_team_name: str, away_team_name: str, commence_time:
     if len(candidates) == 1:
         return candidates[0]["id"]
 
+    # Rearranged/postponed fixtures have kickoff_time IS NULL - can't be compared to
+    # commence_time, so they're excluded from disambiguation rather than crashing on
+    # None.replace(). Zero comparable candidates left is a legitimate "can't
+    # disambiguate" outcome (counted as unmatched by the caller), not a crash.
+    dated_candidates = [row for row in candidates if row["kickoff_time"] is not None]
+    if not dated_candidates:
+        return None
+
     target = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
 
     def _delta(row):
         kt = datetime.fromisoformat(row["kickoff_time"].replace("Z", "+00:00"))
         return abs((kt - target).total_seconds())
 
-    return min(candidates, key=_delta)["id"]
+    return min(dated_candidates, key=_delta)["id"]
 
 
 def sync_live_odds(conn) -> dict:
@@ -120,30 +139,47 @@ def sync_live_odds(conn) -> dict:
         raise
 
     now = datetime.now(timezone.utc).isoformat()
-    matched = unmatched = 0
+    matched = unmatched = failed = 0
 
     for event in payload:
-        parsed = parse_live_odds_event(event)
-        if parsed is None:
-            unmatched += 1
-            continue
-        fixture_id = match_fixture(conn, parsed["home_team"], parsed["away_team"], parsed["commence_time"])
-        if fixture_id is None:
-            unmatched += 1
-            continue
+        # A single event's processing (match_fixture's disambiguation, or the insert)
+        # raising an unexpected exception must not abort the whole run mid-loop and
+        # discard every not-yet-committed insert from this run - one bad event is
+        # counted and skipped, like a single manager-fetch failure in eo_sample.py or a
+        # single malformed item in news_source.py, rather than crashing before the
+        # commit or before update_source_health can record what actually happened.
+        try:
+            parsed = parse_live_odds_event(event)
+            if parsed is None:
+                unmatched += 1
+                continue
+            fixture_id = match_fixture(conn, parsed["home_team"], parsed["away_team"], parsed["commence_time"])
+            if fixture_id is None:
+                unmatched += 1
+                continue
 
-        conn.execute(
-            "INSERT INTO fixture_odds_live "
-            "(fixture_id, source, bookmaker, home_win_odds, draw_odds, away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(fixture_id, source, bookmaker) DO UPDATE SET "
-            "home_win_odds=excluded.home_win_odds, draw_odds=excluded.draw_odds, away_win_odds=excluded.away_win_odds, "
-            "over_2_5_odds=excluded.over_2_5_odds, under_2_5_odds=excluded.under_2_5_odds, retrieved_at=excluded.retrieved_at",
-            (fixture_id, _SOURCE_NAME, parsed["bookmaker"], parsed["home_win_odds"], parsed["draw_odds"],
-             parsed["away_win_odds"], parsed["over_2_5_odds"], parsed["under_2_5_odds"], now),
-        )
-        matched += 1
+            conn.execute(
+                "INSERT INTO fixture_odds_live "
+                "(fixture_id, source, bookmaker, home_win_odds, draw_odds, away_win_odds, over_2_5_odds, under_2_5_odds, retrieved_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(fixture_id, source, bookmaker) DO UPDATE SET "
+                "home_win_odds=excluded.home_win_odds, draw_odds=excluded.draw_odds, away_win_odds=excluded.away_win_odds, "
+                "over_2_5_odds=excluded.over_2_5_odds, under_2_5_odds=excluded.under_2_5_odds, retrieved_at=excluded.retrieved_at",
+                (fixture_id, _SOURCE_NAME, parsed["bookmaker"], parsed["home_win_odds"], parsed["draw_odds"],
+                 parsed["away_win_odds"], parsed["over_2_5_odds"], parsed["under_2_5_odds"], now),
+            )
+            matched += 1
+        except Exception:
+            failed += 1
+            continue
 
     conn.commit()
-    update_source_health(conn, _SOURCE_NAME, success=True, error=None)
-    return {"fetched": len(payload), "matched": matched, "unmatched": unmatched}
+
+    # Unlike eo_sample.py's percentage tolerance (sized for ~750 sequential manager
+    # fetches, where a couple of 404s is normal noise), a live-odds feed is a handful
+    # of EPL fixtures per gameweek - any single event raising an unexpected exception
+    # here is itself the noteworthy signal, not statistical noise. Report it as a
+    # degraded run rather than silently reporting success=True.
+    error = f"{failed} of {len(payload)} event(s) failed to process" if failed else None
+    update_source_health(conn, _SOURCE_NAME, success=(failed == 0), error=error)
+    return {"fetched": len(payload), "matched": matched, "unmatched": unmatched, "failed": failed}

@@ -5,7 +5,9 @@ from fpl_agent.cli.main import cli
 
 def test_sync_live_odds_reports_result(monkeypatch, db_conn):
     import fpl_agent.cli.main as main_mod
-    monkeypatch.setattr(main_mod, "sync_live_odds", lambda conn: {"fetched": 10, "matched": 8, "unmatched": 2})
+    monkeypatch.setattr(
+        main_mod, "sync_live_odds", lambda conn: {"fetched": 10, "matched": 8, "unmatched": 2, "failed": 0}
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["sync-live-odds"])
