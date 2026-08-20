@@ -729,8 +729,10 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - [x] Live pre-match odds feed (the-odds-api.com, opt-in via `ODDS_API_KEY`) -
   closes the "unreachable today" limitation from Pillar 0. Spec:
   `docs/superpowers/specs/2026-08-20-live-odds-feed-design.md`. Plan:
-  `docs/superpowers/plans/2026-08-20-live-odds-feed.md` (7/7 tasks). Not yet
-  live-verified against the real API - needs the user's own free key.
+  `docs/superpowers/plans/2026-08-20-live-odds-feed.md` (7/7 tasks + 2 post-merge
+  fixes found live-verifying against real GW1 data - see the limitations section
+  above for what they were). Live-verified 2026-08-20: 10/10 GW1 fixtures matched
+  and blended.
 
 ## What's still genuinely limited (read before trusting output)
 
@@ -761,21 +763,39 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   (see `expected_bonus_per90`) — a real behavior change for that ~14% of the pool that this
   holdout doesn't directly validate, though it's the same honest-fallback pattern used throughout
   this model layer (e.g. `shrink_rate`'s own zero-matches behavior), not a fabrication.
-- **Live pre-match odds blending is now reachable, opt-in, and requires the user's
-  own free API key.** `fixture_odds_live` (migration `0014`) + `ingestion/odds_live_source.py`
-  (the-odds-api.com, free tier, no cost) + `fpl sync-live-odds` populate real
-  pre-match quotes for upcoming fixtures, matched to FPL fixtures via the existing
-  `market_identity` crosswalk. `models/expected_points.py::_fixture_odds_row` falls
-  back to this table only when no historical (played-match) odds row exists for a
-  fixture - the backtest/historical path is completely unaffected. Requires
-  `ODDS_API_KEY` in `.env` (see `.env.example`) - without it, every projection
-  continues to degrade to Dixon-Coles-only exactly as before, same honest fallback
-  posture as everywhere else in this model layer. Not live-verified against the
-  real API in the building session (obtaining a key requires account creation,
-  which the agent building this did not do on the user's behalf) - fully unit/
-  integration tested against realistic mocked payloads instead; a real
-  `fpl sync-live-odds` run is the next actual live-verification step once a key
-  is configured.
+- **Live pre-match odds blending is reachable, opt-in, and live-verified against real
+  GW1 data (2026-08-20, after the user configured their own free key).** `fixture_odds_live`
+  (migration `0014`) + `ingestion/odds_live_source.py` (the-odds-api.com, free tier,
+  no cost, ~500 credits/month, `h2h`+`totals` × 1 region = 2 credits per
+  `fpl sync-live-odds` call covering every upcoming fixture in one request - ample
+  for a full season) + `fpl sync-live-odds` populate real pre-match quotes, matched
+  to FPL fixtures via the existing `market_identity` crosswalk.
+  `models/expected_points.py::_fixture_odds_row` falls back to this table only when
+  no historical (played-match) odds row exists for a fixture - the backtest/
+  historical path is completely unaffected. Requires `ODDS_API_KEY` in `.env` (see
+  `.env.example`) - without it, every projection degrades to Dixon-Coles-only
+  exactly as before.
+
+  **Two real bugs found and fixed during the first live run against real GW1 data,
+  neither caught by mocked-payload testing:** (1) the-odds-api returns clubs' full
+  names ("Manchester United") while FPL's own `teams.name` is the short display
+  form ("Man Utd") - 6 of GW1's 10 fixtures failed to match until a local alias
+  table (`_ODDS_API_TEAM_NAME_ALIASES`) was added to translate the known current
+  divergences before the existing crosswalk runs. (2) `parse_live_odds_event`
+  originally always took `bookmakers[0]` - live-verified that for every single GW1
+  fixture, the first-listed UK bookmaker had only the `h2h` market priced this far
+  from kickoff, while several later-listed bookmakers already had the `totals` line;
+  since the blend requires the full 1X2+totals set, this meant the feature was a
+  silent no-op end to end (odds fetched and matched correctly, but never actually
+  blended) despite passing every mocked test. Now searches bookmakers for the first
+  one with both markets complete, falling back to h2h-only (same single-bookmaker,
+  not-averaged design, just not blindly index-0). Real, measured effect on the live
+  pool: `fpl build-team`'s total GW1 xP moved 36.93 → 39.4 and the captain pick
+  changed from a cheap defender to Arsenal's keeper, correctly reflecting Arsenal's
+  real 1.17 home-win market odds against a big underdog - signal Dixon-Coles alone
+  (fitted on prior-season results, blind to this specific market reaction) was
+  underweighting. Both fixes are additive, don't touch the historical/backtest path,
+  and are covered by regression tests reproducing the exact real failure observed.
 - **Backtest baseline is historical-only.** `fpl backtest` proves the model against 2024-25-style
   historical seasons (once backfilled); it says nothing yet about live in-season accuracy —
   revisit once real 2026-27 GW1-5 results exist to compare against.
