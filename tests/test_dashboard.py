@@ -21,6 +21,8 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "Availability risks" in result
     assert "Squad Changes" in result
     assert "Transfer News" in result
+    assert "Price Moves" in result
+    assert "Latest Recommendations" in result
     assert "System health" in result
     assert f'content="{60}"' in result  # meta-refresh tag present, tightened from 300 to 60s
 
@@ -54,6 +56,43 @@ def test_dashboard_squad_changes_panel_renders_real_change_events(db_conn):
     assert "moved club" in result
     assert "T1" in result and "T2" in result  # team short names resolved for the club-change row
     assert "injured" in result  # status label resolved, not the raw 'i' code
+
+
+def test_dashboard_price_moves_panel_shows_a_real_price_change(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "UPDATE player_price_history SET valid_until='t1' WHERE player_id=1"
+    )
+    db_conn.execute(
+        "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES (1, 999, 't1', NULL)"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "99.9m" in result  # the new price
+    assert "price-up" in result
+
+
+def test_dashboard_price_moves_panel_honest_empty_state_preseason(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "No price changes yet" in result
+
+
+def test_dashboard_latest_recommendations_panel_shows_real_decisions(db_conn):
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(db_conn, "transfer", "Bruno G. -> Anderson nets +1.18 xP", {"a": 1}, confidence="low")
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Bruno G. -&gt; Anderson nets +1.18 xP" in result or "Bruno G. -> Anderson nets +1.18 xP" in result
+    assert "transfer" in result
 
 
 def test_generate_dashboard_html_escapes_untrusted_text(db_conn):

@@ -29,6 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from fpl_agent.database.decisions import list_decisions
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.fixtures import live_or_reference_event
 from fpl_agent.models.live_bonus import compute_live_bonus
@@ -316,6 +317,58 @@ def _squad_changes_html(conn: sqlite3.Connection, limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+def _price_changes_html(conn: sqlite3.Connection, limit: int = 8) -> str:
+    """Real, already-tracked price moves (player_price_history's own
+    valid_from/valid_until change-tracking, no new schema) - each player's
+    most recently-superseded price row paired with their current one,
+    ordered by when the change actually happened. Direct answer to "we get
+    new data on every batch, show me what changed" (2026-08-20) - a real
+    per-sync delta feed, not just a static snapshot."""
+    rows = conn.execute(
+        "SELECT old.player_id, old.value_tenths AS old_value, cur.value_tenths AS new_value, "
+        "old.valid_until AS changed_at, p.web_name, t.short_name AS team "
+        "FROM player_price_history old "
+        "JOIN player_price_history cur ON cur.player_id = old.player_id AND cur.valid_until IS NULL "
+        "JOIN players p ON p.id = old.player_id "
+        "JOIN teams t ON t.id = p.team_id "
+        "WHERE old.valid_until IS NOT NULL AND old.value_tenths != cur.value_tenths "
+        "ORDER BY old.valid_until DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No price changes yet this preseason - the honest state, not a gap.</div>"
+    lines = []
+    for r in rows:
+        rose = r["new_value"] > r["old_value"]
+        arrow = "&#9650;" if rose else "&#9660;"
+        cls = "price-up" if rose else "price-down"
+        lines.append(
+            f"<div class='price-item'><span class='{cls}'>{arrow}</span> "
+            f"<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])}</span> "
+            f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m"
+            f"<span class='change-time'>{_esc(_relative_time(r['changed_at']))}</span></div>"
+        )
+    return "\n".join(lines)
+
+
+def _recent_decisions_html(conn: sqlite3.Connection, limit: int = 5) -> str:
+    """The real decision journal (every build-team/transfers/captain/chip run
+    already logs itself here) surfaced directly - "what has the algorithm
+    actually recommended, and when" (2026-08-20 ask), reusing existing,
+    already-tested persistence rather than a new feed."""
+    decisions = list_decisions(conn, limit=limit)
+    if not decisions:
+        return "<div class='empty-state'>No decisions logged yet.</div>"
+    lines = []
+    for d in decisions:
+        lines.append(
+            f"<div class='decision-item'><span class='decision-type'>{_esc(d.decision_type)}</span>"
+            f"<span class='decision-summary'>{_esc(d.summary)}</span>"
+            f"<span class='change-time'>{_esc(_relative_time(d.created_at))}</span></div>"
+        )
+    return "\n".join(lines)
+
+
 def _news_html(conn: sqlite3.Connection, limit: int = 6) -> str:
     items = list_recent_news(conn, limit=limit)
     if not items:
@@ -428,6 +481,20 @@ def generate_dashboard_html(conn: sqlite3.Connection, live_payload: dict | None 
     <h2>Transfer News <span class="panel-subtitle">journalism, Tier 2-4</span></h2>
     <div class="news-list">
 {_news_html(conn)}
+    </div>
+  </section>
+
+  <section class="panel panel-prices">
+    <h2>Price Moves</h2>
+    <div class="price-list">
+{_price_changes_html(conn)}
+    </div>
+  </section>
+
+  <section class="panel panel-decisions">
+    <h2>Latest Recommendations <span class="panel-subtitle">what the algorithm just decided</span></h2>
+    <div class="decision-list">
+{_recent_decisions_html(conn)}
     </div>
   </section>
 </div>
@@ -565,6 +632,18 @@ _CSS = """
     font-size: 0.82rem; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
   .change-desc { color: var(--fg); }
   .change-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+
+  .price-list { display: flex; flex-direction: column; gap: 4px; }
+  .price-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;
+    background: var(--surface-2); border-radius: 6px; }
+  .price-up { color: var(--ok); font-weight: 700; }
+  .price-down { color: var(--bad); font-weight: 700; }
+
+  .decision-list { display: flex; flex-direction: column; gap: 6px; }
+  .decision-item { display: flex; flex-direction: column; gap: 2px; font-size: 0.82rem; padding: 8px 10px;
+    background: var(--surface-2); border-radius: 8px; }
+  .decision-type { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); font-weight: 700; }
+  .decision-summary { color: var(--fg); }
 
   /* --- System health chips --- */
   .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
