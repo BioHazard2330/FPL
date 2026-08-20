@@ -36,6 +36,7 @@ from fpl_agent.backtesting.harness import (
 )
 from fpl_agent.models.minutes_distribution import expected_appearance_points, minutes_bucket_probabilities
 from fpl_agent.models.player_regression import player_shrunk_rates
+from fpl_agent.models.team_strength_dc import expected_goals, fit_dixon_coles, load_matches_for_fitting
 
 FEATURE_NAMES = [
     "is_gkp", "is_def", "is_mid", "is_fwd",
@@ -45,14 +46,61 @@ FEATURE_NAMES = [
     "p_full", "p_partial", "effective_minutes_fraction",
     "goals_rate", "assists_rate", "yellow_card_rate",
     "appearance",
+    "team_exp_goals", "opp_exp_goals", "is_home",
 ]
 _POSITIONS = ("GKP", "DEF", "MID", "FWD")
 
+# Fallback when a team wasn't in the as-of-date fitting window (early-season/
+# insufficient lookback) - the same flat league-average this project's other
+# Dixon-Coles consumers fall back to (expected_points.py::_LEAGUE_AVERAGE_GOALS),
+# duplicated here as a plain float rather than importing a private constant
+# from a different model module.
+_LEAGUE_AVERAGE_GOALS = 1.3
 
-def _feature_row(conn: sqlite3.Connection, player_id: int, season: str, position: str, as_of_date: str) -> list[float] | None:
+
+def _fit_round_dc_model(conn: sqlite3.Connection, as_of_date: str):
+    """One fit per round (not per row) - Dixon-Coles fitting is a real
+    optimization, too expensive to redo for every one of tens of thousands of
+    player-rows. Returns None when there's not enough history to fit
+    honestly (identical bar fit_dixon_coles/load_matches_for_fitting already
+    enforce) - callers must treat that as "no fixture signal available", not
+    an error, same as every other consumer of this fit in this codebase."""
+    matches, team_ids = load_matches_for_fitting(conn, as_of_date)
+    if len(team_ids) < 2 or not matches:
+        return None
+    try:
+        return fit_dixon_coles(matches, team_ids)
+    except RuntimeError:
+        return None
+
+
+def _match_fixture(conn: sqlite3.Connection, understat_match_id: str, season: str, match_date: str, own_team_id: int):
+    """market_team_id is the same id space match_results_history's
+    home_team_id/away_team_id use (both tables resolve through the same
+    market_identity crosswalk) - confirmed live, no extra join table needed.
+    Returns (opponent_team_id, is_home) or None if the match can't be
+    resolved (e.g. a genuinely blank/postponed date with no football-data.co.uk
+    row - rare, handled the same honest-fallback way as everywhere else)."""
+    row = conn.execute(
+        "SELECT home_team_id, away_team_id FROM match_results_history "
+        "WHERE season=? AND match_date=? AND (home_team_id=? OR away_team_id=?)",
+        (season, match_date, own_team_id, own_team_id),
+    ).fetchone()
+    if row is None:
+        return None
+    is_home = row["home_team_id"] == own_team_id
+    opponent = row["away_team_id"] if is_home else row["home_team_id"]
+    return opponent, is_home
+
+
+def _feature_row(
+    conn: sqlite3.Connection, row, season: str, position: str, as_of_date: str, dc_model,
+) -> list[float] | None:
     """None means leakage-excluded (same bar run_backtest applies - fewer
     than 4 pre-cutoff empirical matches would otherwise pull in live,
-    undated state via expected_minutes())."""
+    undated state via expected_minutes()). `dc_model` is the round's shared
+    fit (or None) - passed in rather than fit per-row, see _fit_round_dc_model."""
+    player_id = row["player_id"]
     mp = minutes_bucket_probabilities(conn, player_id, season, as_of_date=as_of_date)
     if mp.source != "empirical":
         return None
@@ -61,6 +109,21 @@ def _feature_row(conn: sqlite3.Connection, player_id: int, season: str, position
     goals_rate, assists_rate, yellow_card_rate = _scoring_rates(conn, season, position)
     effective_minutes_fraction = mp.p_partial * _PARTIAL_MINUTES_FRACTION + mp.p_full
     appearance = expected_appearance_points(mp)
+
+    team_exp_goals = opp_exp_goals = _LEAGUE_AVERAGE_GOALS
+    is_home = 0.5  # unknown - neither clearly home nor away, a neutral fallback
+    if dc_model is not None:
+        fixture = _match_fixture(conn, row["understat_match_id"], season, row["match_date"], row["market_team_id"])
+        if fixture is not None:
+            opponent_id, home = fixture
+            if row["market_team_id"] in dc_model.teams and opponent_id in dc_model.teams:
+                home_goals, away_goals = expected_goals(
+                    dc_model,
+                    row["market_team_id"] if home else opponent_id,
+                    opponent_id if home else row["market_team_id"],
+                )
+                team_exp_goals, opp_exp_goals = (home_goals, away_goals) if home else (away_goals, home_goals)
+                is_home = 1.0 if home else 0.0
 
     return [
         1.0 if position == "GKP" else 0.0,
@@ -73,6 +136,7 @@ def _feature_row(conn: sqlite3.Connection, player_id: int, season: str, position
         mp.p_full, mp.p_partial, effective_minutes_fraction,
         goals_rate, assists_rate, yellow_card_rate,
         appearance,
+        team_exp_goals, opp_exp_goals, is_home,
     ]
 
 
@@ -90,6 +154,7 @@ def build_dataset(conn: sqlite3.Connection, seasons: list[str]) -> tuple[np.ndar
         boundaries = starts + [None]
         for i in range(len(starts)):
             round_start, round_end = boundaries[i], boundaries[i + 1]
+            dc_model = _fit_round_dc_model(conn, round_start)
             clause = "AND match_date < ?" if round_end else ""
             params = (season, round_start) + ((round_end,) if round_end else ())
             rows = conn.execute(
@@ -104,7 +169,7 @@ def build_dataset(conn: sqlite3.Connection, seasons: list[str]) -> tuple[np.ndar
                 actual = reconstruct_actual_points(conn, row, season)
                 if actual is None:
                     continue
-                features = _feature_row(conn, row["player_id"], season, position, round_start)
+                features = _feature_row(conn, row, season, position, round_start, dc_model)
                 if features is None:
                     continue
                 X_rows.append(features)
