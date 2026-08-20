@@ -622,7 +622,15 @@ def build_team(sync: bool):
         conn.close()
         raise SystemExit(1)
 
-    gw1_xp = primary.result.total_xp
+    # NOT primary.result.total_xp - that sums the full 15-man squad at equal
+    # weight (bench included, captain not doubled), which understates the real
+    # projected GW score. The honest figure is the 11 starters plus one extra
+    # copy of the captain's median (real FPL scoring doubles the armband).
+    gw1_xp = round(
+        sum(c.median for c in primary.xi.starting)
+        + (primary.xi.captain.median if primary.xi.captain else 0.0),
+        2,
+    )
     five_gw_xp = sum(
         expected_points_window(conn, c.player_id, n_gw=5).total_median for c in primary.xi.starting
     )

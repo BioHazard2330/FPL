@@ -109,8 +109,24 @@ def optimise_squad(
 
     prob = pulp.LpProblem("fpl_squad", pulp.LpMaximize)
     x = {c.player_id: pulp.LpVariable(f"x_{c.player_id}", cat="Binary") for c in pool}
+    # Captain doubles points in real FPL scoring (section 65), so a plain Sum(xp)
+    # objective systematically undervalues explosive premiums relative to their
+    # price - their raw xp has to "pay for itself" once, when in practice the
+    # squad's best player earns 2x every week as captain. `cap` picks exactly one
+    # squad member to get one extra copy of their own xp in the objective, the
+    # same formulation public FPL squad-optimiser tools use. Left unconstrained to
+    # starters-only deliberately: the player receiving this bonus is by
+    # construction the single highest-xp squad member, who `pick_starting_xi`'s
+    # own greedy top-xp fill will always start anyway.
+    cap = {c.player_id: pulp.LpVariable(f"cap_{c.player_id}", cat="Binary") for c in pool}
 
-    prob += pulp.lpSum(c.xp * x[c.player_id] for c in pool)
+    prob += (
+        pulp.lpSum(c.xp * x[c.player_id] for c in pool)
+        + pulp.lpSum(c.xp * cap[c.player_id] for c in pool)
+    )
+    prob += pulp.lpSum(cap[c.player_id] for c in pool) == 1
+    for c in pool:
+        prob += cap[c.player_id] <= x[c.player_id]
     prob += pulp.lpSum(c.price_tenths * x[c.player_id] for c in pool) <= budget_tenths
 
     for position, required in position_requirements.items():

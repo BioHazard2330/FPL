@@ -51,9 +51,19 @@ def team_churn_ratio(conn: sqlite3.Connection, team_id: int, season: str | None 
     market_team_id = get_or_create_market_team(conn, "fpl", team_row["name"])
 
     last_season = prior_season(season)
+    # player_id IS NOT NULL: rows where the Understat->FPL crosswalk never
+    # resolved a name (fringe/loan/departed players never entering this
+    # season's `players` table) must be excluded before GROUP BY - SQL groups
+    # all NULLs together into one artificial "contributor", so dozens of
+    # genuinely separate sub-threshold cameo appearances silently sum past
+    # MIN_CONTRIBUTOR_MINUTES as a single phantom entry. Confirmed live: this
+    # inflated Man City's churn ratio to 0.60 (a single NULL-id blob carrying
+    # 21520 of the team's 36733 total contributor-minutes) when the real
+    # figure, once excluded, is ~0.03 (just Bobb's departure).
     contributors = conn.execute(
         "SELECT player_id, SUM(minutes) AS mins FROM player_match_stats_history "
-        "WHERE market_team_id=? AND season=? GROUP BY player_id HAVING SUM(minutes) >= ?",
+        "WHERE market_team_id=? AND season=? AND player_id IS NOT NULL "
+        "GROUP BY player_id HAVING SUM(minutes) >= ?",
         (market_team_id, last_season, MIN_CONTRIBUTOR_MINUTES),
     ).fetchall()
     if not contributors:

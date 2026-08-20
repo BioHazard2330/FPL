@@ -856,6 +856,93 @@ data already sitting unused in `player_season_history.defensive_contribution`.
   disclosed scope boundary, not an oversight - revisit only if a genuinely
   free live-match-event source is ever found.
 
+## Competitor-scope check: real journalist GW1 teams vs ours (2026-08-20)
+
+User asked directly: what do current journalists/community tools (Fantasy Football
+Scout, RotoWire, allaboutfpl, etc) pick for GW1 2026-27, and why doesn't our
+squad look anything like it. Researched live (WebSearch), then ran `fpl
+build-team` for real and compared. Consensus across every source checked:
+Haaland is the near-unanimous captain ("nobody gets punished for this obvious
+pick"), Bruno Fernandes is the standard backup armband, both are template
+picks. Our squad (pre-fix) had **neither** - not as a deliberate differential
+call, but because of two real, confirmed bugs, found by refusing to accept
+"the optimizer said so" as an explanation and checking the arithmetic by hand.
+
+- **Bug 1 - `optimise_squad`'s ILP objective had zero captain-multiplier
+  awareness (`optimization/squad.py`).** It maximized plain Σxp over 15
+  players under budget; the captain was picked afterward as whoever ended up
+  highest-xp in the chosen squad. Real FPL scoring doubles the captain's
+  points every week - a squad-construction objective that ignores this
+  systematically undervalues explosive-ceiling premiums relative to price,
+  since their raw xp has to "pay for itself" once instead of the ~2x it's
+  actually worth on the manager's best week. Fixed by adding one extra binary
+  variable per candidate (`cap_i <= x_i`, `Σcap_i == 1`) contributing one more
+  copy of `xp` to the objective for whichever squad member it lands on - the
+  same formulation public FPL squad-optimiser tools use. Left unconstrained to
+  starters-only deliberately: the player receiving the bonus is by
+  construction the single highest-xp squad member, who `pick_starting_xi`'s
+  own greedy top-xp fill always starts anyway - verified true in practice,
+  not just assumed.
+- **Bug 2 - the CLI's headline "GW1 expected points" number was silently
+  wrong (`cli/main.py::build_team`).** It printed `primary.result.total_xp`,
+  a plain sum over the full 15-man squad at equal weight - bench included,
+  captain not doubled. Real "how many points do we expect this GW" is the 11
+  starters' median summed plus one extra copy of the captain's median. Fixed
+  to compute that directly instead of reusing the ILP's internal bookkeeping
+  field for a different purpose than it was designed for.
+- **Bug 3, found while sanity-checking why Haaland still didn't make the
+  squad after fixing 1+2 - `models/squad_churn.py`'s contributor query
+  silently merged every unresolved Understat player-appearance in the league
+  into one artificial per-team "contributor" via SQL's NULL-grouping
+  behavior.** `player_match_stats_history.player_id` is NULL wherever the
+  Understat name crosswalk never resolved (fringe/loan/departed players who
+  never entered this season's `players` table) - confirmed live, 4222 of
+  11490 rows (36.7%) across the whole table. `GROUP BY player_id` groups all
+  NULLs into a single row, so dozens of genuinely separate,
+  individually-sub-threshold cameo appearances summed together and blew past
+  `MIN_CONTRIBUTOR_MINUTES=450` as one phantom "departed" contributor -
+  regardless of whether any one of them was ever a real contributor. Verified
+  by hand for Man City: a single NULL-id blob carried 21520 of the team's
+  36733 total contributor-minutes, inflating the reported churn ratio to
+  0.60 (the single highest in the pool, capped to the 0.4 shrink cap) when
+  the real figure - Bobb's departure alone - is ~0.03. Fixed with
+  `AND player_id IS NOT NULL` in the contributor query. **Recomputed churn
+  ratios for all 20 teams post-fix: every value now falls in a plausible
+  0.0-0.21 range** (was 0.0-0.60), a systemic improvement across the whole
+  league's preseason calibration, not just Man City/Haaland.
+- **Same-session proactive fix, not yet triggered but a real latent trap:**
+  `ingestion/cross_league_source.py::_candidate_players` used
+  `id NOT IN (SELECT ... WHERE season=?)` against the same NULL-contaminated
+  table. SQL's `NOT IN` silently matches nothing at all (three-valued logic,
+  not an error) if its subquery returns even one NULL. Harmless today only
+  because 2026-27 has zero synced matches yet (the subquery is empty) - would
+  have silently zeroed out every future `backfill-cross-league` candidate the
+  moment in-season backfill produces its first unresolved row. Fixed
+  defensively with `AND player_id IS NOT NULL` in both `NOT IN` subqueries
+  before it could ever fire for real.
+- **Live-verified end to end**, real synced 587-player pool, `fpl build-team`:
+  GW1 total 54.66 (post reporting-fix, pre churn-fix) -> 59.61 (post
+  churn-fix), Bruno Fernandes entered the squad as captain (matches
+  journalist consensus's "next-best if not Haaland" pick exactly). 366/366
+  tests pass throughout.
+- **What this does NOT close, stated honestly rather than forced:** Haaland
+  himself still isn't in the optimizer's squad even after both fixes.
+  Verified this is the model's genuine optimum, not a residual bug - directly
+  tested by forcing him into the ILP and re-solving: the forced-Haaland
+  objective is measurably lower (70.55 vs 71.53 unforced) than leaving him
+  out. His real per-90 production checks out fine by hand against his actual
+  27-goal/8-assist prior season (component math lands within a few tenths of
+  his 6.85 median), but at £15.5m - the single most expensive player in the
+  game - his xp-per-cost (0.44) is genuinely below several cheaper options
+  this squad already needed anyway (Fernandes 0.54, Semenyo 0.68). This is a
+  real, known tension in FPL strategy: pure EV-per-cost optimization under a
+  hard budget cap doesn't always agree with "the popular pick," and
+  journalist "best team" articles are also shaped by template-safety and
+  rank-variance-avoidance psychology ("nobody gets punished for the obvious
+  pick") that a pure optimizer has no reason to weight. Not fabricating
+  confidence either way - this is a legitimate, disclosed divergence, not
+  silently glossed over.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**

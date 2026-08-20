@@ -75,10 +75,19 @@ def _candidate_players(conn: sqlite3.Connection, season: str) -> list[sqlite3.Ro
     ever) and zero player_match_stats_history this season (the primary
     Understat path has nothing for them either) - genuinely new to the
     English top flight, the only case this fallback should fire for."""
+    # player_id IS NOT NULL in both subqueries: SQL's NOT IN silently matches
+    # nothing at all (three-valued logic, not an error) if its subquery ever
+    # returns a single NULL - a real, currently-latent trap, since
+    # player_match_stats_history can contain NULL player_id rows for
+    # Understat entries that never resolved to an FPL id (confirmed live,
+    # squad_churn.py hit the same table's NULL rows). Harmless today only
+    # because no 2026-27 matches are synced yet (the WHERE season=? subquery
+    # is empty) - would silently zero out every future backfill-cross-league
+    # candidate the moment in-season backfill produces even one unresolved row.
     return conn.execute(
         "SELECT id, first_name, second_name FROM players WHERE removed=0 "
-        "AND id NOT IN (SELECT DISTINCT player_id FROM player_season_history) "
-        "AND id NOT IN (SELECT DISTINCT player_id FROM player_match_stats_history WHERE season=?)",
+        "AND id NOT IN (SELECT DISTINCT player_id FROM player_season_history WHERE player_id IS NOT NULL) "
+        "AND id NOT IN (SELECT DISTINCT player_id FROM player_match_stats_history WHERE season=? AND player_id IS NOT NULL)",
         (season,),
     ).fetchall()
 
