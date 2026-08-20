@@ -88,6 +88,37 @@ def _reference_event(conn: sqlite3.Connection) -> int:
     return 1
 
 
+def current_live_event(conn: sqlite3.Connection) -> int | None:
+    """The event id of a genuinely in-progress fixture right now
+    (started=1, finished=0), or None if nothing is live. Deliberately
+    independent of events.is_next/is_current - real FPL behavior flips
+    is_next to the FOLLOWING gameweek the moment a deadline passes,
+    regardless of whether that gameweek's own matches have kicked off or
+    finished, since is_next/is_current answer "what's next to plan
+    transfers/captaincy for", not "what's being played right now". Those
+    coincide during preseason (nothing is live either way) but diverge for
+    the entire real GW1 match window: the deadline passes at 17:30, the
+    first kickoff isn't until ~19:00, and matches run through the weekend
+    while the gameweek's own `finished` flag doesn't flip until bonus is
+    confirmed days later - `_reference_event()` would report GW2 as
+    "current" for that whole window even though GW1 is what's actually
+    live. Live-tracking callers need this function, not `_reference_event`."""
+    row = conn.execute(
+        "SELECT DISTINCT event FROM fixtures WHERE started=1 AND finished=0 ORDER BY event LIMIT 1"
+    ).fetchone()
+    return row["event"] if row else None
+
+
+def live_or_reference_event(conn: sqlite3.Connection) -> int | None:
+    """Prefer a genuinely in-progress gameweek over the planning-oriented
+    `_reference_event()` - use this for anything that needs "what's live
+    right now" (live-bonus, live-watch, the dashboard's Live Tracking
+    panel), never for transfer/captaincy/projection planning, which
+    correctly wants the next actionable deadline instead."""
+    live = current_live_event(conn)
+    return live if live is not None else _reference_event(conn)
+
+
 @dataclass(frozen=True)
 class FixtureCountAnomaly:
     event: int

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fpl_agent.models.availability import list_availability
-from fpl_agent.models.fixtures import _reference_event
+from fpl_agent.models.fixtures import live_or_reference_event
 from fpl_agent.models.live_bonus import compute_live_bonus
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.ingestion.news_source import list_recent_news
@@ -186,7 +186,7 @@ class _LiveWindow:
 
 
 def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWindow:
-    event = _reference_event(conn)
+    event = live_or_reference_event(conn)
     if event is None:
         return _LiveWindow("unknown", None, None, "")
 

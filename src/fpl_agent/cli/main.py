@@ -37,7 +37,7 @@ from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.scheduler.status import check_scheduler_registered
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
-from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
+from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws, live_or_reference_event
 from fpl_agent.models.live_bonus import LiveBonusRow, compute_live_bonus, diff_live_rows
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
@@ -493,8 +493,12 @@ def _maybe_fetch_live_payload(conn) -> dict | None:
     """Only issues a network call when a fixture is genuinely in progress -
     cheap and honest, matches this project's live-bonus CLI command's own
     fetch pattern. Returns None outside any live window (the common case,
-    including all of preseason) with zero network traffic."""
-    event_num = _reference_event(conn)
+    including all of preseason) with zero network traffic. Uses
+    live_or_reference_event(), not _reference_event() directly - the latter
+    would report the FOLLOWING gameweek for the entire real GW1 match
+    window (is_next flips at the deadline, not at kickoff or full-time),
+    which would silently never detect the live fixture at all."""
+    event_num = live_or_reference_event(conn)
     if event_num is None:
         return None
     row = conn.execute(
@@ -617,7 +621,11 @@ def live_bonus_cmd(event_num: int | None):
     on bash, or the PowerShell equivalent)."""
     conn = get_connection()
     if event_num is None:
-        event_num = _reference_event(conn)
+        # live_or_reference_event(), not _reference_event() - during the
+        # entire real GW1 match window is_next has already flipped to GW2
+        # (it tracks the deadline, not kickoff/full-time), which would make
+        # the default here silently check the wrong, not-yet-started event.
+        event_num = live_or_reference_event(conn)
         if event_num is None:
             click.echo("no reference gameweek found (no upcoming fixtures)", err=True)
             conn.close()
@@ -696,7 +704,14 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
         squad_ids = {c.player_id for c in report.structures[0].result.squad}
         click.echo(f"no --squad given - tracking the current recommended squad ({len(squad_ids)} players)")
 
-    event_num = _reference_event(conn)
+    # live_or_reference_event(), not _reference_event() - is_next flips to
+    # the FOLLOWING gameweek the moment a deadline passes, well before that
+    # gameweek's own matches kick off (and it stays flipped through the
+    # whole live weekend, since events.finished only flips once bonus is
+    # confirmed days later) - defaulting to _reference_event() here would
+    # make live-watch silently watch the wrong, not-yet-started gameweek
+    # for the entire real GW1 window.
+    event_num = live_or_reference_event(conn)
     if event_num is None:
         click.echo("no reference gameweek found (no upcoming fixtures)", err=True)
         conn.close()
