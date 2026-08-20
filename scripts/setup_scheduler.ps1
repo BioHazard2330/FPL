@@ -17,13 +17,24 @@ param(
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $FplExe = Join-Path $ProjectRoot ".venv\Scripts\fpl.exe"
+$HiddenLauncher = Join-Path $PSScriptRoot "run_scheduled_hidden.vbs"
 
 if (-not (Test-Path $FplExe)) {
     Write-Error "fpl.exe not found at $FplExe - run 'pip install -e .[dev]' in the project venv first."
     exit 1
 }
+if (-not (Test-Path $HiddenLauncher)) {
+    Write-Error "run_scheduled_hidden.vbs not found at $HiddenLauncher - it should ship alongside this script."
+    exit 1
+}
 
-$Action = New-ScheduledTaskAction -Execute $FplExe -Argument "run-scheduled" -WorkingDirectory $ProjectRoot
+# Routed through wscript.exe + a tiny VBS launcher (see run_scheduled_hidden.vbs)
+# instead of executing fpl.exe directly - a console-subsystem exe launched
+# straight by Task Scheduler pops a visible command prompt every run, which
+# was a real, reported annoyance (a window flashing open every 60 minutes
+# showing raw CLI output). This suppresses that window entirely.
+$Action = New-ScheduledTaskAction -Execute "wscript.exe" `
+    -Argument "`"$HiddenLauncher`" `"$FplExe`" `"run-scheduled`"" -WorkingDirectory $ProjectRoot
 # RepetitionDuration must be a valid ISO 8601 duration Task Scheduler's XML
 # schema accepts - [TimeSpan]::MaxValue (~10,675,199 days) is NOT, and
 # Register-ScheduledTask below throws on it while still falling through to

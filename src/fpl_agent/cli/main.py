@@ -449,8 +449,8 @@ def run_scheduled():
     click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
 
     try:
-        _write_dashboard()
-        logger.info("dashboard regenerated at %s", DASHBOARD_PATH)
+        dashboard_path = _write_dashboard()
+        logger.info("dashboard regenerated at %s", dashboard_path)
     except Exception:
         logger.exception("dashboard regeneration failed - not fatal to the sync itself")
 
