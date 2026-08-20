@@ -11,7 +11,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-from fpl_agent.alerts.engine import TerminalNotifier, deliver_pending_alerts, pending_alerts
+from fpl_agent.alerts.engine import configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
 from fpl_agent.config import load_dotenv
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
@@ -436,7 +436,7 @@ def run_scheduled():
     )
 
     conn = get_connection()
-    alerts = deliver_pending_alerts(conn, TerminalNotifier())
+    alerts = deliver_pending_alerts(conn, configured_notifiers(conn))
     cadence = recommended_cadence(conn)
     conn.close()
 
@@ -565,11 +565,12 @@ def changes(limit: int, event_type: str | None):
 @cli.command()
 @click.option("--deliver", is_flag=True, help="mark alerts as delivered so they won't show again")
 def alerts(deliver: bool):
-    """Show pending HIGH+ severity alerts (section 84-86). Terminal-only channel."""
+    """Show pending HIGH+ severity alerts (section 84-86). Terminal channel
+    always fires; Telegram/Discord also fire if configured (.env.example)."""
     conn = get_connection()
 
     if deliver:
-        sent = deliver_pending_alerts(conn, TerminalNotifier())  # notifier.send() does the printing
+        sent = deliver_pending_alerts(conn, configured_notifiers(conn))  # notifier.send() does the printing
         if not sent:
             click.echo("no pending alerts")
     else:

@@ -754,22 +754,62 @@ free with this project's real data sources - full design doc:
   (traditionally higher-scoring than the EPL) discounted to ~0.83, Serie A
   (traditionally more defensive) boosted to ~1.12. `fpl build-team` still
   runs clean post-wiring.
-- **Deliberately out of scope, real and valuable, documented rather than
-  silently dropped** (same pattern as Plan 2b): Championship-level (or other
-  EFL-division) team-strength calibration for genuinely promoted teams.
-  football-data.co.uk does carry English second-tier results (division code
-  `E1`), which could seed a promoted team's Dixon-Coles attack/defence via an
-  empirically-fit Championship->PL scaling factor - but fitting that factor
-  honestly needs a real multi-season historical promoted-team analysis
-  (comparing past promoted teams' final-Championship-season fit against
-  their actual first-PL-season fit), which is its own piece of work, not
-  attempted this pass. Also checked and ruled out cleanly (not silently
-  skipped): the-odds-api.com has no EPL outright/futures market at any tier
+- **Update, same day: Championship-level promoted-team calibration (Component
+  B), originally scoped out of this pass, was in fact built later the same
+  session (2026-08-20)** - see `models/promoted_team_calibration.py` and the
+  "Closed 2026-08-20: promoted teams had zero PL history" bullet under "What's
+  still genuinely limited" below for the full account (migration `0016`,
+  empirical Championship->PL shift, live-verified real numbers). This
+  paragraph is kept for the historical record of the original scoping
+  decision, not because the gap is still open. Also checked and ruled out
+  cleanly (not silently skipped) that same session: the-odds-api.com has no
+  EPL outright/futures market at any tier
   (`has_outrights: false` for `soccer_epl`, confirmed live against the real
   `/v4/sports` endpoint with the project's own key; the only outright markets
   offered at all are NFL/NBA/MLB/NHL/NCAA/golf/politics/World Cup) - a
   market-based team-strength signal for the squad-churn problem is a dead
   end for this free source, not a gap in this implementation.
+
+## Live-ops/reliability maturity (Pillar 3, started 2026-08-20)
+
+Pillar 3 (per [[project-fpl-architecture-roadmap]]: "register the already-built-
+but-inactive Task Scheduler job, add push-notification alert channel, wire
+drift-detection off the backtest harness") had not been started until now.
+
+- **Push-notification alert channels are built** - `alerts/engine.py` gains
+  `TelegramNotifier`/`DiscordNotifier`/`CompositeNotifier`/`configured_notifiers()`,
+  both genuinely free (Telegram Bot API and Discord webhooks have no cost),
+  both already anticipated as `.env.example` placeholders since Phase 1 - this
+  closes that out rather than introducing a new dependency. `configured_notifiers(conn)`
+  always includes `TerminalNotifier` (the original, still-default channel - a
+  deliberate user choice, section 84) and adds Telegram/Discord only when their
+  env vars are genuinely set; both CLI call sites (`fpl alerts --deliver`,
+  `fpl run-scheduled`) now use it instead of a hardcoded `TerminalNotifier()`.
+  One down channel can't silently drop alerts on a channel that IS working -
+  each network notifier catches its own delivery failure independently rather
+  than letting one exception abort the whole batch. **Found and fixed the same
+  secret-in-error-message leak class already caught once this project for
+  `odds_live_source.py`**: Telegram's bot token lives in the request URL path,
+  Discord's webhook URL IS the secret - both notifiers build their
+  `source_health.last_error`/printed-warning messages from safe fields only
+  (HTTP status code), never `str(exc)`, before it could ever ship, with a
+  regression test proving the secret never appears in the persisted error.
+  Live-verified: `fpl alerts` still runs clean, terminal-only, with the real
+  synced DB and no push config present - zero regression to existing behavior.
+- **Deliberately not done: registering the Task Scheduler job.** Not a
+  capability gap - `scripts/setup_scheduler.ps1` has been built and tested since
+  Phase 7. Registering it starts a real, persistent, unattended background
+  process on the user's machine, which is a different class of action from a
+  code change; per this project's own safety posture that's the user's call to
+  make explicitly, not something to enable unilaterally while working through a
+  gap-closure list. Run `setup_scheduler.ps1` when the user is ready for it.
+- **Deliberately not attempted: drift-detection off the backtest harness.**
+  The real mechanism (comparing live in-season prediction accuracy against the
+  backtest's historical baseline) has nothing to compare against yet - there
+  are no finished 2026-27 gameweeks to measure live drift from. Building the
+  machinery now would be exactly the kind of thing this project's own
+  discipline warns against: code that can't be live-verified before shipping,
+  same category as the EO-threshold gap. Revisit once real GW1+ results exist.
 
 ## Build status
 
@@ -1076,6 +1116,25 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   has no shipped test coverage yet — it was verified out-of-band by the reviewer with
   a standalone harness during Task 9, not by a committed test — worth adding one if
   this path is touched again.
+
+  **Re-checked 2026-08-20, claim above was too strong - corrected.** The user
+  surfaced `github.com/vaastav/Fantasy-Premier-League`; live-verified it for real
+  (`data/{season}/gws/gw{N}.csv`, back to 2016-17, free, no key) - it DOES carry a
+  real per-player-per-gameweek `selected` field, a genuine historical ownership
+  signal that does not exist anywhere else this project has found. So "no historical
+  ownership data exists at all" was wrong. What's still genuinely missing: `selected`
+  is a raw COUNT, not FPL's `selected_by_percent` - reconstructing the real percent
+  needs the total-registered-managers count for that exact historical gameweek, which
+  grows substantially through a season (fastest early on) and isn't published
+  anywhere in this source or found elsewhere free (checked `players_raw.csv`, the
+  repo's own README, no total_players field). Using a rank-percentile proxy instead
+  was considered and rejected: it would feed a uniformly-distributed rank into
+  `MAX_OWNERSHIP_PERCENT`/`MIN_OWNERSHIP_PERCENT` thresholds calibrated for real
+  ownership's heavily right-skewed shape - a scale mismatch that could produce a
+  confidently wrong backtest number, worse than today's honest
+  `insufficient_ownership_data=True` guard. User agreed (2026-08-20) not to chase
+  this further for now - real progress (a genuine data source found), but the
+  percent-reconstruction problem is unsolved, not silently worked around.
 - **Sampled effective ownership is real, but bounded and preseason-unverified end-to-end.**
   `fpl sync-eo --event N` samples ~750 of the ~10,000 Overall-league managers (rank-stratified,
   not a full census) — `eo_percent` carries a real margin of error

@@ -33,6 +33,19 @@ def get_odds_api_key() -> str | None:
     return os.environ.get("ODDS_API_KEY")
 
 
+def get_telegram_config() -> tuple[str, str] | None:
+    """Both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set - a bot token
+    alone can't send to anyone. Free (Telegram's Bot API has no cost)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    return (token, chat_id) if token and chat_id else None
+
+
+def get_discord_webhook_url() -> str | None:
+    """Free (Discord webhooks have no cost)."""
+    return os.environ.get("DISCORD_WEBHOOK_URL")
+
+
 def _load_yaml(name: str) -> dict:
     path = CONFIG_DIR / name
     if not path.exists():
