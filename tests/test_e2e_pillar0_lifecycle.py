@@ -2,6 +2,8 @@
 (synthetic football-data + Understat payloads, no live network) -> fit ->
 backtest -> persist -> query - not just each module passing in isolation,
 same bar test_e2e_lifecycle.py already set for Phase 8."""
+import json
+
 from click.testing import CliRunner
 
 from fpl_agent.cli.main import cli
@@ -35,15 +37,25 @@ _CSV = (
     + "\n".join(f"{d:02d}/09/24,Man City,Chelsea,2,0,1.45,4.8,7.2,1.9,1.95" for d in range(1, 13))
 )
 
-_SEASON_HTML = "<script>var datesData = JSON.parse('[" + ",".join(
-    f'{{"id":"{i}","isResult":true,"h":{{"title":"Man City"}},"a":{{"title":"Chelsea"}},'
-    f'"datetime":"2024-09-{i:02d} 15:00:00"}}' for i in range(1, 13)
-) + "]');</script>"
+_SEASON_HTML = json.dumps({
+    "teams": {"50": {"id": "50", "title": "Man City"}, "8": {"id": "8", "title": "Chelsea"}},
+    "players": [],
+    "dates": [
+        {"id": str(i), "isResult": True, "h": {"title": "Man City"}, "a": {"title": "Chelsea"},
+         "datetime": f"2024-09-{i:02d} 15:00:00"}
+        for i in range(1, 13)
+    ],
+})
 
-_MATCH_HTML = """<script>var rostersData = JSON.parse('{"h":{"101":{"id":"101",
-"player":"Erling Haaland","team":"Man City","minutes":"90","goals":"1","assists":"0",
-"shots":"3","xG":"0.6","xA":"0.0","key_passes":"1","yellow_card":"0","red_card":"0"}},
-"a":{}}');</script>"""
+_MATCH_HTML = json.dumps({
+    "rosters": {
+        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50", "time": "90",
+                       "goals": "1", "assists": "0", "shots": "3", "xG": "0.6", "xA": "0.0",
+                       "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
+        "a": {},
+    },
+    "shots": [], "tmpl": "",
+})
 
 
 def test_pillar0_pipeline_composes_end_to_end(db_conn, monkeypatch):

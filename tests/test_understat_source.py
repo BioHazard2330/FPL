@@ -1,65 +1,61 @@
 import json
 
-from fpl_agent.ingestion.understat_source import backfill_understat, extract_json_var, parse_understat_match_players
-
-
-def _js_escape(obj) -> str:
-    """Mimic Understat's JSON.parse('...') encoding: JSON text, then escaped
-    as a JS single-quoted string literal (the real page hex-escapes non-ASCII
-    bytes; plain JSON round-trips fine through this simplified encoder for names
-    without special characters, which is enough to test the extraction logic)."""
-    raw = json.dumps(obj)
-    escaped = raw.replace("\\", "\\\\").replace("'", "\\'")
-    return f"var testVar = JSON.parse('{escaped}');"
-
-
-def test_extract_json_var_round_trips_simple_payload():
-    payload = {"h": {"1": {"player": "Erling Haaland"}}}
-    html = f"<script>{_js_escape(payload)}</script>"
-    result = extract_json_var(html, "testVar")
-    assert result == payload
-
-
-def test_extract_json_var_raises_when_missing():
-    from fpl_agent.ingestion.understat_source import UnderstatParseError
-    import pytest
-    with pytest.raises(UnderstatParseError):
-        extract_json_var("<script>var other = JSON.parse('{}');</script>", "testVar")
+from fpl_agent.ingestion.understat_source import backfill_understat, parse_understat_match_players
 
 
 def test_parse_understat_match_players_flattens_both_sides():
     rosters = {
-        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50", "team": "Man City",
-                       "minutes": "90", "goals": "2", "assists": "0", "shots": "5", "xG": "1.8",
+        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50",
+                       "time": "90", "goals": "2", "assists": "0", "shots": "5", "xG": "1.8",
                        "xA": "0.1", "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
-        "a": {"202": {"id": "202", "player": "Cole Palmer", "team_id": "8", "team": "Chelsea",
-                       "minutes": "90", "goals": "0", "assists": "1", "shots": "2", "xG": "0.3",
+        "a": {"202": {"id": "202", "player": "Cole Palmer", "team_id": "8",
+                       "time": "90", "goals": "0", "assists": "1", "shots": "2", "xG": "0.3",
                        "xA": "0.5", "key_passes": "3", "yellow_card": "1", "red_card": "0"}},
     }
-    rows = parse_understat_match_players(rosters, match_id="12345", match_date="2024-08-17", season="2024-25")
+    team_names = {"50": "Man City", "8": "Chelsea"}
+    rows = parse_understat_match_players(rosters, match_id="12345", match_date="2024-08-17", season="2024-25",
+                                          team_names=team_names)
     assert len(rows) == 2
     haaland = next(r for r in rows if r["understat_player_id"] == "101")
     assert haaland["player_name"] == "Erling Haaland"
-    assert haaland["team_name"] == "Man City"
+    assert haaland["team_name"] == "Man City"  # resolved from team_id via the teams map, not a "team" field
     assert haaland["goals"] == 2
     assert haaland["xg"] == 1.8
-    assert haaland["minutes"] == 90
+    assert haaland["minutes"] == 90  # sourced from the real API's "time" field, not "minutes"
 
 
-_SEASON_HTML = """<script>var datesData = JSON.parse('[{"id":"555","isResult":true,
-"h":{"title":"Man City"},"a":{"title":"Chelsea"},"datetime":"2024-08-17 15:00:00"}]');</script>"""
+def test_parse_understat_match_players_raises_for_unknown_team_id():
+    rosters = {"h": {"101": {"id": "101", "player": "X", "team_id": "999", "time": "90", "goals": "0",
+                              "assists": "0", "shots": "0", "xG": "0", "xA": "0", "key_passes": "0",
+                              "yellow_card": "0", "red_card": "0"}}, "a": {}}
+    import pytest
+    with pytest.raises(KeyError):
+        parse_understat_match_players(rosters, "1", "2024-08-17", "2024-25", team_names={})
 
-_MATCH_HTML = """<script>var rostersData = JSON.parse('{"h":{"101":{"id":"101",
-"player":"Erling Haaland","team":"Man City","minutes":"90","goals":"2","assists":"0",
-"shots":"5","xG":"1.8","xA":"0.1","key_passes":"1","yellow_card":"0","red_card":"0"}},
-"a":{}}');</script>"""
+
+_SEASON_JSON = json.dumps({
+    "teams": {"50": {"id": "50", "title": "Man City"}, "8": {"id": "8", "title": "Chelsea"}},
+    "players": [],
+    "dates": [{"id": "555", "isResult": True, "h": {"title": "Man City"}, "a": {"title": "Chelsea"},
+               "datetime": "2024-08-17 15:00:00"}],
+})
+
+_MATCH_JSON = json.dumps({
+    "rosters": {
+        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50", "time": "90",
+                       "goals": "2", "assists": "0", "shots": "5", "xG": "1.8", "xA": "0.1",
+                       "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
+        "a": {},
+    },
+    "shots": [], "tmpl": "",
+})
 
 
 def test_backfill_understat_upserts_player_match_stats(db_conn):
     summary = backfill_understat(
         db_conn, "2024-25",
-        season_page_html=_SEASON_HTML,
-        match_pages={"555": _MATCH_HTML},
+        season_page_html=_SEASON_JSON,
+        match_pages={"555": _MATCH_JSON},
     )
     assert summary["matches_processed"] == 1
     assert summary["player_rows_inserted"] == 1
@@ -67,3 +63,35 @@ def test_backfill_understat_upserts_player_match_stats(db_conn):
     assert row["goals"] == 2
     assert row["xg"] == 1.8
     assert row["player_id"] is None  # no players seeded in this test -> unresolved, not fabricated
+
+
+def test_backfill_understat_skips_unplayed_fixtures(db_conn):
+    season_json = json.dumps({
+        "teams": {"50": {"id": "50", "title": "Man City"}, "8": {"id": "8", "title": "Chelsea"}},
+        "players": [],
+        "dates": [
+            {"id": "555", "isResult": True, "h": {"title": "Man City"}, "a": {"title": "Chelsea"},
+             "datetime": "2024-08-17 15:00:00"},
+            {"id": "556", "isResult": False, "h": {"title": "Arsenal"}, "a": {"title": "Fulham"},
+             "datetime": "2026-08-30 15:00:00"},
+        ],
+    })
+    summary = backfill_understat(
+        db_conn, "2024-25",
+        season_page_html=season_json,
+        match_pages={"555": _MATCH_JSON},
+    )
+    assert summary["matches_processed"] == 1  # the unplayed fixture (556) is never even requested
+
+
+def test_backfill_understat_raises_on_malformed_league_json(db_conn):
+    from fpl_agent.ingestion.understat_source import UnderstatParseError
+    import pytest
+    with pytest.raises(UnderstatParseError):
+        backfill_understat(db_conn, "2024-25", season_page_html="not valid json")
+
+
+def test_backfill_understat_raises_when_dates_key_missing(db_conn):
+    import pytest
+    with pytest.raises(KeyError):
+        backfill_understat(db_conn, "2024-25", season_page_html=json.dumps({"teams": {}, "players": []}))

@@ -1,4 +1,20 @@
-from fpl_agent.ingestion.market_identity import get_or_create_market_team, resolve_player_id
+from fpl_agent.ingestion.market_identity import (
+    get_or_create_market_team,
+    normalize_common_team_name,
+    resolve_player_id,
+)
+
+
+def test_normalize_common_team_name_translates_known_variants():
+    assert normalize_common_team_name("Manchester United") == "Man Utd"
+    assert normalize_common_team_name("Tottenham Hotspur") == "Spurs"
+    assert normalize_common_team_name("Tottenham") == "Spurs"
+    assert normalize_common_team_name("Nottingham Forest") == "Nott'm Forest"
+
+
+def test_normalize_common_team_name_leaves_unknown_names_unchanged():
+    assert normalize_common_team_name("Arsenal") == "Arsenal"
+    assert normalize_common_team_name("Liverpool") == "Liverpool"
 
 
 def _seed_team(conn, team_id=1, name="Arsenal", short="ARS"):

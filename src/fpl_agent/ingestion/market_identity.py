@@ -1,11 +1,40 @@
 """Crosswalk between free-text team/player names used by external market-data
-sources (football-data.co.uk, Understat) and this project's internal ids.
-Necessary because external sources use plain names, and historical seasons
-include teams (promoted/relegated) that aren't in the current `teams` table
-at all - market_teams is a superset identity, only sometimes linked to a
-current FPL team.
+sources (football-data.co.uk, Understat, the-odds-api.com) and this project's
+internal ids. Necessary because external sources use plain names, and
+historical seasons include teams (promoted/relegated) that aren't in the
+current `teams` table at all - market_teams is a superset identity, only
+sometimes linked to a current FPL team.
 """
 import sqlite3
+
+# get_or_create_market_team's fallback for a brand-new market team only does an
+# EXACT match against teams.name/short_name - real external sources routinely
+# use a club's full/formal name (e.g. "Manchester United", "Tottenham
+# Hotspur", "Tottenham") while FPL's own teams.name is its short display form
+# (e.g. "Man Utd", "Spurs"). Confirmed live 2026-08-20 against two independent
+# sources (the-odds-api.com, Understat) hitting the exact same class of
+# mismatch with slightly different variant spellings - centralized here so a
+# third source doesn't have to rediscover the same list. Translate a source
+# name through this BEFORE calling get_or_create_market_team; an unlisted name
+# is returned unchanged (most sources already match FPL's short form exactly,
+# e.g. "Arsenal", "Chelsea", "Liverpool" need no translation at all).
+COMMON_TEAM_NAME_ALIASES = {
+    "manchester united": "Man Utd",
+    "manchester city": "Man City",
+    "newcastle united": "Newcastle",
+    "tottenham hotspur": "Spurs",
+    "tottenham": "Spurs",
+    "nottingham forest": "Nott'm Forest",
+    "brighton and hove albion": "Brighton",
+    "brighton & hove albion": "Brighton",
+    "leeds united": "Leeds",
+    "west ham united": "West Ham",
+    "wolverhampton wanderers": "Wolves",
+}
+
+
+def normalize_common_team_name(name: str) -> str:
+    return COMMON_TEAM_NAME_ALIASES.get(name.strip().lower(), name)
 
 
 def _normalize(name: str) -> str:

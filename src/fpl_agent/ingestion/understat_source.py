@@ -1,22 +1,46 @@
-"""Shot-level per-match player stats (xG/xA/shots/key passes) scraped from
-Understat's public match pages. No official API exists; Understat embeds the
-data as `var NAME = JSON.parse('...')` inside a <script> tag on each page -
-this is the same technique documented by several open-source Understat
-readers (e.g. understatapi, soccerdata). The embedded string is JSON, further
-escaped as a JS string literal with \\xHH byte escapes for non-ASCII names -
-the unicode_escape/latin1/utf-8 round-trip below reverses that."""
+"""Shot-level per-match player stats (xG/xA/shots/key passes) from Understat's
+AJAX JSON endpoints. Understat used to embed this data as
+`var NAME = JSON.parse('...')` inside a <script> tag on each page - the
+technique documented by several open-source Understat readers (e.g.
+understatapi, soccerdata) - but confirmed live 2026-08-20 that its league/
+match pages no longer embed anything: a direct fetch returns a normal 200 and
+an ~18KB page with zero data variables anywhere in it. Inspecting the site's
+own real network requests (not guessed) showed the frontend now calls two
+plain JSON endpoints instead, with the same underlying field shapes as the
+old embedded variables:
+
+- GET /getLeagueData/{league}/{start_year} -> {"teams": {...}, "players": [...],
+  "dates": [...]} - "dates" is the direct replacement for the old `datesData`
+  (same id/isResult/datetime shape per match).
+- GET /getMatchData/{match_id} -> {"rosters": {"h": {...}, "a": {...}}, ...} -
+  the direct replacement for the old `rostersData`, same per-player fields
+  except "minutes" was renamed "time", and the old "team" (a name string) was
+  dropped in favour of "team_id" (a numeric id) - both confirmed by inspecting
+  a real response, not assumed. The name has to be recovered from
+  getLeagueData's own "teams" dict ({"71": {"id": "71", "title": "Aston
+  Villa", ...}, ...}), which is already fetched once per backfill run - no
+  extra request needed.
+
+Both endpoints 404 without an `X-Requested-With: XMLHttpRequest` header
+(confirmed empirically: User-Agent alone or Referer alone still 404s, that
+header alone is sufficient) - a lightweight "is this an AJAX call" gate, not
+real anti-bot fingerprinting, so no browser-automation dependency is needed."""
 import json
-import re
 import time
 from datetime import datetime, timezone
 
 import requests
 
-from fpl_agent.ingestion.market_identity import get_or_create_market_team, resolve_player_id
+from fpl_agent.ingestion.market_identity import (
+    get_or_create_market_team,
+    normalize_common_team_name,
+    resolve_player_id,
+)
 from fpl_agent.ingestion.sync import update_source_health
 
 _TIMEOUT_SECONDS = 15
 _MATCH_FETCH_DELAY_SECONDS = 0.3  # politeness delay, same spirit as history_sync.py
+_AJAX_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 
 
 class UnderstatFetchError(Exception):
@@ -27,29 +51,15 @@ class UnderstatParseError(Exception):
     pass
 
 
-def extract_json_var(html: str, var_name: str):
-    pattern = rf"var\s+{re.escape(var_name)}\s*=\s*JSON\.parse\('(.*?)'\);"
-    match = re.search(pattern, html, re.DOTALL)
-    if not match:
-        raise UnderstatParseError(f"could not find variable {var_name!r} in page")
-
-    raw = match.group(1)
-    try:
-        decoded = raw.encode("utf-8").decode("unicode_escape").encode("latin1").decode("utf-8")
-    except UnicodeDecodeError:
-        decoded = raw  # payload had no byte-escapes to unwind (fine for ASCII-only fixtures)
-    return json.loads(decoded)
-
-
-def _row_from_entry(entry: dict, match_id: str, match_date: str, season: str) -> dict:
+def _row_from_entry(entry: dict, match_id: str, match_date: str, season: str, team_names: dict[str, str]) -> dict:
     return {
         "understat_match_id": match_id,
         "understat_player_id": entry["id"],
         "player_name": entry["player"],
-        "team_name": entry["team"],
+        "team_name": team_names[entry["team_id"]],
         "season": season,
         "match_date": match_date,
-        "minutes": int(entry["minutes"]),
+        "minutes": int(entry["time"]),
         "goals": int(entry["goals"]),
         "assists": int(entry["assists"]),
         "shots": int(entry["shots"]),
@@ -61,11 +71,13 @@ def _row_from_entry(entry: dict, match_id: str, match_date: str, season: str) ->
     }
 
 
-def parse_understat_match_players(rosters_data: dict, match_id: str, match_date: str, season: str) -> list[dict]:
+def parse_understat_match_players(
+    rosters_data: dict, match_id: str, match_date: str, season: str, team_names: dict[str, str]
+) -> list[dict]:
     rows = []
     for side in ("h", "a"):
         for entry in rosters_data.get(side, {}).values():
-            rows.append(_row_from_entry(entry, match_id, match_date, season))
+            rows.append(_row_from_entry(entry, match_id, match_date, season, team_names))
     return rows
 
 
@@ -74,9 +86,9 @@ def _season_start_year(season: str) -> str:
 
 
 def fetch_understat_season_page(season: str) -> str:
-    url = f"https://understat.com/league/EPL/{_season_start_year(season)}"
+    url = f"https://understat.com/getLeagueData/EPL/{_season_start_year(season)}"
     try:
-        resp = requests.get(url, timeout=_TIMEOUT_SECONDS)
+        resp = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=_AJAX_HEADERS)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise UnderstatFetchError(f"failed to fetch {url}: {exc}") from exc
@@ -84,13 +96,20 @@ def fetch_understat_season_page(season: str) -> str:
 
 
 def fetch_understat_match_page(match_id: str) -> str:
-    url = f"https://understat.com/match/{match_id}"
+    url = f"https://understat.com/getMatchData/{match_id}"
     try:
-        resp = requests.get(url, timeout=_TIMEOUT_SECONDS)
+        resp = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=_AJAX_HEADERS)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise UnderstatFetchError(f"failed to fetch {url}: {exc}") from exc
     return resp.text
+
+
+def _parse_json(text: str, context: str) -> dict:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise UnderstatParseError(f"could not parse {context} as JSON: {exc}") from exc
 
 
 def _upsert_player_match_row(conn, season: str, row: dict) -> None:
@@ -120,9 +139,11 @@ def backfill_understat(
     delay: float = _MATCH_FETCH_DELAY_SECONDS,
 ) -> dict:
     try:
-        season_html = season_page_html if season_page_html is not None else fetch_understat_season_page(season)
-        matches = extract_json_var(season_html, "datesData")
-    except (UnderstatFetchError, UnderstatParseError) as exc:
+        season_json = season_page_html if season_page_html is not None else fetch_understat_season_page(season)
+        season_data = _parse_json(season_json, "league data")
+        matches = season_data["dates"]
+        team_names = {tid: normalize_common_team_name(info["title"]) for tid, info in season_data["teams"].items()}
+    except (UnderstatFetchError, UnderstatParseError, KeyError) as exc:
         update_source_health(conn, "understat", success=False, error=str(exc))
         raise
 
@@ -134,15 +155,15 @@ def backfill_understat(
         match_date = m["datetime"].split(" ")[0]
 
         if match_pages is not None:
-            match_html = match_pages.get(match_id)
-            if match_html is None:
+            match_json = match_pages.get(match_id)
+            if match_json is None:
                 continue
         else:
-            match_html = fetch_understat_match_page(match_id)
+            match_json = fetch_understat_match_page(match_id)
             time.sleep(delay)
 
-        rosters = extract_json_var(match_html, "rostersData")
-        rows = parse_understat_match_players(rosters, match_id, match_date, season)
+        rosters = _parse_json(match_json, f"match {match_id} data")["rosters"]
+        rows = parse_understat_match_players(rosters, match_id, match_date, season, team_names)
         for row in rows:
             _upsert_player_match_row(conn, season, row)
             player_rows_inserted += 1
