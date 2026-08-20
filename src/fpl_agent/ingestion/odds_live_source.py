@@ -54,17 +54,11 @@ def _find_market(bookmaker: dict, key: str) -> dict | None:
     return None
 
 
-def parse_live_odds_event(event: dict) -> dict | None:
-    bookmakers = event.get("bookmakers") or []
-    if not bookmakers:
-        return None
-    bookmaker = bookmakers[0]
-
+def _parse_bookmaker(bookmaker: dict, home_team: str, away_team: str, commence_time: str) -> dict | None:
     h2h = _find_market(bookmaker, "h2h")
     if h2h is None:
         return None
 
-    home_team, away_team = event["home_team"], event["away_team"]
     odds_by_name = {o["name"]: o["price"] for o in h2h.get("outcomes", [])}
     if home_team not in odds_by_name or away_team not in odds_by_name or "Draw" not in odds_by_name:
         return None
@@ -83,7 +77,7 @@ def parse_live_odds_event(event: dict) -> dict | None:
     return {
         "home_team": home_team,
         "away_team": away_team,
-        "commence_time": event["commence_time"],
+        "commence_time": commence_time,
         "bookmaker": bookmaker["key"],
         "home_win_odds": odds_by_name[home_team],
         "draw_odds": odds_by_name["Draw"],
@@ -91,6 +85,37 @@ def parse_live_odds_event(event: dict) -> dict | None:
         "over_2_5_odds": over_2_5,
         "under_2_5_odds": under_2_5,
     }
+
+
+def parse_live_odds_event(event: dict) -> dict | None:
+    """Picks one bookmaker's quote per event - still a single-bookmaker read, not an
+    average (documented simplification, unchanged) - but prefers the first bookmaker
+    that has BOTH a usable h2h market AND a 2.5 totals line, falling back to the
+    first bookmaker with a usable h2h market alone. Plain "always take bookmakers[0]"
+    was live-verified 2026-08-20 to leave every GW1 fixture's totals null (the
+    earliest-listed UK bookmakers hadn't priced a 2.5 line yet this far from
+    kickoff, even though several later ones already had) - since
+    models/expected_points.py currently requires the full 1X2+totals set to blend
+    at all, that meant zero fixtures ever actually blended despite odds being
+    fetched and matched successfully. Searching for a complete bookmaker fixes
+    that without changing the single-bookmaker (not averaged) design."""
+    bookmakers = event.get("bookmakers") or []
+    if not bookmakers:
+        return None
+
+    home_team, away_team = event["home_team"], event["away_team"]
+    commence_time = event["commence_time"]
+
+    first_h2h_only = None
+    for bookmaker in bookmakers:
+        parsed = _parse_bookmaker(bookmaker, home_team, away_team, commence_time)
+        if parsed is None:
+            continue
+        if parsed["over_2_5_odds"] is not None and parsed["under_2_5_odds"] is not None:
+            return parsed
+        if first_h2h_only is None:
+            first_h2h_only = parsed
+    return first_h2h_only
 
 
 _SOURCE_NAME = "odds_api"

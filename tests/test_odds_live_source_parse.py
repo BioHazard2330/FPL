@@ -93,6 +93,57 @@ def test_parse_live_odds_event_unmatched_h2h_outcome_returns_none():
     assert parse_live_odds_event(event) is None
 
 
+def test_parse_live_odds_event_skips_h2h_only_bookmaker_for_a_complete_one():
+    # Live-verified 2026-08-20: every GW1 fixture's first-listed UK bookmaker had
+    # only h2h priced this far from kickoff, while several later-listed bookmakers
+    # already had a 2.5 totals line - "always take bookmakers[0]" silently left
+    # every fixture blend-less (over_2_5_odds/under_2_5_odds always null) even
+    # though real, usable totals odds existed in the same response.
+    event = {
+        "id": "evt1", "home_team": "Arsenal", "away_team": "Chelsea",
+        "commence_time": "2026-08-22T14:00:00Z",
+        "bookmakers": [
+            {"key": "betfair_sb_uk", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Arsenal", "price": 1.8}, {"name": "Draw", "price": 3.6}, {"name": "Chelsea", "price": 4.2},
+            ]}]},
+            {"key": "coral", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Arsenal", "price": 1.79}, {"name": "Draw", "price": 3.65}, {"name": "Chelsea", "price": 4.25},
+            ]}]},
+            {"key": "williamhill", "markets": [
+                {"key": "h2h", "outcomes": [
+                    {"name": "Arsenal", "price": 1.77}, {"name": "Draw", "price": 3.7}, {"name": "Chelsea", "price": 4.3},
+                ]},
+                {"key": "totals", "outcomes": [
+                    {"name": "Over", "price": 1.9, "point": 2.5}, {"name": "Under", "price": 1.9, "point": 2.5},
+                ]},
+            ]},
+        ],
+    }
+    parsed = parse_live_odds_event(event)
+    assert parsed["bookmaker"] == "williamhill"
+    assert parsed["over_2_5_odds"] == 1.9
+    assert parsed["under_2_5_odds"] == 1.9
+
+
+def test_parse_live_odds_event_falls_back_to_h2h_only_when_none_have_totals():
+    event = {
+        "id": "evt1", "home_team": "Arsenal", "away_team": "Chelsea",
+        "commence_time": "2026-08-22T14:00:00Z",
+        "bookmakers": [
+            {"key": "betfair_sb_uk", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Arsenal", "price": 1.8}, {"name": "Draw", "price": 3.6}, {"name": "Chelsea", "price": 4.2},
+            ]}]},
+            {"key": "coral", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Arsenal", "price": 1.79}, {"name": "Draw", "price": 3.65}, {"name": "Chelsea", "price": 4.25},
+            ]}]},
+        ],
+    }
+    parsed = parse_live_odds_event(event)
+    assert parsed["bookmaker"] == "betfair_sb_uk"  # first usable h2h, no complete bookmaker exists
+    assert parsed["over_2_5_odds"] is None
+    assert parsed["under_2_5_odds"] is None
+
+
 def test_fetch_live_odds_payload_raises_without_api_key(monkeypatch):
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     with pytest.raises(OddsLiveFetchError, match="ODDS_API_KEY"):
