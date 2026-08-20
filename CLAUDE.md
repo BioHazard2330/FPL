@@ -1152,6 +1152,17 @@ directly against a leading commercial FPL prediction service.
   open-source, no new heavy transitive dependencies beyond already-present
   numpy/scipy) - real DB storage headroom confirmed too (~30MB current total
   vs the ~1-2GB approved budget).
+- **Confirmed this project has the exact same weak spot, with real numbers,
+  not just an assumption borrowed from the paper's abstract.** Bucketed the
+  now-fixed 2025-26 backtest by real actual points (`<=2` vs `>2`, the same
+  "high-return" threshold OpenFPL's paper uses): on **low-return rows
+  (n=4804)** the model clearly beats naive, MAE 0.7474 vs baseline 0.8237. On
+  **high-return rows (n=785, ~14% of the pool - real hauls, the ones that
+  actually decide captaincy/differential value)**, the model's MAE is
+  **3.8100, statistically tied with the naive baseline's 3.7895 - not a clear
+  win**, with a strong systematic under-prediction bias (-3.81 mean signed
+  error). This is real, disclosed, load-bearing evidence for prioritizing the
+  ML-ensemble initiative below, not just citing an external paper's claim.
 - **Not built this session - correctly scoped as its own initiative, not
   rushed.** A genuine ML-ensemble challenger model is comparable in size to
   Pillar 0 itself (new dependency, feature-engineering pipeline, a proper
