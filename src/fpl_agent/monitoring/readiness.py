@@ -10,6 +10,7 @@ from fpl_agent.database.backup import list_backups
 from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.squad import optimise_squad
+from fpl_agent.scheduler.status import check_scheduler_registered
 
 
 @dataclass(frozen=True)
@@ -78,9 +79,16 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
     n_changes = conn.execute("SELECT COUNT(*) FROM change_events").fetchone()[0]
     checks.append(ReadinessCheck("Change detection", "OK", f"{n_changes} event(s) recorded"))
 
-    checks.append(ReadinessCheck(
-        "Scheduler", "DEGRADED", "built (fpl run-scheduled + setup_scheduler.ps1), not registered - user's choice",
-    ))
+    scheduler_info = check_scheduler_registered()
+    if scheduler_info is not None:
+        checks.append(ReadinessCheck(
+            "Scheduler", "OK",
+            f"registered - state={scheduler_info.get('State', '?')}, next run={scheduler_info.get('NextRunTime', '?')}",
+        ))
+    else:
+        checks.append(ReadinessCheck(
+            "Scheduler", "DEGRADED", "built (fpl run-scheduled + setup_scheduler.ps1), not registered - user's choice",
+        ))
     checks.append(ReadinessCheck("Storage governor", "OK", "fpl storage / fpl cleanup active"))
 
     backups = list_backups()

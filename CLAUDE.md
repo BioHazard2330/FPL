@@ -798,13 +798,13 @@ drift-detection off the backtest harness") had not been started until now.
   regression test proving the secret never appears in the persisted error.
   Live-verified: `fpl alerts` still runs clean, terminal-only, with the real
   synced DB and no push config present - zero regression to existing behavior.
-- **Deliberately not done: registering the Task Scheduler job.** Not a
-  capability gap - `scripts/setup_scheduler.ps1` has been built and tested since
-  Phase 7. Registering it starts a real, persistent, unattended background
-  process on the user's machine, which is a different class of action from a
-  code change; per this project's own safety posture that's the user's call to
-  make explicitly, not something to enable unilaterally while working through a
-  gap-closure list. Run `setup_scheduler.ps1` when the user is ready for it.
+- **Registered 2026-08-20, after the user was asked directly and said yes.**
+  Not done unilaterally while working through a gap-closure list, per this
+  project's own safety posture - the user was explicitly asked ("register it
+  now?") once they described wanting continuous during-gameweek monitoring,
+  not before. See the dedicated "Scheduler registered" section below for the
+  two real bugs found running `setup_scheduler.ps1` for the first time ever
+  (it had only been syntax-checked before, never executed end to end).
 - **Deliberately not attempted: drift-detection off the backtest harness.**
   The real mechanism (comparing live in-season prediction accuracy against the
   backtest's historical baseline) has nothing to compare against yet - there
@@ -1558,10 +1558,11 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   build. `fpl build-team` produces a genuine first-XV recommendation from the
   live player pool; whether the user actually acts on it is their call
   (section 83: recommend only, never auto-submit).
-- **Scheduler not registered.** `fpl run-scheduled` and the Task Scheduler setup
-  script are built and tested but inactive - nothing is currently polling in
-  the background. Data goes stale the moment `fpl sync` stops being run
-  manually.
+- **Closed 2026-08-20: scheduler now registered and confirmed live** (see the
+  dedicated section above for the two real bugs its first-ever real run
+  surfaced). `fpl run-scheduled` now genuinely runs every 60 minutes via
+  Windows Task Scheduler - data no longer goes stale purely from nobody
+  running `fpl sync` manually.
 - **Price-change forecast has never been checked against a real price-change
   event.** `models/price_forecast.py`'s ±0.005 threshold is a documented starting
   point, not empirically fit — this is preseason, so no real FPL price rise/fall
@@ -1786,6 +1787,47 @@ pipeline). The now-three-source news pipeline above IS the closest
 available proxy to dedicated press-conference tracking a free-resources-only
 project can reach - not a gap silently left open, a real architecture
 boundary named plainly.
+
+## Scheduler registered + two real bugs found doing it (2026-08-20)
+
+Per the user's explicit "yes, register it" after being asked directly
+(continuous during-gameweek monitoring needs the persistent background
+process, not manual invocations - the one action category this project's
+own safety posture always required an explicit human decision for, never a
+unilateral one even under general dev authorization).
+
+- **`scripts/setup_scheduler.ps1` had never actually been run end to end
+  before this - "tested" meant syntax-checked, not executed.** Confirmed
+  live: the first real run threw `Register-ScheduledTask : The task XML
+  contains a value which is incorrectly formatted or out of range` on
+  `-RepetitionDuration ([TimeSpan]::MaxValue)` (~10,675,199 days - outside
+  what Task Scheduler's XML schema accepts), **then printed "Registered
+  scheduled task..." anyway** - a non-terminating PowerShell error with no
+  try/catch let the script fall through to its own success message while
+  registering nothing. Verified via `Get-ScheduledTask` immediately after:
+  task genuinely did not exist. Fixed both problems: replaced the invalid
+  duration with `(New-TimeSpan -Days 3650)` (~10 years, comfortably valid),
+  and wrapped the registration in `try/catch -ErrorAction Stop` so a real
+  failure is reported as one, never silently swallowed. Re-run clean:
+  `Get-ScheduledTask`/`fpl scheduler-status` both confirm the task is
+  genuinely registered (`State=Ready`, real `NextRunTime`).
+- **`fpl readiness`'s "Scheduler" row was a hardcoded string, not a real
+  check - directly contradicting this file's own stated contract** (`monitoring/readiness.py`'s
+  docstring: "Every check reflects real, live system state - no hardcoded
+  'yes' for anything not actually verified this call"). Caught because the
+  row kept reporting "not registered" immediately after the task genuinely
+  was. Fixed by extracting the Task-Scheduler query `fpl scheduler-status`
+  already ran into a shared, testable function
+  (`scheduler/status.py::check_scheduler_registered()`), now used by both
+  the CLI command and `readiness.py` - one real check, not a duplicated
+  subprocess call and a hardcoded string that could drift out of sync with
+  reality (exactly what happened). 4 new tests
+  (`tests/test_scheduler_status.py`). 382/382 tests total.
+- **Live state now**: `FPLAgentSync` task registered, runs `fpl run-scheduled`
+  every 60 minutes (resource-aware defer check still applies - low disk or
+  low+unplugged battery still skips a cycle, section 21-22, unchanged).
+  `fpl scheduler-status`/`fpl readiness` both confirm it live. Unregister
+  any time with `scripts/remove_scheduler.ps1` if this stops being wanted.
 
 ## Skill/subagent guidance
 

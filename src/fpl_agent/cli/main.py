@@ -30,6 +30,7 @@ from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
+from fpl_agent.scheduler.status import check_scheduler_registered
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
@@ -496,27 +497,15 @@ def scheduler_status():
         click.echo("scheduler-status only supports Windows Task Scheduler currently")
         return
 
-    ps_command = (
-        f"$t = Get-ScheduledTask -TaskName '{_SCHEDULER_TASK_NAME}' -ErrorAction SilentlyContinue; "
-        f"if ($t) {{ $i = Get-ScheduledTaskInfo -TaskName '{_SCHEDULER_TASK_NAME}'; "
-        f"Write-Output \"State=$($t.State)\"; Write-Output \"LastRunTime=$($i.LastRunTime)\"; "
-        f"Write-Output \"NextRunTime=$($i.NextRunTime)\"; Write-Output \"LastResult=$($i.LastTaskResult)\" }} "
-        f"else {{ Write-Output 'NOT_REGISTERED' }}"
-    )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", ps_command],
-        capture_output=True, text=True, timeout=15,
-    )
-    output = result.stdout.strip()
-
-    if not output or "NOT_REGISTERED" in output:
+    info = check_scheduler_registered(_SCHEDULER_TASK_NAME)
+    if info is None:
         click.echo(f"task '{_SCHEDULER_TASK_NAME}' not registered")
         click.echo("register with: powershell -ExecutionPolicy Bypass -File scripts\\setup_scheduler.ps1")
         return
 
     click.echo(f"task '{_SCHEDULER_TASK_NAME}':")
-    for line in output.splitlines():
-        click.echo(f"  {line}")
+    for key, value in info.items():
+        click.echo(f"  {key}={value}")
 
 
 @cli.command()
