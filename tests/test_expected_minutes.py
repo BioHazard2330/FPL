@@ -67,6 +67,42 @@ def test_injury_damps_expected_minutes_to_zero(db_conn):
     assert result.expected_minutes == 0.0
 
 
+def test_cross_league_prior_used_when_genuinely_new_to_the_league(db_conn):
+    """A brand-new signing with zero current-season AND zero PL history
+    (real 2026-27 case: this transfer window's new arrivals) must still get
+    a real, disclosed, LOW-confidence minutes estimate from their foreign-
+    league prior rather than silently collapsing to zero - discounted for
+    the genuine new-club minutes-share uncertainty."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO player_cross_league_prior (player_id, source_league, source_season, source_team_name, "
+        "minutes, goals_per90, assists_per90, xg_per90, xa_per90, league_quality_factor, retrieved_at) "
+        "VALUES (1,'La_liga','2025','Real Sociedad',3040,0.3,0.2,0.25,0.18,1.0,'t0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "cross_league_prior_new_signing"
+    assert result.confidence == "LOW"
+    # 3040/38 = 80.0 per-GW, discounted 0.6x = 48.0
+    assert 47 <= result.expected_minutes <= 49
+
+
+def test_cross_league_prior_absent_still_falls_back_to_zero(db_conn):
+    """No PL history and no cross-league row either (e.g. a lower-league or
+    non-top-5-league signing this project has no source for) - stays the
+    honest zero, not a fabricated guess."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "no_data_available"
+    assert result.expected_minutes == 0.0
+
+
 def test_doubtful_partially_damps_expected_minutes(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "d"

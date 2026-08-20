@@ -11,6 +11,24 @@ _AVAILABILITY_DAMPING = {
     "CONFIRMED UNAVAILABLE": 0.0,
 }
 
+# Approximate round count used to convert a cross-league total-minutes figure
+# into a per-GW rate (models/cross_league_source.py's CROSS_LEAGUE_CODES: La
+# Liga/Serie A play 38 rounds, Bundesliga/Ligue 1 play 34, RFPL ~30 - 38 is a
+# disclosed, deliberately simple approximation, not a per-league lookup table
+# (getting a specific league's exact round count wrong would silently bias
+# one nationality's signings without being any more honest about it - a
+# single documented constant plus the discount below is the more defensible
+# trade-off for a LOW-confidence estimate that already carries real
+# uncertainty from the transfer itself).
+_CROSS_LEAGUE_ROUNDS_APPROX = 38
+# A real transfer doesn't guarantee immediate first-team minutes at the new
+# club (squad depth, manager trust, an adaptation period) - this is a
+# disclosed, uncalibrated heuristic, same honesty posture as
+# squad_churn.py's _CHURN_SHRINK_CAP and promoted_team_calibration.py's
+# additive shift. Revisit once real in-season minutes data exists for any
+# of these signings to fit an actual rate against.
+_NEW_SIGNING_MINUTES_DISCOUNT = 0.6
+
 
 @dataclass(frozen=True)
 class ExpectedMinutes:
@@ -62,9 +80,18 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         confidence = "LOW"
         basis = "last_season_prior_no_current_data"
     else:
-        base = 0.0
-        confidence = "LOW"
-        basis = "no_data_available"
+        cross_league_row = conn.execute(
+            "SELECT minutes FROM player_cross_league_prior WHERE player_id=?", (player_id,)
+        ).fetchone()
+        if cross_league_row is not None and cross_league_row["minutes"]:
+            cross_league_per_gw = min(cross_league_row["minutes"] / _CROSS_LEAGUE_ROUNDS_APPROX, 90)
+            base = cross_league_per_gw * _NEW_SIGNING_MINUTES_DISCOUNT
+            confidence = "LOW"
+            basis = "cross_league_prior_new_signing"
+        else:
+            base = 0.0
+            confidence = "LOW"
+            basis = "no_data_available"
 
     damped = min(base * _AVAILABILITY_DAMPING[classification], 90.0)
 
