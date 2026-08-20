@@ -416,6 +416,23 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   `baseline_expected_marginal_value` and `advisory_expected_marginal_value` as distinct fields,
   same FACTS/DERIVED/REASONING layering rule Plan 1a's `total_net_ev`/`tiebreak_adjustment` split
   used), never merged into the baseline schedule.
+- **Real limitation, caught by the user, not by this project's own review (2026-08-20): a short
+  `--horizon` makes `schedule_chips`'s DP output unreliable as season-long chip advice, and this was
+  presented as trustworthy the first time without catching it.** A real `fpl season-sim --horizon 5`
+  run recommended bboost/3xc inside GW2-4 - checked live and confirmed there is no blank/double GW
+  anywhere in GW1-5 (`detect_blank_double_gws` returns zero anomalies), and `chip_windows` shows
+  bboost/3xc/wildcard are all real-eligible through GW19, nothing forces early use. The DP is
+  correct given what it can see - it genuinely found the best placement *within the simulated
+  window* - but a 5-GW horizon has zero visibility into where a real double gameweek will land
+  later in the season (the actual reason bench boost/triple captain have value), so its chip
+  placement is an artifact of the horizon length, not a genuine season-long optimum. Standard real
+  FPL strategy - hold all chips through the first month barring an obvious, visible reason - was
+  the correct call here, and would have been missed if the DP's output had been trusted at face
+  value. **Not yet fixed in code** - `schedule_chips`/`fpl season-sim` still silently accept a short
+  `--horizon` and report a chip schedule with no caveat about its own visibility limit. A real
+  follow-up (not built this session): either warn explicitly when `--horizon` is short relative to
+  the nearest chip window's real eligible range, or default `--horizon` for chip-scheduling purposes
+  specifically to cover a full chip half (GW1-19), separate from the (cheaper) risk-band trial count.
 - Scenario-reuse/runtime decision — one shared scenario draw per `schedule_chips`/`season-sim`
   call, reused across every chip-window and hit-candidate evaluation within that call, rather than
   an independent redraw per candidate (rejected: statistically purer in isolation, but multiplies

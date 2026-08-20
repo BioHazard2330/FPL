@@ -40,7 +40,7 @@ from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
 from fpl_agent.models.live_bonus import LiveBonusRow, compute_live_bonus, diff_live_rows
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
-from fpl_agent.monitoring.dashboard import generate_dashboard_html
+from fpl_agent.monitoring.dashboard import _REFRESH_SECONDS, generate_dashboard_html
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
@@ -527,15 +527,19 @@ def dashboard():
     """Generate (or regenerate) the local auto-refreshing HTML dashboard -
     the same one `fpl run-scheduled` regenerates every cycle. Open
     data/dashboard.html in a browser and leave the tab open; it reloads
-    itself every 5 minutes to show whatever the last sync produced. A
-    published, always-fresh, no-Claude-open public WEBSITE isn't reachable
-    with this project's local, free-resources-only architecture (a
-    published Artifact page can't read this local database or fetch
-    external data on its own) - this is the honest, real equivalent: local,
-    genuinely automatic once the scheduler is running, zero extra cost."""
+    itself on its own to show whatever the last sync produced (see
+    monitoring.dashboard._REFRESH_SECONDS for the real, current interval -
+    referenced here rather than hardcoded a second time, after this exact
+    string drifted out of sync with a real refresh-interval change once
+    already). A published, always-fresh, no-Claude-open public WEBSITE
+    isn't reachable with this project's local, free-resources-only
+    architecture (a published Artifact page can't read this local database
+    or fetch external data on its own) - this is the honest, real
+    equivalent: local, genuinely automatic once the scheduler is running,
+    zero extra cost."""
     path = _write_dashboard()
     click.echo(f"wrote {path}")
-    click.echo("open it in a browser and leave the tab open - it auto-reloads every 5 minutes")
+    click.echo(f"open it in a browser and leave the tab open - it auto-reloads every {_REFRESH_SECONDS // 60}min")
 
 
 @cli.command()
