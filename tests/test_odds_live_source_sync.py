@@ -42,6 +42,33 @@ def test_match_fixture_returns_none_for_unresolvable_team(db_conn):
     assert match_fixture(db_conn, "Arsenal", "Some Nonexistent FC", "2026-08-22T14:00:00Z") is None
 
 
+def test_match_fixture_resolves_the_odds_api_full_club_names(db_conn):
+    # Confirmed live 2026-08-20 against the real API: 6 of GW1's 10 fixtures failed
+    # to match purely because the-odds-api returns full/formal club names
+    # ("Manchester United", "Tottenham Hotspur") while FPL's own teams.name is the
+    # short display form ("Man Utd", "Spurs"). Reproduces one real failing pair.
+    bootstrap = make_bootstrap()
+    bootstrap["teams"][0].update({"id": 1, "name": "Man Utd", "short_name": "MUN"})
+    bootstrap["teams"].append({
+        "id": 2, "code": 4, "name": "Spurs", "short_name": "TOT",
+        "strength_overall_home": 3, "strength_overall_away": 3,
+        "strength_attack_home": 0, "strength_attack_away": 0,
+        "strength_defence_home": 0, "strength_defence_away": 0, "pulse_id": 2,
+    })
+    _upsert_many(db_conn, "teams", normalize_teams(bootstrap), "t0")
+    _upsert_many(db_conn, "element_types", normalize_element_types(bootstrap), "t0")
+    _upsert_many(db_conn, "events", normalize_events(bootstrap), "t0")
+    _upsert_many(db_conn, "players", normalize_players(bootstrap), "t0")
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1001, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 0, '2026-08-20T00:00:00Z')"
+    )
+    db_conn.commit()
+
+    fixture_id = match_fixture(db_conn, "Manchester United", "Tottenham Hotspur", "2026-08-22T14:00:00Z")
+    assert fixture_id == 1
+
+
 def test_match_fixture_disambiguates_double_fixture_by_closest_kickoff(db_conn):
     _seed_two_teams_and_fixture(db_conn, fixture_id=1, kickoff="2026-08-22T14:00:00Z")
     db_conn.execute(

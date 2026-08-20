@@ -95,10 +95,35 @@ def parse_live_odds_event(event: dict) -> dict | None:
 
 _SOURCE_NAME = "odds_api"
 
+# the-odds-api.com returns clubs' full/formal names (e.g. "Manchester United"),
+# while FPL's own teams.name is its short display form (e.g. "Man Utd") -
+# market_identity.get_or_create_market_team's fallback for a brand-new market
+# team only does an exact match against teams.name/short_name, so these never
+# resolve without help. Confirmed live 2026-08-20 against the real API for
+# GW1: 6 of 10 fixtures failed to match purely on this naming gap before this
+# table was added. Translating to the FPL-side name first lets the existing,
+# unmodified get_or_create_market_team fallback match normally - no change
+# needed to that shared crosswalk (used by other connectors too).
+_ODDS_API_TEAM_NAME_ALIASES = {
+    "manchester united": "Man Utd",
+    "manchester city": "Man City",
+    "newcastle united": "Newcastle",
+    "tottenham hotspur": "Spurs",
+    "nottingham forest": "Nott'm Forest",
+    "brighton and hove albion": "Brighton",
+    "leeds united": "Leeds",
+    "west ham united": "West Ham",
+    "wolverhampton wanderers": "Wolves",
+}
+
+
+def _normalize_odds_api_team_name(name: str) -> str:
+    return _ODDS_API_TEAM_NAME_ALIASES.get(name.strip().lower(), name)
+
 
 def match_fixture(conn, home_team_name: str, away_team_name: str, commence_time: str) -> int | None:
-    home_market_id = get_or_create_market_team(conn, _SOURCE_NAME, home_team_name)
-    away_market_id = get_or_create_market_team(conn, _SOURCE_NAME, away_team_name)
+    home_market_id = get_or_create_market_team(conn, _SOURCE_NAME, _normalize_odds_api_team_name(home_team_name))
+    away_market_id = get_or_create_market_team(conn, _SOURCE_NAME, _normalize_odds_api_team_name(away_team_name))
 
     home_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (home_market_id,)).fetchone()
     away_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (away_market_id,)).fetchone()
