@@ -19,9 +19,41 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "My Team" in result
     assert "Live Tracking" in result
     assert "Availability risks" in result
+    assert "Squad Changes" in result
     assert "Transfer News" in result
     assert "System health" in result
-    assert f'content="{300}"' in result  # meta-refresh tag present
+    assert f'content="{60}"' in result  # meta-refresh tag present, tightened from 300 to 60s
+
+
+def test_dashboard_squad_changes_panel_renders_real_change_events(db_conn):
+    """Tier 1 FACTS panel: a player added, removed, moved club, or had their
+    official status change - straight from change_detection.py's own event
+    types, distinct from the RSS Transfer News panel."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('new_player','player',1,NULL,'P1',?,'[]','MEDIUM','MEDIUM',NULL,0)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('club_change','player',2,'1','2',?,'[]','MEDIUM','MEDIUM',NULL,0)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('status_change','player',3,'a','i',?,'[]','MEDIUM','HIGH',NULL,0)", (now,),
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "added to the FPL database" in result
+    assert "moved club" in result
+    assert "T1" in result and "T2" in result  # team short names resolved for the club-change row
+    assert "injured" in result  # status label resolved, not the raw 'i' code
 
 
 def test_generate_dashboard_html_escapes_untrusted_text(db_conn):

@@ -38,7 +38,12 @@ from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.build_team import generate_build_team_report
 
-_REFRESH_SECONDS = 300  # client-side reload cadence - well inside the 60min server regeneration interval
+_REFRESH_SECONDS = 60  # client-side reload cadence - tightened 2026-08-20 (was 300) per direct
+# user ask for near-real-time updates; the actual data freshness ceiling is however often
+# fpl run-scheduled last ran (scheduler/adaptive.py now retightens that too, 15-360min by
+# real deadline-proximity - see config/freshness.yaml), reloading the static HTML file
+# itself is free, so there's no cost to checking far more often than that.
+_CHANGE_EVENT_TYPES = ("new_player", "removed_player", "club_change", "status_change")
 _POSITION_ORDER = ["GKP", "DEF", "MID", "FWD"]
 # Fixed categorical order per the dataviz skill's validated palette (slots 1-4):
 # assigning hues by the job they do (position identity) in the palette's own
@@ -261,6 +266,56 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
     return "<div class='empty-state'>Gameweek finished. Bonus points are confirmed by FPL a few hours after full-time - check back shortly.</div>"
 
 
+_STATUS_LABELS = {"a": "available", "i": "injured", "s": "suspended", "u": "unavailable", "d": "doubtful"}
+
+
+def _describe_change_event(conn: sqlite3.Connection, event_type: str, entity_id: int, old_value, new_value) -> str:
+    player = conn.execute("SELECT web_name FROM players WHERE id=?", (entity_id,)).fetchone()
+    name = player["web_name"] if player else f"player #{entity_id}"
+
+    if event_type == "new_player":
+        return f"<strong>{_esc(name)}</strong> added to the FPL database"
+    if event_type == "removed_player":
+        return f"<strong>{_esc(name)}</strong> removed from the FPL database"
+    if event_type == "club_change":
+        old_team = conn.execute("SELECT short_name FROM teams WHERE id=?", (old_value,)).fetchone()
+        new_team = conn.execute("SELECT short_name FROM teams WHERE id=?", (new_value,)).fetchone()
+        old_t = old_team["short_name"] if old_team else "?"
+        new_t = new_team["short_name"] if new_team else "?"
+        return f"<strong>{_esc(name)}</strong> moved club: {_esc(old_t)} &rarr; {_esc(new_t)}"
+    if event_type == "status_change":
+        old_s = _STATUS_LABELS.get(old_value, old_value or "?")
+        new_s = _STATUS_LABELS.get(new_value, new_value or "?")
+        return f"<strong>{_esc(name)}</strong> status: {_esc(old_s)} &rarr; {_esc(new_s)}"
+    return f"<strong>{_esc(name)}</strong> {_esc(event_type)}"
+
+
+def _squad_changes_html(conn: sqlite3.Connection, limit: int = 10) -> str:
+    """Tier 1 FACTS straight from the change-detection engine (not RSS news) -
+    a player genuinely added to/removed from FPL's own database, moved club,
+    or had their official availability status change. Real per-team squad
+    churn, not a fabricated feed - only fires when `change_detection.py`
+    actually recorded something, which only covers deltas since this
+    project started polling (see CLAUDE.md's cross-competition/transfer-
+    window sections for the honest caveat on pre-polling history)."""
+    placeholders = ",".join("?" * len(_CHANGE_EVENT_TYPES))
+    rows = conn.execute(
+        f"SELECT event_type, entity_id, old_value, new_value, detected_at FROM change_events "
+        f"WHERE event_type IN ({placeholders}) ORDER BY detected_at DESC LIMIT ?",
+        (*_CHANGE_EVENT_TYPES, limit),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No squad changes detected yet this session.</div>"
+    lines = []
+    for r in rows:
+        desc = _describe_change_event(conn, r["event_type"], r["entity_id"], r["old_value"], r["new_value"])
+        lines.append(
+            f"<div class='change-item'><span class='change-desc'>{desc}</span>"
+            f"<span class='change-time'>{_esc(_relative_time(r['detected_at']))}</span></div>"
+        )
+    return "\n".join(lines)
+
+
 def _news_html(conn: sqlite3.Connection, limit: int = 6) -> str:
     items = list_recent_news(conn, limit=limit)
     if not items:
@@ -362,8 +417,15 @@ def generate_dashboard_html(conn: sqlite3.Connection, live_payload: dict | None 
     </ul>
   </section>
 
+  <section class="panel panel-changes">
+    <h2>Squad Changes <span class="panel-subtitle">official data, Tier 1</span></h2>
+    <div class="change-list">
+{_squad_changes_html(conn)}
+    </div>
+  </section>
+
   <section class="panel panel-news">
-    <h2>Transfer News</h2>
+    <h2>Transfer News <span class="panel-subtitle">journalism, Tier 2-4</span></h2>
     <div class="news-list">
 {_news_html(conn)}
     </div>
@@ -410,6 +472,8 @@ _CSS = """
   }
   h2 { font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
        color: var(--muted); margin: 0 0 14px; }
+  .panel-subtitle { font-size: 0.68rem; font-weight: 500; text-transform: none; letter-spacing: normal;
+    color: var(--faint); margin-left: 6px; }
   code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
   .topbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 20px; }
@@ -495,6 +559,12 @@ _CSS = """
   .news-time { font-size: 0.72rem; color: var(--faint); }
   .tag { font-size: 0.7rem; background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 1px 8px; }
   .tag-team { color: var(--accent); }
+
+  .change-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+  .change-item { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    font-size: 0.82rem; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
+  .change-desc { color: var(--fg); }
+  .change-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
 
   /* --- System health chips --- */
   .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }

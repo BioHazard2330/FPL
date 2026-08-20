@@ -30,6 +30,7 @@ from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_o
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
+from fpl_agent.scheduler.adaptive import maybe_retighten_scheduler
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
 from fpl_agent.scheduler.status import check_scheduler_registered
@@ -444,11 +445,15 @@ def run_scheduled():
     conn = get_connection()
     alerts = deliver_pending_alerts(conn, configured_notifiers(conn))
     cadence = recommended_cadence(conn)
+    retighten_msg = maybe_retighten_scheduler(conn)
     conn.close()
 
     logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
     click.echo(f"sync ok - {len(alerts)} alert(s) delivered")
     click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
+    if retighten_msg:
+        logger.info("run-scheduled: %s", retighten_msg)
+        click.echo(retighten_msg)
 
     try:
         dashboard_path = _write_dashboard()
