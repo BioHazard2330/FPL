@@ -13,7 +13,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from fpl_agent.alerts.engine import configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
-from fpl_agent.config import load_dotenv
+from fpl_agent.config import DATA_DIR, load_dotenv
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
@@ -37,6 +37,7 @@ from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
 from fpl_agent.models.live_bonus import compute_live_bonus
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
+from fpl_agent.monitoring.dashboard import generate_dashboard_html
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
@@ -446,6 +447,48 @@ def run_scheduled():
     logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
     click.echo(f"sync ok - {len(alerts)} alert(s) delivered")
     click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
+
+    try:
+        _write_dashboard()
+        logger.info("dashboard regenerated at %s", DASHBOARD_PATH)
+    except Exception:
+        logger.exception("dashboard regeneration failed - not fatal to the sync itself")
+
+
+def _dashboard_path():
+    # Computed fresh per call, not as a module-level constant - the exact
+    # same DATA_DIR-captured-at-import-time bug already caught once in this
+    # project (monitoring/cleanup.py/storage.py) would otherwise silently
+    # write to the real project data dir even when a test monkeypatches
+    # DATA_DIR for isolation.
+    return DATA_DIR / "dashboard.html"
+
+
+def _write_dashboard() -> None:
+    conn = get_connection()
+    try:
+        html_content = generate_dashboard_html(conn)
+    finally:
+        conn.close()
+    path = _dashboard_path()
+    path.write_text(html_content, encoding="utf-8")
+    return path
+
+
+@cli.command()
+def dashboard():
+    """Generate (or regenerate) the local auto-refreshing HTML dashboard -
+    the same one `fpl run-scheduled` regenerates every cycle. Open
+    data/dashboard.html in a browser and leave the tab open; it reloads
+    itself every 5 minutes to show whatever the last sync produced. A
+    published, always-fresh, no-Claude-open public WEBSITE isn't reachable
+    with this project's local, free-resources-only architecture (a
+    published Artifact page can't read this local database or fetch
+    external data on its own) - this is the honest, real equivalent: local,
+    genuinely automatic once the scheduler is running, zero extra cost."""
+    path = _write_dashboard()
+    click.echo(f"wrote {path}")
+    click.echo("open it in a browser and leave the tab open - it auto-reloads every 5 minutes")
 
 
 @cli.command()

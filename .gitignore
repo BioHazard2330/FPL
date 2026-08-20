@@ -17,6 +17,7 @@ data/tmp/
 data/backups/
 data/*.npz
 data/*.joblib
+data/dashboard.html
 logs/*.log
 logs/*.log.*
 *.cache/

@@ -1890,6 +1890,62 @@ already gives you `bps`) and conflated with the wrong rule.
   endpoint enables but doesn't itself provide; a real, disclosed follow-up,
   not silently claimed as done. 390/390 tests.
 
+## Local auto-refreshing dashboard (2026-08-20)
+
+User asked directly: does Claude need to stay open, and is an
+always-updating website possible? Checked the real constraint before
+answering (loaded the `artifact-capabilities` skill rather than guessing):
+a published Artifact page cannot read this project's local SQLite database
+(no filesystem access from a sandboxed browser page) and has no capability
+to autonomously fetch external data on a timer without a viewer action - a
+publicly-hosted, always-fresh, no-Claude-open website is genuinely not
+reachable with this project's local-first, free-resources-only architecture
+without a real hosting change (likely paid, out of scope). Said so plainly
+rather than overpromising a public site.
+
+What IS real and already true: Claude does not need to stay open for data
+to keep updating - the Windows Task Scheduler (registered earlier this
+session) already refreshes the database every 60 minutes on its own.
+
+- **`monitoring/dashboard.py::generate_dashboard_html()`** - a real, local
+  HTML snapshot: recommended GW1 squad (reuses `generate_build_team_report`,
+  the exact same function `fpl build-team` calls, not a separate model),
+  availability risks, full `fpl readiness` check table, and source health -
+  all pure reads of current DB state, no network calls. Auto-reloads itself
+  every 5 minutes via `<meta http-equiv="refresh">` - open it once, leave
+  the tab open, it shows whatever the last sync produced without any
+  further action.
+- **`fpl dashboard`** generates it on demand; **`fpl run-scheduled`** now
+  regenerates it automatically every cycle (failure here is logged but never
+  fails the sync itself - a dashboard-write problem must never block the
+  actual data sync it depends on). Written to `data/dashboard.html`
+  (gitignored - a generated, regenerable artifact, same category as the
+  ML dataset/model files from earlier this session).
+- **Two real bugs caught before/while shipping this, not after**: (1) the
+  `dashboard` command's first-ever run crashed with `NameError:
+  DASHBOARD_PATH is not defined` - a leftover reference to a variable name
+  from before a mid-build refactor (a module-level constant became a
+  per-call function specifically to avoid the exact DATA_DIR-captured-at-
+  import-time bug this project already caught once in `cleanup.py`/
+  `storage.py` - the refactor was right, one call site just didn't get
+  updated). Fixed, and a dedicated CLI-level test added
+  (`test_dashboard_cli_command_prints_the_real_written_path`) specifically
+  because the OTHER tests here call `_write_dashboard()` directly and would
+  never have exercised the command's own `click.echo` line where the bug
+  actually was - verified live that this new test fails without the fix,
+  not just that it passes with it. (2) `generate_dashboard_html` originally
+  interpolated player names/news text (ultimately sourced from an external
+  API) directly into HTML without escaping - a real XSS-shaped risk for a
+  page opened in a real browser even though it's local-only; caught by its
+  own test while writing it (`test_generate_dashboard_html_escapes_
+  untrusted_text`), fixed with `html.escape()` before it ever shipped.
+- 4 tests (`tests/test_dashboard.py`), 394/394 total. Live-verified against
+  the real synced pool: real squad/captain, a genuinely long real
+  availability-risk list (confirmed-unavailable/doubtful players plus
+  players who've permanently transferred out or gone out on loan - the
+  existing `models/availability.py::classify()` behavior, not new to this
+  feature), all 12 real data sources reporting healthy.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
