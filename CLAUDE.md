@@ -268,6 +268,16 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   scoring only: appearance + goals + assists + yellow cards — bonus/BPS aren't in that source,
   excluded from both sides rather than faked). Scores MAE/RMSE against a raw-per-90 baseline,
   persists to `model_backtest_runs`.
+- `models/player_regression.py::season_shrunk_rate()`/`season_position_average_per90()` (added
+  2026-08-20) — same `shrink_rate()` machinery as the primary Understat-based path, but over
+  `player_season_history` (official FPL season totals). `expected_points.py::_player_match_rates`
+  calls this whenever a player has zero `player_match_stats_history` rows for the season —
+  the real, current condition (see the `fpl backfill-xg` limitation below): without it, goals/
+  assists silently collapse to 0.0 for every player, not just a conservative estimate. Same
+  goals-from-actual-goals/assists-from-official-xA asymmetry the primary path already used;
+  `before_season` threaded through for backtest leakage-safety. Coarser-grained (season, not
+  match) than the primary path when Understat is actually reachable — a real, honest fallback,
+  not a replacement for fixing the scraper.
 
 ## Data model / logic (Pillar 1 Plan 1a)
 
@@ -804,16 +814,30 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   (`understat.com/league/EPL/<year>`) no longer embeds the `datesData`/`teamsData` JSON blob
   `understat_source.py::extract_json_var` parses out of a `<script>` tag; a direct fetch (with and
   without a browser User-Agent) returns a normal 200 and an 18KB page, but neither variable name
-  appears in it anywhere — a real site-structure change on Understat's end. Net effect: with no
-  `player_match_stats_history` rows reachable for 2024-25, `fpl backtest --season 2024-25` (with
-  or without `--bonus`) currently reports `predictions scored 0` / `MAE 0.0` / `RMSE 0.0` /
-  `DOES NOT beat naive baseline` for its round-level half on a fresh DB. It degrades gracefully
-  rather than lying about coverage (same `0.0`-not-a-crash pattern `fallback_excluded_count`
-  already uses elsewhere in the harness), but that round-level output is not currently trustworthy
-  evidence of anything until Understat's scraper is fixed for the new page structure — untouched
-  by this plan, since Task 5 was verification-only. The bonus-regression half is unaffected:
-  `score_bonus_regression` reads `player_season_history` only, which comes from FPL's own API via
-  `fpl sync-history`, never from Understat.
+  appears in it anywhere — a real site-structure change on Understat's end. `player_match_stats_history`
+  has zero rows reachable, confirmed total across every season, not just 2024-25. `fpl backtest --season
+  2024-25` (with or without `--bonus`) reports `predictions scored 0` / `MAE 0.0` / `RMSE 0.0` /
+  `DOES NOT beat naive baseline` for its round-level half on a fresh DB — degrades gracefully rather
+  than lying about coverage, but that round-level output is not trustworthy evidence of anything until
+  Understat's scraper is fixed for the new page structure. The bonus-regression half is unaffected:
+  `score_bonus_regression` reads `player_season_history` only, never Understat.
+
+  **What this bullet originally missed, found live 2026-08-20: the blast radius wasn't just the
+  backtest metric — it silently zeroed goals/assists for every player in LIVE projections too.**
+  `player_shrunk_rates()`'s goals/xa components and `player_share_of_team_xg()` are both 100% Understat-
+  dependent; with the table empty, both a player's own rate AND the shrinkage prior collapse to 0, so
+  `shrink_rate(0, 0, 0) = 0` for literally every player regardless of real ability — not a conservative
+  estimate, a complete silent loss of the single largest scoring component. Haaland projected 2.49 xP
+  (should be ~6-7 given his real ~6.3-6.8/game season average) purely from this. **Fixed**:
+  `models/player_regression.py::season_shrunk_rate()`/`season_position_average_per90()` (same
+  empirical-Bayes machinery bonus_regression.py already established) fall back to
+  `player_season_history` (official FPL data, always populated, no Understat dependency) whenever a
+  player has zero Understat match rows for the season — same goals-from-actual/assists-from-xA
+  asymmetry the primary path already used, leakage-safe for the backtest (`before_season` threaded
+  through, regression-tested). Live-verified: Haaland → 6.16 xP, `fpl build-team`'s GW1 total moved
+  39.4 → 57.22. Understat itself is still broken and still needs its scraper fixed for the
+  round-level backtest and the shot-level (not season-level) precision the primary path gives when
+  it's working — this fallback is real and correct, but coarser-grained than the path it's covering for.
 - **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
   detection all need Tier 2-4 sources the user chose not to enable. What's built
   instead (official-status injuries, confirmed-transfer club changes) is real and
