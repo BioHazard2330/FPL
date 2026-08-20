@@ -1,6 +1,8 @@
 import logging
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 
 import click
 import numpy as np
@@ -11,7 +13,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-from fpl_agent.alerts.engine import configured_notifiers, deliver_pending_alerts, pending_alerts
+from fpl_agent.alerts.engine import Alert, TerminalNotifier, configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
 from fpl_agent.config import DATA_DIR, load_dotenv
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
@@ -34,7 +36,7 @@ from fpl_agent.scheduler.status import check_scheduler_registered
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
-from fpl_agent.models.live_bonus import compute_live_bonus
+from fpl_agent.models.live_bonus import LiveBonusRow, compute_live_bonus, diff_live_rows
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.dashboard import generate_dashboard_html
@@ -464,10 +466,33 @@ def _dashboard_path():
     return DATA_DIR / "dashboard.html"
 
 
+def _maybe_fetch_live_payload(conn) -> dict | None:
+    """Only issues a network call when a fixture is genuinely in progress -
+    cheap and honest, matches this project's live-bonus CLI command's own
+    fetch pattern. Returns None outside any live window (the common case,
+    including all of preseason) with zero network traffic."""
+    event_num = _reference_event(conn)
+    if event_num is None:
+        return None
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1 AND finished=0", (event_num,)
+    ).fetchone()
+    if not row or not row["n"]:
+        return None
+    try:
+        payload = FPLApiAdapter().fetch_event_live(event_num).data
+    except SourceFetchError as e:
+        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        return None
+    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+    return payload
+
+
 def _write_dashboard() -> None:
     conn = get_connection()
     try:
-        html_content = generate_dashboard_html(conn)
+        live_payload = _maybe_fetch_live_payload(conn)
+        html_content = generate_dashboard_html(conn, live_payload=live_payload)
     finally:
         conn.close()
     path = _dashboard_path()
@@ -600,6 +625,98 @@ def live_bonus_cmd(event_num: int | None):
             f"{r.fixture_id:>7} {r.web_name:<20} {r.bps:>4} {r.provisional_bonus:>5} {confirmed:>9}  "
             f"{r.minutes:>3}  {r.goals_scored}  {r.assists}"
         )
+
+
+@cli.command("live-watch")
+@click.option("--squad", "squad_arg", default=None,
+              help="comma-separated player ids to track (default: the current recommended squad)")
+@click.option("--interval", default=75, type=int, help="poll interval in seconds (default 75)")
+@click.option("--max-hours", default=3.0, type=float, help="safety cap on total watch duration")
+@click.option("--deliver/--no-deliver", default=True,
+              help="push through configured notifiers (terminal always; Telegram/Discord if configured) - "
+                   "--no-deliver prints to terminal only, bypassing config")
+def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliver: bool):
+    """Fast-polling live-match watch: pushes a notification the moment a
+    tracked squad player scores, assists, gains provisional bonus, or is
+    sent off - diffed against FPL's own official live-event feed, real
+    Tier 1 data, never fabricated. A deliberate, narrow exception to this
+    project's 'single-shot command, no permanent background loop'
+    convention (see `fpl live-bonus`'s own docstring): detecting a NEW
+    goal needs a diff against the previous poll, and that diff state is
+    far simpler to keep in one running process's memory across a ~75s
+    cadence than to persist and reconcile across ~80 separate single-shot
+    invocations over a ~2-hour match window. Run this yourself during a
+    live gameweek (e.g. in its own terminal) - it is NOT registered with
+    the Windows Task Scheduler, matching the same explicit-opt-in bar this
+    project already applied to the regular sync scheduler. Stops
+    automatically once every fixture in the reference gameweek is
+    finished, hits --max-hours, or is interrupted with Ctrl+C."""
+    conn = get_connection()
+
+    if squad_arg:
+        try:
+            squad_ids = {int(x) for x in squad_arg.split(",") if x.strip()}
+        except ValueError:
+            click.echo("--squad must be a comma-separated list of player ids", err=True)
+            conn.close()
+            raise SystemExit(1)
+    else:
+        report = generate_build_team_report(conn)
+        if not report.structures or not report.structures[0].result.squad:
+            click.echo("no squad available - pass --squad explicitly or run fpl build-team first", err=True)
+            conn.close()
+            raise SystemExit(1)
+        squad_ids = {c.player_id for c in report.structures[0].result.squad}
+        click.echo(f"no --squad given - tracking the current recommended squad ({len(squad_ids)} players)")
+
+    event_num = _reference_event(conn)
+    if event_num is None:
+        click.echo("no reference gameweek found (no upcoming fixtures)", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    notifier = configured_notifiers(conn) if deliver else TerminalNotifier()
+    adapter = FPLApiAdapter()
+    poll_state: dict[int, LiveBonusRow] = {}
+    stop_at = time.monotonic() + max_hours * 3600
+    click.echo(
+        f"watching event {event_num}, squad {sorted(squad_ids)}, every {interval}s "
+        f"(max {max_hours}h) - Ctrl+C to stop"
+    )
+
+    try:
+        while time.monotonic() < stop_at:
+            totals = conn.execute(
+                "SELECT COUNT(*) AS total, SUM(finished) AS done FROM fixtures WHERE event=?", (event_num,)
+            ).fetchone()
+            if totals and totals["total"] and totals["done"] == totals["total"]:
+                click.echo("all fixtures finished for this gameweek - stopping")
+                break
+
+            try:
+                payload = adapter.fetch_event_live(event_num).data
+            except SourceFetchError as e:
+                update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+                click.echo(f"poll failed: {e} - retrying next cycle", err=True)
+                time.sleep(interval)
+                continue
+            update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+
+            rows = [r for r in compute_live_bonus(conn, payload) if r.player_id in squad_ids]
+            events, poll_state = diff_live_rows(poll_state, rows)
+            for ev in events:
+                alert = Alert(
+                    change_event_id=0, event_type=ev.kind, entity="player", entity_id=ev.player_id,
+                    severity="HIGH", old_value=ev.web_name, new_value=ev.detail,
+                    detected_at=datetime.now(timezone.utc).isoformat(),
+                )
+                notifier.send(alert)
+
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        click.echo("\nstopped")
+    finally:
+        conn.close()
 
 
 @cli.command()

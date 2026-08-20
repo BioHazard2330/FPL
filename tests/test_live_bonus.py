@@ -1,4 +1,4 @@
-from fpl_agent.models.live_bonus import _assign_bonus, compute_live_bonus
+from fpl_agent.models.live_bonus import LiveBonusRow, _assign_bonus, compute_live_bonus, diff_live_rows
 
 
 def test_assign_bonus_clear_ranking():
@@ -97,3 +97,75 @@ def test_compute_live_bonus_double_gameweek_player_scored_independently_per_fixt
     alpha_rows = [r for r in rows if r.player_id == 1]
     assert {r.fixture_id for r in alpha_rows} == {100, 101}
     assert all(r.provisional_bonus == 3 for r in alpha_rows)  # top BPS in both fixtures
+
+
+def _row(player_id, web_name="X", fixture_id=100, bps=0, provisional_bonus=0,
+         minutes=90, goals_scored=0, assists=0, red_cards=0):
+    return LiveBonusRow(
+        player_id=player_id, web_name=web_name, fixture_id=fixture_id, bps=bps,
+        provisional_bonus=provisional_bonus, confirmed_bonus=None, minutes=minutes,
+        goals_scored=goals_scored, assists=assists, red_cards=red_cards,
+    )
+
+
+def test_diff_live_rows_first_observation_seeds_baseline_with_no_events():
+    """A live-watch that starts mid-match must not fire a false 'just
+    scored!' alert for goals a player already had before the watch began -
+    the empty-previous-dict case is a seed, not a diff."""
+    current = [_row(1, goals_scored=2, assists=1, provisional_bonus=3)]
+
+    events, state = diff_live_rows({}, current)
+
+    assert events == []
+    assert state[1].goals_scored == 2
+
+
+def test_diff_live_rows_fires_a_goal_event_on_real_increase():
+    previous = {1: _row(1, goals_scored=0)}
+    current = [_row(1, goals_scored=1)]
+
+    events, state = diff_live_rows(previous, current)
+
+    assert len(events) == 1
+    assert events[0].kind == "goal"
+    assert state[1].goals_scored == 1
+
+
+def test_diff_live_rows_fires_assist_and_bonus_independently():
+    previous = {1: _row(1, goals_scored=0, assists=0, provisional_bonus=0)}
+    current = [_row(1, goals_scored=0, assists=1, provisional_bonus=2, bps=30)]
+
+    events, _ = diff_live_rows(previous, current)
+
+    kinds = {e.kind for e in events}
+    assert kinds == {"assist", "bonus"}
+
+
+def test_diff_live_rows_bonus_decreasing_never_fires_an_event():
+    """Provisional bonus can legitimately drop mid-match as BPS swings -
+    that's not a moment worth a push notification."""
+    previous = {1: _row(1, provisional_bonus=3)}
+    current = [_row(1, provisional_bonus=1)]
+
+    events, _ = diff_live_rows(previous, current)
+
+    assert events == []
+
+
+def test_diff_live_rows_red_card_fires_once():
+    previous = {1: _row(1, red_cards=0)}
+    current = [_row(1, red_cards=1)]
+
+    events, _ = diff_live_rows(previous, current)
+
+    assert len(events) == 1
+    assert events[0].kind == "red_card"
+
+
+def test_diff_live_rows_no_change_fires_nothing():
+    previous = {1: _row(1, goals_scored=1, assists=1, provisional_bonus=2)}
+    current = [_row(1, goals_scored=1, assists=1, provisional_bonus=2)]
+
+    events, _ = diff_live_rows(previous, current)
+
+    assert events == []
