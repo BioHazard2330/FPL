@@ -1228,38 +1228,47 @@ season `calibrated-v2` was already scored on (MAE 1.1776, high-return MAE
   signal) rather than model architecture alone - this project's own
   `calibrated-v2`, given the same inputs, is already competitive with a
   genuine ML ensemble.
-- **One small, real, disclosed win found along the way**: blending
-  calibrated-v2's prediction with the ML ensemble's (simple weighted
-  average) beats either alone - MAE **1.1726** at a 50/50 blend (vs 1.1776
-  calibrated-v2-only), with high-return MAE improving monotonically as ML
-  weight increases (3.8100 → 3.7994 at 50/50) and low-return MAE also best
-  at 50/50 (0.7433 vs 0.7474) - a classic diverse-model-ensemble variance
-  reduction, not a fluke of one lucky weight. **Caveat disclosed rather than
-  hidden**: the blend weight was chosen by inspecting results on the same
-  held-out set being reported, a mild form of the exact leakage this
-  project's own walk-forward discipline otherwise guards against - so this
-  ~0.4% figure should be read as an optimistic upper bound, not a
-  fully cross-validated number.
+- **A "small real win" was found, then correctly retracted by its own
+  cross-validation, not left standing.** A first pass blending calibrated-v2
+  with the ML ensemble (simple weighted average) appeared to beat either
+  alone - MAE 1.1726 at a 50/50 blend vs 1.1776 calibrated-v2-only - but that
+  weight was chosen by inspecting results on the same 2025-26 held-out set
+  being reported, an actual peek, not just a theoretical risk of one. Redone
+  properly: the blend weight was chosen on a genuinely held-out 20% slice of
+  the TRAINING data only (2021-22 to 2024-25, split before any weight was
+  picked, 2025-26 never touched during selection) - the honest optimum
+  found there is **w=1.0, i.e. no blend at all, pure ML**, monotonically
+  best as ML weight increases on that validation slice. Applying that
+  properly-chosen weight to the real 2025-26 test reproduces Experiment 2's
+  already-reported numbers exactly (MAE 1.1802, high-return MAE 3.7896) -
+  **no blend advantage survives proper validation**. The earlier 50/50
+  figure was overfitting to the specific test set it was tuned against, not
+  a real, generalizable effect. Recorded here specifically because this
+  project's own discipline is to catch and correct an optimistic first
+  result before it ships, not just when a bug is found - this is that same
+  standard applied to a modeling claim rather than a code bug.
 - **Decision, made directly per the user's standing authorization rather
   than left open**: **not integrated into the live `fpl build-team` pipeline
-  before the GW1 deadline.** Three reasons, not caution for its own sake:
-  (1) the measured win is small (~0.4%) and its true out-of-sample size is
-  genuinely uncertain per the caveat above: (2) this whole comparison is
-  scoped to calibrated-v2's "core" backtest formula (appearance+goals+
-  assists+cards) - the actual LIVE `expected_points()` model is already more
-  sophisticated (clean-sheet probability, bonus regression, DefCon, live
-  odds blending), none of which this ML experiment was trained against, so
-  a live integration isn't a simple drop-in; (3) wiring a second model into
-  the pipeline that generates tonight's real recommendation carries real
-  risk of a rushed mistake, for a small and uncertain gain, hours before a
-  deadline that matters. The trained model/dataset artifacts are kept
+  before the GW1 deadline - and now for a cleaner, stronger reason than
+  originally written here.** Once honestly cross-validated, there is no
+  measured win to integrate at all (see the retraction above) - the ML
+  ensemble ties calibrated-v2, full stop, on every variant tested. Two
+  further reasons this stays a research finding rather than shipped code:
+  (1) this whole comparison is scoped to calibrated-v2's "core" backtest
+  formula (appearance+goals+assists+cards) - the actual LIVE
+  `expected_points()` model is already more sophisticated (clean-sheet
+  probability, bonus regression, DefCon, live odds blending), none of which
+  this ML experiment was trained against, so there's no drop-in path even if
+  it had won; (2) shipping a tied-at-best model into the pipeline that
+  generates tonight's real recommendation would add real complexity and risk
+  for zero measured benefit. The trained model/dataset artifacts are kept
   locally (`data/ml_ensemble_v1.joblib`, `data/ml_ensemble_v2_fixtures.joblib`,
   `data/ml_dataset_v2.npz` - gitignored, regenerable from
   `models/ml_ensemble.py` + the now-backfilled 5-season data, not committed
-  as binary artifacts) as a validated starting point for a properly-scoped
-  future blend integration, once there's time to do it without deadline
-  pressure and to validate the blend weight with genuine cross-validation
-  (e.g. leave-one-season-out) rather than a single held-out inspection.
+  as binary artifacts) in case a future session finds a genuinely different
+  feature or richer data source worth testing against this same honest
+  cross-validation bar - not as a "nearly there" starting point, since this
+  pass found no real edge to build on.
 - `models/ml_ensemble.py` + `tests/test_ml_ensemble.py` (3 tests, synthetic
   data - proves the walk-forward extraction/leakage-exclusion/training
   plumbing works correctly, not a real accuracy claim) are committed as
