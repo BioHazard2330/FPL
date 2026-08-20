@@ -31,8 +31,8 @@ class CaptainOption:
     eo_source: str  # "sampled" or "unavailable"
 
 
-def _next_opponent(conn: sqlite3.Connection, team_id: int) -> tuple[str | None, bool | None]:
-    event = _reference_event(conn)
+def _next_opponent(conn: sqlite3.Connection, team_id: int, event: int | None = None) -> tuple[str | None, bool | None]:
+    event = event if event is not None else _reference_event(conn)
     fixture = conn.execute(
         "SELECT team_h, team_a FROM fixtures WHERE (team_h=? OR team_a=?) AND event=? LIMIT 1",
         (team_id, team_id, event),
@@ -53,18 +53,22 @@ def _is_penalty_taker(conn: sqlite3.Connection, player_id: int) -> bool:
     return bool(row and row["penalties_order"] == 1)
 
 
-def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int]) -> list[CaptainOption]:
+def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int], event: int | None = None) -> list[CaptainOption]:
+    """`event` optionally evaluates a specific future gameweek instead of the
+    default "next fixture from right now" - see expected_points()'s
+    `from_event` docstring. Passing None (the default) reproduces the exact
+    prior behavior."""
     eo_by_player = get_all_sample_eo(conn)
     options = []
     for player_id in squad_ids:
-        ep = expected_points(conn, player_id, n_gw=1)
+        ep = expected_points(conn, player_id, n_gw=1, from_event=event)
         player = conn.execute(
             "SELECT web_name, team_id, selected_by_percent FROM players p "
             "LEFT JOIN player_ownership_history oh ON oh.player_id = p.id AND oh.valid_until IS NULL "
             "WHERE p.id=?",
             (player_id,),
         ).fetchone()
-        opponent, is_home = _next_opponent(conn, player["team_id"])
+        opponent, is_home = _next_opponent(conn, player["team_id"], event)
 
         # Absent from a non-empty sample means "no measurement was taken for this
         # player", not a measured zero - ~750 sampled managers can't cover every player.

@@ -638,6 +638,15 @@ check it was started with cwd = `fpl-agent/`, not its parent.
   actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
   preseason session.
 
+  **Re-checked live 2026-08-20 (not just assumed): genuinely still time-gated, not an engineering
+  gap.** Fetched `bootstrap-static` for real - GW1's deadline is confirmed `2026-08-21T17:30:00Z`,
+  and the real fetch timestamp that session was `2026-08-20T08:05:41Z` - about 33 hours short, not
+  yet lockable no matter how much further work is done today. The same applies to the ownership-
+  threshold recalibration above: it needs real post-GW1 sample data to fit against honestly, which
+  doesn't exist yet either. Not fabricating a number to close either gap early - both close
+  naturally and quickly (GW1 locks well within a day of whenever this is next read), not via more
+  code.
+
 ## Data model / logic (Pillar 2 Plan 2a — Tier 2-4 journalism connector)
 
 - `news_items`/`news_item_players`/`news_item_teams` (migration `0013`) — the first
@@ -951,10 +960,22 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   pipeline for in-season backfills once 2026-27 matches actually start, at which point the primary
   match-level path will upgrade live projections past the season-grain fallback automatically, no
   further code change needed.
-- **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
-  detection all need Tier 2-4 sources the user chose not to enable. What's built
-  instead (official-status injuries, confirmed-transfer club changes) is real and
-  useful, just narrower than the full bootstrap spec envisions.
+- **Manager-change detection is now built (2026-08-20)** - `models/manager_change.py`,
+  `fpl manager-changes [--days N]`. Unlocked by adding a second independent Tier 2-4
+  source (Sky Sports RSS, `skysports.com/rss/11095`, confirmed live/free/no-key) alongside
+  BBC Sport - `ingestion/news_source.py::NEWS_SOURCES`/`sync_all_news_sources`, `fpl sync-news`
+  now syncs both. A signal only fires when 2+ DISTINCT sources each have a manager-change-
+  keyword-matched article about the same team within the lookback window - the real
+  corroboration bar this project's own Tier 2-4 precedence policy requires, not just "a
+  keyword matched somewhere." Same restraint as `team-news-monitor`: never writes to
+  `teams`/`players.status`/`change_events`, a heuristic index for a human/Claude to read
+  and judge, never an asserted fact. Live-verified: `fpl sync-news` pulled 52 real items
+  (32 BBC + 20 Sky Sports, both sources healthy in `source_health`); `fpl manager-changes`
+  ran clean and correctly reported no corroborated signal (the honest real preseason state,
+  not a bug). **Predicted lineups remain genuinely open** - re-researched this session
+  (2026-08-20), same conclusion as Plan 2a: the one no-key option found
+  (Apify's Premier League lineups scraper) is still marked deprecated by its own listing.
+  Revisit if a new free source appears.
 - **No real squad exists yet.** Nothing here has ever been run against the
   user's actual FPL team, because there isn't one - this is a from-scratch
   build. `fpl build-team` produces a genuine first-XV recommendation from the
@@ -969,28 +990,81 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   point, not empirically fit — this is preseason, so no real FPL price rise/fall
   has happened yet to validate the heuristic against, in either direction.
   Revisit once real in-season price movements exist to compare predictions to.
-- **Scenario engine doesn't model bonus-point variance, only its mean.**
-  `sample_season_scenarios`'s per-trial bonus contribution is the historical per-90
-  bonus rate applied deterministically every trial, not itself sampled — so
-  `fpl season-sim`'s P10/P50/P90 spread understates real season-total variance by
-  however much bonus points actually vary game-to-game. Appearance/goals/assists/
-  cards/clean-sheets are genuinely stochastic per trial; bonus is not.
-- **Chip *selection* inside `schedule_chips` is event-invariant, even though the DP's
-  whole job is comparing events.** `_bench_boost_trial_values` picks the bench via
-  `pick_starting_xi` and `_triple_captain_trial_values` picks the captain via
-  `evaluate_captaincy` — neither takes an `event`/`as_of_date`, so both use *today's*
-  live expected-points evaluation and then assume that same bench/captain for every
-  candidate gameweek. Only the sampled realized points vary by event. That biases the
-  schedule toward whichever event happens to score best for today's selection rather
-  than a genuinely event-specific one. Fixing it means threading `event`/`as_of_date`
-  through `expected_points`/`evaluate_captaincy`/`pick_starting_xi` — real scope,
-  deliberately not attempted in the Plan 1b fix wave. Documented in both functions'
-  docstrings so it can't be mistaken for correct-by-construction.
-- **Traps/breakouts/template backtest scoring is deferred, not built.** Task 9 only
-  extended the backtest with `score_differentials` — no as-of-date-aware historical
-  replay path exists yet for `models/traps.py`/`breakouts.py`/`template.py`, so
-  `fpl backtest --differentials` scores differentials only, nothing else from the
-  Phase 9 heuristics.
+- **Closed 2026-08-20: cards had no season-grain fallback.** `season_shrunk_rate`
+  (the fallback used whenever current-season Understat data is empty, i.e. every
+  player right now, preseason) is built over `player_season_history`, FPL's own
+  official season-totals endpoint - which carries no cards field at all (confirmed
+  against the schema), so cards silently fell all the way to the pure positional
+  average for every player, unlike goals/assists which at least got a real personal
+  signal from that same fallback. Closed by adding a PRIOR-season Understat
+  match-level fallback specifically for cards (`expected_points.py`'s `_player_match_
+  rates`, using `models.squad_churn.prior_season`): richer than a season total anyway
+  (real per-match data), leakage-free for backtest by construction (an entirely
+  earlier season's full data can't leak into the season being predicted). Live-
+  verified against the real pool: Haaland's cards rate moved from the flat positional
+  average to a real personal 0.0801/90 (plausible - he rarely gets booked).
+- **Closed 2026-08-20: promoted teams had zero PL history to fit Dixon-Coles from
+  at all.** Coventry/Hull/Ipswich (this season's genuinely promoted teams, confirmed
+  via zero `player_season_history` for their entire squads) were completely absent
+  from `team_strength_dc.py`'s fit, so every one of their fixtures silently degraded
+  to flat `_LEAGUE_AVERAGE_GOALS` - a real data gap (not a bug, unlike the Man Utd/
+  Spurs one above), but a closeable one. `models/promoted_team_calibration.py` fits
+  Dixon-Coles separately on Championship (E1) results (migration `0016`,
+  `secondary_division_match_results` - a table kept STRICTLY SEPARATE from
+  `match_results_history` so the live PL fit can never be corrupted by a cross-
+  division match, verified by a dedicated isolation test) and derives a real
+  empirical Championship->PL translation (additive shift on the model's log-scale
+  attack/defence coefficients, not a ratio) from actual historical promoted teams -
+  discovered programmatically (any team present in both a recent Championship fit
+  and the current PL fit's lookback window must have been promoted at that boundary),
+  not hardcoded, so the same code works next season without editing team names.
+  Wired into `expected_points.py::_get_or_fit_dc_model` as a strict additive-only
+  augmentation: a team that already has a real PL fit is never touched (regression-
+  tested for byte-identical equality), a team with no Championship data either gets
+  nothing fabricated (keeps the existing flat-average fallback). Small calibration
+  sample size (3 teams: Burnley/Leeds/Sunderland, this season's only available
+  historical promoted-team data point) is a real, disclosed limitation, not hidden.
+  **Live-verified, both the calibration and the real-world direction of the
+  numbers**: attack shift ≈ -0.13 (harder to score a level up), defence shift ≈
+  +0.71 in this model's sign convention (leakier defence a level up) - both match
+  real football intuition, not just internally consistent math. Applied to the
+  current pool: e.g. Coventry (home) vs Newcastle now projects 1.67 scored / 2.73
+  conceded instead of a flat 1.3/1.3 - correctly reads as a real underdog, not an
+  average team. `fpl build-team`/`fpl doctor` both still run clean post-wiring.
+- **Closed 2026-08-20: scenario engine now samples bonus with real per-trial variance.**
+  `_sample_player_trial_points`'s bonus term was `bonus90 * weight`, identical every
+  trial for a given minutes bucket - now `rng.poisson(bonus90 * weight)`, the same
+  honest mean-preserving discrete-count approximation already used here for assists
+  (no source carries real per-trial bonus/BPS data to sample from - Poisson's mean
+  still equals the shrinkage-regressed expectation exactly, only real variance around
+  it is now added). Regression-tested (`test_bonus_is_sampled_with_real_variance_but_
+  preserves_the_mean`): 20000-trial sample recovers the calibrated mean to within 0.05
+  while showing genuine variance.
+- **Closed 2026-08-20: chip *selection* inside `schedule_chips` is no longer
+  event-invariant.** `expected_points()` gained an optional `from_event` parameter
+  (existing callers unaffected - the `else` branch is byte-for-byte the prior code
+  path) that targets a specific future gameweek's fixture(s) instead of always "next
+  fixture from now", reusing `expected_points_window`'s existing from_event fixture-
+  lookup pattern rather than duplicating floor/ceiling/confidence logic anywhere.
+  `optimization/captaincy.py::evaluate_captaincy`/`optimization/chips.py::_candidates`
+  both thread an optional `event` through to it. Regression-tested at the real
+  wiring level, not just the pure function (this project's own repeated lesson):
+  `test_bench_boost_trial_values_picks_a_different_bench_per_event`/
+  `test_triple_captain_trial_values_picks_a_different_captain_per_event` prove a
+  genuinely different bench/captain gets selected for two candidate gameweeks with
+  different underlying fixtures, not just that the parameter is accepted.
+- **Traps/breakouts/template backtest scoring is deferred, not built - and stays that
+  way for two real, structural reasons, not lack of effort (re-assessed 2026-08-20).**
+  (1) `player_ownership_history` has no historical backfill source (see the
+  differential-backtest bullet below) - any historical-season backtest for these three
+  would report `insufficient_ownership_data=True` regardless of how much scoring code
+  exists, exactly like `score_differentials` already does. (2) `traps.py` specifically
+  also reads `expected_minutes()`/availability classification/price history, none of
+  which have an as-of-date-aware historical variant anywhere in this codebase (unlike
+  the ownership/Understat/season-history paths `differentials.py` already threads
+  `as_of_date` through) - building that is real, substantial,
+  currently-unprovable new infrastructure (blocked on point 1 regardless), not a
+  small extension. Revisit if a free historical FPL-ownership source is ever found.
 - **Differential backtest has nothing to score against yet.** `fpl backtest
   --differentials` currently reports `insufficient_ownership_data=True` for any
   historical season, including 2024-25, because `player_ownership_history` is only
@@ -1028,6 +1102,15 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
   `fpl doctor` / `fpl source-status` showing the `fpl_eo_sample` source as healthy. That is the
   actual live-verification step this pillar's testing bar requires — it just cannot happen inside a
   preseason session.
+
+  **Re-checked live 2026-08-20 (not just assumed): genuinely still time-gated, not an engineering
+  gap.** Fetched `bootstrap-static` for real - GW1's deadline is confirmed `2026-08-21T17:30:00Z`,
+  and the real fetch timestamp that session was `2026-08-20T08:05:41Z` - about 33 hours short, not
+  yet lockable no matter how much further work is done today. The same applies to the ownership-
+  threshold recalibration above: it needs real post-GW1 sample data to fit against honestly, which
+  doesn't exist yet either. Not fabricating a number to close either gap early - both close
+  naturally and quickly (GW1 locks well within a day of whenever this is next read), not via more
+  code.
 
 - **Fixed 2026-08-20: Dixon-Coles team strength had silently never fitted real history for Man
   Utd or Spurs, since Pillar 0.** Found while researching season-transition/squad-churn handling

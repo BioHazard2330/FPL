@@ -1,4 +1,4 @@
-from fpl_agent.ingestion.news_source import sync_news
+from fpl_agent.ingestion.news_source import NEWS_SOURCES, NewsFetchError, sync_all_news_sources, sync_news
 from fpl_agent.ingestion.sync import _upsert_many
 from fpl_agent.normalization.fpl_core import normalize_element_types, normalize_players, normalize_teams
 
@@ -131,3 +131,33 @@ def test_sync_news_records_source_health_on_fetch_failure(db_conn, monkeypatch):
     ).fetchone()
     assert health is not None
     assert health["failure_count"] >= 1
+
+
+def test_sync_all_news_sources_aggregates_both_sources(db_conn, monkeypatch):
+    _seed_haaland(db_conn)
+    import fpl_agent.ingestion.news_source as news_mod
+
+    monkeypatch.setattr(news_mod, "fetch_rss", lambda url: _FEED)
+    result = sync_all_news_sources(db_conn)
+
+    assert result["fetched"] == 4  # 2 items x 2 sources
+    assert result["new_items"] == 4
+    assert result["errors"] == {}
+    sources = {r["source"] for r in db_conn.execute("SELECT DISTINCT source FROM news_items").fetchall()}
+    assert sources == {name for name, _url, _tier in NEWS_SOURCES}
+
+
+def test_sync_all_news_sources_one_source_failing_does_not_abort_the_other(db_conn, monkeypatch):
+    _seed_haaland(db_conn)
+    import fpl_agent.ingestion.news_source as news_mod
+
+    def flaky_fetch(url):
+        if url == news_mod.SKY_SPORTS_PL_RSS_URL:
+            raise NewsFetchError("boom")
+        return _FEED
+
+    monkeypatch.setattr(news_mod, "fetch_rss", flaky_fetch)
+    result = sync_all_news_sources(db_conn)
+
+    assert result["fetched"] == 2  # only the BBC feed succeeded
+    assert result["errors"] == {"sky_sports_rss": "boom"}

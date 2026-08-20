@@ -90,8 +90,9 @@ from fpl_agent.models.player_regression import (
     player_shrunk_rates,
     season_shrunk_rate,
 )
+from fpl_agent.models.promoted_team_calibration import augment_model_with_promoted_teams
 from fpl_agent.models.rules import current_season, get_rule
-from fpl_agent.models.squad_churn import team_churn_ratio
+from fpl_agent.models.squad_churn import prior_season, team_churn_ratio
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
 
@@ -123,7 +124,14 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
     needlessly slow; callers within the same backtest round or the same live
     prediction pass share one fit. The cache is not invalidated by new match
     ingestion, so a long-lived process that syncs mid-run would keep the older
-    fit for an already-seen as_of_date."""
+    fit for an already-seen as_of_date.
+
+    Only ever called from the live path (_blended_fixture_goals, in turn
+    called by expected_points()/expected_points_window()/scenario_engine.py -
+    never by core_expected_points()'s backtest path, which doesn't reconstruct
+    the team blend at all, see this module's own docstring), so augmenting
+    with current_season(conn)'s promoted-team calibration here is always
+    correct - there is no historical-replay leakage risk to guard against."""
     key = (id(conn), as_of_date)
     cached = _dc_model_cache.get(key)
     if cached is not None:
@@ -134,6 +142,9 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
         model = None
     else:
         model = fit_dixon_coles(matches, team_ids)
+        season = current_season(conn)
+        if season is not None:
+            model = augment_model_with_promoted_teams(conn, model, season)
     _dc_model_cache[key] = (conn, model)
     return model
 
@@ -393,6 +404,27 @@ def _player_match_rates(
             shrunk_xa90 = cross_league["xa_per90"]
             goals_source = "cross_league"
 
+        # Cards has no season-grain fallback via season_shrunk_rate: FPL's own
+        # season-totals endpoint (player_season_history, history_past) carries
+        # no cards field at all - a real source limitation, not an oversight
+        # (confirmed against the schema). Without this, cards silently falls
+        # all the way to the pure positional average for every player whenever
+        # current-season Understat is empty - which is every player right now,
+        # preseason. The closest real personal signal available is the
+        # player's own PRIOR season's Understat match-level discipline rate
+        # (richer than a season total anyway - real per-match minutes/cards,
+        # not FPL's aggregate). Using an entirely earlier season's full data
+        # (as_of_date=None) is leakage-free for a walk-forward backtest of
+        # `season` by construction, same reasoning season_shrunk_rate's own
+        # before_season already relies on. Falls through to shrink_rate's own
+        # zero-matches behavior (pure positional average) if the player has
+        # no Understat rows last season either - never fabricated.
+        prior_season_str = prior_season(season) if season else None
+        if prior_season_str:
+            prior_cards = player_shrunk_rates(conn, player_id, prior_season_str, as_of_date=None)["cards"]
+            if prior_cards.matches_played > 0:
+                shrunk["cards"] = prior_cards
+
         player_share = 0.0
         minutes_fraction = 0.0
         # No shot-level data to derive a real team-xG share from, so this
@@ -474,11 +506,24 @@ class ExpectedPoints:
     model_version: str
 
 
-def expected_points(conn: sqlite3.Connection, player_id: int, n_gw: int = 1) -> ExpectedPoints:
+def expected_points(
+    conn: sqlite3.Connection, player_id: int, n_gw: int = 1, from_event: int | None = None
+) -> ExpectedPoints:
     """Single-match expected points, with the fixture-level goals inputs averaged
-    over the player's next `n_gw` unfinished fixtures (v1's `n_gw` semantics -
-    a window of context, not a multi-match total). Use expected_points_window()
-    for a genuine cumulative total across a window."""
+    over `n_gw` unfinished fixtures (v1's `n_gw` semantics - a window of context,
+    not a multi-match total). Use expected_points_window() for a genuine
+    cumulative total across a window.
+
+    `from_event` optionally targets a SPECIFIC future gameweek's fixture(s)
+    instead of the default "next n_gw unfinished fixtures from right now" -
+    lets a caller evaluate a candidate GAMEWEEK rather than always "today".
+    Added for chip-window scheduling (optimization/chips.py) and captaincy
+    evaluation (optimization/captaincy.py), both of which used to always
+    evaluate "today's" squad/captain and assume it for every event under
+    comparison - see CLAUDE.md's "chip selection is event-invariant"
+    limitation, closed by this. Existing callers that don't pass it get the
+    exact same code path as before (the `else` branch below is byte-for-byte
+    unchanged), zero behavior change for them."""
     rates = _player_match_rates(conn, player_id)
     em = expected_minutes(conn, player_id)
     probs = rates["minutes_probs"]
@@ -489,13 +534,19 @@ def expected_points(conn: sqlite3.Connection, player_id: int, n_gw: int = 1) -> 
         "WHERE (team_h=? OR team_a=?) AND finished=0 ORDER BY event",
         (rates["team_id"], rates["team_id"]),
     ).fetchall()
-    # Window by gameweek, not by row count, so a double gameweek contributes both
-    # of its fixtures to the average rather than eating the whole n_gw budget.
-    first_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
-    fixtures = [
-        f for f in upcoming
-        if first_event is None or f["event"] is None or f["event"] < first_event + max(n_gw, 1)
-    ]
+    if from_event is not None:
+        fixtures = [
+            f for f in upcoming
+            if f["event"] is not None and from_event <= f["event"] < from_event + max(n_gw, 1)
+        ]
+    else:
+        # Window by gameweek, not by row count, so a double gameweek contributes
+        # both of its fixtures to the average rather than eating the whole n_gw budget.
+        first_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
+        fixtures = [
+            f for f in upcoming
+            if first_event is None or f["event"] is None or f["event"] < first_event + max(n_gw, 1)
+        ]
 
     if fixtures:
         goals_pairs = [_fixture_goals_for(conn, f, rates["team_id"]) for f in fixtures]

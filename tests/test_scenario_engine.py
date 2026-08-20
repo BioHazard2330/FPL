@@ -71,6 +71,26 @@ def test_never_plays_scores_nothing():
     assert np.all(points == 0.0)
 
 
+def test_bonus_is_sampled_with_real_variance_but_preserves_the_mean():
+    """Closes CLAUDE.md's "scenario engine doesn't model bonus-point variance"
+    limitation: bonus must no longer be the same deterministic value every
+    trial (previously bonus90 * weight, identical every trial for a fixed
+    minutes bucket), and its sampled mean must still match the shrinkage-
+    regressed expectation (Poisson's defining property), not some other
+    biased value."""
+    rng = np.random.default_rng(7)
+    # goals_rate/assists_rate/cards/clean_sheet/conceded all zeroed so bonus is
+    # the only contributor to `points` - isolates the assertion cleanly.
+    rates = _rates(goals_rate=0.0, assists_rate=0.0, clean_sheet_pts=0.0, yellow_card_rate=0.0, bonus90=1.2)
+    team_goals = np.zeros(20000, dtype=int)
+    opp_goals = np.zeros(20000, dtype=int)
+    points = _sample_player_trial_points(rng, rates, conceded_rate=0.0, team_goals=team_goals, opp_goals=opp_goals)
+    bonus_only = points - 2.0  # subtract the deterministic full-appearance points
+
+    assert len(set(bonus_only.tolist())) > 1  # real variance - not the same value every trial
+    assert abs(bonus_only.mean() - 1.2) < 0.05  # Poisson mean recovers the calibrated rate (weight=1.0 here)
+
+
 def test_defender_conceded_penalty_scales_with_opponent_goals():
     rng = np.random.default_rng(3)
     rates = _rates(position="DEF", goals_rate=6.0, clean_sheet_pts=4.0, player_share_per90=0.05)

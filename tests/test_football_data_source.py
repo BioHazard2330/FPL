@@ -1,4 +1,4 @@
-from fpl_agent.ingestion.football_data_source import backfill_football_data, parse_football_data_row
+from fpl_agent.ingestion.football_data_source import backfill_football_data, backfill_secondary_division, parse_football_data_row
 from fpl_agent.ingestion.market_identity import get_or_create_market_team
 
 
@@ -108,3 +108,56 @@ def test_football_data_team_names_resolve_to_the_same_market_team_as_fpl(db_conn
     match = db_conn.execute("SELECT home_team_id, away_team_id FROM match_results_history").fetchone()
     assert match["home_team_id"] == fpl_mun_id
     assert match["away_team_id"] == fpl_tot_id
+
+
+def test_secondary_division_team_names_resolve_to_the_same_market_team_as_fpl(db_conn):
+    """Regression guard for the same bug class the Man Utd/Spurs fix covers
+    above, found live while backfilling real Championship data for
+    promoted-team calibration: football-data.co.uk's E1 files use "Coventry"/
+    "Hull"/"Ipswich" while FPL's own teams.name is "Coventry City"/"Hull
+    City"/"Ipswich Town" - without the alias, these would silently create
+    disconnected duplicate market_teams rows."""
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (7, 1, 'Coventry City', 'COV', 't0')")
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (11, 2, 'Hull City', 'HUL', 't0')")
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (12, 3, 'Ipswich Town', 'IPS', 't0')")
+    fpl_cov_id = get_or_create_market_team(db_conn, "fpl", "Coventry City")
+    fpl_hul_id = get_or_create_market_team(db_conn, "fpl", "Hull City")
+    fpl_ips_id = get_or_create_market_team(db_conn, "fpl", "Ipswich Town")
+
+    csv_text = "Date,HomeTeam,AwayTeam,FTHG,FTAG\n17/08/24,Coventry,Hull,1,0\n18/08/24,Ipswich,Coventry,2,2\n"
+    backfill_secondary_division(db_conn, "2024-25", division="E1", csv_text=csv_text)
+
+    rows = db_conn.execute("SELECT home_team_id, away_team_id FROM secondary_division_match_results ORDER BY match_date").fetchall()
+    assert rows[0]["home_team_id"] == fpl_cov_id
+    assert rows[0]["away_team_id"] == fpl_hul_id
+    assert rows[1]["home_team_id"] == fpl_ips_id
+    assert rows[1]["away_team_id"] == fpl_cov_id
+
+
+def test_backfill_secondary_division_never_touches_match_results_history(db_conn):
+    """Isolation guard for Component B (promoted-team calibration): a
+    Championship backfill must land in its own table, never in
+    match_results_history, so the live calibrated-v2 Dixon-Coles fit
+    (which scans match_results_history unfiltered) cannot possibly be
+    corrupted by a cross-division match."""
+    csv_text = (
+        "Date,HomeTeam,AwayTeam,FTHG,FTAG\n"
+        "17/08/24,Leicester,Ipswich,1,1\n"
+    )
+    summary = backfill_secondary_division(db_conn, "2023-24", division="E1", csv_text=csv_text)
+
+    assert summary["matches_inserted"] == 1
+    assert db_conn.execute("SELECT COUNT(*) c FROM match_results_history").fetchone()["c"] == 0
+    row = db_conn.execute("SELECT * FROM secondary_division_match_results").fetchone()
+    assert row["division"] == "E1"
+    assert row["season"] == "2023-24"
+    assert row["home_goals"] == 1
+
+
+def test_backfill_secondary_division_idempotent(db_conn):
+    csv_text = "Date,HomeTeam,AwayTeam,FTHG,FTAG\n17/08/24,Leicester,Ipswich,1,1\n"
+    backfill_secondary_division(db_conn, "2023-24", division="E1", csv_text=csv_text)
+    summary = backfill_secondary_division(db_conn, "2023-24", division="E1", csv_text=csv_text)
+
+    assert summary["matches_inserted"] == 1
+    assert db_conn.execute("SELECT COUNT(*) c FROM secondary_division_match_results").fetchone()["c"] == 1

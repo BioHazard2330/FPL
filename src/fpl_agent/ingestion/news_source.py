@@ -1,6 +1,14 @@
-"""Tier 2-4 (strong-reporter) journalism ingestion: BBC Sport's free Premier
-League RSS feed. FACTS only - see the module-level linkage functions below for
-why player/team matching is a heuristic index, never a classified fact."""
+"""Tier 2-4 (strong-reporter) journalism ingestion: free Premier League RSS
+feeds. FACTS only - see the module-level linkage functions below for why
+player/team matching is a heuristic index, never a classified fact.
+
+Two independent sources as of 2026-08-20 (BBC Sport + Sky Sports, both
+confirmed live, free, no-key, real journalism) - added specifically to give
+models/manager_change.py a genuine second source to require corroboration
+from, per this project's own Tier 2-4 precedence policy (CLAUDE.md: "one
+journalism source alone isn't enough to build a corroboration detector
+around" - the reason the manager-change engine stayed deferred through
+Pillar 2 Plan 2a)."""
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -11,9 +19,18 @@ import requests
 from fpl_agent.ingestion.sync import update_source_health
 
 BBC_PL_RSS_URL = "https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml"
+SKY_SPORTS_PL_RSS_URL = "https://www.skysports.com/rss/11095"
 _TIMEOUT_SECONDS = 15
 _SOURCE_NAME = "bbc_sport_rss"
 _SOURCE_TIER = "strong_reporter"
+_SKY_SPORTS_SOURCE_NAME = "sky_sports_rss"
+
+# (source_name, feed_url, source_tier) - both strong_reporter tier (established
+# sports journalism outlets, same trust level, see CLAUDE.md's precedence policy).
+NEWS_SOURCES = (
+    (_SOURCE_NAME, BBC_PL_RSS_URL, _SOURCE_TIER),
+    (_SKY_SPORTS_SOURCE_NAME, SKY_SPORTS_PL_RSS_URL, _SOURCE_TIER),
+)
 
 
 class NewsFetchError(Exception):
@@ -110,12 +127,21 @@ def match_teams(conn, text: str) -> list[int]:
     return sorted(matched)
 
 
-def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) -> dict:
+def sync_news(
+    conn,
+    feed_url: str = BBC_PL_RSS_URL,
+    limit: int | None = None,
+    source_name: str = _SOURCE_NAME,
+    source_tier: str = _SOURCE_TIER,
+) -> dict:
+    """`source_name`/`source_tier` default to BBC (unchanged prior behavior
+    for any existing caller that doesn't pass them) - pass a different
+    NEWS_SOURCES entry to sync Sky Sports or any future additional feed."""
     try:
         xml_text = fetch_rss(feed_url)
         items = parse_rss_items(xml_text)
     except (NewsFetchError, ET.ParseError) as exc:
-        update_source_health(conn, _SOURCE_NAME, success=False, error=str(exc))
+        update_source_health(conn, source_name, success=False, error=str(exc))
         raise NewsFetchError(str(exc)) from exc
 
     now = datetime.now(timezone.utc).isoformat()
@@ -127,7 +153,7 @@ def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) ->
 
         existing = conn.execute(
             "SELECT id FROM news_items WHERE source=? AND external_id=?",
-            (_SOURCE_NAME, item["external_id"]),
+            (source_name, item["external_id"]),
         ).fetchone()
         if existing is not None:
             continue
@@ -135,7 +161,7 @@ def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) ->
         cur = conn.execute(
             "INSERT INTO news_items (source, source_tier, external_id, title, link, summary, published_at, retrieved_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (_SOURCE_NAME, _SOURCE_TIER, item["external_id"], item["title"], item["link"],
+            (source_name, source_tier, item["external_id"], item["title"], item["link"],
              item["summary"], item["published_at"], now),
         )
         news_item_id = cur.lastrowid
@@ -156,13 +182,30 @@ def sync_news(conn, feed_url: str = BBC_PL_RSS_URL, limit: int | None = None) ->
             teams_linked += 1
 
     conn.commit()
-    update_source_health(conn, _SOURCE_NAME, success=True, error=None)
+    update_source_health(conn, source_name, success=True, error=None)
     return {
         "fetched": len(items),
         "new_items": new_items,
         "players_linked": players_linked,
         "teams_linked": teams_linked,
     }
+
+
+def sync_all_news_sources(conn, limit: int | None = None) -> dict:
+    """Syncs every registered source (NEWS_SOURCES) in one call - what `fpl
+    sync-news` actually runs. Aggregated totals; per-source failures don't
+    abort the others (each already has its own source_health tracking via
+    sync_news -> update_source_health)."""
+    totals = {"fetched": 0, "new_items": 0, "players_linked": 0, "teams_linked": 0}
+    errors = {}
+    for name, url, tier in NEWS_SOURCES:
+        try:
+            result = sync_news(conn, feed_url=url, limit=limit, source_name=name, source_tier=tier)
+            for key in totals:
+                totals[key] += result[key]
+        except NewsFetchError as exc:
+            errors[name] = str(exc)
+    return {**totals, "errors": errors}
 
 
 def list_recent_news(conn, limit: int = 20) -> list[dict]:

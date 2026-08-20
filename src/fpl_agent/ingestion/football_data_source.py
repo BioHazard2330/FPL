@@ -66,9 +66,14 @@ def season_to_code(season: str) -> str:
     return start[-2:] + end
 
 
-def fetch_season_csv(season: str) -> str:
+def fetch_season_csv(season: str, division: str = "E0") -> str:
+    """`division` - football-data.co.uk's own division codes: E0 (Premier
+    League, the default, what every existing caller still gets), E1
+    (Championship). Used by backfill_secondary_division() for promoted-team
+    calibration (see docs/superpowers/specs/2026-08-20-preseason-calibration-
+    design.md) - never by backfill_football_data(), which stays E0-only."""
     code = season_to_code(season)
-    url = f"https://www.football-data.co.uk/mmz4281/{code}/E0.csv"
+    url = f"https://www.football-data.co.uk/mmz4281/{code}/{division}.csv"
     try:
         resp = requests.get(url, timeout=_TIMEOUT_SECONDS)
         resp.raise_for_status()
@@ -122,6 +127,47 @@ def _upsert_match_and_odds(conn, season: str, parsed: dict) -> bool:
              o["over_2_5"], o["under_2_5"], now),
         )
     return True
+
+
+def _upsert_secondary_division_match(conn, division: str, season: str, parsed: dict) -> None:
+    home_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["home_team_name"]))
+    away_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["away_team_name"]))
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO secondary_division_match_results "
+        "(division, season, match_date, home_team_id, away_team_id, home_goals, away_goals, source, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(division, season, match_date, home_team_id, away_team_id) DO UPDATE SET "
+        "home_goals=excluded.home_goals, away_goals=excluded.away_goals, retrieved_at=excluded.retrieved_at",
+        (division, season, parsed["match_date"], home_id, away_id, parsed["home_goals"], parsed["away_goals"],
+         "football_data", now),
+    )
+
+
+def backfill_secondary_division(conn, season: str, division: str = "E1", csv_text: str | None = None) -> dict:
+    """Historical results for a secondary division (default E1, the
+    Championship) - separate from backfill_football_data/match_results_
+    history entirely, feeding models/promoted_team_calibration.py instead
+    of the live calibrated-v2 Dixon-Coles fit. See docs/superpowers/specs/
+    2026-08-20-preseason-calibration-design.md's Component B."""
+    try:
+        text = csv_text if csv_text is not None else fetch_season_csv(season, division=division)
+    except FootballDataFetchError as exc:
+        update_source_health(conn, f"football_data_{division}", success=False, error=str(exc))
+        raise
+
+    reader = csv.DictReader(io.StringIO(text))
+    matches_inserted = 0
+    for raw_row in reader:
+        parsed = parse_football_data_row(raw_row)
+        if parsed is None:
+            continue
+        _upsert_secondary_division_match(conn, division, season, parsed)
+        matches_inserted += 1
+    conn.commit()
+
+    update_source_health(conn, f"football_data_{division}", success=True, error=None)
+    return {"matches_inserted": matches_inserted}
 
 
 def backfill_football_data(conn, season: str, csv_text: str | None = None) -> dict:

@@ -23,7 +23,7 @@ from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
-from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_news
+from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_all_news_sources
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync
 from fpl_agent.ingestion.understat_source import backfill_understat
@@ -205,21 +205,23 @@ def sync_eo(event: int, sample_size: int, force: bool):
 @cli.command("sync-news")
 @click.option("--limit", default=None, type=int, help="max new items to process this run (omit for all)")
 def sync_news_cmd(limit: int | None):
-    """Ingest BBC Sport Premier League RSS (strong-reporter tier journalism) - real
-    articles matched to players/teams by name, never auto-classified into a status
-    change. Separate from `fpl sync`, opt-in."""
+    """Ingest BBC Sport + Sky Sports Premier League RSS (strong-reporter tier
+    journalism, two independent sources) - real articles matched to
+    players/teams by name, never auto-classified into a status change.
+    Separate from `fpl sync`, opt-in."""
     conn = get_connection()
     try:
-        result = sync_news(conn, limit=limit)
-    except NewsFetchError as e:
-        click.echo(f"sync-news failed: {e}", err=True)
-        raise SystemExit(1)
+        result = sync_all_news_sources(conn, limit=limit)
     finally:
         conn.close()
     click.echo(f"fetched         {result['fetched']}")
     click.echo(f"new items       {result['new_items']}")
     click.echo(f"players linked  {result['players_linked']}")
     click.echo(f"teams linked    {result['teams_linked']}")
+    for source, error in result["errors"].items():
+        click.echo(f"WARNING: {source} failed: {error}", err=True)
+    if result["errors"] and result["fetched"] == 0:
+        raise SystemExit(1)
 
 
 @cli.command("sync-live-odds")
@@ -262,6 +264,30 @@ def team_news_cmd(limit: int):
         click.echo(f"{published:25} [{item['source_tier']}] players={players} teams={teams}")
         click.echo(f"  {item['title']}")
         click.echo(f"  {item['link']}")
+
+
+@cli.command("manager-changes")
+@click.option("--days", default=7, type=int, help="lookback window in days")
+def manager_changes_cmd(days: int):
+    """Heuristic manager-change signal: teams with a manager-change-keyword
+    article from 2+ INDEPENDENT journalism sources within the lookback
+    window (requires `fpl sync-news` to have run first). A real, computed
+    corroboration signal for a human/Claude to read and judge - never an
+    asserted fact, never written to `teams`/`players.status`."""
+    from fpl_agent.models.manager_change import detect_manager_change_signals
+
+    conn = get_connection()
+    try:
+        signals = detect_manager_change_signals(conn, days_lookback=days)
+    finally:
+        conn.close()
+    if not signals:
+        click.echo(f"no corroborated manager-change signals in the last {days} day(s)")
+        return
+    for s in signals:
+        click.echo(f"{s.team_name} - corroborated by: {', '.join(s.sources)}")
+        for title in s.matched_titles:
+            click.echo(f"  {title}")
 
 
 @cli.command("backfill-odds")

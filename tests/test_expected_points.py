@@ -240,6 +240,27 @@ def test_squad_churn_shrinks_the_dixon_coles_signal(db_conn):
     assert (shrunk[0] - shrunk[1]) < (baseline[0] - baseline[1])
 
 
+def test_cards_falls_back_to_prior_season_understat_data(db_conn):
+    """Real gap this closes: player_season_history (season_shrunk_rate's
+    source) carries no cards field at all - confirmed against the schema -
+    so cards used to fall straight to the pure positional average whenever
+    current-season Understat was empty, which is every player right now,
+    preseason. This asserts the player's own PRIOR season's real Understat
+    discipline rate is used instead, when it exists."""
+    from fpl_agent.models.expected_points import _player_match_rates
+    from fpl_agent.models.squad_churn import prior_season
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    baseline = _player_match_rates(db_conn, player_id=1)  # nothing at all -> pure positional average
+
+    _seed_player_match_stats(db_conn, prior_season(season), 1, arsenal)  # last season's real cards rate
+
+    with_prior = _player_match_rates(db_conn, player_id=1)
+
+    assert with_prior["shrunk_cards90"] != baseline["shrunk_cards90"]
+    assert with_prior["shrunk_cards90"] > 0
+
+
 def test_odds_from_a_different_match_are_never_blended_in(db_conn):
     # Regression: the lookup used to be "most recent prior meeting between these
     # two teams", unbounded in age, so an unplayed fixture silently picked up a
@@ -360,6 +381,29 @@ def test_n_gw_widens_the_fixture_window(db_conn):
     two_gw = expected_points(db_conn, 1, n_gw=2)
 
     assert one_gw.median != two_gw.median
+
+
+def test_from_event_targets_a_specific_future_gameweek(db_conn):
+    """Closes CLAUDE.md's "chip selection is event-invariant" limitation:
+    from_event lets a caller evaluate a SPECIFIC future gameweek (e.g. GW10,
+    a candidate chip window) rather than always "the next fixture from right
+    now". Home/away flips between the two events here, so a genuinely
+    different from_event must produce a genuinely different result -
+    proving the parameter is actually wired into the fixture lookup, not
+    just accepted and ignored."""
+    _seed_two_team_world(db_conn, with_player_stats=False)
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, updated_at) VALUES (2,'Gameweek 2','2026-08-28T17:30:00Z',1756400000,0,0,0,0,'t0')"
+    )
+    _insert_fixture(db_conn, 2, 2, 2, 1, date="2026-08-28")  # reverse fixture, player's team away
+
+    gw1 = expected_points(db_conn, 1, n_gw=1, from_event=1)
+    gw2 = expected_points(db_conn, 1, n_gw=1, from_event=2)
+    default_call = expected_points(db_conn, 1, n_gw=1)  # from_event=None must reproduce the GW1 (soonest) result
+
+    assert gw1.median != gw2.median
+    assert gw1.median == default_call.median
 
 
 def test_core_expected_points_is_leakage_free(db_conn):

@@ -43,7 +43,7 @@ def _seed(conn):
 
 
 def _patch(monkeypatch):
-    monkeypatch.setattr(captaincy_mod, "expected_points", lambda conn, pid, n_gw=1: _EP[pid])
+    monkeypatch.setattr(captaincy_mod, "expected_points", lambda conn, pid, n_gw=1, from_event=None: _EP[pid])
 
 
 def test_captaincy_report_picks_best_by_median(db_conn, monkeypatch):

@@ -81,7 +81,12 @@ def freehit_value(conn: sqlite3.Connection, squad_ids: list[int]) -> float:
     return wildcard_value(conn, squad_ids, n_gw=1)
 
 
-def _candidates(conn: sqlite3.Connection, squad_ids: list[int]):
+def _candidates(conn: sqlite3.Connection, squad_ids: list[int], event: int | None = None):
+    """`event` optionally evaluates a specific future gameweek instead of the
+    default "next fixture from right now" - see expected_points()'s
+    `from_event` docstring. Passing None (the default, what bench_boost_value/
+    triple_captain_value/wildcard_value/freehit_value all still do) reproduces
+    the exact prior behavior."""
     rows = conn.execute(
         f"SELECT p.id, p.web_name, et.singular_name_short AS position, p.team_id, t.short_name AS team_short "
         f"FROM players p JOIN element_types et ON et.id=p.element_type JOIN teams t ON t.id=p.team_id "
@@ -89,7 +94,7 @@ def _candidates(conn: sqlite3.Connection, squad_ids: list[int]):
         squad_ids,
     ).fetchall()
     for r in rows:
-        ep = expected_points(conn, r["id"], n_gw=1)
+        ep = expected_points(conn, r["id"], n_gw=1, from_event=event)
         yield PlayerCandidate(
             player_id=r["id"], web_name=r["web_name"], position=r["position"],
             team_id=r["team_id"], team_short=r["team_short"], price_tenths=0, xp=ep.median,
@@ -125,12 +130,13 @@ def _bench_boost_trial_values(
     pick_starting_xi call bench_boost_value already makes) - only the bench's
     realized points vary per scenario trial.
 
-    Known approximation: the bench is picked from TODAY's live expected-points
-    evaluation (pick_starting_xi takes no event/as_of_date), so the same bench is
-    assumed for every candidate event even though schedule_chips exists precisely
-    to compare different events - biasing the DP toward whichever event scores
-    best for today's bench rather than a genuinely event-specific one."""
-    squad = list(_candidates(conn, squad_ids))
+    The bench is picked from `event`-specific expected-points evaluation
+    (_candidates(..., event=event), which threads through to
+    expected_points()'s `from_event` - see CLAUDE.md's now-closed "chip
+    selection is event-invariant" limitation), so a genuinely different
+    bench can be picked for a genuinely different candidate gameweek, rather
+    than always assuming today's bench."""
+    squad = list(_candidates(conn, squad_ids, event=event))
     xi = pick_starting_xi(conn, squad)
     bench_ids = [c.player_id for c in xi.bench]
     return np.array([
@@ -144,12 +150,12 @@ def _triple_captain_trial_values(
     """Extra points over a normal (2x) captaincy - one more multiple of the best
     option's realized points, mirroring triple_captain_value's median-based logic.
 
-    Known approximation: the captain is picked from TODAY's live captaincy
-    evaluation (evaluate_captaincy takes no event/as_of_date), so the same captain
-    is assumed for every candidate event even though schedule_chips exists
-    precisely to compare different events - biasing the DP toward whichever event
-    scores best for today's captain rather than a genuinely event-specific one."""
-    options = evaluate_captaincy(conn, squad_ids)
+    The captain is picked from `event`-specific captaincy evaluation
+    (evaluate_captaincy(..., event=event) - see CLAUDE.md's now-closed "chip
+    selection is event-invariant" limitation), so a genuinely different
+    captain can be picked for a genuinely different candidate gameweek,
+    rather than always assuming today's captain."""
+    options = evaluate_captaincy(conn, squad_ids, event=event)
     if not options:
         return np.zeros(len(scenario_draw))
     captain_id = options[0].player_id

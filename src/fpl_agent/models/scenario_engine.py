@@ -13,13 +13,18 @@ Both the chip DP scheduler and fpl season-sim consume the same trial draws, so t
 never silently disagree about the same fixture's odds (the reason this module exists as
 one shared piece of infrastructure rather than two independent samplers).
 
-Bonus points are NOT sampled per trial - no per-trial bonus distribution exists (same
-gap models/expected_points.py::core_expected_points already documents for Pillar 0).
-Only the shrinkage-regressed bonus90 contribution (models/bonus_regression.py's
-expected_bonus_per90, season-grain empirical-Bayes shrinkage toward the positional mean -
-no longer a raw historical average) is added, scaled by the trial's own minutes weight.
-This means trial totals do not capture bonus-point variance, only its mean - a known,
-documented limitation, not a silent gap.
+Bonus points ARE sampled per trial (closed 2026-08-20 - see CLAUDE.md's now-closed
+"scenario engine doesn't model bonus-point variance" limitation): no source this
+project has carries real match-level bonus/BPS award data (BPS is FPL-proprietary,
+Understat doesn't have it - the same reason bonus_regression.py's own shrinkage is
+season-grain, not match-grain), so there is no real per-trial bonus DISTRIBUTION to
+draw from. Real FPL bonus is a discrete {0,1,2,3} award to a match's top-3 BPS
+performers - a Poisson draw is the same honest, mean-preserving discrete-count
+approximation already used here for assists (also a low-count stat with no per-trial
+distribution source), not a perfect model of the real top-3 mechanism. Its mean
+still equals models/bonus_regression.py's shrinkage-regressed expected_bonus_per90,
+scaled by the trial's own minutes weight - the calibrated mean is unchanged, only
+real variance around it is now added.
 
 RNG convention: every sampling function here takes an explicit np.random.Generator -
 never global numpy random state - so trials are reproducible under a fixed seed. This
@@ -96,7 +101,11 @@ def _sample_player_trial_points(
     card_drawn = rng.random(n_trials) < card_prob
     cards_points = card_drawn.astype(float) * rates["yellow_card_rate"]
 
-    bonus_points = rates["bonus90"] * weight  # deterministic - see module docstring
+    # Poisson-distributed, mean-preserving (E[bonus] = bonus90 * weight, matching the
+    # shrinkage-regressed expectation exactly) - see module docstring for why this is
+    # the honest approximation available, not a perfect top-3-BPS model.
+    bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None)
+    bonus_points = rng.poisson(bonus_rate)
 
     # A clean sheet is a hard 60-minute threshold, same as _match_components - p_full
     # only, not the blended partial-appearance weight.

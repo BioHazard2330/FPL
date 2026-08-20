@@ -31,6 +31,14 @@ COMMON_TEAM_NAME_ALIASES = {
     "leeds united": "Leeds",
     "west ham united": "West Ham",
     "wolverhampton wanderers": "Wolves",
+    # football-data.co.uk's Championship (E1) files use short forms for these
+    # three clubs too - found live 2026-08-20 backfilling secondary-division
+    # data for promoted-team calibration (docs/superpowers/specs/2026-08-20-
+    # preseason-calibration-design.md's Component B), same mismatch class the
+    # Man Utd/Spurs fix above already covers for the top-flight file.
+    "coventry": "Coventry City",
+    "hull": "Hull City",
+    "ipswich": "Ipswich Town",
 }
 
 

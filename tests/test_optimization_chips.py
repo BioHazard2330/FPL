@@ -101,6 +101,45 @@ def test_bench_boost_trial_values_sums_only_bench_points(db_conn, monkeypatch):
     assert list(values) == [9.0, 1.0]  # bench is just player 3 in both trials
 
 
+def test_bench_boost_trial_values_picks_a_different_bench_per_event(db_conn, monkeypatch):
+    """Closes CLAUDE.md's "chip selection is event-invariant" limitation for
+    the bench-boost side: _candidates must actually be called with `event`
+    (threading through to expected_points()'s from_event), not just accept
+    the parameter and ignore it. Here player 3 has the better fixture at
+    GW10 (so player 2 is benched) and player 2 has the better fixture at
+    GW20 (so player 3 is benched) - real pick_starting_xi (unmocked) must
+    follow that switch."""
+    _seed_squad_for_bench_boost(db_conn)
+    # squad_max_play=1 for FWD (unlike the shared helper's 3) so a real bench
+    # split actually occurs under pick_starting_xi's real constraint logic -
+    # with only 3 total players and FWD max=3, nobody would ever be benched.
+    db_conn.execute("UPDATE element_types SET squad_max_play=1 WHERE id=4")
+    db_conn.commit()
+    import fpl_agent.optimization.chips as chips_mod
+    from fpl_agent.optimization.squad import PlayerCandidate
+
+    def fake_candidates(conn, squad_ids, event=None):
+        p2_xp, p3_xp = (4.0, 9.0) if event == 10 else (9.0, 4.0)
+        xp_by_id = {1: 5.0, 2: p2_xp, 3: p3_xp}
+        for pid in squad_ids:
+            yield PlayerCandidate(
+                player_id=pid, web_name=f"p{pid}", position="GKP" if pid == 1 else "FWD",
+                team_id=1, team_short="TMA", price_tenths=0, xp=xp_by_id[pid],
+                median=xp_by_id[pid], floor=xp_by_id[pid], ceiling=xp_by_id[pid],
+                confidence="HIGH", expected_minutes=90.0,
+            )
+
+    monkeypatch.setattr(chips_mod, "_candidates", fake_candidates)
+
+    scenario_draw = [ScenarioOutcome(trial_index=0, points_by_event_player={(10, 2): 6.0, (20, 3): 6.0})]
+
+    gw10_values = _bench_boost_trial_values(db_conn, [1, 2, 3], event=10, scenario_draw=scenario_draw)
+    gw20_values = _bench_boost_trial_values(db_conn, [1, 2, 3], event=20, scenario_draw=scenario_draw)
+
+    assert list(gw10_values) == [6.0]  # player 2 (weaker at GW10) is benched, scores its real GW10 points
+    assert list(gw20_values) == [6.0]  # player 3 (weaker at GW20) is benched, scores its real GW20 points
+
+
 def test_triple_captain_trial_values_reads_best_captain_points(db_conn, monkeypatch):
     _seed_squad_for_bench_boost(db_conn)
     import fpl_agent.optimization.chips as chips_mod
@@ -108,7 +147,7 @@ def test_triple_captain_trial_values_reads_best_captain_points(db_conn, monkeypa
 
     monkeypatch.setattr(
         chips_mod, "evaluate_captaincy",
-        lambda conn, squad_ids: [CaptainOption(player_id=2, web_name="FWD_starter", position="FWD", floor=1, median=5, ceiling=9, confidence="HIGH", expected_minutes=90, is_penalty_taker=False, opponent_short=None, is_home=None, selected_by_percent=None, effective_ownership_percent=None, eo_source="unavailable")],
+        lambda conn, squad_ids, event=None: [CaptainOption(player_id=2, web_name="FWD_starter", position="FWD", floor=1, median=5, ceiling=9, confidence="HIGH", expected_minutes=90, is_penalty_taker=False, opponent_short=None, is_home=None, selected_by_percent=None, effective_ownership_percent=None, eo_source="unavailable")],
     )
 
     scenario_draw = [
@@ -118,6 +157,36 @@ def test_triple_captain_trial_values_reads_best_captain_points(db_conn, monkeypa
 
     values = _triple_captain_trial_values(db_conn, [1, 2, 3], event=10, scenario_draw=scenario_draw)
     assert list(values) == [12.0, 3.0]
+
+
+def test_triple_captain_trial_values_picks_a_different_captain_per_event(db_conn, monkeypatch):
+    """Closes CLAUDE.md's "chip selection is event-invariant" limitation:
+    the captain evaluated must actually change when `event` changes, not
+    just be accepted as a parameter and ignored. evaluate_captaincy here
+    returns a genuinely different top pick depending on which event it's
+    asked about (player 2 has the better fixture at GW10, player 3 at
+    GW20) - _triple_captain_trial_values must follow that per-event switch
+    and read the RIGHT player's scenario points each time."""
+    _seed_squad_for_bench_boost(db_conn)
+    import fpl_agent.optimization.chips as chips_mod
+    from fpl_agent.optimization.captaincy import CaptainOption
+
+    def fake_evaluate_captaincy(conn, squad_ids, event=None):
+        best_id = 2 if event == 10 else 3
+        return [CaptainOption(player_id=best_id, web_name=f"p{best_id}", position="FWD", floor=1, median=5, ceiling=9, confidence="HIGH", expected_minutes=90, is_penalty_taker=False, opponent_short=None, is_home=None, selected_by_percent=None, effective_ownership_percent=None, eo_source="unavailable")]
+
+    monkeypatch.setattr(chips_mod, "evaluate_captaincy", fake_evaluate_captaincy)
+
+    scenario_draw = [
+        ScenarioOutcome(trial_index=0, points_by_event_player={(10, 2): 12.0, (20, 3): 8.0}),
+        ScenarioOutcome(trial_index=1, points_by_event_player={(10, 2): 3.0, (20, 3): 6.0}),
+    ]
+
+    gw10_values = _triple_captain_trial_values(db_conn, [1, 2, 3], event=10, scenario_draw=scenario_draw)
+    gw20_values = _triple_captain_trial_values(db_conn, [1, 2, 3], event=20, scenario_draw=scenario_draw)
+
+    assert list(gw10_values) == [12.0, 3.0]  # player 2's real GW10 points
+    assert list(gw20_values) == [8.0, 6.0]  # player 3's real GW20 points - a genuinely different captain
 
 
 from fpl_agent.optimization.chips import ChipWindow, schedule_chips
