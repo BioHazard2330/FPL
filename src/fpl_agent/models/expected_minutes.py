@@ -49,6 +49,30 @@ _CROSS_LEAGUE_ROUNDS_APPROX = 38
 # of these signings to fit an actual rate against.
 _NEW_SIGNING_MINUTES_DISCOUNT = 0.6
 
+# Real gap found 2026-08-20: a user-provided screenshot of a competitor FPL
+# prediction tool showed a real, non-trivial minutes estimate (82') for a
+# player this project had zero statistical signal on (Tzolis) - their own UI
+# has a "Default minutes" toggle, confirming this is a disclosed editorial
+# ASSUMPTION for new-to-PL signings with no track record, not a hidden
+# statistical trick this project is missing. This project had no equivalent
+# fallback at all for that class of player - real managers voting with real
+# squad selections (team news, transfer fee size, preseason form this
+# project has no structured source for) is a real, freely-available signal
+# this project already has in player_ownership_history and had never used
+# for expected_minutes specifically. 10.0 matches traps.py's existing
+# MIN_OWNERSHIP_PERCENT convention (a real, non-arbitrary "meaningful
+# ownership" bar already established elsewhere in this codebase) - deliberately
+# more conservative than the competitor's 82' default, since a broad
+# ownership signal is weaker evidence than whatever informed theirs.
+_MARKET_CONVICTION_OWNERSHIP_THRESHOLD = 10.0
+_MARKET_CONVICTION_DEFAULT_MINUTES = 60.0
+# Only overrides a base drawn from one of these already-weak-evidence
+# branches - never a genuinely low but well-evidenced estimate (e.g. Havertz,
+# a real, current-squad backup with real recent minutes data showing it -
+# a low number there is a real signal, not a data gap, and must not be
+# inflated just because of unrelated ownership noise).
+_WEAK_EVIDENCE_BASES = {"no_data_available", "stale_prior_season", "cross_league_prior_new_signing"}
+
 
 @dataclass(frozen=True)
 class ExpectedMinutes:
@@ -136,6 +160,16 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
             base = 0.0
             confidence = "LOW"
             basis = "no_data_available"
+
+    if basis in _WEAK_EVIDENCE_BASES and base < _MARKET_CONVICTION_DEFAULT_MINUTES:
+        ownership_row = conn.execute(
+            "SELECT selected_by_percent FROM player_ownership_history WHERE player_id=? AND valid_until IS NULL",
+            (player_id,),
+        ).fetchone()
+        real_ownership = ownership_row["selected_by_percent"] if ownership_row and ownership_row["selected_by_percent"] is not None else 0.0
+        if real_ownership >= _MARKET_CONVICTION_OWNERSHIP_THRESHOLD:
+            base = _MARKET_CONVICTION_DEFAULT_MINUTES
+            basis = "market_conviction_override"
 
     damped = min(base * _AVAILABILITY_DAMPING[classification], 90.0)
 

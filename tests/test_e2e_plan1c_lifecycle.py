@@ -43,6 +43,17 @@ def _seed_pool(conn):
         "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES "
         "(1, 100, 't0', NULL), (2, 50, 't0', NULL), (3, 50, 't0', NULL)"
     )
+    # Player 1's own real trap reason (a genuine price drop) - decoupled from the
+    # minutes/no-data path, which market_conviction_override (expected_minutes.py,
+    # 2026-08-20) now correctly treats as "the market believes in this fit player
+    # despite no history" rather than a minutes-risk trap signal. This player is
+    # still meant to be included in find_traps output (the test's real point is the
+    # EO-fallback wiring below), just via a reason that reflects a genuine
+    # deteriorating signal instead.
+    conn.execute(
+        "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES "
+        "(1, 110, 's0', 't0')"
+    )
     conn.execute(
         "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
         "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,1,1,0,0,'t0')"  # epoch 0 - already locked

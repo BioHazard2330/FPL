@@ -40,6 +40,15 @@ def _set_current_season(conn, season="2026-27"):
     conn.commit()
 
 
+def _set_ownership(conn, player_id, selected_by_percent):
+    conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (?,?,'t0',NULL)",
+        (player_id, selected_by_percent),
+    )
+    conn.commit()
+
+
 def test_uses_last_season_prior_when_no_current_data(db_conn):
     bootstrap = make_bootstrap()
     _seed(db_conn, bootstrap, "t0")
@@ -144,6 +153,79 @@ def test_cross_league_prior_absent_still_falls_back_to_zero(db_conn):
 
     assert result.basis == "no_data_available"
     assert result.expected_minutes == 0.0
+
+
+def test_market_conviction_override_when_real_ownership_is_high_despite_no_data(db_conn):
+    """Real gap found 2026-08-20: a user-shared competitor tool screenshot
+    showed a real, non-trivial minutes estimate for a player this project
+    had zero statistical signal on (their own UI has a "Default minutes"
+    toggle - a disclosed editorial assumption, not hidden data). Real
+    managers voting with real squad selections (20%+ ownership) despite this
+    project having no history is itself a real, freely-available signal -
+    when the current estimate is this weak, it should be a disclosed
+    default assumption, not a fabricated-looking exact zero."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_ownership(db_conn, 1, 20.4)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "market_conviction_override"
+    assert result.confidence == "LOW"
+    assert result.expected_minutes == 60.0
+
+
+def test_market_conviction_override_does_not_fire_below_the_ownership_threshold(db_conn):
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_ownership(db_conn, 1, 3.0)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "no_data_available"
+    assert result.expected_minutes == 0.0
+
+
+def test_market_conviction_override_upgrades_a_stale_prior_too(db_conn):
+    """Not just the no-data branch - a stale prior (like the real Tzolis
+    case) is also weak evidence and should be eligible for the same
+    override when real ownership disagrees with it."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_current_season(db_conn, "2026-27")
+    _insert_season_history(db_conn, player_id=1, minutes=326, season_name="2021/22")
+    _set_ownership(db_conn, 1, 20.4)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "market_conviction_override"
+    assert result.expected_minutes == 60.0
+
+
+def test_market_conviction_override_never_inflates_a_well_evidenced_low_estimate(db_conn):
+    """A real, current-squad backup with genuine recent minutes data (e.g.
+    Havertz) showing low involvement is a real signal, not a data gap -
+    high ownership on such a player (rare, but possible - a popular
+    differential punt) must never override real recent evidence.
+    make_bootstrap()'s default event is unfinished (finished_events=0),
+    which alone would keep current_per_gw at None regardless of the
+    snapshot's minutes value - a second, genuinely finished event is
+    required to actually exercise the current_season_only path."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, average_entry_score, highest_score, updated_at) "
+        "VALUES (2,'Gameweek 0','2026-08-14T17:30:00Z',1,1,1,0,0,NULL,NULL,'t0')"
+    )
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=20 WHERE player_id=1")
+    db_conn.commit()
+    _set_ownership(db_conn, 1, 20.4)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "current_season_only"
+    assert result.expected_minutes == 20.0  # real recent evidence, unmodified by the high-ownership signal
 
 
 def test_doubtful_partially_damps_expected_minutes(db_conn):
