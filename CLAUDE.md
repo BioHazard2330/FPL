@@ -809,35 +809,56 @@ Phased build with checkpoints (user preference — do not attempt the full spec 
 - **Backtest baseline is historical-only.** `fpl backtest` proves the model against 2024-25-style
   historical seasons (once backfilled); it says nothing yet about live in-season accuracy —
   revisit once real 2026-27 GW1-5 results exist to compare against.
-- **`fpl backfill-xg` is currently broken on a from-scratch DB — discovered live during the
-  bonus-shrinkage verification, not a bug in this project's code.** Understat's league season page
-  (`understat.com/league/EPL/<year>`) no longer embeds the `datesData`/`teamsData` JSON blob
-  `understat_source.py::extract_json_var` parses out of a `<script>` tag; a direct fetch (with and
-  without a browser User-Agent) returns a normal 200 and an 18KB page, but neither variable name
-  appears in it anywhere — a real site-structure change on Understat's end. `player_match_stats_history`
-  has zero rows reachable, confirmed total across every season, not just 2024-25. `fpl backtest --season
-  2024-25` (with or without `--bonus`) reports `predictions scored 0` / `MAE 0.0` / `RMSE 0.0` /
-  `DOES NOT beat naive baseline` for its round-level half on a fresh DB — degrades gracefully rather
-  than lying about coverage, but that round-level output is not trustworthy evidence of anything until
-  Understat's scraper is fixed for the new page structure. The bonus-regression half is unaffected:
-  `score_bonus_regression` reads `player_season_history` only, never Understat.
+- **`fpl backfill-xg` was broken, now fixed and live-verified (2026-08-20) — history kept below
+  because the incident revealed a real blast-radius gap worth remembering.** Discovered live during
+  the bonus-shrinkage verification: Understat's league/match pages had stopped embedding the
+  `datesData`/`rostersData` JSON blobs `understat_source.py::extract_json_var` used to parse out of a
+  `<script>` tag — a direct fetch returned a normal 200 and an ~18KB page with zero data variables
+  anywhere in it, a real site-structure change on Understat's end, not a bug in this project's original
+  code. `player_match_stats_history` had zero rows reachable, confirmed total across every season.
 
-  **What this bullet originally missed, found live 2026-08-20: the blast radius wasn't just the
-  backtest metric — it silently zeroed goals/assists for every player in LIVE projections too.**
-  `player_shrunk_rates()`'s goals/xa components and `player_share_of_team_xg()` are both 100% Understat-
-  dependent; with the table empty, both a player's own rate AND the shrinkage prior collapse to 0, so
-  `shrink_rate(0, 0, 0) = 0` for literally every player regardless of real ability — not a conservative
-  estimate, a complete silent loss of the single largest scoring component. Haaland projected 2.49 xP
-  (should be ~6-7 given his real ~6.3-6.8/game season average) purely from this. **Fixed**:
-  `models/player_regression.py::season_shrunk_rate()`/`season_position_average_per90()` (same
-  empirical-Bayes machinery bonus_regression.py already established) fall back to
-  `player_season_history` (official FPL data, always populated, no Understat dependency) whenever a
-  player has zero Understat match rows for the season — same goals-from-actual/assists-from-xA
-  asymmetry the primary path already used, leakage-safe for the backtest (`before_season` threaded
-  through, regression-tested). Live-verified: Haaland → 6.16 xP, `fpl build-team`'s GW1 total moved
-  39.4 → 57.22. Understat itself is still broken and still needs its scraper fixed for the
-  round-level backtest and the shot-level (not season-level) precision the primary path gives when
-  it's working — this fallback is real and correct, but coarser-grained than the path it's covering for.
+  **What was missed at the time: the blast radius wasn't just the backtest metric — it silently zeroed
+  goals/assists for every player in LIVE projections too.** `player_shrunk_rates()`'s goals/xa
+  components and `player_share_of_team_xg()` are both 100% Understat-dependent; with the table empty,
+  both a player's own rate AND the shrinkage prior collapsed to 0, so `shrink_rate(0, 0, 0) = 0` for
+  literally every player regardless of real ability — not a conservative estimate, a complete silent
+  loss of the single largest scoring component. Haaland projected 2.49 xP (should be ~6-7 given his
+  real ~6.3-6.8/game season average) purely from this — caught only because the user compared the
+  squad's total xP against real-world magnitudes and pushed back, not by any test or review.
+  **First fixed with a fallback**: `models/player_regression.py::season_shrunk_rate()`/
+  `season_position_average_per90()` (same empirical-Bayes machinery `bonus_regression.py` already
+  established) fall back to `player_season_history` (official FPL data, no Understat dependency)
+  whenever a player has zero Understat match rows — leakage-safe for the backtest (`before_season`
+  threaded through, regression-tested). Live-verified: Haaland → 6.16 xP, `fpl build-team`'s GW1 total
+  moved 39.4 → 57.22.
+
+  **Then the actual scraper was fixed too, same session.** Inspecting the live page directly (fetched
+  it, searched for every `var` declaration — none found) and then the site's own real network requests
+  (via a real browser) showed Understat's frontend now calls two plain JSON endpoints instead of
+  embedding data: `GET /getLeagueData/{league}/{start_year}` → `{teams, players, dates}` and
+  `GET /getMatchData/{match_id}` → `{rosters, shots, tmpl}` — same underlying field shapes as the old
+  embedded variables, with two real differences confirmed against live responses (`"minutes"` renamed
+  `"time"`; roster entries carry `"team_id"` instead of a `"team"` name string, resolved from
+  `getLeagueData`'s own `teams` dict). Both endpoints 404 without an `X-Requested-With: XMLHttpRequest`
+  header (a lightweight AJAX gate, not real anti-bot fingerprinting — no browser-automation dependency
+  needed). `understat_source.py` rewritten to hit these directly (`json.loads`, no more regex
+  var-extraction). Hit the identical club-full-name-vs-FPL-short-name mismatch class the live-odds fix
+  found the same session (`"Tottenham"`/`"Manchester United"` vs FPL's `"Spurs"`/`"Man Utd"`) —
+  consolidated into a shared `market_identity.normalize_common_team_name()` used by both connectors
+  instead of duplicating the alias table per-connector. **Live-verified**: `fpl backfill-xg --season
+  2025-26` — 380 matches, 11490 player rows, Haaland's real totals (35 matches, 27 goals, 2979 minutes)
+  match `player_season_history` almost exactly. `fpl backtest --season 2025-26` — genuinely restored:
+  12 rounds, 5589 predictions scored (was 0), MAE 0.4112 vs naive baseline 0.4152, **beats naive
+  baseline**. Bonus regression: 328 players, 60.1% win rate, consistent with the earlier result.
+
+  **What this means for right now, stated plainly rather than oversold:** it does not further change
+  live GW1 projections tonight — this is preseason, so no current-2026-27-season match data exists yet
+  for the primary Understat path to use either way; live numbers still correctly come from the
+  season-grain fallback above. This fix's real value is restoring the backtest's evidentiary validity
+  (the model's "beats naive baseline" claim is provable again, not just asserted) and setting up the
+  pipeline for in-season backfills once 2026-27 matches actually start, at which point the primary
+  match-level path will upgrade live projections past the season-grain fallback automatically, no
+  further code change needed.
 - **Tier 1 only.** Transfer rumours, predicted lineups, and manager-change
   detection all need Tier 2-4 sources the user chose not to enable. What's built
   instead (official-status injuries, confirmed-transfer club changes) is real and
