@@ -53,6 +53,7 @@ from fpl_agent.optimization.chips import (
 )
 from fpl_agent.optimization.squad import build_player_pool, optimise_squad, pick_starting_xi
 from fpl_agent.optimization.transfers import best_transfer_for_player, recommend as recommend_transfer, search_transfer_sequences
+from fpl_agent.optimization.rate_team import rate_team
 
 
 @click.group()
@@ -1219,6 +1220,75 @@ def final_check(squad: str, bank: float, free_transfers: int, sync: bool):
     click.echo(f"Confidence:    {overall_confidence}")
     click.echo(f"Data status:   {data_status}")
     click.echo(f"decision_id={decision_id}")
+
+
+@cli.command("rate-team")
+@click.option("--squad", required=True, help="comma-separated player ids (any 15, not necessarily one this project built)")
+@click.option("--sync/--no-sync", default=True, help="refresh data before rating (default: yes)")
+def rate_team_cmd(squad: str, sync: bool):
+    """Rate My Team (section-adjacent, competitor-scope closure): score an
+    EXISTING squad - your own real team, or one drafted anywhere else - the
+    same way FPL Copilot/Fantasy Football Hub's "Rate My Team" tools do.
+    efficiency_percent is real, not fabricated: this squad's GW1 xP as a
+    percentage of the best achievable squad's xP under the same budget."""
+    if sync:
+        try:
+            run_sync()
+        except (SourceFetchError, ValidationError) as e:
+            click.echo(f"sync failed: {e}", err=True)
+            raise SystemExit(1)
+
+    squad_ids = _parse_squad_option(squad)
+    conn = get_connection()
+    rating = rate_team(conn, squad_ids)
+
+    if rating.duplicate_ids:
+        click.echo(f"WARNING: duplicate id(s) in squad, a real squad can't own the same player twice - deduplicated: {rating.duplicate_ids}", err=True)
+    if rating.invalid_ids:
+        click.echo(f"WARNING: {len(rating.invalid_ids)} id(s) not found in the current player pool: {rating.invalid_ids}", err=True)
+    if rating.rule_violations:
+        click.echo("WARNING: this squad does not satisfy real FPL squad-construction rules:", err=True)
+        for v in rating.rule_violations:
+            click.echo(f"  - {v}", err=True)
+
+    detail = {
+        "squad_ids": rating.squad_ids, "gw1_xp": rating.gw1_xp, "optimal_gw1_xp": rating.optimal_gw1_xp,
+        "efficiency_percent": rating.efficiency_percent, "template_count": rating.template_count,
+        "differential_ids": rating.differential_ids, "trap_ids": rating.trap_ids,
+        "rule_violations": rating.rule_violations,
+    }
+    decision_id = log_decision(
+        conn, "rate_team", f"rate team: {rating.gw1_xp} xP, {rating.efficiency_percent}% of optimal",
+        detail, model_version=MODEL_VERSION, confidence=rating.captain.confidence if rating.captain else None,
+    )
+    conn.close()
+
+    click.echo(f"decision_id={decision_id}")
+    click.echo()
+    if rating.xi.starting:
+        click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'xP':>6}  Risk")
+        for c in rating.xi.starting:
+            tag = " (C)" if rating.captain and c.player_id == rating.captain.player_id else \
+                  " (VC)" if rating.vice and c.player_id == rating.vice.player_id else ""
+            click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {c.median:>6.2f}  {c.confidence}{tag}")
+        click.echo("-- bench --")
+        for c in rating.xi.bench:
+            click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {c.median:>6.2f}  {c.confidence}")
+    click.echo()
+    click.echo(f"Cost / Bank:          £{rating.total_cost_tenths/10:.1f}m / £{rating.bank_tenths/10:.1f}m")
+    click.echo(f"GW1 expected points:  {rating.gw1_xp}")
+    click.echo(f"First 5-GW xP (XI):   {rating.five_gw_xp}")
+    click.echo(f"Best possible (same budget): {rating.optimal_gw1_xp} xP")
+    click.echo(f"Efficiency:           {rating.efficiency_percent}% of the best achievable squad this GW")
+    click.echo(f"Captain:              {rating.captain.web_name if rating.captain else 'n/a'}")
+    click.echo(f"Vice:                 {rating.vice.web_name if rating.vice else 'n/a'}")
+    click.echo(f"Template picks:       {rating.template_count}/15")
+    click.echo(f"Real differentials:   {rating.differential_ids or 'none flagged'}")
+    click.echo(f"Trap risks:           {rating.trap_ids or 'none flagged'}")
+    click.echo(f"Breakout picks owned: {rating.breakout_ids or 'none'}")
+    click.echo("Availability risks:" if rating.risks else "Availability risks: none flagged")
+    for r in rating.risks:
+        click.echo(f"  - {r}")
 
 
 if __name__ == "__main__":

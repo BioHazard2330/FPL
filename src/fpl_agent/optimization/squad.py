@@ -14,6 +14,16 @@ import pulp
 from fpl_agent.models.expected_points import expected_points
 from fpl_agent.models.rules import current_season, get_rule
 
+# A bench player's real expected weekly contribution is far below a
+# starter's - they only score when autosubbed in (a non-playing starter) or
+# during a Bench Boost chip, both rare relative to "every week" a starter
+# counts. 0.1 is a disclosed heuristic weight, not fit to real historical
+# autosub-rate data (this project has none) - same honesty posture as
+# price_forecast.py's threshold. Deliberately not 0.0: a bench player still
+# has genuine optionality value (a real hedge against a starter blanking),
+# just nowhere near a starter's.
+_BENCH_WEIGHT = 0.1
+
 
 @dataclass(frozen=True)
 class PlayerCandidate:
@@ -102,6 +112,10 @@ def optimise_squad(
         r["singular_name_short"]: r["squad_select"]
         for r in conn.execute("SELECT singular_name_short, squad_select FROM element_types").fetchall()
     }
+    play_bounds = {
+        r["singular_name_short"]: (r["squad_min_play"], r["squad_max_play"])
+        for r in conn.execute("SELECT singular_name_short, squad_min_play, squad_max_play FROM element_types").fetchall()
+    }
 
     pool = build_player_pool(conn, n_gw=n_gw, exclude_ids=exclude_ids, objective=objective)
     if not pool:
@@ -109,28 +123,48 @@ def optimise_squad(
 
     prob = pulp.LpProblem("fpl_squad", pulp.LpMaximize)
     x = {c.player_id: pulp.LpVariable(f"x_{c.player_id}", cat="Binary") for c in pool}
-    # Captain doubles points in real FPL scoring (section 65), so a plain Sum(xp)
-    # objective systematically undervalues explosive premiums relative to their
-    # price - their raw xp has to "pay for itself" once, when in practice the
-    # squad's best player earns 2x every week as captain. `cap` picks exactly one
-    # squad member to get one extra copy of their own xp in the objective, the
-    # same formulation public FPL squad-optimiser tools use. Left unconstrained to
-    # starters-only deliberately: the player receiving this bonus is by
-    # construction the single highest-xp squad member, who `pick_starting_xi`'s
-    # own greedy top-xp fill will always start anyway.
+    # Joint squad+XI+captain optimisation, not a plain Sum(xp) over all 15.
+    # Two real-scoring facts a plain 15-man sum ignores: (1) captain doubles
+    # points (section 65) - `cap` gives exactly one squad member one extra
+    # copy of their own xp, same formulation public FPL optimiser tools use.
+    # (2) only 11 of the 15 actually play most weeks - a bench player's real
+    # expected contribution is near their FULL xp only on the rare week
+    # they're autosubbed in or the squad plays Bench Boost, not every week
+    # like a starter. Weighing all 15 equally (the pre-fix objective)
+    # measurably mis-optimised for real GW score: confirmed live via
+    # `fpl rate-team` on the real player pool, the old objective built a
+    # squad that invested in a deep bench (~13.5 combined bench xp) instead
+    # of Bruno Fernandes (6.23 xp, higher than every one of that squad's own
+    # starters) purely because bench xp counted at full starter weight in
+    # the objective, when it should barely count at all most weeks. `s`
+    # marks the 11 starters (formation-bound the same way pick_starting_xi's
+    # own min/max-play constraints already are, so the ILP's internal XI
+    # choice and the actual reported XI agree); bench contribution
+    # (`x - s`) is scaled by `_BENCH_WEIGHT`, a disclosed heuristic (not
+    # fitted to real autosub-rate data, which this project doesn't have) -
+    # not zero, since a bench player genuinely has some real optionality
+    # value, just far below a starter's.
+    s = {c.player_id: pulp.LpVariable(f"s_{c.player_id}", cat="Binary") for c in pool}
     cap = {c.player_id: pulp.LpVariable(f"cap_{c.player_id}", cat="Binary") for c in pool}
 
     prob += (
-        pulp.lpSum(c.xp * x[c.player_id] for c in pool)
+        pulp.lpSum(c.xp * s[c.player_id] for c in pool)
         + pulp.lpSum(c.xp * cap[c.player_id] for c in pool)
+        + _BENCH_WEIGHT * pulp.lpSum(c.xp * (x[c.player_id] - s[c.player_id]) for c in pool)
     )
     prob += pulp.lpSum(cap[c.player_id] for c in pool) == 1
+    prob += pulp.lpSum(s[c.player_id] for c in pool) == 11
     for c in pool:
-        prob += cap[c.player_id] <= x[c.player_id]
+        prob += cap[c.player_id] <= s[c.player_id]
+        prob += s[c.player_id] <= x[c.player_id]
     prob += pulp.lpSum(c.price_tenths * x[c.player_id] for c in pool) <= budget_tenths
 
     for position, required in position_requirements.items():
         prob += pulp.lpSum(x[c.player_id] for c in pool if c.position == position) == required
+        min_play, max_play = play_bounds.get(position, (0, 11))
+        starters_in_position = pulp.lpSum(s[c.player_id] for c in pool if c.position == position)
+        prob += starters_in_position >= min_play
+        prob += starters_in_position <= max_play
 
     for team_id in {c.team_id for c in pool}:
         prob += pulp.lpSum(x[c.player_id] for c in pool if c.team_id == team_id) <= club_limit

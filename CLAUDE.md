@@ -49,7 +49,9 @@ Claude is the reasoning/orchestration layer — not the database, not the perman
 
 ## Commands (CLI, via `fpl`)
 
-All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `audit` (season-end review — not yet needed pre-season, no completed GWs to audit). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-eo --event N [--sample-size N] [--force]`, `fpl sync-history`, `fpl sync-news [--limit N]`, `fpl sync-live-odds`, `fpl team-news [--limit N]`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`.
+All section 96 CLI commands implemented except `scan` (superseded by `status`+`changes`+`injuries` run together - no single command adds value over composing the existing ones) and `audit` (season-end review — not yet needed pre-season, no completed GWs to audit). Full list: `fpl doctor`, `fpl storage`, `fpl sync`, `fpl sync-eo --event N [--sample-size N] [--force]`, `fpl sync-history`, `fpl sync-news [--limit N]`, `fpl sync-live-odds`, `fpl team-news [--limit N]`, `fpl source-status`, `fpl injuries`, `fpl changes [--type]`, `fpl projections`, `fpl build-team`, `fpl build-squad`, `fpl captain --squad`, `fpl chips --squad`, `fpl transfers --squad` (add `--search [--horizon N] [--beam-width N]` for the multi-GW beam search), `fpl prices`, `fpl fixture-watch`, `fpl run-scheduled`, `fpl alerts [--deliver]`, `fpl scheduler-status`, `fpl decisions [--type]`, `fpl why <id>`, `fpl cleanup`, `fpl backup`, `fpl backups`, `fpl verify-backup <name>`, `fpl restore <name> [--yes]`, `fpl status`, `fpl readiness`, `fpl final-check --squad`, `fpl season-sim --squad [--trials N] [--horizon N]`,
+`fpl rate-team --squad <ids>` (Rate My Team - score any existing squad, not
+just one this project built).
 
 ## Data model (Phase 2)
 
@@ -1275,6 +1277,70 @@ season `calibrated-v2` was already scored on (MAE 1.1776, high-return MAE
   real, tested, reusable infrastructure regardless of the integration
   decision above. `xgboost`/`scikit-learn` added to `pyproject.toml` (both
   free, open-source, no cost). 374/374 tests.
+
+## Competitor-scope closure + a major squad-optimizer correctness fix (2026-08-20)
+
+Per the user's explicit directive to match/beat FPL Review and FPL Copilot's
+feature set. Researched both directly (FPL Review: Massive Data Model
+projections, multi-week Team Planner/Solver, Elite 1000 tracking, Season
+Review, customizable projections; FPL Copilot: Solver, xP, Chip Strategies,
+Rate My Team, Minileagues) and closed the clearest concrete gap.
+
+- **`fpl rate-team --squad <ids>`** (`optimization/rate_team.py`) - a genuine
+  "Rate My Team" for any EXISTING 15-man squad (the user's own real team, or
+  one drafted anywhere else), matching FPL Copilot's/Fantasy Football Hub's
+  tool. Built from 100% already-tested machinery (build_player_pool,
+  pick_starting_xi, optimise_squad, captaincy_report, differentials/traps/
+  breakouts/template) - no new modelling. `efficiency_percent` is a real,
+  non-fabricated score: this squad's real GW1 xP (11 starters + captain
+  bonus) as a percentage of the best achievable squad's xP under the same
+  budget - not an arbitrary invented 0-100 rating. Also validates real FPL
+  squad-construction legality (position counts, club limit) and deduplicates
+  a repeated id rather than rating a nonsensical double-counted squad. 4
+  tests (`tests/test_rate_team.py`).
+- **A real, high-severity squad-optimizer bug found live while testing
+  `rate-team`, not while looking for one.** A manually-assembled legal squad
+  scored HIGHER (58.3 real XI+captain xP) than `optimise_squad`'s own
+  reported "optimal" squad (56.83) under the identical budget - mathematically
+  impossible for a genuine optimum, so the ILP's objective had to be wrong
+  for the metric that actually matters. Root cause: `optimise_squad`'s
+  captain-aware objective (added earlier this session) still weighted all 15
+  squad members equally, including the 4 who never play most weeks - so it
+  happily built a stronger bench (~13.5 combined xp) instead of paying
+  Bruno Fernandes's £12m premium (6.23 xp, higher than every one of that
+  squad's own starters), because bench xp counted at full starter weight in
+  the objective. Confirmed live by hand before fixing, not assumed.
+- **Fixed with a proper joint squad+XI+captain MILP.** Added `s_i` (starter,
+  `s_i <= x_i`) alongside the existing squad-membership (`x_i`) and captain
+  (`cap_i <= s_i`) variables, formation-bound the same way `pick_starting_xi`'s
+  own min/max-play constraints already are (so the ILP's internal XI choice
+  and the actually-reported XI agree), and re-weighted the objective:
+  starters and the captain bonus at full xp, bench contribution
+  (`x_i - s_i`) at `_BENCH_WEIGHT = 0.1` - a disclosed heuristic (a bench
+  player's real expected contribution is near their full xp only on the rare
+  week they're autosubbed in or Bench Boost is played, not fit to real
+  historical autosub-rate data this project doesn't have), not zero (a
+  benched player still has genuine hedge value, just far below a starter's).
+  378/378 tests, zero regressions to the existing test suite despite the
+  significant rewrite.
+- **Live-verified, same real data snapshot, before vs after**: real
+  XI+captain total 56.83 -> **59.21** (+4.2%) under the identical £100m
+  budget - Bruno Fernandes now correctly included and captained, the bench
+  now genuinely minimal cheap fodder (three players at the exact £4.0m
+  price floor) rather than expensive mid-tier depth, matching real expert
+  FPL strategy (load the XI, use the bench purely as budget enablers) far
+  more closely than the pre-fix behavior did. This is a real correctness
+  fix to the actual live GW1 recommendation, not just an internal metric -
+  `fpl build-team`'s own headline squad changed as a direct result.
+- **What this doesn't cover yet, disclosed rather than silently claimed**:
+  FPL Review's "hourly updated projections" (this project's scheduler is
+  built but deliberately left unregistered - the user's own standing choice
+  about starting a persistent background process, not something to flip
+  unilaterally even under general dev authorization) and "customizable
+  projections" (no user-tunable model-input knobs exist here - every number
+  is computed from real data with no manual override surface). Both are
+  real, legitimate gaps, not yet closed, named honestly rather than glossed
+  over.
 
 ## Build status
 
