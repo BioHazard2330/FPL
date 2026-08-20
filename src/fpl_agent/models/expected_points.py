@@ -78,6 +78,7 @@ from fpl_agent.models.blend import (
     market_implied_fixture_goals,
 )
 from fpl_agent.models.bonus_regression import expected_bonus_per90
+from fpl_agent.models.defensive_contribution import defcon_points_probability, expected_defcon_actions_per90
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.minutes_distribution import (
@@ -438,6 +439,15 @@ def _player_match_rates(
 
     bonus90 = expected_bonus_per90(conn, player_id).shrunk_per90
 
+    # Defensive contribution ("DefCon") - a real FPL scoring rule (10 CBIT for
+    # DEF, 12 CBIRT for MID/FWD, 2 points, capped) completely unmodeled before
+    # 2026-08-20 despite player_season_history already carrying the raw action
+    # count. Always season-grain, same reason bonus is (no source this project
+    # has carries match-level CBIT/CBIRT counts) - see
+    # models/defensive_contribution.py's module docstring.
+    defcon_actions90 = expected_defcon_actions_per90(conn, player_id).shrunk_per90
+    defcon_pts_rule = get_rule(conn, rules_season, f"scoring.defensive_contribution.{position}", 0) or 0
+
     yellow_card_rate = get_rule(conn, rules_season, "scoring.yellow_cards", -1) or -1
 
     return {
@@ -449,6 +459,7 @@ def _player_match_rates(
         "player_share": player_share, "player_share_per90": share_per90,
         "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs,
+        "defcon_actions90": defcon_actions90, "defcon_pts_rule": defcon_pts_rule,
         "season": season, "rules_season": rules_season, "goals_source": goals_source,
     }
 
@@ -477,8 +488,12 @@ def _match_components(
     conceded = _goals_conceded_penalty(conn, rates["rules_season"], rates["position"], opp_goals) * min(
         effective_minutes_fraction, 1.0
     )
+    # Same p_full-based weight as clean_sheet, not the blended partial fraction -
+    # a threshold stat (10-12 actions in one match) needs a full match to
+    # plausibly reach, same reasoning already established there.
+    defcon = defcon_points_probability(rates["defcon_actions90"], rates["position"]) * rates["defcon_pts_rule"] * p_sixty_plus
 
-    return appearance + goals + assists + bonus + clean_sheet + cards + conceded
+    return appearance + goals + assists + bonus + clean_sheet + cards + conceded + defcon
 
 
 def _fixture_date(fixture_row) -> str:

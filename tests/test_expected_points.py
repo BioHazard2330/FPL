@@ -240,6 +240,57 @@ def test_squad_churn_shrinks_the_dixon_coles_signal(db_conn):
     assert (shrunk[0] - shrunk[1]) < (baseline[0] - baseline[1])
 
 
+def test_player_match_rates_carries_a_real_defcon_rate_from_season_history(db_conn):
+    """Closes a real gap found comparing this project's scope against
+    competitor tools (e.g. Fantasy Football Scout's DefCon Data): defensive
+    contribution points (10 CBIT for DEF, 12 CBIRT for MID/FWD, 2 points) were
+    completely unmodeled despite player_season_history already carrying the
+    raw action count. This proves _player_match_rates actually reads it, not
+    just that models/defensive_contribution.py's pure functions work in
+    isolation."""
+    from fpl_agent.models.expected_points import _player_match_rates
+
+    bootstrap = make_bootstrap()
+    bootstrap["game_config"]["scoring"]["defensive_contribution"] = {"GKP": 0, "DEF": 2, "MID": 2, "FWD": 2}
+    # make_bootstrap()'s default player (id=1) is a GKP - add a real DEF too,
+    # since GKP correctly always gets defcon_pts_rule=0 (not eligible).
+    bootstrap["element_types"].append({
+        "id": 2, "singular_name": "Defender", "singular_name_short": "DEF",
+        "plural_name": "Defenders", "squad_min_play": 3, "squad_max_play": 5, "squad_select": 5,
+    })
+    bootstrap["elements"].append({**bootstrap["elements"][0], "id": 2, "code": 2, "element_type": 2, "web_name": "DefPlayer"})
+    _seed_full(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (2,'2025/26',3420,38,0,0,0,0,0,0,0,0,0,0,0,450,50,55,'t0')"
+    )
+    db_conn.commit()
+
+    rates = _player_match_rates(db_conn, player_id=2)
+
+    assert rates["defcon_actions90"] > 0.0
+    assert rates["defcon_pts_rule"] == 2  # DEF rate from the real synced rules table
+
+
+def test_higher_defcon_rate_scores_more_points_for_an_otherwise_identical_player(db_conn):
+    from fpl_agent.models.expected_points import _match_components
+    from types import SimpleNamespace
+
+    base_rates = dict(
+        position="DEF", goals_rate=6.0, assists_rate=3.0, clean_sheet_pts=4.0,
+        shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=-1.0,
+        player_share_per90=0.0, bonus90=0.0, defcon_pts_rule=2,
+        rules_season="2026-27",
+        minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
+    )
+    low = _match_components(db_conn, {**base_rates, "defcon_actions90": 2.0}, team_goals=1.3, opp_goals=1.3)
+    high = _match_components(db_conn, {**base_rates, "defcon_actions90": 15.0}, team_goals=1.3, opp_goals=1.3)
+
+    assert high > low
+
+
 def test_cards_falls_back_to_prior_season_understat_data(db_conn):
     """Real gap this closes: player_season_history (season_shrunk_rate's
     source) carries no cards field at all - confirmed against the schema -

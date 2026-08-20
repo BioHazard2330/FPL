@@ -811,6 +811,51 @@ drift-detection off the backtest harness") had not been started until now.
   discipline warns against: code that can't be live-verified before shipping,
   same category as the EO-threshold gap. Revisit once real GW1+ results exist.
 
+## Competitor-scope gap: defensive contribution points (closed 2026-08-20)
+
+User asked to check this project's scope against real competitor FPL tools
+specifically to find what they cover that this project doesn't, not just
+re-audit internal gaps already tracked. Research surfaced Fantasy Football
+Scout's "DefCon Data" feature - checked whether this project modeled the
+underlying real FPL scoring rule at all: it didn't, at all, despite the raw
+data already sitting unused in `player_season_history.defensive_contribution`.
+
+- **Real rule, verified live against two independent sources** (this
+  project's own synced `rules` table AND a fresh web check of the official
+  rules): a DEF hitting 10+ combined clearances/blocks/interceptions/tackles
+  (CBIT) in a single match, or a MID/FWD hitting 12+ of the same plus ball
+  recoveries (CBIRT), earns a flat 2 points, capped at 2 - unchanged for
+  2026-27. GKP not eligible (`scoring.defensive_contribution.GKP=0`).
+- **`models/defensive_contribution.py`** - no new methodology, reuses two
+  patterns already established elsewhere in this codebase: season-grain
+  shrinkage-regressed per-90 action rate (`bonus_regression.py`'s exact
+  shape - no source here carries match-level CBIT/CBIRT counts, Understat
+  doesn't track tackles/clearances/interceptions at all, same reason bonus
+  is season-grain) feeding a Poisson threshold-crossing probability
+  (`models/blend.py::clean_sheet_probability`'s exact methodology, just
+  P(actions >= threshold) instead of P(goals == 0)).
+- Wired into `expected_points.py::_player_match_rates`/`_match_components`:
+  a new `defcon` term added to the per-match points sum, weighted by
+  `p_full` (not the blended partial-appearance fraction) - same reasoning
+  already established for clean_sheet, a 10-12-action threshold needs a
+  full match to plausibly reach.
+- **Live-verified against the real synced pool, both mechanically and for
+  real-world plausibility**: Caicedo (genuinely known for high tackle/
+  interception volume as a defensive midfielder) shows ~28% chance of the
+  12-action threshold per match; Gomes ~33%; Haaland (pure striker, minimal
+  defensive involvement) correctly ~0%. `fpl build-team` runs clean - real
+  DEF/MID players with genuine defensive volume moved up in projected xP
+  (e.g. Gabriel 3.89 -> 4.68 xP), GW1 squad total 60.25 -> 62.37, a real,
+  credible shift, not a discontinuity. 366/366 tests.
+- **Other competitor-scope items surfaced by the same research, deliberately
+  not chased**: live in-play point/rank tracking during a match, and the
+  official app's "projected bonus after 20 minutes" feature - both need a
+  real-time live-match-event data feed (BPS-in-progress, live minutes) this
+  project has no Tier 1 access to; this project's own architecture is
+  pre-match projection + post-match sync, not an in-play tracker. A real,
+  disclosed scope boundary, not an oversight - revisit only if a genuinely
+  free live-match-event source is ever found.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**
