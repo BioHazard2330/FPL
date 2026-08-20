@@ -21,11 +21,11 @@ from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective_ownership
 from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
-from fpl_agent.ingestion.fpl_api import SourceFetchError
+from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_all_news_sources
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
-from fpl_agent.ingestion.sync import ValidationError, run_sync
+from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
 from fpl_agent.scheduler.cadence import recommended_cadence
@@ -34,6 +34,7 @@ from fpl_agent.scheduler.status import check_scheduler_registered
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws
+from fpl_agent.models.live_bonus import compute_live_bonus
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.doctor import run_checks
@@ -506,6 +507,56 @@ def scheduler_status():
     click.echo(f"task '{_SCHEDULER_TASK_NAME}':")
     for key, value in info.items():
         click.echo(f"  {key}={value}")
+
+
+@cli.command("live-bonus")
+@click.option("--event", "event_num", default=None, type=int, help="gameweek number (default: current/next event)")
+def live_bonus_cmd(event_num: int | None):
+    """Real-time provisional bonus points from FPL's own official live-event
+    endpoint (Tier 1, not a model) - the top 3 BPS scorers in each currently
+    in-progress or just-finished fixture, real official 3-2-1 tie handling.
+    Empty before kickoff and for any gameweek that hasn't started - that's
+    the honest state, not a failure. Single-shot like every other command
+    here; for a live-updating terminal view during an actual match, run this
+    in your own shell loop (e.g. `while true; do fpl live-bonus; sleep 30; done`
+    on bash, or the PowerShell equivalent)."""
+    conn = get_connection()
+    if event_num is None:
+        event_num = _reference_event(conn)
+        if event_num is None:
+            click.echo("no reference gameweek found (no upcoming fixtures)", err=True)
+            conn.close()
+            raise SystemExit(1)
+
+    adapter = FPLApiAdapter()
+    try:
+        payload = adapter.fetch_event_live(event_num).data
+    except SourceFetchError as e:
+        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        click.echo(f"live-bonus failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+
+    rows = compute_live_bonus(conn, payload)
+    conn.close()
+
+    if not rows:
+        click.echo(f"no live data for event {event_num} yet - not kicked off, or the gameweek has no minutes played")
+        return
+
+    click.echo(f"{'Fixture':>7} {'Player':<20} {'BPS':>4} {'Bonus':>5} {'Confirmed':>9}  Min  G  A")
+    current_fixture = None
+    for r in rows:
+        if r.fixture_id != current_fixture:
+            if current_fixture is not None:
+                click.echo()
+            current_fixture = r.fixture_id
+        confirmed = str(r.confirmed_bonus) if r.confirmed_bonus is not None else "-"
+        click.echo(
+            f"{r.fixture_id:>7} {r.web_name:<20} {r.bps:>4} {r.provisional_bonus:>5} {confirmed:>9}  "
+            f"{r.minutes:>3}  {r.goals_scored}  {r.assists}"
+        )
 
 
 @cli.command()

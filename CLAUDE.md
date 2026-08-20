@@ -850,13 +850,15 @@ data already sitting unused in `player_season_history.defensive_contribution`.
   (e.g. Gabriel 3.89 -> 4.68 xP), GW1 squad total 60.25 -> 62.37, a real,
   credible shift, not a discontinuity. 366/366 tests.
 - **Other competitor-scope items surfaced by the same research, deliberately
-  not chased**: live in-play point/rank tracking during a match, and the
-  official app's "projected bonus after 20 minutes" feature - both need a
-  real-time live-match-event data feed (BPS-in-progress, live minutes) this
-  project has no Tier 1 access to; this project's own architecture is
-  pre-match projection + post-match sync, not an in-play tracker. A real,
-  disclosed scope boundary, not an oversight - revisit only if a genuinely
-  free live-match-event source is ever found.
+  not chased at the time**: live in-play point/rank tracking during a match,
+  and the official app's "projected bonus after 20 minutes" feature - both
+  need a real-time live-match-event data feed (BPS-in-progress, live
+  minutes). **Correction, 2026-08-20: this project DOES have Tier 1 access
+  to exactly that feed** (`GET /api/event/{N}/live/`, FPL's own official
+  API) - the "no access" framing above was wrong, not just outdated; see the
+  dedicated "Live in-play bonus tracking" section below for what's now built
+  (`fpl live-bonus`) and what's still genuinely a further step (full squad
+  live-score/rank aggregation, not just per-match provisional bonus).
 
 ## Competitor-scope check: real journalist GW1 teams vs ours (2026-08-20)
 
@@ -1828,6 +1830,65 @@ unilateral one even under general dev authorization).
   low+unplugged battery still skips a cycle, section 21-22, unchanged).
   `fpl scheduler-status`/`fpl readiness` both confirm it live. Unregister
   any time with `scripts/remove_scheduler.ps1` if this stops being wanted.
+
+## Live in-play bonus tracking - a corrected limitation (2026-08-20)
+
+The user relayed another AI's suggested script (fetch live match JSON from
+`premierleague.com`, compute 3-2-1 bonus from raw clearances/blocks). Taken
+seriously enough to verify rather than dismissed, and it led to a genuine
+correction: this project had previously stated "no Tier 1 access to a
+live-match-event feed" (Pillar 2/DefCon sections above) - **that was too
+strong.** FPL's own official API has exactly this:
+`GET /api/event/{N}/live/` (`fantasy.premierleague.com`, not the bare
+`premierleague.com` domain the relayed script named - confirmed live,
+200 OK, correct real schema, currently empty `elements` since GW1 hasn't
+kicked off yet - the honest preseason state, not broken). The relayed
+script also conflated two genuinely different things: BPS (a separate
+proprietary FPL formula, already computed and returned directly in
+`stats.bps`) and DefCon's raw CBIT/CBIRT action counts (a different,
+newer scoring rule this project modeled separately in
+`models/defensive_contribution.py`) - reconstructing bonus from raw
+defensive actions would have been wrong twice over: unnecessary (FPL
+already gives you `bps`) and conflated with the wrong rule.
+
+- **`ingestion/fpl_api.py::fetch_event_live(event)`** - one new adapter
+  method, same retry/health-tracking pattern as every other one here.
+- **`models/live_bonus.py::compute_live_bonus()`** - groups live elements by
+  fixture (`explain[].fixture` - a double-gameweek player is scored
+  independently per match, matching real rules, not summed), excludes
+  0-minute players (can't earn bonus), ranks by `bps` within each fixture,
+  assigns provisional 3-2-1 bonus via `_assign_bonus()` implementing the
+  REAL official tie rule: two players tied for the top BPS in a match both
+  get 3, and the next-best player gets 1 - not 2, that slot is skipped
+  entirely, not given to a third player. `confirmed_bonus` is `None` until
+  FPL finalizes it (~a few hours post-match, when `stats.bonus` actually
+  populates) - reported honestly as "not yet decided," never fabricated as
+  zero.
+- **`fpl live-bonus [--event N]`** - single-shot like every other command
+  here (this project's own architectural convention: Claude-orchestrated
+  batch commands, not a permanent background loop). For a live-refreshing
+  terminal view during an actual match, the user's own shell loop around
+  this single command (`while true; do fpl live-bonus; sleep 30; done`) is
+  the right layer for that, not a Python `while True` baked into the CLI
+  itself.
+- **Cannot be fully live-verified yet - GW1 hasn't kicked off, so there is
+  no real in-progress match to test the live numbers against.** Built and
+  tested against the real, well-documented endpoint schema instead (8 tests
+  covering the tie-rule's exact edge cases: clear ranking, 2-way and 3-way
+  ties for first, a tie for second, fewer than 3 players, double-gameweek
+  independent-per-fixture scoring, and the "0 bonus mid-match means
+  unfinalized, not zero" distinction) - honestly disclosed as
+  schema-verified, not yet outcome-verified, rather than claimed as fully
+  proven. The moment a real match goes live, this becomes genuinely useful
+  with zero further code changes needed.
+- **What this closes, stated precisely**: real-time official BPS/provisional
+  bonus during a LIVE or just-finished match - genuinely new capability,
+  matching what LiveFPL/the official app show. What it does NOT close: full
+  live in-play POINT/RANK tracking (total live score, overall rank
+  movement) - that needs live per-player total_points aggregation across a
+  whole squad plus live overall-rank context, a larger feature this specific
+  endpoint enables but doesn't itself provide; a real, disclosed follow-up,
+  not silently claimed as done. 390/390 tests.
 
 ## Skill/subagent guidance
 

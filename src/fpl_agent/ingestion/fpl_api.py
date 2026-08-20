@@ -76,3 +76,12 @@ class FPLApiAdapter:
 
     def fetch_entry_picks(self, entry_id: int, event: int) -> RawFetch:
         return self._get(f"fpl_api_entry_picks_{entry_id}_{event}", f"/entry/{entry_id}/event/{event}/picks/")
+
+    def fetch_event_live(self, event: int) -> RawFetch:
+        """Real-time per-player stats for an in-progress or just-finished
+        gameweek - `stats.bps` updates continuously during live matches,
+        `stats.bonus` only populates once a match's bonus is finalized
+        (~a few hours after full time). Confirmed live 2026-08-20: real
+        endpoint, correct schema, currently empty `elements` (GW1 hasn't
+        kicked off yet) - not broken, the honest preseason state."""
+        return self._get(f"fpl_api_event_live_{event}", f"/event/{event}/live/")
