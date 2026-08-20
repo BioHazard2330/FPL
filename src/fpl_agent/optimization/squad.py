@@ -98,10 +98,29 @@ def optimise_squad(
     exclude_ids: set[int] | None = None,
     objective: str = "median",
     budget_override_tenths: int | None = None,
+    bench_weight: float | None = None,
+    must_include_ids: set[int] | None = None,
 ) -> SquadResult:
     """budget_override_tenths lets a caller solve under a tighter cap than the
     real rules budget (section 94's structure B: leaving bank spare for future
-    flexibility) without touching the rules table."""
+    flexibility) without touching the rules table.
+
+    bench_weight overrides _BENCH_WEIGHT for this solve only (default: use the
+    module constant) - a real, standing user preference (2026-08-20: "cant
+    have 3 players on my bench as bench fodder, that wont make me able to
+    rotate") that the default 0.1 weight structurally can't satisfy on its
+    own, since it deliberately treats bench contribution as worth far less
+    than a starter's. Raising it trades some starting-XI ceiling for genuine
+    bench playability - the caller's call, not a silent default change.
+
+    must_include_ids hard-locks specific players into the squad (e.g. "I want
+    Haaland AND Fernandes regardless of cost-efficiency") - a real,
+    disclosed override of pure EV-per-cost optimisation, not a bug: rank-
+    variance/ownership-protection value on a near-mandatory premium asset is
+    a legitimate reason a manager weighs differently than this optimiser's
+    default objective does. Raises ValueError if a requested id isn't even
+    in the position/exclude-filtered pool, rather than silently ignoring an
+    impossible request."""
     season = current_season(conn)
     budget_tenths = budget_override_tenths if budget_override_tenths is not None else get_rule(
         conn, season, "rules.squad_total_spend", 1000
@@ -120,6 +139,14 @@ def optimise_squad(
     pool = build_player_pool(conn, n_gw=n_gw, exclude_ids=exclude_ids, objective=objective)
     if not pool:
         return SquadResult(squad=[], total_cost_tenths=0, total_xp=0.0, status="Infeasible (empty pool)")
+
+    if must_include_ids:
+        pool_ids = {c.player_id for c in pool}
+        missing = must_include_ids - pool_ids
+        if missing:
+            raise ValueError(f"must_include_ids not in the candidate pool (excluded or unknown): {sorted(missing)}")
+
+    weight = bench_weight if bench_weight is not None else _BENCH_WEIGHT
 
     prob = pulp.LpProblem("fpl_squad", pulp.LpMaximize)
     x = {c.player_id: pulp.LpVariable(f"x_{c.player_id}", cat="Binary") for c in pool}
@@ -150,7 +177,7 @@ def optimise_squad(
     prob += (
         pulp.lpSum(c.xp * s[c.player_id] for c in pool)
         + pulp.lpSum(c.xp * cap[c.player_id] for c in pool)
-        + _BENCH_WEIGHT * pulp.lpSum(c.xp * (x[c.player_id] - s[c.player_id]) for c in pool)
+        + weight * pulp.lpSum(c.xp * (x[c.player_id] - s[c.player_id]) for c in pool)
     )
     prob += pulp.lpSum(cap[c.player_id] for c in pool) == 1
     prob += pulp.lpSum(s[c.player_id] for c in pool) == 11
@@ -168,6 +195,9 @@ def optimise_squad(
 
     for team_id in {c.team_id for c in pool}:
         prob += pulp.lpSum(x[c.player_id] for c in pool if c.team_id == team_id) <= club_limit
+
+    for pid in must_include_ids or ():
+        prob += x[pid] == 1
 
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
     status = pulp.LpStatus[prob.status]

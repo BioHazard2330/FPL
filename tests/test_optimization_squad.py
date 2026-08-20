@@ -174,3 +174,54 @@ def test_budget_override_is_respected(db_conn, monkeypatch):
 
     assert result.status == "Optimal"
     assert result.total_cost_tenths <= 700
+
+
+def test_must_include_ids_forces_a_specific_player_into_the_squad(db_conn, monkeypatch):
+    """Real, disclosed override of pure EV-per-cost optimisation (2026-08-20:
+    "I want Haaland AND Fernandes regardless of cost-efficiency") - player 17
+    is the weakest DEF candidate (xp=2.0, lowest in the pool) and would never
+    be picked by a normal solve; forcing it in must still produce a legal,
+    optimal-subject-to-the-constraint squad."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    baseline = squad_mod.optimise_squad(db_conn, n_gw=1)
+    assert 17 not in {c.player_id for c in baseline.squad}  # confirms it's a real, non-trivial constraint
+
+    forced = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={17})
+
+    assert forced.status == "Optimal"
+    assert 17 in {c.player_id for c in forced.squad}
+    assert len(forced.squad) == 15
+
+
+def test_must_include_ids_raises_when_the_player_is_excluded(db_conn, monkeypatch):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    try:
+        squad_mod.optimise_squad(db_conn, n_gw=1, exclude_ids={17}, must_include_ids={17})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "17" in str(e)
+
+
+def test_higher_bench_weight_produces_a_stronger_bench(db_conn, monkeypatch):
+    """Real, disclosed user preference (2026-08-20: "cant have 3 players on
+    my bench as bench fodder") - the default _BENCH_WEIGHT=0.1 structurally
+    favours a minimal, cheap bench; raising it must produce a squad whose
+    bench genuinely carries more real (non-fodder) value, not just a
+    differently-priced one."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    low = squad_mod.optimise_squad(db_conn, n_gw=1, bench_weight=0.1)
+    high = squad_mod.optimise_squad(db_conn, n_gw=1, bench_weight=0.9)
+    assert low.status == "Optimal" and high.status == "Optimal"
+
+    low_xi = squad_mod.pick_starting_xi(db_conn, low.squad)
+    high_xi = squad_mod.pick_starting_xi(db_conn, high.squad)
+    low_bench_xp = sum(c.xp for c in low_xi.bench)
+    high_bench_xp = sum(c.xp for c in high_xi.bench)
+
+    assert high_bench_xp > low_bench_xp
