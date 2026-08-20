@@ -446,6 +446,20 @@ def run_scheduled():
     alerts = deliver_pending_alerts(conn, configured_notifiers(conn))
     cadence = recommended_cadence(conn)
     retighten_msg = maybe_retighten_scheduler(conn)
+
+    # Wired into the regular cycle 2026-08-20 (was opt-in-only, same mold as
+    # sync-history/sync-eo) - direct user finding: a real, notable BBC-covered
+    # story (a new signing's Community Shield debut) had already aged out of
+    # the RSS feeds' limited retention window by the time it was checked,
+    # because nothing had been polling news on a live cadence. Non-fatal on
+    # any failure - sync_all_news_sources already isolates per-source
+    # failures internally (NewsFetchError never escapes it), this is just the
+    # same defensive posture as the dashboard regen below for anything else.
+    news_result = None
+    try:
+        news_result = sync_all_news_sources(conn)
+    except Exception:
+        logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
     conn.close()
 
     logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
@@ -454,6 +468,9 @@ def run_scheduled():
     if retighten_msg:
         logger.info("run-scheduled: %s", retighten_msg)
         click.echo(retighten_msg)
+    if news_result is not None:
+        logger.info("run-scheduled news sync: %d fetched, %d new item(s)", news_result["fetched"], news_result["new_items"])
+        click.echo(f"news: {news_result['new_items']} new item(s) synced")
 
     try:
         dashboard_path = _write_dashboard()
