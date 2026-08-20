@@ -1,4 +1,10 @@
-from fpl_agent.models.player_regression import player_share_of_team_xg, player_shrunk_rates, shrink_rate
+from fpl_agent.models.player_regression import (
+    player_share_of_team_xg,
+    player_shrunk_rates,
+    season_position_average_per90,
+    season_shrunk_rate,
+    shrink_rate,
+)
 
 
 def _seed_players_and_matches(conn):
@@ -103,6 +109,103 @@ def test_player_shrunk_rates_as_of_date_excludes_future_rows(db_conn):
     # so shrunk_per90 = (15*1.0 + 10*1.0625)/25 = 1.025, well below the live value.
     assert rates_asof["goals"].shrunk_per90 == 1.025
     assert rates_asof["goals"].shrunk_per90 < rates_live["goals"].shrunk_per90
+
+
+def _seed_season_history(conn, player_id, season_name, goals_scored, expected_assists, minutes):
+    conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (?,?,?,0,0,?,0,0,0,0,0,0,?,0,0,0,50,55,'t0')",
+        (player_id, season_name, minutes, goals_scored, expected_assists),
+    )
+
+
+def test_season_position_average_per90_computes_population_prior(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    for pid in (10, 11):
+        conn.execute(
+            "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+            "VALUES (?,?,?,1,1,'a','t0')", (pid, pid, f"P{pid}"),
+        )
+    _seed_season_history(conn, 10, "2023/24", goals_scored=18, expected_assists=0, minutes=900)  # 10 matches
+    _seed_season_history(conn, 11, "2023/24", goals_scored=2, expected_assists=0, minutes=90)     # 1 match
+    conn.commit()
+
+    result = season_position_average_per90(conn, "FWD", "goals_scored")
+
+    assert abs(result - 20 / 11) < 1e-9
+
+
+def test_season_position_average_per90_rejects_unknown_column(db_conn):
+    try:
+        season_position_average_per90(db_conn, "FWD", "bps")
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "bps" in str(e)
+
+
+def test_season_shrunk_rate_pulls_small_sample_toward_prior(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    for pid in (10, 11):
+        conn.execute(
+            "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+            "VALUES (?,?,?,1,1,'a','t0')", (pid, pid, f"P{pid}"),
+        )
+    _seed_season_history(conn, 10, "2023/24", goals_scored=18, expected_assists=0, minutes=900)   # 10 matches, 1.8/90
+    _seed_season_history(conn, 11, "2023/24", goals_scored=2, expected_assists=0, minutes=90)      # 1 match, 2.0/90
+    conn.commit()
+
+    big = season_shrunk_rate(conn, 10, "goals_scored")
+    small = season_shrunk_rate(conn, 11, "goals_scored")
+
+    assert big.raw_per90 == 1.8
+    assert small.raw_per90 == 2.0
+    assert abs(small.shrunk_per90 - small.raw_per90) > abs(big.shrunk_per90 - big.raw_per90)
+
+
+def test_season_shrunk_rate_no_data_returns_pure_positional_average(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    for pid in (10, 12):
+        conn.execute(
+            "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+            "VALUES (?,?,?,1,1,'a','t0')", (pid, pid, f"P{pid}"),
+        )
+    _seed_season_history(conn, 10, "2023/24", goals_scored=18, expected_assists=0, minutes=900)  # 10 matches, 1.8/90
+    conn.commit()
+
+    result = season_shrunk_rate(conn, 12, "goals_scored")  # player 12 has no season_history row at all
+
+    assert result.raw_per90 == 0.0
+    assert result.shrunk_per90 == 1.8
+
+
+def test_season_shrunk_rate_raises_for_unknown_player(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    try:
+        season_shrunk_rate(conn, 999, "goals_scored")
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "999" in str(e)
 
 
 def test_position_average_per90_boundary_is_strict_less_than(db_conn):

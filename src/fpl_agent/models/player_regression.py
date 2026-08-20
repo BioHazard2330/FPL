@@ -80,6 +80,78 @@ def player_shrunk_rates(conn: sqlite3.Connection, player_id: int, season: str, a
     return result
 
 
+_SEASON_FALLBACK_COLUMNS = ("goals_scored", "expected_assists")
+
+
+def season_position_average_per90(
+    conn: sqlite3.Connection, position: str, column: str, before_season: str | None = None
+) -> float:
+    """Same population-prior computation as position_average_per90, but off
+    player_season_history (season TOTALS, "YYYY/YY" season_name) instead of
+    player_match_stats_history (Understat, per-match) - see season_shrunk_rate's
+    docstring for why this exists. `column` is whitelisted, not user input, but
+    validated anyway since it's interpolated into the query (no parameterized-
+    identifier support in sqlite3)."""
+    if column not in _SEASON_FALLBACK_COLUMNS:
+        raise ValueError(f"unsupported season fallback column: {column}")
+    clause, params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
+    row = conn.execute(
+        f"SELECT SUM(psh.{column}) AS total, SUM(psh.minutes) AS minutes "
+        "FROM player_season_history psh JOIN players p ON p.id = psh.player_id "
+        "JOIN element_types et ON et.id = p.element_type "
+        f"WHERE et.singular_name_short = ? AND psh.{column} IS NOT NULL AND psh.minutes IS NOT NULL {clause}",
+        (position,) + params,
+    ).fetchone()
+    if not row or not row["minutes"]:
+        return 0.0
+    return (row["total"] or 0.0) / (row["minutes"] / 90)
+
+
+def season_shrunk_rate(
+    conn: sqlite3.Connection, player_id: int, column: str, before_season: str | None = None
+) -> ShrunkRate:
+    """Fallback for when player_match_stats_history (Understat, per-match shot
+    data) has zero rows for a player - a real, current condition (Understat's
+    page structure changed, fpl backfill-xg is broken, confirmed 0 rows
+    reachable in a fresh sync as of 2026-08-20 - see CLAUDE.md). Without this,
+    player_shrunk_rates' goals/xa components silently collapse to 0.0 for
+    EVERY player (both the player's own raw rate AND the shrinkage prior come
+    from the same empty table, so shrink_rate(0, 0, 0) = 0) - not a "slightly
+    conservative estimate", a complete, silent loss of the single largest
+    scoring component in live projections. Reuses shrink_rate() unmodified
+    over player_season_history instead, exactly the same empirical-Bayes
+    treatment bonus_regression.py already established for bonus points (same
+    season-grain limitation: no source this project has carries shot-level
+    goals/assists data outside Understat, so this can't be match-grain like
+    the primary path when it's actually working). Column choice matches the
+    existing live-Understat design's own asymmetry (see expected_points.py):
+    goals uses the player's own ACTUAL goals_scored (real outcomes, not
+    predicted), assists uses the official expected_assists (xA is treated as
+    the more stable predictor for assists specifically, same reasoning
+    Pillar 0 already applied when both were available from Understat)."""
+    player = conn.execute(
+        "SELECT et.singular_name_short AS position FROM players p "
+        "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
+        (player_id,),
+    ).fetchone()
+    if player is None:
+        raise ValueError(f"unknown player_id: {player_id}")
+    position = player["position"]
+
+    clause, params = ("AND season_name < ?", (before_season,)) if before_season else ("", ())
+    row = conn.execute(
+        f"SELECT {column}, minutes FROM player_season_history "
+        f"WHERE player_id=? AND {column} IS NOT NULL AND minutes IS NOT NULL {clause} "
+        "ORDER BY season_name DESC LIMIT 1",
+        (player_id,) + params,
+    ).fetchone()
+    player_total = row[column] if row else 0.0
+    player_minutes = row["minutes"] if row else 0
+
+    position_avg = season_position_average_per90(conn, position, column, before_season)
+    return shrink_rate(player_total, player_minutes, position_avg)
+
+
 def player_share_of_team_xg(
     conn: sqlite3.Connection, player_id: int, market_team_id: int, season: str, as_of_date: str | None = None
 ) -> float:

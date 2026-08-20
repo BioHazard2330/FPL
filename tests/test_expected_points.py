@@ -350,6 +350,43 @@ def test_core_expected_points_is_leakage_free(db_conn):
     assert as_of.minutes_source == "empirical"
 
 
+def test_season_fallback_respects_before_season_and_does_not_leak(db_conn):
+    """The season_shrunk_rate fallback (fired when Understat has zero rows for
+    a player+season - the real, current condition) must respect the same
+    leakage boundary every other query in this function already does. Without
+    passing before_season through, a backtest of an earlier season would fall
+    back to season_shrunk_rate's default "most recent row available" behavior
+    - which could be a LATER, real season - leaking future performance into an
+    "as of" historical estimate."""
+    _seed_two_team_world(db_conn, with_player_stats=False)  # no Understat rows -> fallback fires
+
+    # Two player_season_history rows for player 1: a modest earlier season and
+    # an inflated later one. player_id=1 already has a '2025/26' row from
+    # _seed_two_team_world's _insert_season_history call (goals_scored=0) -
+    # overwrite it with a real, distinguishable value and add an earlier row.
+    db_conn.execute("DELETE FROM player_season_history WHERE player_id=1")
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (1,'2023/24',2700,30,0,5,2,0,0,10,0,0,3.0,0,0,0,50,55,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (1,'2025/26',2700,30,0,25,2,0,0,10,0,0,3.0,0,0,0,50,55,'t0')"
+    )
+    db_conn.commit()
+
+    # Backtesting "2024-25": must see only the strictly-earlier 2023/24 row (5
+    # goals), never the 2025/26 row (25 goals) - that would be real leakage.
+    historical = core_expected_points(db_conn, 1, as_of_date="2024-06-01", season="2024-25")
+    live = core_expected_points(db_conn, 1)  # live season has no rows of its own -> most recent available (2025/26)
+
+    assert live.goals > historical.goals
+
+
 def test_core_expected_points_falls_back_and_says_so(db_conn):
     # Fewer than _MIN_MATCHES_FOR_EMPIRICAL pre-cutoff matches -> minutes come
     # from expected_minutes(), which reads live players.status / the newest
@@ -446,3 +483,35 @@ def test_player_match_rates_bonus90_is_shrinkage_regressed_not_naive(db_conn):
     naive_bonus90 = 6 / 90 * 90  # what the OLD code would have returned: 6.0
     assert rates["bonus90"] != naive_bonus90
     assert rates["bonus90"] < naive_bonus90  # pulled down toward the lower population prior
+
+
+def test_player_match_rates_falls_back_to_season_history_when_understat_empty(db_conn):
+    """Reproduces the real bug found live 2026-08-20: player_match_stats_history
+    (Understat) had zero rows for every player on a fresh sync (fpl backfill-xg is
+    broken - see CLAUDE.md), which silently collapsed goals/xa to 0.0 for
+    literally every player (both the player's own rate AND the shrinkage prior
+    come from the same empty table). This asserts the season_fallback path
+    actually fires from the live _player_match_rates call, not just in
+    player_regression.py's own unit tests in isolation - same lesson the bonus90
+    test above already encodes for this exact class of bug."""
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    # No player_match_stats_history rows inserted at all for this season - the
+    # real, current condition. player_season_history carries real goals/xA.
+    db_conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, "
+        "goals_scored, assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (1,'2025/26',2700,30,0,20,5,0,0,10,0,0,7.5,0,0,0,50,55,'t0')"
+    )
+    db_conn.commit()
+
+    rates = _player_match_rates(db_conn, player_id=1)
+
+    assert rates["goals_source"] == "season_fallback"
+    assert rates["shrunk_goals90"] > 0.0  # was silently 0.0 before this fix, for every player
+    assert rates["shrunk_xa90"] > 0.0
+    assert rates["player_share_per90"] > 0.0
+
+    ep = expected_points(db_conn, 1)
+    assert ep.median > 2.0  # appearance points alone (~1.7-2.0 for a nailed starter) can't reach this

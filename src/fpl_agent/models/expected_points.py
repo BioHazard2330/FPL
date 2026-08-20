@@ -84,7 +84,11 @@ from fpl_agent.models.minutes_distribution import (
     minutes_bucket_probabilities,
 )
 from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
-from fpl_agent.models.player_regression import player_share_of_team_xg, player_shrunk_rates
+from fpl_agent.models.player_regression import (
+    player_share_of_team_xg,
+    player_shrunk_rates,
+    season_shrunk_rate,
+)
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
@@ -294,12 +298,56 @@ def _player_match_rates(
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
-    player_share = player_share_of_team_xg(conn, player_id, team_market_id, season, as_of_date)
-    minutes_fraction = _historical_minutes_fraction(conn, player_id, team_market_id, season, as_of_date)
-    # Accumulated share -> per-90-equivalent share. Capped at 1.0: a player
-    # cannot own more than all of their team's xG per 90, and a tiny sample
-    # (one start out of ten team matches) can otherwise blow the ratio up.
-    share_per90 = min(player_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
+
+    if shrunk["goals"].matches_played > 0:
+        # Understat match-level data exists for this player+season - primary path.
+        shrunk_goals90 = shrunk["goals"].shrunk_per90
+        shrunk_xa90 = shrunk["xa"].shrunk_per90
+        player_share = player_share_of_team_xg(conn, player_id, team_market_id, season, as_of_date)
+        minutes_fraction = _historical_minutes_fraction(conn, player_id, team_market_id, season, as_of_date)
+        # Accumulated share -> per-90-equivalent share. Capped at 1.0: a player
+        # cannot own more than all of their team's xG per 90, and a tiny sample
+        # (one start out of ten team matches) can otherwise blow the ratio up.
+        share_per90 = min(player_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
+        goals_source = "understat"
+    else:
+        # player_match_stats_history has zero rows for this player+season - a real,
+        # current condition (fpl backfill-xg is broken, see CLAUDE.md). Without this
+        # branch, both the player's own rate AND the shrinkage prior come from the
+        # same empty table, so shrink_rate(0, 0, 0) = 0 for every single player -
+        # not a conservative estimate, a complete silent loss of the goals/assists
+        # component. Falls back to season_shrunk_rate() over player_season_history
+        # (official FPL data, always populated by `fpl sync-history`) - same
+        # empirical-Bayes machinery bonus_regression.py already established.
+        # Column choice matches the primary path's own asymmetry: goals uses actual
+        # goals_scored, assists uses official expected_assists (xA), same reasoning
+        # Pillar 0 already applied when both came from Understat.
+        # season_shrunk_rate's before_season is player_season_history's own
+        # "YYYY/YY" convention, not rules.season's "YYYY-YY" - see
+        # player_regression.py's module docstring. Converting `season` (e.g.
+        # "2024-25" -> "2024/25") and passing it as a strict upper bound keeps a
+        # walk-forward backtest of a historical season leakage-free the same way
+        # every other query in this function already is: without this, a
+        # backtest replaying 2024-25 with Understat data unavailable would fall
+        # back to the MOST RECENT season_history row available - which could be
+        # a later, real season - leaking future data into an "as of" estimate.
+        # In live mode `season` is the current (in-progress or not-yet-started)
+        # season, which has no player_season_history rows yet either way, so
+        # this is a no-op there and changes nothing about live behavior.
+        before_season = season.replace("-", "/") if season else None
+        shrunk_goals90 = season_shrunk_rate(conn, player_id, "goals_scored", before_season).shrunk_per90
+        shrunk_xa90 = season_shrunk_rate(conn, player_id, "expected_assists", before_season).shrunk_per90
+        player_share = 0.0
+        minutes_fraction = 0.0
+        # No shot-level data to derive a real team-xG share from, so this
+        # approximates it: the player's own shrunk per-90 goal rate against a
+        # league-average team goals rate, rather than this specific team's rate
+        # (team-level goal aggregation isn't available without Understat either).
+        # A real, documented simplification, not a fabricated precise share -
+        # still lets the existing team_goals * share_per90 formula respond to
+        # fixture difficulty via team_goals, just with a coarser baseline.
+        share_per90 = min(shrunk_goals90 / _LEAGUE_AVERAGE_GOALS, 1.0)
+        goals_source = "season_fallback"
 
     bonus90 = expected_bonus_per90(conn, player_id).shrunk_per90
 
@@ -308,13 +356,13 @@ def _player_match_rates(
     return {
         "position": position, "team_id": player["team_id"],
         "goals_rate": goals_rate, "assists_rate": assists_rate, "clean_sheet_pts": clean_sheet_pts,
-        "shrunk_goals90": shrunk["goals"].shrunk_per90,
-        "shrunk_xa90": shrunk["xa"].shrunk_per90, "shrunk_cards90": shrunk["cards"].shrunk_per90,
+        "shrunk_goals90": shrunk_goals90,
+        "shrunk_xa90": shrunk_xa90, "shrunk_cards90": shrunk["cards"].shrunk_per90,
         "yellow_card_rate": yellow_card_rate,
         "player_share": player_share, "player_share_per90": share_per90,
         "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs,
-        "season": season, "rules_season": rules_season,
+        "season": season, "rules_season": rules_season, "goals_source": goals_source,
     }
 
 
