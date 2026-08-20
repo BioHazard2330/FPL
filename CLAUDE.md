@@ -1001,6 +1001,39 @@ actually works?
   already inside every xP number bench boost sums. Confirmed by reading the
   call chain, not assumed.
 
+## Competitor-scope check, part 3: real gap identified, not yet built (2026-08-20)
+
+Checked FPL Review's "Elite 1000" sample concept against this project's own
+sampled EO (Plan 1c) per the user's research method. **Confirmed real,
+substantial, structural gap - not a bug, and not built this session.**
+FPL Review's Elite 1000 is a cohort of 1000 manager entries **pre-selected
+before the season starts**, using multiple seasons of historical FPL
+performance/rank data to identify managers likely to be genuinely skilled -
+then tracked as a fixed panel all season (median Elite-1000 manager
+historically finishes ~50-70k overall; a same-sized current-top-10k
+reference group finishes ~250k - materially different, more genuinely
+"elite" populations). This project's `ingestion/eo_sample.py` instead
+stratifies across the CURRENT live standings' rank 1-10,000 each time it
+samples - at GW1 specifically, current overall rank hasn't stabilized from
+any real points yet, so this is closer to an arbitrary cross-section than a
+skill-selected one. These are genuinely different methodologies, not the
+same thing under different names.
+
+Replicating the real Elite-1000 concept needs a new capability this project
+doesn't have: identifying a historically-consistent top-performing manager
+cohort (fetchable free via FPL's own API - last season's final classic
+`leagues-classic/314/standings/` gives real historical entry ranks, no paid
+source needed) and persisting it as a stable panel to sample from instead of
+re-stratifying live standings every time. This is a genuinely new,
+non-trivial capability (a new data pipeline + selection methodology + its
+own design decisions about how many seasons/what skill threshold to use),
+not a quick fix to the existing sampler - and, like the EO threshold
+recalibration gap, its output can't be meaningfully validated until real
+in-season data exists to check the sample's predictive value against.
+**Not built this session** - flagged honestly as a real, disclosed
+next-roadmap candidate (a Pillar 2/3 follow-up plan) rather than either
+ignored or rushed into a shallow, unvalidated version.
+
 ## Build status
 
 Phased build with checkpoints (user preference — do not attempt the full spec unattended). **All 9 phases plus Pillar 0 (prediction accuracy core) and Pillar 1 Plans 1a, 1b, and 1c (multi-GW transfer search + price forecast; scenario engine + chip DP scheduling + `fpl season-sim`; sampled effective ownership) complete, and Pillar 2 Plan 2a (Tier 2-4 journalism connector).**
