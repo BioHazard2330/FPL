@@ -1946,6 +1946,76 @@ session) already refreshes the database every 60 minutes on its own.
   existing `models/availability.py::classify()` behavior, not new to this
   feature), all 12 real data sources reporting healthy.
 
+## Dashboard visual redesign + live-watch push notifications (2026-08-20)
+
+Per direct user feedback that the first dashboard read as "plain"/"AI-generated"
+(a styled table dump), plus an explicit ask for excitement during live play
+("do I get updates when my player scores?"). Both closed same session, ~21h
+before the GW1 deadline.
+
+- **`monitoring/dashboard.py::generate_dashboard_html()`** rewritten wholesale:
+  a real pitch layout for "My Team" (position rows, captain/vice armband
+  badges, bench separated below), an honest "Live Tracking" panel with three
+  real states (pre-kickoff schedule / live scoreboard / post-match - never
+  fabricates a score), a "Transfer News" panel over `list_recent_news`, a
+  compact chip-based system-health strip (was two long plain tables), and a
+  pulsing auto-refresh indicator. Styled per the `dataviz` skill's validated
+  reference palette (`references/palette.md`) - fixed categorical hue order
+  for GKP/DEF/MID/FWD identity, status colors reserved for OK/DEGRADED/MISSING,
+  never color-alone (every chip carries a text label too). Availability risks
+  now filters to the squad's own 15 players (was leaguewide) - a deliberate
+  behavior change, more useful on a "My Team" page. Headline xP reuses the
+  exact starters+captain-median formula `cli/main.py::build_team` already
+  established (not `total_xp`, which would reintroduce the earlier documented
+  bench/captain-weighting bug).
+- **`generate_dashboard_html(conn, live_payload=None)`** takes an optional
+  already-fetched live payload so it stays a pure, fully-testable function -
+  no network call of its own. `cli/main.py::_maybe_fetch_live_payload()`
+  decides whether to fetch: only when a squad fixture is genuinely
+  `started=1 AND finished=0` for the reference event, so outside any live
+  window (all of preseason, and most of any matchday) zero extra network
+  traffic happens. Regression-tested (`test_write_dashboard_does_not_fetch_live_data_outside_a_live_window`).
+- **`fpl live-watch [--squad ids] [--interval 75] [--max-hours 3] [--deliver/--no-deliver]`**
+  - fast-polls FPL's official `/api/event/{N}/live/` endpoint (Tier 1, the
+  same one `fpl live-bonus`/DefCon already use) and pushes a real notification
+  the instant a tracked squad player's goals/assists/provisional-bonus
+  increases or they're sent off, through the same `configured_notifiers()`
+  Telegram/Discord/terminal channels `fpl alerts` already uses (repurposing
+  the existing `Alert` dataclass as a generic notification carrier, not a new
+  channel). `models/live_bonus.py::diff_live_rows()` is the pure diff core:
+  an EMPTY previous-state dict means "first observation this session" and
+  seeds the baseline with **zero** events - without this, starting a watch
+  mid-match would fire a false "just scored!" alert for every goal a player
+  already had before the watch began (regression-tested). A bonus decrease
+  (BPS swings mid-match are real and common) never fires an event - nothing
+  to celebrate about bonus going down. `LiveBonusRow` gained a `red_cards`
+  field (additive, default 0 - existing callers/tests unaffected).
+  Deliberately **not** registered with the Windows Task Scheduler and
+  **not** a permanent loop baked silently into every CLI call - explicit,
+  narrow exception to this project's own single-shot-command convention
+  (see `fpl live-bonus`'s own docstring), justified because diffing needs
+  in-process state across a ~75s cadence that would be far messier to
+  persist/reconcile across ~80 separate single-shot invocations over a
+  ~2-hour match window. User runs it themselves during a live gameweek.
+  Stops automatically once every fixture in the reference gameweek is
+  finished, hits `--max-hours`, or on Ctrl+C.
+- **Cannot be outcome-verified yet** - same honest limitation `fpl live-bonus`
+  already carries: GW1 hasn't kicked off, so there is no real in-progress
+  match to watch. Built and tested against the real, documented endpoint
+  schema and a synthetic two-poll goal sequence (proves the diff fires
+  exactly once, not on the seed poll) - schema-verified, not yet
+  outcome-verified. Becomes genuinely live the moment GW1 kicks off
+  (2026-08-21T17:30 UTC deadline, kickoffs shortly after), zero further code
+  needed.
+- 16 new tests (7 `diff_live_rows`, 4 `fpl live-watch` CLI, 5 dashboard panel).
+  409/409 total. Live-verified `fpl dashboard` against the real synced pool:
+  real squad (captain B.Fernandes, GW1 59.2 xP - matches the previously
+  documented 59.21 build-team figure), real pre-kickoff fixture schedule for
+  the squad's own teams, real BBC/Sky news items, all system-health chips OK
+  except the two already-documented standing DEGRADED rows (Transfers/Team
+  news - Tier 1 only, user's own standing choice). Screenshot-reviewed in a
+  real browser, not just asserted from HTML strings.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
