@@ -87,7 +87,17 @@ def _patch_expected_points(monkeypatch):
             confidence="MEDIUM", expected_minutes=75.0,
         )
 
+    def fake_window(conn, player_id, n_gw, from_event=None):
+        # squad.py's real median/xp now comes from expected_points_window(), not
+        # expected_points() (2026-08-21 fix - see squad.py's own docstring) - this
+        # suite tests the ILP's constraint/objective logic against a given xp per
+        # player, not window computation itself, so the fake window mirrors the
+        # same fixed xp_map single-match value regardless of n_gw.
+        median = xp_map[player_id]
+        return SimpleNamespace(player_id=player_id, n_gw=n_gw, fixture_count=1, total_median=median)
+
     monkeypatch.setattr(squad_mod, "expected_points", fake)
+    monkeypatch.setattr(squad_mod, "expected_points_window", fake_window)
 
 
 def test_optimal_squad_respects_all_constraints(db_conn, monkeypatch):
@@ -176,6 +186,27 @@ def test_budget_override_is_respected(db_conn, monkeypatch):
     assert result.total_cost_tenths <= 700
 
 
+def test_must_start_ids_forces_a_player_into_the_starting_xi(db_conn, monkeypatch):
+    """Real gap found live 2026-08-21: must_include_ids only guarantees the
+    15-man squad, not a starting spot - a forced-in player with a low xp
+    (Tzolis's real case: a thin track record, real median well below the
+    squad's other options) still lost the XI place to stronger starters.
+    Player 27 is the weakest MID candidate (xp=2.8, would never start on
+    pure median) - forcing it via must_start_ids must put it in the XI."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={27})
+    baseline_xi = squad_mod.pick_starting_xi(db_conn, result.squad)
+    assert 27 not in {c.player_id for c in baseline_xi.starting}  # confirms it's a real, non-trivial case
+
+    forced_xi = squad_mod.pick_starting_xi(db_conn, result.squad, must_start_ids={27})
+
+    assert 27 in {c.player_id for c in forced_xi.starting}
+    assert len(forced_xi.starting) == 11
+    assert len(forced_xi.bench) == 4
+
+
 def test_must_include_ids_forces_a_specific_player_into_the_squad(db_conn, monkeypatch):
     """Real, disclosed override of pure EV-per-cost optimisation (2026-08-20:
     "I want Haaland AND Fernandes regardless of cost-efficiency") - player 17
@@ -193,6 +224,121 @@ def test_must_include_ids_forces_a_specific_player_into_the_squad(db_conn, monke
     assert forced.status == "Optimal"
     assert 17 in {c.player_id for c in forced.squad}
     assert len(forced.squad) == 15
+
+
+def test_low_start_percent_player_is_never_selected(db_conn, monkeypatch):
+    """Real, hard user directive (2026-08-21): "I dont want people in my
+    squad that wont even start or has very rare chance to start." Player 20
+    is the strongest MID candidate (xp=6.0) and would normally be picked -
+    a real 20% start probability must exclude it from a new squad entirely,
+    not just flag it as a soft risk after the fact."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    baseline = squad_mod.optimise_squad(db_conn, n_gw=1)
+    assert 20 in {c.player_id for c in baseline.squad}  # confirms it's normally a real pick
+
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (20, 1, 'CM', 20, 't0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1)
+
+    assert result.status == "Optimal"
+    assert 20 not in {c.player_id for c in result.squad}
+
+
+def test_must_include_ids_overrides_the_low_start_percent_exclusion(db_conn, monkeypatch):
+    """The exclusion is a default protection, not an absolute lock - an
+    explicit must_include_ids override (the caller's own deliberate call,
+    same precedent already established for that parameter) still wins."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (20, 1, 'CM', 20, 't0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={20})
+
+    assert result.status == "Optimal"
+    assert 20 in {c.player_id for c in result.squad}
+
+
+def test_rotation_risk_keyword_excludes_a_player_with_no_percent_data(db_conn, monkeypatch):
+    """When the newer percentage source hasn't covered a player, the
+    existing rotation-risk keyword heuristic (models/team_news_risk.py)
+    still gates squad selection - the same real hard directive, applied via
+    whichever real evidence this project actually has for that player."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    baseline = squad_mod.optimise_squad(db_conn, n_gw=1)
+    assert 20 in {c.player_id for c in baseline.squad}
+
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_teams (team_id, formation, next_match_text, latest_news, "
+        "source, source_tier, fetched_at) VALUES (1, '4-3-3', 'Test FC (H)', "
+        "'It could be any one of P20 or a new signing in that berth.', 'test', 'strong_reporter', 't0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1)
+
+    assert result.status == "Optimal"
+    assert 20 not in {c.player_id for c in result.squad}
+
+
+def test_high_percent_does_not_override_a_real_keyword_risk(db_conn, monkeypatch):
+    """Real disagreement between the two real sources this project has,
+    caught live 2026-08-21 (Guehi: 97% per the percentage source, but real
+    hedge text from a different source the same day). Both signals are real
+    evidence - a high percent from one source must not silently override a
+    genuine hedge from the other. Exclude on EITHER, per the user's own
+    "simple as is" directive."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (20, 1, 'CM', 97, 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_teams (team_id, formation, next_match_text, latest_news, "
+        "source, source_tier, fetched_at) VALUES (1, '4-3-3', 'Test FC (H)', "
+        "'P20 may have to miss out again, unless he displaces the new signing.', 'test', 'strong_reporter', 't0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1)
+
+    assert result.status == "Optimal"
+    assert 20 not in {c.player_id for c in result.squad}
+
+
+def test_60_percent_is_excluded_70_percent_is_not(db_conn, monkeypatch):
+    """Real threshold raised 50->70 the same session, second real pushback:
+    "60% is too less, thats almost a coin flip. not possible." Pins the
+    exact boundary rather than just a clearly-low value like 20%."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (20, 1, 'CM', 60, 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (22, 2, 'CM', 70, 't0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1)
+
+    picked = {c.player_id for c in result.squad}
+    assert 20 not in picked  # 60% - excluded
+    assert 22 in picked      # 70% - included
 
 
 def test_must_include_ids_raises_when_the_player_is_excluded(db_conn, monkeypatch):

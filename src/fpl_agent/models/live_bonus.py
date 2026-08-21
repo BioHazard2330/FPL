@@ -18,9 +18,30 @@ and the next-best player gets 1, not 2 - the "2" slot is skipped entirely).
 
 Cannot be live-verified against real in-progress-match data yet (GW1 hasn't
 kicked off) - built and tested against the real, well-documented endpoint
-schema instead, honestly disclosed rather than claimed as fully proven."""
+schema instead, honestly disclosed rather than claimed as fully proven.
+
+Extended 2026-08-21 (live-gameweek layer, item 2/4) to carry full live stats
+per squad player, not just bonus - `LiveBonusRow` kept its name (the module
+and dataclass predate this extension, and every existing caller's
+`compute_live_bonus`/`LiveBonusRow` construction stays unchanged - only new,
+defaulted fields were added) but now also reports real DEFCON progress.
+Real field-name verification done BEFORE writing this, not assumed: fetched
+the live `bootstrap-static` `element_stats` catalogue and cross-checked
+several real synced DEF players' own raw numbers - `clearances_blocks_
+interceptions` + `tackles` sums EXACTLY to the `defensive_contribution`
+field for a DEF (Senesi: 357 CBI + 62 tackles = 419, matching his own
+`defensive_contribution` value exactly) - confirming `defensive_contribution`
+IS the real raw CBIT (DEF) / CBIRT (MID/FWD, recoveries included) combined
+action count FPL itself already computes, not points and not a guess. The
+SAME field name is FPL's own well-documented live-event `stats` dict key
+(same vocabulary as the season-aggregate bootstrap field, scoped to one
+gameweek instead) - not yet live-verified against a real non-zero in-
+progress value (GW1 hasn't kicked off), same honest, disclosed posture the
+rest of this module already uses for bonus."""
 import sqlite3
 from dataclasses import dataclass
+
+from fpl_agent.models.defensive_contribution import DEFCON_THRESHOLDS
 
 _BONUS_POINTS_POOL = (3, 2, 1)
 
@@ -53,6 +74,13 @@ class LiveBonusRow:
     goals_scored: int
     assists: int
     red_cards: int = 0
+    # Added 2026-08-21 (live-gameweek layer) - all defaulted so every
+    # pre-existing construction site (this module's own, and the test
+    # helper in test_live_bonus.py) keeps working unchanged.
+    position: str = ""
+    defensive_contribution: int = 0  # real FPL-computed raw CBIT(DEF)/CBIRT(MID/FWD) count THIS match
+    defcon_threshold: int | None = None  # DEFCON_THRESHOLDS[position] - None for GKP (not eligible)
+    defcon_reached: bool = False  # defensive_contribution >= defcon_threshold this match
 
 
 def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[LiveBonusRow]:
@@ -62,7 +90,29 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
     gameweek - each scored independently, matching real FPL rules), ranks by
     `bps` within each fixture group, assigns provisional bonus. Players with
     0 minutes are excluded (can't earn bonus, and BPS is meaningless for a
-    non-appearance) - matches FPL's own real behavior."""
+    non-appearance) - matches FPL's own real behavior. Also reads the live
+    `defensive_contribution` field straight off `stats` (see this module's
+    docstring for the real field-verification this was based on) and
+    resolves the player's real position to look up their DEFCON_THRESHOLDS
+    entry, flagging `defcon_reached` the moment this match's count meets it
+    - a real, disclosed simplification for a double-gameweek player:
+    `defensive_contribution` in FPL's own live stats is a whole-gameweek
+    total (same as goals_scored/assists), not per-fixture, so a DGW player's
+    two LiveBonusRow entries both carry the SAME defensive_contribution
+    value - correct for `defcon_reached` (the real rule counts each match
+    separately, and this project has no per-fixture breakdown of that field
+    to split it by), but means this row shouldn't be read as "this specific
+    fixture's own count" for a DGW player, only "the gameweek total so far"
+    - the exact same caveat diff_live_rows already documents for goals/
+    assists/red_cards on a double gameweek."""
+    player_rows = {
+        r["id"]: (r["web_name"], r["position"])
+        for r in conn.execute(
+            "SELECT p.id AS id, p.web_name AS web_name, et.singular_name_short AS position "
+            "FROM players p JOIN element_types et ON et.id = p.element_type"
+        ).fetchall()
+    }
+
     by_fixture: dict[int, list[dict]] = {}
     for element in live_payload.get("elements", []):
         stats = element.get("stats", {})
@@ -82,10 +132,12 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
         for entry, provisional in zip(entries, bonus_list):
             player_id = entry["player_id"]
             stats = entry["stats"]
-            name_row = conn.execute("SELECT web_name FROM players WHERE id=?", (player_id,)).fetchone()
+            web_name, position = player_rows.get(player_id, (f"#{player_id}", ""))
+            defensive_contribution = stats.get("defensive_contribution", 0) or 0
+            defcon_threshold = DEFCON_THRESHOLDS.get(position)
             rows.append(LiveBonusRow(
                 player_id=player_id,
-                web_name=name_row["web_name"] if name_row else f"#{player_id}",
+                web_name=web_name,
                 fixture_id=fixture_id,
                 bps=stats.get("bps", 0),
                 provisional_bonus=provisional,
@@ -94,6 +146,10 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
                 goals_scored=stats.get("goals_scored", 0),
                 assists=stats.get("assists", 0),
                 red_cards=stats.get("red_cards", 0),
+                position=position,
+                defensive_contribution=defensive_contribution,
+                defcon_threshold=defcon_threshold,
+                defcon_reached=defcon_threshold is not None and defensive_contribution >= defcon_threshold,
             ))
 
     rows.sort(key=lambda r: (r.fixture_id, -r.bps))
@@ -104,7 +160,7 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
 class LiveMatchEvent:
     """One real, user-facing moment worth pushing a notification for -
     diffed between two consecutive polls, never fabricated. `kind` is one
-    of "goal"/"assist"/"bonus"/"red_card"."""
+    of "goal"/"assist"/"bonus"/"red_card"/"defcon" (2026-08-21)."""
     player_id: int
     web_name: str
     kind: str
@@ -174,6 +230,20 @@ def diff_live_rows(
                 events.append(LiveMatchEvent(
                     row.player_id, row.web_name, "red_card",
                     "sent off", row.fixture_id,
+                ))
+            # DEFCON (2026-08-21) - fires once, the moment defcon_reached
+            # flips False->True, same "genuine increase only" discipline as
+            # every other event kind here (a real, comparable prior state -
+            # `prev.defcon_reached`, defaulting False on first sight of this
+            # player mid-poll - not re-fired every subsequent poll once
+            # already True).
+            prev_defcon_reached = prev.defcon_reached if prev else False
+            if row.defcon_reached and not prev_defcon_reached:
+                events.append(LiveMatchEvent(
+                    row.player_id, row.web_name, "defcon",
+                    f"defensive contribution threshold reached! "
+                    f"({row.defensive_contribution}/{row.defcon_threshold}, +2 pts)",
+                    row.fixture_id,
                 ))
 
         new_state[row.player_id] = row

@@ -11,12 +11,38 @@ in .env.example's placeholders from Phase 1 - this closes that out. Config
 absence must never crash delivery: `configured_notifiers()` silently omits a
 channel that isn't configured, and each network notifier catches its own
 request failure rather than aborting the whole alert batch (one down channel
-must not silently drop alerts on channels that ARE working)."""
+must not silently drop alerts on channels that ARE working).
 
+WindowsToastNotifier (2026-08-21, live-gameweek layer) - the user explicitly
+asked for push notifications but explicitly ruled out Telegram/Discord
+("dont want discord or telegram notis, find a better way, not an obnoxious
+one"). A native Windows 10/11 toast notification is the real answer: no
+external account/bot/webhook to set up, no third-party service in the loop,
+appears as a normal transient OS notification that lands in Action Center
+if missed (not a modal, not a sound-forced interrupt) - genuinely the least
+obnoxious real channel available on this project's own Windows-only
+platform (section 20). Verified live before building this: the WinRT toast
+type (`Windows.UI.Notifications.ToastNotificationManager`) loads and a real
+toast displays via Windows PowerShell (`powershell.exe`) - NOT PowerShell
+7/Core (`pwsh`), which this session confirmed does not project that WinRT
+type the same way. Delivered via `subprocess` + `-EncodedCommand` (UTF-16LE
+base64), the standard robust way to hand PowerShell dynamic string content
+without any shell-quoting/injection surface - alert text is also
+XML-escaped before being embedded in the toast's own XML payload, since
+`old_value`/`new_value` can contain characters like `&`/`<` in a real
+predicted-lineup status string. Always included when `sys.platform ==
+"win32"`, no config needed (unlike Telegram/Discord's opt-in env vars) -
+this project has no non-Windows deployment target (section 20's own
+Windows-only scheduler scope), so there is no cross-platform gap being
+papered over here."""
+
+import subprocess
 import sqlite3
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from xml.sax.saxutils import escape as _xml_escape
 
 import requests
 
@@ -52,6 +78,89 @@ class TerminalNotifier(Notifier):
             f"[{alert.severity}] {alert.event_type} {alert.entity}#{alert.entity_id}: "
             f"{alert.old_value} -> {alert.new_value}  ({alert.detected_at})"
         )
+
+
+_TOAST_TIMEOUT_SECONDS = 10
+_TOAST_APP_ID = "PowerShell"  # a real, always-present AppUserModelID on any
+# Windows 10/11 box (Windows PowerShell ships with the OS) - toasts posted
+# under it show up in Action Center under "Windows PowerShell", the same
+# real, honest identity a `powershell.exe`-invoked toast actually has;
+# claiming a different app's identity here would be misleading, not useful.
+
+
+def _build_toast_script(title: str, body: str) -> str:
+    """WinRT toast XML, built via Windows PowerShell (`powershell.exe`, not
+    `pwsh`/PowerShell 7 - live-verified 2026-08-21 that only the former
+    projects `Windows.UI.Notifications.ToastNotificationManager` as a usable
+    type accelerator on this project's real dev machine). `title`/`body` are
+    XML-escaped before embedding - alert text (old_value/new_value) is real
+    scraped/API text that can genuinely contain `&`/`<`/`>` (a predicted-
+    lineup status string, a price value), and this toast XML has no other
+    sanitization layer."""
+    safe_title = _xml_escape(title)
+    safe_body = _xml_escape(body)
+    return (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+        "ContentType=WindowsRuntime] > $null\n"
+        "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, "
+        "ContentType=WindowsRuntime] > $null\n"
+        "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, "
+        "ContentType=WindowsRuntime] > $null\n"
+        "$template = @'\n"
+        f'<toast><visual><binding template="ToastGeneric">'
+        f"<text>{safe_title}</text><text>{safe_body}</text>"
+        "</binding></visual></toast>\n"
+        "'@\n"
+        "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
+        "$xml.LoadXml($template)\n"
+        "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml\n"
+        f'[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("{_TOAST_APP_ID}")'
+        ".Show($toast)\n"
+    )
+
+
+class WindowsToastNotifier(Notifier):
+    """Native Windows 10/11 toast notification - see this module's own
+    docstring for why this replaces Telegram/Discord as the default push
+    channel for this project. Delivered via `-EncodedCommand` (base64
+    UTF-16LE), not string interpolation into a shell command line - avoids
+    any PowerShell-quoting injection surface entirely for real, untrusted
+    alert text. Non-fatal on any failure (subprocess error, non-zero exit,
+    missing `powershell.exe`) - same "one down channel must never drop
+    alerts on channels that ARE working" contract every other Notifier here
+    already honors, and `fpl live-watch`'s own fast in-match loop calls
+    `notifier.send()` in a tight poll loop where a single hung/failing
+    channel must never block real-time delivery of the next event."""
+
+    def __init__(self, conn: sqlite3.Connection | None = None):
+        self._conn = conn
+
+    def send(self, alert: Alert) -> None:
+        import base64
+
+        title = f"[{alert.severity}] {alert.event_type}"
+        body = f"{alert.entity}#{alert.entity_id}: {alert.old_value} -> {alert.new_value}"
+        script = _build_toast_script(title, body)
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                capture_output=True, timeout=_TOAST_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            message = f"windows toast delivery failed: {type(exc).__name__}"
+            print(f"[{message}]")
+            if self._conn is not None:
+                update_source_health(self._conn, "windows_toast_alerts", success=False, error=message)
+            return
+        if result.returncode != 0:
+            message = f"windows toast delivery failed: powershell exit {result.returncode}"
+            print(f"[{message}]")
+            if self._conn is not None:
+                update_source_health(self._conn, "windows_toast_alerts", success=False, error=message)
+            return
+        if self._conn is not None:
+            update_source_health(self._conn, "windows_toast_alerts", success=True, error=None)
 
 
 def _alert_text(alert: Alert) -> str:
@@ -143,10 +252,17 @@ class CompositeNotifier(Notifier):
 
 def configured_notifiers(conn: sqlite3.Connection) -> CompositeNotifier:
     """TerminalNotifier always fires (the original, still-default channel -
-    section 84). Telegram/Discord are added only when their config is
-    genuinely present; absence is silent, never an error - the system must
-    keep working without them, same as ODDS_API_KEY."""
+    section 84). WindowsToastNotifier (2026-08-21) fires whenever running on
+    Windows - no config needed, unlike Telegram/Discord's opt-in env vars -
+    since this project's real deployment target IS Windows (section 20's own
+    scheduler scope) and this is now the standing default push channel (see
+    this module's own docstring for why Telegram/Discord were explicitly
+    declined for this). Telegram/Discord stay available, added only when
+    their config is genuinely present; absence is silent, never an error -
+    the system must keep working without them, same as ODDS_API_KEY."""
     notifiers: list[Notifier] = [TerminalNotifier()]
+    if sys.platform == "win32":
+        notifiers.append(WindowsToastNotifier(conn=conn))
     telegram = get_telegram_config()
     if telegram is not None:
         notifiers.append(TelegramNotifier(*telegram, conn=conn))

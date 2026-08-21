@@ -37,6 +37,7 @@ from fpl_agent.ingestion.market_identity import (
     resolve_player_id,
 )
 from fpl_agent.ingestion.sync import update_source_health
+from fpl_agent.models.player_regression import invalidate_cache_for_connection
 
 _TIMEOUT_SECONDS = 15
 _MATCH_FETCH_DELAY_SECONDS = 0.3  # politeness delay, same spirit as history_sync.py
@@ -169,6 +170,9 @@ def backfill_understat(
             player_rows_inserted += 1
         conn.commit()
         matches_processed += 1
+
+    if player_rows_inserted:
+        invalidate_cache_for_connection(conn)
 
     update_source_health(conn, "understat", success=True, error=None)
     return {"matches_processed": matches_processed, "player_rows_inserted": player_rows_inserted}

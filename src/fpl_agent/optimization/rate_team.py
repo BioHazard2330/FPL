@@ -21,6 +21,7 @@ from fpl_agent.models.breakouts import find_breakouts
 from fpl_agent.models.differentials import find_differentials
 from fpl_agent.models.expected_points import expected_points_window
 from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
 from fpl_agent.models.template import get_template
 from fpl_agent.models.traps import find_traps
 from fpl_agent.optimization.captaincy import CaptainOption, captaincy_report
@@ -135,6 +136,7 @@ def rate_team(conn: sqlite3.Connection, squad_ids: list[int]) -> SquadRating:
 
     availability = list_availability(conn, unavailable_only=True)
     risks = [f"{a.web_name}: {a.classification}" for a in availability if a.player_id in squad_id_set]
+    risks += [f"{f.web_name}: rotation risk - \"{f.snippet}\"" for f in flag_squad_rotation_risk(conn, deduped_ids)]
 
     total_cost_tenths = sum(c.price_tenths for c in squad_candidates)
     rule_violations = _check_squad_legality(conn, squad_candidates, season)

@@ -21,12 +21,44 @@ from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective_ownership
+from fpl_agent.ingestion.change_detection import (
+    detect_predicted_lineup_status_changes,
+    detect_start_percent_changes,
+    detect_upcoming_kickoffs,
+)
 from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
+from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference, sample_live_rank_reference
+from fpl_agent.ingestion.my_team import (
+    get_latest_squad,
+    get_my_team_entry_id,
+    get_used_chips,
+    resolve_tracked_squad_ids,
+    set_my_team_entry_id,
+    set_tracked_squad_ids,
+    sync_my_team,
+)
 from fpl_agent.ingestion.raw_store import prune_raw
 from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_all_news_sources
+from fpl_agent.ingestion.predicted_lineups_source import (
+    PredictedLineupFetchError,
+    get_predicted_lineup_for_squad,
+    sync_predicted_lineups,
+)
+from fpl_agent.ingestion.lineup_probability_source import (
+    LineupProbabilityFetchError,
+    get_start_percent,
+    sync_lineup_probabilities,
+)
+from fpl_agent.models.team_outlook import squad_team_outlooks
+from fpl_agent.ingestion.fotmob_source import FotMobFetchError, refresh_in_progress_matches, sync_match
+from fpl_agent.ingestion.qualitative_analysis import (
+    QualitativeAnalysisError,
+    apply_match_analysis,
+    record_user_observation,
+)
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
@@ -39,6 +71,7 @@ from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws, live_or_reference_event
 from fpl_agent.models.live_bonus import LiveBonusRow, compute_live_bonus, diff_live_rows
+from fpl_agent.models.live_rank import estimate_live_rank, estimate_squad_live_points
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.dashboard import _REFRESH_SECONDS, generate_dashboard_html
@@ -274,6 +307,294 @@ def team_news_cmd(limit: int):
         click.echo(f"  {item['link']}")
 
 
+@cli.command("sync-predicted-lineups")
+def sync_predicted_lineups_cmd():
+    """Ingest fantasyfootballscout.co.uk/team-news/ (strong-reporter tier,
+    free, no login, robots.txt-permitted, verified live 2026-08-21) - real
+    predicted starting XIs + out/doubt/banned status per team, matched to
+    players by name within their own team, never auto-classified into a
+    status change. Separate from `fpl sync`, opt-in."""
+    conn = get_connection()
+    try:
+        result = sync_predicted_lineups(conn)
+    except PredictedLineupFetchError as e:
+        click.echo(f"sync-predicted-lineups failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"teams            {result['teams']}")
+    click.echo(f"players          {result['players']}")
+    click.echo(f"players matched  {result['players_matched']}")
+    if result["unknown_team_codes"]:
+        click.echo(f"WARNING: unrecognized team codes: {result['unknown_team_codes']}", err=True)
+
+
+@cli.command("sync-lineup-probability")
+def sync_lineup_probability_cmd():
+    """Ingest fantasyfootballpundit.com's real per-player start-PERCENTAGE
+    predicted lineups (strong-reporter tier, free, no login, robots.txt-
+    permitted, verified live 2026-08-21) - a richer signal than
+    `sync-predicted-lineups`'s binary starting/bench flag. Feeds
+    `models/expected_minutes.py` directly where it covers a player.
+    Separate from `fpl sync`, opt-in."""
+    conn = get_connection()
+    try:
+        result = sync_lineup_probabilities(conn)
+    except LineupProbabilityFetchError as e:
+        click.echo(f"sync-lineup-probability failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"teams            {result['teams']}")
+    click.echo(f"players          {result['players']}")
+    click.echo(f"players matched  {result['players_matched']}")
+    if result["unknown_teams"]:
+        click.echo(f"WARNING: unrecognized team names: {result['unknown_teams']}", err=True)
+
+
+@cli.command("sync-match")
+@click.option("--date", "date_str", default=None, help="YYYY-MM-DD, default today (UTC)")
+@click.argument("home_team")
+@click.argument("away_team")
+def sync_match_cmd(home_team: str, away_team: str, date_str: str | None):
+    """Match Intelligence Core (Pillar 4 Slice A): resolve a real FotMob match
+    id for HOME_TEAM vs AWAY_TEAM (never hardcoded - looked up via FotMob's
+    date-scoped fixture list), fetch its full match payload, normalize, and
+    upsert Match/PlayerMatchState/TeamMatchState. Safe to re-run - the
+    intended way to refresh a LIVE match's state."""
+    day = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else datetime.now(timezone.utc).date()
+    conn = get_connection()
+    try:
+        result = sync_match(conn, home_team, away_team, day)
+    except FotMobFetchError as e:
+        click.echo(f"sync-match failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"fotmob match id   {result['fotmob_match_id']}")
+    click.echo(f"status            {result['status']}")
+    click.echo(f"kickoff (UTC)     {result['kickoff_utc']}")
+    click.echo(f"fixture           {result['home_team']} vs {result['away_team']}")
+    click.echo(f"players ingested  {result['players_ingested']} ({result['players_resolved']} resolved to FPL ids)")
+    click.echo(f"team states       {result['team_states_ingested']}")
+
+
+@cli.command("match-report")
+@click.argument("fotmob_match_id")
+def match_report_cmd(fotmob_match_id: str):
+    """Print the currently-persisted structured Match Intelligence state for a
+    match already synced via `fpl sync-match`. Read-only - does not fetch or
+    invoke the qualitative-analysis skill (see .claude/skills/
+    match-intelligence-analysis/) itself."""
+    conn = get_connection()
+    match = conn.execute(
+        "SELECT * FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)
+    ).fetchone()
+    if match is None:
+        click.echo(f"no match intelligence found for fotmob match id {fotmob_match_id} - run `fpl sync-match` first", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    click.echo(f"MATCH  {match['competition']}  status={match['status']}  kickoff={match['kickoff_utc']}")
+    click.echo(f"       home_team_id={match['home_team_id']} away_team_id={match['away_team_id']}  "
+               f"score={match['home_score']}-{match['away_score']}")
+    click.echo(f"       source={match['source']} retrieved_at={match['retrieved_at']}")
+
+    team_states = conn.execute("SELECT * FROM team_match_state WHERE match_id=?", (match["id"],)).fetchall()
+    click.echo(f"\nTEAM STATES ({len(team_states)})")
+    for t in team_states:
+        click.echo(f"  team_id={t['team_id']} formation={t['formation']} possession={t['possession_pct']} "
+                   f"shots={t['shots']} xg={t['xg']}")
+
+    player_states = conn.execute(
+        "SELECT * FROM player_match_state WHERE match_id=? ORDER BY started DESC, team_id", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nPLAYER STATES ({len(player_states)})")
+    for p in player_states:
+        resolved = f"player_id={p['player_id']}" if p["player_id"] else "UNRESOLVED"
+        click.echo(f"  {resolved:<18} fotmob_id={p['fotmob_player_id']:<10} team_id={p['team_id']} "
+                   f"started={bool(p['started'])} goals={p['goals']} shots={p['shots']} xg={p['xg']}")
+
+    observations = conn.execute("SELECT * FROM match_observations WHERE match_id=?", (match["id"],)).fetchall()
+    click.echo(f"\nOBSERVATIONS ({len(observations)})")
+    for o in observations:
+        click.echo(f"  [{o['observation_type']}] OBSERVED: {o['observed']}")
+        if o["inferred"]:
+            click.echo(f"    INFERRED: {o['inferred']}")
+        if o["fpl_direction"]:
+            click.echo(f"    FPL: {o['fpl_direction']} / {o['fpl_signal']} - {o['fpl_reason']}")
+    if not observations:
+        click.echo("  (none yet - run the match-intelligence-analysis skill)")
+
+    implications = conn.execute("SELECT * FROM player_fpl_implications WHERE match_id=?", (match["id"],)).fetchall()
+    click.echo(f"\nFPL IMPLICATIONS ({len(implications)})")
+    for i in implications:
+        click.echo(f"  player_id={i['player_id']} {i['direction']}/{i['signal']} - {i['reason']} [{i['phase']}]")
+
+    summaries = conn.execute(
+        "SELECT * FROM match_analysis_summary WHERE match_id=? ORDER BY phase", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nANALYSIS SUMMARY ({len(summaries)})")
+    for s in summaries:
+        tag = "" if s["phase"] == "FULL_TIME" else "  [PROVISIONAL]"
+        click.echo(f"  [{s['phase']}]{tag} {s['headline']}")
+        if s["uncertainties"]:
+            click.echo(f"    uncertain: {s['uncertainties']}")
+
+    player_states = conn.execute(
+        "SELECT * FROM player_qualitative_state WHERE match_id=?", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nPLAYER QUALITATIVE STATE ({len(player_states)})")
+    for p in player_states:
+        click.echo(f"  player_id={p['player_id']} role={p['role']} signal={p['tactical_signal']} outlook={p['fpl_outlook']} confidence={p['confidence']}")
+
+    team_states = conn.execute(
+        "SELECT * FROM team_qualitative_state WHERE match_id=?", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nTEAM QUALITATIVE STATE ({len(team_states)})")
+    for t in team_states:
+        click.echo(f"  team_id={t['team_id']} tactical={t['tactical_signal']} attack={t['attacking_signal']} defence={t['defensive_signal']}")
+        if t["key_observation"]:
+            click.echo(f"    key observation: {t['key_observation']}")
+
+    user_obs = conn.execute(
+        "SELECT * FROM user_observations WHERE match_id=? ORDER BY created_at", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nUSER OBSERVATIONS ({len(user_obs)})")
+    for u in user_obs:
+        click.echo(f"  [{u['subject_type']}:{u['subject_id']}] {u['sentiment'] or ''} {u['note']}")
+
+    conn.close()
+
+
+@cli.command("match-analyze")
+@click.argument("fotmob_match_id")
+@click.option("--phase", required=True, type=click.Choice(["pre_match", "live", "halftime", "full_time"], case_sensitive=False))
+@click.option("--file", "payload_path", required=True, type=click.Path(exists=True), help="JSON payload written by the match-intelligence-analysis skill")
+def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
+    """Persist a qualitative analysis payload (Pillar 4 Slice A2). The single
+    validated write path the LLM skill uses - never raw SQL from the skill
+    itself. Idempotent per (match, phase); a full_time write is refused
+    unless the match has genuinely finished."""
+    import json
+
+    with open(payload_path, encoding="utf-8") as f:
+        payload = json.load(f)
+
+    conn = get_connection()
+    match = conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)).fetchone()
+    if match is None:
+        click.echo(f"match-analyze failed: no match intelligence found for fotmob match id {fotmob_match_id}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    try:
+        result = apply_match_analysis(conn, match["id"], phase.upper(), payload)
+    except QualitativeAnalysisError as e:
+        click.echo(f"match-analyze failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    conn.close()
+    click.echo(f"phase                  {result['phase']}")
+    click.echo(f"observations written   {result['observations_written']}")
+    click.echo(f"implications written   {result['implications_written']}")
+    click.echo(f"player states written  {result['player_states_written']}")
+    click.echo(f"team states written    {result['team_states_written']}")
+
+
+@cli.command("match-note")
+@click.option("--player", "player_id", type=int, default=None, help="player id (mutually exclusive with --team)")
+@click.option("--team", "team_id", type=int, default=None, help="team id (mutually exclusive with --player)")
+@click.option("--sentiment", type=click.Choice(["positive", "negative", "neutral"]), default=None)
+@click.option("--note", required=True, help="free-text observation")
+@click.option("--match", "fotmob_match_id", default=None, help="fotmob match id, if this note is about a specific match")
+@click.option("--phase", "phase_label", default=None, help="free-text phase label, e.g. 'second half'")
+def match_note_cmd(player_id: int | None, team_id: int | None, sentiment: str | None, note: str, fotmob_match_id: str | None, phase_label: str | None):
+    """Record a real USER_OBSERVATION - never merged into AI-authored
+    analysis (Pillar 4 Slice A2, the seed of the future My Football View)."""
+    if (player_id is None) == (team_id is None):
+        click.echo("match-note failed: pass exactly one of --player or --team", err=True)
+        raise SystemExit(1)
+    subject_type, subject_id = ("player", player_id) if player_id is not None else ("team", team_id)
+
+    conn = get_connection()
+    match_id = None
+    if fotmob_match_id is not None:
+        match = conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)).fetchone()
+        if match is None:
+            click.echo(f"match-note failed: no match intelligence found for fotmob match id {fotmob_match_id}", err=True)
+            conn.close()
+            raise SystemExit(1)
+        match_id = match["id"]
+
+    try:
+        obs_id = record_user_observation(conn, subject_type, subject_id, note, sentiment=sentiment, match_id=match_id, phase=phase_label)
+    except QualitativeAnalysisError as e:
+        click.echo(f"match-note failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    conn.close()
+    click.echo(f"recorded USER_OBSERVATION #{obs_id}")
+
+
+@cli.command("predicted-lineups")
+@click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
+def predicted_lineups_cmd(squad: str):
+    """Latest predicted-XI/injury-doubt read for a specific squad, from
+    `fpl sync-predicted-lineups`'s last run. A player id absent below means
+    no signal, not confirmed anything - see the module docstring."""
+    player_ids = [int(x) for x in squad.split(",")]
+    conn = get_connection()
+    try:
+        lineup = get_predicted_lineup_for_squad(conn, player_ids)
+        names = {
+            row["id"]: row["web_name"]
+            for row in conn.execute(
+                f"SELECT id, web_name FROM players WHERE id IN ({','.join('?' * len(player_ids))})", player_ids
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    if not lineup:
+        click.echo("no predicted-lineup data synced yet - run `fpl sync-predicted-lineups` first")
+        return
+    for pid in player_ids:
+        name = names.get(pid, f"id={pid}")
+        info = lineup.get(pid)
+        if info is None:
+            click.echo(f"{name:20} no signal (not matched in latest sync)")
+            continue
+        doubt = f" ({info['doubt_percent']}%)" if info["doubt_percent"] is not None else ""
+        click.echo(f"{name:20} {info['team_short']:4} {info['status']}{doubt}")
+
+
+@cli.command("team-outlook")
+@click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
+def team_outlook_cmd(squad: str):
+    """Real per-team qualitative read for every club your squad touches - real
+    squad-turnover ratio (who actually left, minutes-weighted), recent Tier 2-4
+    news, and the predicted-lineup source's own latest team-news paragraph.
+    "Be an automatic football pundit" (2026-08-21) - every field here traces to
+    a DB row already synced, nothing generated."""
+    player_ids = [int(x) for x in squad.split(",")]
+    conn = get_connection()
+    try:
+        outlooks = squad_team_outlooks(conn, player_ids)
+    finally:
+        conn.close()
+    for o in outlooks:
+        click.echo(f"{o.team_name}")
+        click.echo(f"  squad churn: {o.churn_label}")
+        if o.formation:
+            click.echo(f"  predicted formation: {o.formation}")
+        if o.manager_change:
+            click.echo(f"  {o.manager_change}")
+        if o.lineup_news:
+            click.echo(f"  latest: {o.lineup_news}")
+        for n in o.recent_news:
+            click.echo(f"  news [{n['source_tier']}] {n['title']}")
+        click.echo()
+
+
 @cli.command("manager-changes")
 @click.option("--days", default=7, type=int, help="lookback window in days")
 def manager_changes_cmd(days: int):
@@ -422,7 +743,14 @@ def run_scheduled():
     """The actual entrypoint the OS scheduler invokes (section 19) - not `fpl sync`
     directly. Checks resources first (defers if constrained), syncs, then delivers
     any newly-pending HIGH+ alerts. Logs to the rotating log file, not just stdout,
-    since this runs unattended."""
+    since this runs unattended.
+
+    Alert delivery moved to the END of this function (2026-08-21, live-
+    gameweek layer) - it used to fire right after run_sync(), before the
+    news/predicted-lineup/lineup-probability/kickoff steps below had a
+    chance to write anything, so any change_events those steps produced sat
+    undelivered until the NEXT scheduled cycle. One delivery pass at the end
+    now covers everything this single cycle detected."""
     logger = logging.getLogger("fpl_agent.scheduler")
 
     resources = check_resources()
@@ -431,20 +759,30 @@ def run_scheduled():
         click.echo(f"deferred: {resources.defer_reason}")
         return
 
+    # Real, cheap squad scoping for every live-alert step below - see
+    # ingestion/my_team.py::resolve_tracked_squad_ids' own docstring for why
+    # this project's push notifications are deliberately narrowed to a real
+    # tracked squad rather than firing on every one of the ~380-390 players
+    # this project's Tier 2-4 sources cover. A short-lived connection, closed
+    # immediately - run_sync() opens its own.
+    scope_conn = get_connection()
+    tracked_squad_ids = resolve_tracked_squad_ids(scope_conn)
+    scope_conn.close()
+
     try:
-        summary = run_sync()
+        summary = run_sync(tracked_squad_ids=tracked_squad_ids)
     except (SourceFetchError, ValidationError) as e:
         logger.error("run-scheduled sync failed: %s", e)
         click.echo(f"sync failed: {e}", err=True)
         raise SystemExit(1)
 
     logger.info(
-        "run-scheduled sync ok: %d lifecycle events, %d setpiece events, retrieved_at=%s",
-        summary["lifecycle_events"], summary["setpiece_events"], summary["retrieved_at"],
+        "run-scheduled sync ok: %d lifecycle events, %d setpiece events, %d price events, retrieved_at=%s",
+        summary["lifecycle_events"], summary["setpiece_events"], summary.get("price_events", 0),
+        summary["retrieved_at"],
     )
 
     conn = get_connection()
-    alerts = deliver_pending_alerts(conn, configured_notifiers(conn))
     cadence = recommended_cadence(conn)
     retighten_msg = maybe_retighten_scheduler(conn)
 
@@ -461,17 +799,116 @@ def run_scheduled():
         news_result = sync_all_news_sources(conn)
     except Exception:
         logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
+
+    # Predicted-lineup + start-percent CHANGE detection (2026-08-21, live-
+    # gameweek layer) - both sources were already synced by this project
+    # (2026-08-21, same day, earlier) but only as current-state snapshots,
+    # never diffed against their own prior sync to detect a real change and
+    # alert on it. Snapshot BEFORE each sync call (both tables are
+    # delete+insert current-state, no history underneath to diff after the
+    # fact - see each detector's own docstring), then diff after. Non-fatal
+    # on any failure, same posture as news/my-team below - a scrape failing
+    # must never abort the whole scheduled cycle.
+    try:
+        prev_lineup_state = {
+            r["player_id"]: r["predicted_status"]
+            for r in conn.execute(
+                "SELECT player_id, predicted_status FROM predicted_lineup_players WHERE player_id IS NOT NULL"
+            ).fetchall()
+        }
+        sync_predicted_lineups(conn)
+        lineup_events = detect_predicted_lineup_status_changes(
+            conn, prev_lineup_state, tracked_squad_ids, datetime.now(timezone.utc).isoformat(),
+            "fantasyfootballscout_team_news",
+        )
+        conn.commit()
+        logger.info("run-scheduled predicted-lineup sync: %d change event(s)", lineup_events)
+    except Exception:
+        logger.exception("run-scheduled predicted-lineup sync failed - not fatal to the sync itself")
+
+    try:
+        from fpl_agent.ingestion.change_detection import snapshot_start_percent_state
+
+        prev_start_percent_state = snapshot_start_percent_state(conn, tracked_squad_ids)
+        sync_lineup_probabilities(conn)
+        start_percent_events = detect_start_percent_changes(
+            conn, prev_start_percent_state, tracked_squad_ids, datetime.now(timezone.utc).isoformat(),
+            "fantasyfootballpundit_start_percent",
+        )
+        conn.commit()
+        logger.info("run-scheduled lineup-probability sync: %d change event(s)", start_percent_events)
+    except Exception:
+        logger.exception("run-scheduled lineup-probability sync failed - not fatal to the sync itself")
+
+    # Kickoff reminders (2026-08-21) - no network call, pure DB read/write,
+    # so failure here would only ever be a real local bug, not a flaky
+    # external source - still non-fatal, matching every other step's
+    # posture in this function.
+    try:
+        kickoff_events = detect_upcoming_kickoffs(conn, tracked_squad_ids, datetime.now(timezone.utc))
+        conn.commit()
+        if kickoff_events:
+            logger.info("run-scheduled kickoff reminders: %d fixture(s)", kickoff_events)
+    except Exception:
+        logger.exception("run-scheduled kickoff reminder detection failed - not fatal to the sync itself")
+
+    # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
+    # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new
+    # "tracked match" registry: re-syncs any not-yet-FULL_TIME match_intelligence
+    # row within a bounded recent window, using the team names already
+    # stored. Non-fatal on failure, same posture as every other step here.
+    try:
+        mi_result = refresh_in_progress_matches(conn)
+        if mi_result["refreshed"]:
+            logger.info(
+                "run-scheduled match-intelligence refresh: %d refreshed, %d skipped, %d failed",
+                mi_result["refreshed"], mi_result["skipped"], mi_result["failed"],
+            )
+    except Exception:
+        logger.exception("run-scheduled match-intelligence refresh failed - not fatal to the sync itself")
+
     conn.close()
 
-    logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
-    click.echo(f"sync ok - {len(alerts)} alert(s) delivered")
-    click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
     if retighten_msg:
         logger.info("run-scheduled: %s", retighten_msg)
         click.echo(retighten_msg)
     if news_result is not None:
         logger.info("run-scheduled news sync: %d fetched, %d new item(s)", news_result["fetched"], news_result["new_items"])
         click.echo(f"news: {news_result['new_items']} new item(s) synced")
+
+    # Real gap found 2026-08-21 - the user asked directly for "my real team"
+    # to auto-update once their real gameweek deadline passes, and
+    # sync_my_team() was never actually wired into the regular unattended
+    # cycle (it was a standalone opt-in command, same mold as sync-history/
+    # sync-eo before the news sync above got wired in). Only runs when a
+    # real entry id has been saved (`fpl my-team --entry-id` at least once);
+    # non-fatal on failure - the most common failure mode this session is
+    # entirely expected (event hasn't locked yet), sync_my_team() already
+    # handles that internally rather than raising, but a real network
+    # failure on the entry-info fetch itself is still caught here rather
+    # than aborting the whole scheduled run over one opt-in extra.
+    try:
+        conn2 = get_connection()
+        my_team_entry_id = get_my_team_entry_id(conn2)
+        if my_team_entry_id is not None:
+            my_team_result = sync_my_team(conn2, my_team_entry_id)
+            logger.info(
+                "run-scheduled my-team sync: entry=%s picks_fetched=%s",
+                my_team_entry_id, my_team_result["picks"]["fetched"],
+            )
+        conn2.close()
+    except Exception:
+        logger.exception("run-scheduled my-team sync failed - not fatal to the sync itself")
+
+    # Delivered last, after every detection step above has had a chance to
+    # write a real change_events row this cycle - see this function's own
+    # docstring for why this moved from right after run_sync().
+    conn3 = get_connection()
+    alerts = deliver_pending_alerts(conn3, configured_notifiers(conn3))
+    conn3.close()
+    logger.info("run-scheduled delivered %d alert(s); next cadence: %s", len(alerts), cadence.reason)
+    click.echo(f"sync ok - {len(alerts)} alert(s) delivered")
+    click.echo(f"next recommended interval: {cadence.interval_minutes}min ({cadence.reason})")
 
     try:
         dashboard_path = _write_dashboard()
@@ -515,11 +952,17 @@ def _maybe_fetch_live_payload(conn) -> dict | None:
     return payload
 
 
-def _write_dashboard() -> None:
+def _write_dashboard(
+    gw_window: int = 1, must_include_ids: set[int] | None = None, must_start_ids: set[int] | None = None,
+    exclude_ids: set[int] | None = None,
+) -> None:
     conn = get_connection()
     try:
         live_payload = _maybe_fetch_live_payload(conn)
-        html_content = generate_dashboard_html(conn, live_payload=live_payload)
+        html_content = generate_dashboard_html(
+            conn, live_payload=live_payload, gw_window=gw_window,
+            must_include_ids=must_include_ids, must_start_ids=must_start_ids, exclude_ids=exclude_ids,
+        )
     finally:
         conn.close()
     path = _dashboard_path()
@@ -528,9 +971,15 @@ def _write_dashboard() -> None:
 
 
 @cli.command()
-def dashboard():
+@click.option("--gw-window", default=1, type=int, help="fixtures to sum for the Recommended Squad panel, same as `fpl build-team --gw-window`")
+@click.option("--must-include", default=None, help="comma-separated player ids to force into the Recommended Squad panel")
+@click.option("--must-start", default=None, help="comma-separated player ids to force into the starting XI specifically")
+@click.option("--exclude", default=None, help="comma-separated player ids to bar from selection entirely")
+def dashboard(gw_window: int, must_include: str | None, must_start: str | None, exclude: str | None):
     """Generate (or regenerate) the local auto-refreshing HTML dashboard -
-    the same one `fpl run-scheduled` regenerates every cycle. Open
+    the same one `fpl run-scheduled` regenerates every cycle (which always
+    uses the defaults - GW1, no forced picks - `--gw-window`/`--must-include`
+    are for an explicit manual regen only). Open
     data/dashboard.html in a browser and leave the tab open; it reloads
     itself on its own to show whatever the last sync produced (see
     monitoring.dashboard._REFRESH_SECONDS for the real, current interval -
@@ -542,7 +991,18 @@ def dashboard():
     or fetch external data on its own) - this is the honest, real
     equivalent: local, genuinely automatic once the scheduler is running,
     zero extra cost."""
-    path = _write_dashboard()
+    parsed_must_include = _parse_squad_option(must_include)
+    must_include_ids = set(parsed_must_include) if parsed_must_include else None
+    parsed_must_start = _parse_squad_option(must_start)
+    must_start_ids = set(parsed_must_start) if parsed_must_start else None
+    if must_start_ids:
+        must_include_ids = (must_include_ids or set()) | must_start_ids
+    parsed_exclude = _parse_squad_option(exclude)
+    exclude_ids = set(parsed_exclude) if parsed_exclude else None
+    path = _write_dashboard(
+        gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
+        exclude_ids=exclude_ids,
+    )
     click.echo(f"wrote {path}")
     click.echo(f"open it in a browser and leave the tab open - it auto-reloads every {_REFRESH_SECONDS // 60}min")
 
@@ -648,7 +1108,7 @@ def live_bonus_cmd(event_num: int | None):
         click.echo(f"no live data for event {event_num} yet - not kicked off, or the gameweek has no minutes played")
         return
 
-    click.echo(f"{'Fixture':>7} {'Player':<20} {'BPS':>4} {'Bonus':>5} {'Confirmed':>9}  Min  G  A")
+    click.echo(f"{'Fixture':>7} {'Player':<20} {'BPS':>4} {'Bonus':>5} {'Confirmed':>9}  Min  G  A  DefCon")
     current_fixture = None
     for r in rows:
         if r.fixture_id != current_fixture:
@@ -656,10 +1116,142 @@ def live_bonus_cmd(event_num: int | None):
                 click.echo()
             current_fixture = r.fixture_id
         confirmed = str(r.confirmed_bonus) if r.confirmed_bonus is not None else "-"
+        # DEFCON (2026-08-21) - "-" for a position the rule doesn't apply to
+        # (GKP), never a fabricated "0/None".
+        if r.defcon_threshold is None:
+            defcon_col = "-"
+        else:
+            defcon_col = f"{r.defensive_contribution}/{r.defcon_threshold}" + (" (+2)" if r.defcon_reached else "")
         click.echo(
             f"{r.fixture_id:>7} {r.web_name:<20} {r.bps:>4} {r.provisional_bonus:>5} {confirmed:>9}  "
-            f"{r.minutes:>3}  {r.goals_scored}  {r.assists}"
+            f"{r.minutes:>3}  {r.goals_scored}  {r.assists}  {defcon_col}"
         )
+
+
+@cli.command("live-rank")
+@click.option("--entry-id", "entry_id_opt", default=None, type=int, help="FPL entry id (default: the saved my-team entry id)")
+@click.option("--event", "event_num", default=None, type=int, help="gameweek number (default: current/next event)")
+@click.option("--sample-size", default=300, type=int, help="reference managers to sample (heaviest network call in this project - see the command's own warning)")
+@click.option("--force", is_flag=True, help="resample even if a reference sample already exists for this event")
+def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: int, force: bool):
+    """Estimate your real live overall rank during an in-progress gameweek -
+    FPL's own API never publishes this (confirmed by real research, see
+    models/live_rank.py's own module docstring), so this samples a real,
+    rank-stratified set of managers across the FULL 1..total_players range
+    (not just the competitive top 10k `fpl sync-eo` samples - a real,
+    deliberate difference, since a typical manager's own real rank can sit
+    anywhere in that range) and interpolates where your own real live
+    points total falls among them. Real, disclosed limitations, not
+    oversold: uncalibrated (no real live-gameweek results exist yet to fit
+    against), doesn't model autosubs (a non-appearing starter simply
+    contributes 0, not a fabricated substitution), and the underlying
+    sample is the heaviest network call in this project - opt-in only,
+    idempotent per event unless --force, same posture `fpl sync-eo`
+    already established for the same reason."""
+    conn = get_connection()
+    entry_id = entry_id_opt if entry_id_opt is not None else get_my_team_entry_id(conn)
+    if entry_id is None:
+        click.echo("no entry id - pass --entry-id or run `fpl my-team --entry-id <id>` first", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    if event_num is None:
+        event_num = live_or_reference_event(conn)
+        if event_num is None:
+            click.echo("no reference gameweek found (no upcoming fixtures)", err=True)
+            conn.close()
+            raise SystemExit(1)
+
+    try:
+        sync_my_team(conn, entry_id, event=event_num)
+    except SourceFetchError as e:
+        click.echo(f"my-team sync failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    my_picks = [
+        (r["player_id"], r["multiplier"])
+        for r in conn.execute(
+            "SELECT player_id, multiplier FROM my_team_picks WHERE entry_id=? AND event=?",
+            (entry_id, event_num),
+        ).fetchall()
+    ]
+    gw_summary = conn.execute(
+        "SELECT total_points, points FROM my_team_gw_summary WHERE entry_id=? AND event=?",
+        (entry_id, event_num),
+    ).fetchone()
+    if not my_picks or gw_summary is None or gw_summary["total_points"] is None:
+        click.echo(
+            f"no real picks/points synced for entry {entry_id} event {event_num} yet - "
+            "event may not have locked, or `fpl my-team` hasn't been run against it", err=True,
+        )
+        conn.close()
+        raise SystemExit(1)
+
+    adapter = FPLApiAdapter()
+    try:
+        live_payload = adapter.fetch_event_live(event_num).data
+    except SourceFetchError as e:
+        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        click.echo(f"live-rank failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+
+    pre_gw_total = gw_summary["total_points"] - (gw_summary["points"] or 0)
+    my_live_points = estimate_squad_live_points(my_picks, live_payload)
+    my_current_total = pre_gw_total + my_live_points
+
+    reference = get_live_rank_reference(conn, event_num)
+    if not reference or force:
+        click.echo(f"sampling {sample_size} reference managers across the full rank range - this can take a while...")
+        try:
+            sample_result = sample_live_rank_reference(
+                conn, event_num, live_payload, target_sample_size=sample_size, force=force,
+            )
+        except ValueError as e:
+            click.echo(f"live-rank failed: {e}", err=True)
+            conn.close()
+            raise SystemExit(1)
+        click.echo(
+            f"reference sample: {sample_result['sample_size']} managers "
+            f"({sample_result['managers_failed']} failed" +
+            (", aborted early)" if sample_result["aborted_early"] else ")")
+        )
+        reference = get_live_rank_reference(conn, event_num)
+
+    if not reference:
+        click.echo("reference sample produced zero usable managers - cannot estimate a rank this cycle", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    total_players_row = conn.execute("SELECT value FROM app_meta WHERE key='total_players'").fetchone()
+    total_players = int(total_players_row["value"]) if total_players_row else 11_000_000
+    estimate = estimate_live_rank(reference, my_current_total, total_players)
+
+    decision_id = log_decision(
+        conn, "live_rank",
+        summary=f"estimated live rank ~{estimate.estimated_rank:,} (event {event_num}, {my_current_total:.0f} pts)",
+        detail={
+            "entry_id": entry_id, "event": event_num, "pre_gw_total": pre_gw_total,
+            "live_points": my_live_points, "current_total": my_current_total,
+            "estimated_rank": estimate.estimated_rank, "rank_lower_bound": estimate.rank_lower_bound,
+            "rank_upper_bound": estimate.rank_upper_bound, "sample_size": estimate.sample_size,
+            "bracketed": estimate.bracketed,
+        },
+        confidence="low",
+    )
+    conn.close()
+
+    click.echo(f"decision_id={decision_id}")
+    click.echo(f"pre-GW total: {pre_gw_total}   live points this GW: {my_live_points:.0f}   current total: {my_current_total:.0f}")
+    click.echo(f"estimated live rank: ~{estimate.estimated_rank:,}  (real bracket {estimate.rank_lower_bound:,}-{estimate.rank_upper_bound:,}, {estimate.sample_size} sampled managers)")
+    if not estimate.bracketed:
+        click.echo("NOTE: your total fell outside the sampled range - this is a much cruder bound, not a precise interpolation.")
+    click.echo(
+        "Uncalibrated estimate (real research-backed method, no fitted results yet - see "
+        "models/live_rank.py) - does not model autosubs, a non-appearing starter counts as 0."
+    )
 
 
 @cli.command("live-watch")
@@ -854,7 +1446,11 @@ def _parse_squad_option(squad: str | None) -> list[int] | None:
 
 @cli.command("build-team")
 @click.option("--sync/--no-sync", default=True, help="refresh data before building (default: yes)")
-def build_team(sync: bool):
+@click.option("--gw-window", default=1, type=int, help="fixtures to sum for structures A/B (real user ask 2026-08-21: build with a multi-GW fixture window in mind, e.g. 5)")
+@click.option("--must-include", default=None, help="comma-separated player ids to force into the squad regardless of cost-efficiency or the start-confidence gate")
+@click.option("--must-start", default=None, help="comma-separated player ids to force into the STARTING XI specifically (must-include only guarantees the 15-man squad, not a starting spot)")
+@click.option("--exclude", default=None, help="comma-separated player ids to bar from selection entirely - real use: \"downgrade X to Y\" needs both must-include Y and exclude X, must-include alone can add Y without removing X")
+def build_team(sync: bool, gw_window: int, must_include: str | None, must_start: str | None, exclude: str | None):
     """Section 92-94: full first-team workflow. Three structures (best EV / best
     flexibility / best upside), captain/vice, risks, narrowly-missed players,
     pre-GW1 watchlist. This is section 61's optimiser plus context - not a
@@ -874,7 +1470,18 @@ def build_team(sync: bool):
             if not c.ok:
                 click.echo(f"  {c.name}: {c.detail}", err=True)
 
-    report = generate_build_team_report(conn)
+    parsed_must_include = _parse_squad_option(must_include)
+    must_include_ids = set(parsed_must_include) if parsed_must_include else None
+    parsed_must_start = _parse_squad_option(must_start)
+    must_start_ids = set(parsed_must_start) if parsed_must_start else None
+    if must_start_ids:
+        must_include_ids = (must_include_ids or set()) | must_start_ids  # a forced starter must also be in the squad
+    parsed_exclude = _parse_squad_option(exclude)
+    exclude_ids = set(parsed_exclude) if parsed_exclude else None
+    report = generate_build_team_report(
+        conn, gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
+        exclude_ids=exclude_ids,
+    )
     primary = report.structures[0]
 
     if not primary.result.squad:
@@ -914,23 +1521,52 @@ def build_team(sync: bool):
         detail, model_version=MODEL_VERSION,
         confidence=report.captain.confidence if report.captain else None,
     )
+    # Real, cheap fallback for the live-alert layer's squad scoping
+    # (ingestion/my_team.py::resolve_tracked_squad_ids, 2026-08-21) - the
+    # "build_team" decision detail above stores web_names only, not ids
+    # (see that dict's own "squad": [c.web_name for c in ...] line), so this
+    # is the one place real ids from this exact build get persisted anywhere
+    # cheap to read back.
+    set_tracked_squad_ids(conn, [c.player_id for c in primary.result.squad])
+    # Real synced start percentages (ingestion/lineup_probability_source.py),
+    # where they exist, straight from the same source `optimise_squad` used
+    # to decide who's even eligible - fetched before conn.close() so the
+    # printed "Start%" column matches the real number that decided squad
+    # membership, not only the older expected_minutes-derived proxy (real
+    # gap found 2026-08-21: a synced 50% real percentage vs a derived 42%
+    # for the same player was genuinely confusing shown side by side).
+    real_start_percents = {
+        c.player_id: get_start_percent(conn, c.player_id)
+        for c in primary.xi.starting + primary.xi.bench
+    }
     conn.close()
 
     click.echo(f"model_version={MODEL_VERSION} (see models/expected_points.py for component caveats)  decision_id={decision_id}")
     click.echo()
-    click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'Start%':>7} {'xP':>6}  Risk")
+    xp_col = "xP" if gw_window == 1 else f"{gw_window}gw-xP"
+    click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'Start%':>7} {xp_col:>6}  Risk")
     for c in primary.xi.starting:
-        start_pct = min(c.expected_minutes / 90 * 100, 100)
+        start_pct = real_start_percents.get(c.player_id)
+        if start_pct is None:
+            start_pct = min(c.expected_minutes / 90 * 100, 100)
         tag = " (C)" if c is primary.xi.captain else " (VC)" if c is primary.xi.vice_captain else ""
         click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {start_pct:>6.0f}% {c.median:>6.2f}  {c.confidence}{tag}")
     click.echo("-- bench --")
     for c in primary.xi.bench:
-        start_pct = min(c.expected_minutes / 90 * 100, 100)
+        start_pct = real_start_percents.get(c.player_id)
+        if start_pct is None:
+            start_pct = min(c.expected_minutes / 90 * 100, 100)
         click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {start_pct:>6.0f}% {c.median:>6.2f}  {c.confidence}")
 
+    # Real bug caught 2026-08-21 while wiring --gw-window through: this label
+    # used to always say "GW1" - once gw_window>1, `gw1_xp` is a real summed
+    # multi-GW total (via optimise_squad's own n_gw), not a single match, and
+    # the old fixed label would have silently lied about what the number
+    # means. Dynamic now - "GW1" only when the window genuinely is 1.
+    xp_label = "GW1 expected points" if gw_window == 1 else f"{gw_window}-GW expected points"
     click.echo()
     click.echo(f"Total Cost:            £{primary.result.total_cost_tenths/10:.1f}m")
-    click.echo(f"GW1 expected points:   {gw1_xp}")
+    click.echo(f"{xp_label}:   {gw1_xp}")
     click.echo(f"First 5-GW xP (XI):    {round(five_gw_xp, 2)}")
     click.echo(f"Captain:               {report.captain.web_name if report.captain else 'n/a'}")
     click.echo(f"Vice:                  {report.vice.web_name if report.vice else 'n/a'}")
@@ -980,6 +1616,7 @@ def build_squad(gw_window: int):
         },
         model_version=MODEL_VERSION,
     )
+    set_tracked_squad_ids(conn, [c.player_id for c in result.squad])
     conn.close()
 
     click.echo(f"model_version={MODEL_VERSION} (see models/expected_points.py for component caveats)  decision_id={decision_id}")
@@ -1149,8 +1786,8 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
 @click.option("--squad", required=True, help="comma-separated player ids")
 @click.option("--trials", default=1000, type=int, help="number of Monte Carlo scenario trials")
 @click.option("--horizon", default=5, type=int, help="horizon in GWs")
-@click.option("--used-chips", default="", help="comma-separated chip names already used this season (e.g. wildcard,bboost) - excluded from scheduling")
-def season_sim(squad: str, trials: int, horizon: int, used_chips: str):
+@click.option("--used-chips", default=None, help="comma-separated chip names already used this season (e.g. wildcard,bboost) - excluded from scheduling. Omit to auto-detect from a synced `fpl my-team` entry, if one exists.")
+def season_sim(squad: str, trials: int, horizon: int, used_chips: str | None):
     """Season-long risk bands (P10/P50/P90) and chip timing from real sampled
     scenarios, not a single point estimate (Pillar 1 Plan 1b)."""
     conn = get_connection()
@@ -1244,7 +1881,18 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str):
                 f"hold chips barring an obvious, visible reason - is usually the safer read this early."
             )
 
-        used_chip_names = {c.strip() for c in used_chips.split(",") if c.strip()}
+        if used_chips is not None:
+            used_chip_names = {c.strip() for c in used_chips.split(",") if c.strip()}
+        else:
+            # Real gap closed 2026-08-21: previously always had to be typed in
+            # by hand (no live FPL account integration existed). Now reads
+            # real played chips off a synced `fpl my-team` entry when one is
+            # saved - explicit --used-chips always wins over this, never
+            # silently overridden.
+            my_team_entry_id = get_my_team_entry_id(conn)
+            used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
+            if used_chip_names:
+                click.echo(f"(auto-detected used chips from your real team: {', '.join(sorted(used_chip_names))})")
         schedule = schedule_chips(conn, squad_ids, trajectory, windows, scenario_draw, used_chip_names=used_chip_names)
         for entry in schedule.baseline_schedule:
             click.echo(f"GW{entry.event}  {entry.chip_name}  median +{entry.expected_marginal_value:.1f}")
@@ -1566,6 +2214,75 @@ def rate_team_cmd(squad: str, sync: bool):
     click.echo("Availability risks:" if rating.risks else "Availability risks: none flagged")
     for r in rating.risks:
         click.echo(f"  - {r}")
+
+
+@cli.command("my-team")
+@click.option("--entry-id", default=None, type=int, help="real FPL entry id (saved for future runs)")
+@click.option("--event", default=None, type=int, help="gameweek to fetch picks for (default: latest locked)")
+@click.option("--force", is_flag=True, help="re-fetch picks even if already synced for this event")
+def my_team_cmd(entry_id: int | None, event: int | None, force: bool):
+    """Sync and show your REAL FPL team - entry info, real past-season rank
+    history, and (once a gameweek has locked) your real squad, rated the same
+    way `fpl rate-team` rates any squad. Public FPL API, no login needed."""
+    conn = get_connection()
+    resolved_id = entry_id if entry_id is not None else get_my_team_entry_id(conn)
+    if resolved_id is None:
+        click.echo("no entry id saved yet - pass --entry-id <your real FPL team id> once", err=True)
+        conn.close()
+        raise SystemExit(1)
+    if entry_id is not None:
+        set_my_team_entry_id(conn, entry_id)
+
+    try:
+        result = sync_my_team(conn, resolved_id, event=event, force=force)
+    except SourceFetchError as e:
+        click.echo(f"my-team failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+
+    click.echo(f"entry_id       {resolved_id}")
+    click.echo(f"manager        {result['manager_name']}")
+    if result["history_error"]:
+        click.echo(f"WARNING: season history fetch failed: {result['history_error']}", err=True)
+
+    for row in conn.execute(
+        "SELECT season_name, total_points, rank, rank_percentage FROM my_team_season_history "
+        "WHERE entry_id=? ORDER BY season_name", (resolved_id,),
+    ).fetchall():
+        click.echo(f"  {row['season_name']}: {row['total_points']} pts, rank {row['rank']:,} (top {row['rank_percentage']}%)")
+
+    picks = result["picks"]
+    if not picks["fetched"]:
+        click.echo(f"real squad: not available yet - {picks['reason']}")
+        conn.close()
+        return
+
+    click.echo(f"\nreal squad, GW{picks['event']} ({picks['picks_count']} players):")
+    latest = get_latest_squad(conn, resolved_id)
+    if latest is None:
+        conn.close()
+        return
+    real_event, real_ids = latest
+    rating = rate_team(conn, real_ids)
+    conn.close()
+
+    if rating.xi.starting:
+        click.echo(f"{'Pos':<4} {'Player':<20} {'Price':>7} {'xP':>6}  Risk")
+        for c in rating.xi.starting:
+            tag = " (C)" if rating.captain and c.player_id == rating.captain.player_id else \
+                  " (VC)" if rating.vice and c.player_id == rating.vice.player_id else ""
+            click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {c.median:>6.2f}  {c.confidence}{tag}")
+        click.echo("-- bench --")
+        for c in rating.xi.bench:
+            click.echo(f"{c.position:<4} {c.web_name:<20} £{c.price_tenths/10:>5.1f}m {c.median:>6.2f}  {c.confidence}")
+    click.echo()
+    click.echo(f"GW{real_event} expected points:  {rating.gw1_xp}")
+    click.echo(f"Best possible (same budget): {rating.optimal_gw1_xp} xP")
+    click.echo(f"Efficiency:                  {rating.efficiency_percent}% of the best achievable squad this GW")
+    if rating.rule_violations:
+        click.echo("WARNING: real squad does not satisfy real FPL rules (mid-GW transfer state?):", err=True)
+        for v in rating.rule_violations:
+            click.echo(f"  - {v}", err=True)
 
 
 if __name__ == "__main__":

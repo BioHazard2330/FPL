@@ -78,6 +78,57 @@ class FixtureWindow:
     used_fallback: bool
 
 
+@dataclass(frozen=True)
+class TickerEntry:
+    fixture_id: int
+    event: int
+    opponent_team_id: int
+    opponent_short: str
+    is_home: bool
+    difficulty: int  # real FPL 1-5 FDR scale (see fixture_difficulty's own docstring)
+
+
+def team_fixture_ticker(conn: sqlite3.Connection, team_id: int, n_gw: int = 5, from_event: int | None = None) -> list[TickerEntry]:
+    """Real per-fixture difficulty ticker (2026-08-21, per direct user ask
+    to build what FPL Copilot/Fantasy Football Scout's own FDR ticker shows -
+    real research confirmed live: a colored 1-5 cell per upcoming fixture,
+    never a single number blended across several matches). One entry per
+    real fixture in the window - unlike `fixture_window_score` (which
+    averages into one summary figure for transfer-planning comparisons),
+    this returns the individual per-gameweek reads a ticker actually needs.
+    `difficulty` is the OPPONENT's own overall strength in the venue they're
+    playing at that fixture (`strength_overall_away` if they're visiting,
+    `strength_overall_home` if we are) - real FPL's own official FDR
+    convention (a single difficulty number per fixture, not split by
+    attack/defence - that split only matters for `expected_points()`'s own
+    goals model, not the ticker), confirmed against the real research this
+    session did into FPL Copilot's ticker. A blank gameweek (no fixture)
+    simply produces no entry for that event - callers that need to show the
+    gap explicitly should cross-reference `detect_blank_double_gws`, not
+    treat a short list as an error."""
+    start = from_event if from_event is not None else _reference_event(conn)
+    rows = conn.execute(
+        "SELECT f.id, f.event, f.team_h, f.team_a, t.short_name AS opp_short, "
+        "t.strength_overall_home AS opp_home_strength, t.strength_overall_away AS opp_away_strength "
+        "FROM fixtures f JOIN teams t ON t.id = (CASE WHEN f.team_h=? THEN f.team_a ELSE f.team_h END) "
+        "WHERE (f.team_h=? OR f.team_a=?) AND f.event >= ? AND f.event < ? ORDER BY f.event",
+        (team_id, team_id, team_id, start, start + n_gw),
+    ).fetchall()
+
+    entries = []
+    for r in rows:
+        is_home = r["team_h"] == team_id
+        opponent_id = r["team_a"] if is_home else r["team_h"]
+        # If we're home, the opponent is travelling (their away strength);
+        # if we're away, the opponent is at home (their home strength).
+        difficulty = r["opp_away_strength"] if is_home else r["opp_home_strength"]
+        entries.append(TickerEntry(
+            fixture_id=r["id"], event=r["event"], opponent_team_id=opponent_id, opponent_short=r["opp_short"],
+            is_home=is_home, difficulty=difficulty if difficulty else 3,
+        ))
+    return entries
+
+
 def _reference_event(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT id FROM events WHERE is_next=1 LIMIT 1").fetchone()
     if row is not None:

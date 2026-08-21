@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 from fpl_agent.database.connection import get_connection
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.sync import update_source_health
+from fpl_agent.models.bonus_regression import invalidate_cache_for_connection as invalidate_bonus_cache
+from fpl_agent.models.defensive_contribution import invalidate_cache_for_connection as invalidate_defcon_cache
+from fpl_agent.models.player_regression import invalidate_cache_for_connection
 from fpl_agent.normalization.fpl_core import normalize_season_history
 
 _DEFAULT_DELAY_SECONDS = 0.15  # politeness delay between per-player requests, section 23
@@ -65,6 +68,11 @@ def sync_player_season_history(
             conn.commit()
             fetched += 1
             time.sleep(delay)
+
+        if fetched:
+            invalidate_cache_for_connection(conn)
+            invalidate_bonus_cache(conn)
+            invalidate_defcon_cache(conn)
 
         update_source_health(
             conn, "fpl_api_element_summary",

@@ -1,4 +1,4 @@
-from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
+from fpl_agent.database.decisions import get_decision, latest_decision_of_type, list_decisions, log_decision
 
 
 def test_log_and_get_decision(db_conn):
@@ -26,3 +26,18 @@ def test_list_decisions_orders_newest_first(db_conn):
 
 def test_get_missing_decision_returns_none(db_conn):
     assert get_decision(db_conn, 9999) is None
+
+
+def test_latest_decision_of_type_returns_the_most_recent_matching_row(db_conn):
+    log_decision(db_conn, "chip", "old", {"wildcard_5gw": 1.0})
+    log_decision(db_conn, "squad", "unrelated", {})
+    newest_id = log_decision(db_conn, "chip", "new", {"wildcard_5gw": 9.9})
+
+    d = latest_decision_of_type(db_conn, "chip")
+
+    assert d.id == newest_id
+    assert d.detail["wildcard_5gw"] == 9.9
+
+
+def test_latest_decision_of_type_returns_none_when_never_logged(db_conn):
+    assert latest_decision_of_type(db_conn, "chip") is None

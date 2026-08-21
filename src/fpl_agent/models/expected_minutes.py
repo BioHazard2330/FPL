@@ -1,8 +1,10 @@
 import sqlite3
 from dataclasses import dataclass
 
+from fpl_agent.ingestion.lineup_probability_source import get_start_percent
 from fpl_agent.models.availability import classify
 from fpl_agent.models.rules import current_season
+from fpl_agent.models.team_news_risk import rotation_risk_snippet
 
 # A season gap of 2+ (i.e. missing at least one full season between the most
 # recent player_season_history row and now) means that row is NOT genuinely
@@ -66,6 +68,37 @@ _NEW_SIGNING_MINUTES_DISCOUNT = 0.6
 # ownership signal is weaker evidence than whatever informed theirs.
 _MARKET_CONVICTION_OWNERSHIP_THRESHOLD = 10.0
 _MARKET_CONVICTION_DEFAULT_MINUTES = 60.0
+# Real gap found 2026-08-21: a user-built real GW1 squad included Jacquet (a
+# genuine Liverpool signing, real name-checked live), and this project gave him
+# expected_minutes=0.0 (basis="no_data_available") despite
+# ingestion/predicted_lineups_source.py independently confirming him as a real
+# predicted STARTER that same week. Ownership-based market_conviction_override
+# below never fires for a brand-new, low-profile signing (real ownership can't
+# clear 10% before anyone's even seen him play) - exactly the case where a
+# direct "a real site predicts he starts THIS match" signal is both stronger
+# evidence and the one actually available. Takes precedence over the ownership
+# check below (a specific per-fixture starting-XI prediction beats an indirect
+# ownership proxy) but only within the same weak-evidence gate - never
+# overrides a well-evidenced low estimate for the same reason
+# market_conviction_override doesn't.
+_PREDICTED_LINEUP_STARTER_MINUTES = 75.0
+# Real gap found 2026-08-21 (forensic audit against real open-source FPL
+# predictors, per the user's explicit ask - PlanFPL.com rated Maguire/
+# Calafiori/Tonali roughly double this project's own numbers for the same
+# real GW1 squad). Root cause traced to real data, not a fabricated
+# discrepancy: all three have a genuine multi-season history of PARTIAL
+# squad involvement (Maguire 19/38 starts, Calafiori 22/38, both '25/26) -
+# real signal, correctly NOT in _WEAK_EVIDENCE_BASES. But minutes/38 conflates
+# "how often was he selected" with "how long does he play once selected" -
+# real per-start minutes for all three are 77-92 (confirmed via
+# player_season_history: minutes/starts), a genuinely different number.
+# `ingestion/predicted_lineups_source.py` already independently confirms
+# whether a player is in THIS week's actual starting XI - when it does, "how
+# often selected historically" stops being the open question and "how long
+# does he play once selected" (his own real per-start rate) is the better
+# estimate for the week we already know he starts. Gated on a minimum
+# starts count so a single noisy match doesn't set the rate.
+_MIN_STARTS_FOR_PER_START_RATE = 5
 # Only overrides a base drawn from one of these already-weak-evidence
 # branches - never a genuinely low but well-evidenced estimate (e.g. Havertz,
 # a real, current-squad backup with real recent minutes data showing it -
@@ -90,12 +123,37 @@ _RECENT_SEASON_BLEND_WEIGHTS = (0.55, 0.30, 0.15)
 
 
 def _blended_recent_seasons_per_gw(conn: sqlite3.Connection, player_id: int) -> float | None:
+    """Real gap found 2026-08-21 (while checking the user's real "Gyokeres
+    looks off" complaint by hand): FPL's own `history_past` can carry a row
+    for a season years before a player ever reached English football
+    (confirmed real - Gyokeres's only other row besides 2025/26 was 2018/19,
+    0 minutes, a genuine data artifact not a real "quiet season"). The
+    original version blended whatever `LIMIT 3` rows existed regardless of
+    how far apart they actually were, so that one ancient zero-minute row
+    dragged a real, established current player's blend down by ~35%
+    (58.3->37.8 min/GW). Fixed by stopping the blend at the first genuine
+    multi-season GAP between consecutive rows (season_name year jump > 1) -
+    a discontinuity means "no trustworthy recent read beyond this point",
+    same reasoning the single-row staleness check above already uses, just
+    applied at the boundary where the actual gap is, not a fixed distance
+    from "now" (which would have wrongly excluded the Isak case's real,
+    perfectly consecutive 3-season blend - checked by hand before choosing
+    this over a simpler absolute-threshold-per-row version)."""
     rows = conn.execute(
-        "SELECT minutes FROM player_season_history WHERE player_id=? "
+        "SELECT minutes, season_name FROM player_season_history WHERE player_id=? "
         "ORDER BY season_name DESC LIMIT ?",
         (player_id, len(_RECENT_SEASON_BLEND_WEIGHTS)),
     ).fetchall()
-    usable = [r["minutes"] for r in rows if r["minutes"] is not None]
+    usable: list[int] = []
+    prev_year: int | None = None
+    for r in rows:
+        if r["minutes"] is None:
+            continue
+        year = _season_start_year(r["season_name"])
+        if prev_year is not None and year is not None and prev_year - year > 1:
+            break
+        usable.append(r["minutes"])
+        prev_year = year
     if not usable:
         return None
     weights = _RECENT_SEASON_BLEND_WEIGHTS[: len(usable)]
@@ -110,6 +168,7 @@ class ExpectedMinutes:
     confidence: str  # LOW / MEDIUM / HIGH
     basis: str
     classification: str
+    rotation_risk: str | None = None  # real quoted evidence from team_news_risk.py, else None
 
 
 def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinutes:
@@ -134,7 +193,7 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         current_per_gw = min(current_minutes / finished_events, 90)
 
     prior_row = conn.execute(
-        "SELECT minutes, season_name FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
+        "SELECT minutes, starts, season_name FROM player_season_history WHERE player_id=? ORDER BY season_name DESC LIMIT 1",
         (player_id,),
     ).fetchone()
 
@@ -205,6 +264,68 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
             confidence = "LOW"
             basis = "no_data_available"
 
+    # Real gap found 2026-08-21 (the user pushed back directly on real GW1
+    # picks - Osula/Gyokeres/Dorgu - checked by hand, confirmed real): the
+    # predicted-lineup "starting" flag below is a binary classification that
+    # doesn't cross-check the SAME scrape's own free-text team news, which
+    # for these exact players plainly hedges ("two from three of Osula/
+    # Wissa/Woltemade", "unless he displaces...Dorgu", "was only a
+    # substitute"). See models/team_news_risk.py's module docstring for the
+    # full real evidence. Computed once here and threaded through both
+    # override branches below - a real rotation-risk hit BLOCKS the
+    # "starting" flag from raising the estimate at all (falls back to the
+    # season-average base, which already honestly reflects a partial role),
+    # rather than silently trusting a structured flag its own source text
+    # contradicts.
+    rotation_risk = rotation_risk_snippet(conn, player_id)
+    # Real gap found 2026-08-21 (continued user pushback: "why are you giving
+    # me Madueke when... theres either journalist sites or fpl sites that do
+    # this for free" - a genuine, better source, found and built the same
+    # day: ingestion/lineup_probability_source.py, a real per-player start-
+    # PERCENTAGE, not a binary starting/bench flag. Where it covers a player,
+    # it REPLACES the binary predicted_lineup_players gate below with a
+    # continuous scale - a player at 40% (Madueke's real number the day this
+    # was built) gets raised 40% of the way toward the override target, not
+    # silently treated the same as a 95%-certain starter. Falls back to the
+    # binary gate + rotation_risk keyword heuristic exactly as before for any
+    # player this newer, narrower-coverage source hasn't matched.
+    start_percent = get_start_percent(conn, player_id)
+
+    if basis in ("blended_current_and_prior_season", "current_season_only", "last_season_prior_no_current_data"):
+        # Real, well-evidenced bases - only ever raises the estimate (never
+        # overrides a low number that's a genuine signal, e.g. Havertz), and
+        # only when the player's own real per-start rate is actually higher
+        # than the season-average base already computed above.
+        if prior_row is not None and prior_row["starts"] and prior_row["starts"] >= _MIN_STARTS_FOR_PER_START_RATE:
+            per_start_minutes = min(prior_row["minutes"] / prior_row["starts"], 90)
+            if start_percent is not None:
+                if per_start_minutes > base:
+                    base = base + (per_start_minutes - base) * (start_percent / 100)
+                    basis = "predicted_lineup_confirmed_starting"
+            else:
+                predicted_starting = conn.execute(
+                    "SELECT 1 FROM predicted_lineup_players WHERE player_id=? AND predicted_status='starting'",
+                    (player_id,),
+                ).fetchone()
+                if predicted_starting is not None and rotation_risk is None and per_start_minutes > base:
+                    base = per_start_minutes
+                    basis = "predicted_lineup_confirmed_starting"
+
+    if basis in _WEAK_EVIDENCE_BASES:
+        if start_percent is not None:
+            target = _PREDICTED_LINEUP_STARTER_MINUTES * (start_percent / 100)
+            if target > base:
+                base = target
+                basis = "predicted_lineup_confirmed_starting"
+        else:
+            predicted_starting = conn.execute(
+                "SELECT 1 FROM predicted_lineup_players WHERE player_id=? AND predicted_status='starting'",
+                (player_id,),
+            ).fetchone()
+            if predicted_starting is not None and rotation_risk is None and base < _PREDICTED_LINEUP_STARTER_MINUTES:
+                base = _PREDICTED_LINEUP_STARTER_MINUTES
+                basis = "predicted_lineup_confirmed_starting"
+
     if basis in _WEAK_EVIDENCE_BASES and base < _MARKET_CONVICTION_DEFAULT_MINUTES:
         ownership_row = conn.execute(
             "SELECT selected_by_percent FROM player_ownership_history WHERE player_id=? AND valid_until IS NULL",
@@ -223,4 +344,5 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         confidence=confidence,
         basis=basis,
         classification=classification,
+        rotation_risk=rotation_risk,
     )

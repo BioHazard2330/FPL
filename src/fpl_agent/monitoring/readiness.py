@@ -55,9 +55,17 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
         "Tier 1 only - confirmed via club_change events, no pre-confirmation news (source-tier choice)",
     ))
     checks.append(ReadinessCheck("Injuries", "OK", "official status/news/chance-of-playing fields (Tier 1)"))
-    checks.append(ReadinessCheck(
-        "Team news", "DEGRADED", "Tier 1 only - no predicted lineups or press-conference parsing",
-    ))
+
+    n_lineup_teams = conn.execute("SELECT COUNT(*) FROM predicted_lineup_teams").fetchone()[0]
+    if n_lineup_teams:
+        checks.append(ReadinessCheck(
+            "Team news", "OK",
+            f"Tier 2-4 predicted lineups synced for {n_lineup_teams} team(s) - run `fpl sync-predicted-lineups` to refresh",
+        ))
+    else:
+        checks.append(ReadinessCheck(
+            "Team news", "DEGRADED", "no predicted-lineup sync yet - run `fpl sync-predicted-lineups`",
+        ))
 
     n_history = conn.execute("SELECT COUNT(*) FROM player_season_history").fetchone()[0]
     checks.append(ReadinessCheck(

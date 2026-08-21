@@ -9,6 +9,8 @@ import requests
 
 from fpl_agent.ingestion.market_identity import get_or_create_market_team, normalize_common_team_name
 from fpl_agent.ingestion.sync import update_source_health
+from fpl_agent.models.expected_points import invalidate_dc_model_cache
+from fpl_agent.models.promoted_team_calibration import invalidate_cache_for_connection
 
 
 class FootballDataFetchError(Exception):
@@ -166,6 +168,9 @@ def backfill_secondary_division(conn, season: str, division: str = "E1", csv_tex
         matches_inserted += 1
     conn.commit()
 
+    if matches_inserted:
+        invalidate_cache_for_connection(conn)
+
     update_source_health(conn, f"football_data_{division}", success=True, error=None)
     return {"matches_inserted": matches_inserted}
 
@@ -188,6 +193,14 @@ def backfill_football_data(conn, season: str, csv_text: str | None = None) -> di
         if parsed["odds"]:
             odds_inserted += 1
     conn.commit()
+
+    if matches_inserted:
+        # Real, pre-existing gap closed here (2026-08-21): match_results_history
+        # is this function's own table, and it's the sole writer, but neither
+        # expected_points.py cache keyed off it (_dc_model_cache, and the new
+        # _last_match_date_cache added the same day) had an invalidation hook
+        # before this - see invalidate_dc_model_cache's own docstring.
+        invalidate_dc_model_cache(conn)
 
     update_source_health(conn, "football_data", success=True, error=None)
     return {"matches_inserted": matches_inserted, "odds_inserted": odds_inserted}

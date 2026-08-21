@@ -77,6 +77,21 @@ class FPLApiAdapter:
     def fetch_entry_picks(self, entry_id: int, event: int) -> RawFetch:
         return self._get(f"fpl_api_entry_picks_{entry_id}_{event}", f"/entry/{entry_id}/event/{event}/picks/")
 
+    def fetch_entry_info(self, entry_id: int) -> RawFetch:
+        """Real, public, no-login entry summary - manager name/region/team
+        started, current-season overall points/rank once the season has real
+        results. Confirmed live 2026-08-21: works pre-GW1 too (returns the
+        manager's real identity fields immediately; season points/rank fields
+        are null until real matches exist, the honest preseason state)."""
+        return self._get(f"fpl_api_entry_{entry_id}", f"/entry/{entry_id}/")
+
+    def fetch_entry_history(self, entry_id: int) -> RawFetch:
+        """Real past-season summaries (`"past"`) and per-GW summaries for the
+        live season so far (`"current"`) - both public, no login needed.
+        Confirmed live 2026-08-21: past-season rows are real and available
+        immediately regardless of GW lock state (they're closed seasons)."""
+        return self._get(f"fpl_api_entry_history_{entry_id}", f"/entry/{entry_id}/history/")
+
     def fetch_event_live(self, event: int) -> RawFetch:
         """Real-time per-player stats for an in-progress or just-finished
         gameweek - `stats.bps` updates continuously during live matches,

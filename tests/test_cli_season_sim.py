@@ -153,3 +153,53 @@ def test_season_sim_excludes_already_used_chips(monkeypatch, db_conn):
 
     assert result.exit_code == 0, result.output
     assert captured["used_chip_names"] == {"bboost", "wildcard"}
+
+
+def test_season_sim_auto_detects_used_chips_from_a_synced_real_team(monkeypatch, db_conn):
+    """Real gap closed 2026-08-21: --used-chips previously always had to be
+    typed in by hand. Omitting it now auto-detects real played chips from a
+    synced `fpl my-team` entry."""
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+    _patch_squad_rebuild(monkeypatch, [3, 4])
+    db_conn.execute(
+        "INSERT INTO chip_windows (id,name,number,start_event,stop_event,chip_type,season,updated_at) "
+        "VALUES (1,'bboost',1,1,19,'team','2026-27','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('my_team_entry_id', '7378572', 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (7378572, 1, 1, 1, 1, 0, 0, 'bboost', 't0')"
+    )
+    db_conn.commit()
+
+    import fpl_agent.cli.main as main_mod
+    from fpl_agent.models.scenario_engine import ScenarioOutcome
+
+    def fake_sample(conn, squad_ids, from_event, horizon_gw, n_trials=1000, rng=None):
+        return [
+            ScenarioOutcome(trial_index=i, points_by_event_player={
+                (e, pid): 5.0 for e in range(from_event, from_event + horizon_gw) for pid in squad_ids
+            })
+            for i in range(n_trials)
+        ]
+
+    monkeypatch.setattr(main_mod, "sample_season_scenarios", fake_sample)
+
+    captured = {}
+
+    def capture_schedule(conn, squad_ids, trajectory, windows, scenario_draw, used_chip_names=frozenset()):
+        captured["used_chip_names"] = used_chip_names
+        from fpl_agent.optimization.chips import ChipSchedule
+        return ChipSchedule(baseline_schedule=(), advisory_hit_recommendations=(), total_expected_value=0.0)
+
+    monkeypatch.setattr(main_mod, "schedule_chips", capture_schedule)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["season-sim", "--squad", "1,2", "--trials", "10", "--horizon", "2"])  # no --used-chips
+
+    assert result.exit_code == 0, result.output
+    assert captured["used_chip_names"] == {"bboost"}
+    assert "auto-detected used chips" in result.output

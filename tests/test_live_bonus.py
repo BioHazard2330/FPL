@@ -204,3 +204,119 @@ def test_diff_live_rows_double_gameweek_bonus_takes_the_higher_fixture_value():
     assert len(bonus_events) == 1
     assert "+3" in bonus_events[0].detail
     assert new_state[1].provisional_bonus == 3
+
+
+# --- DEFCON live progress (2026-08-21, live-gameweek layer item 2/4) ------
+
+
+def _seed_players_with_positions(conn, entries):
+    """entries: [(player_id, web_name, position_short)]. Same shape as
+    _seed_players but lets each player carry a real, distinct position -
+    needed to prove DEFCON_THRESHOLDS resolves per-player, not just the
+    single hardcoded MID every other test in this file uses."""
+    positions = sorted({pos for _, _, pos in entries})
+    names = {"GKP": "Goalkeeper", "DEF": "Defender", "MID": "Midfielder", "FWD": "Forward"}
+    for i, pos in enumerate(positions, start=1):
+        conn.execute(
+            "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+            "VALUES (?,?,?,?, 't0')",
+            (i, names[pos], pos, names[pos] + "s"),
+        )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'T1','T1','t0')")
+    pos_to_type_id = {pos: i for i, pos in enumerate(positions, start=1)}
+    for pid, name, pos in entries:
+        conn.execute(
+            "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+            "VALUES (?,?,?,1,?,'a','t0')",
+            (pid, pid, name, pos_to_type_id[pos]),
+        )
+    conn.commit()
+
+
+def test_compute_live_bonus_flags_defcon_reached_for_a_def_hitting_the_real_threshold(db_conn):
+    _seed_players_with_positions(db_conn, [(1, "Defender1", "DEF")])
+    payload = {"elements": [
+        {"id": 1, "stats": {"minutes": 90, "bps": 20, "goals_scored": 0, "assists": 0,
+                             "defensive_contribution": 10},
+         "explain": [{"fixture": 100}]},
+    ]}
+
+    rows = compute_live_bonus(db_conn, payload)
+
+    assert rows[0].position == "DEF"
+    assert rows[0].defcon_threshold == 10
+    assert rows[0].defensive_contribution == 10
+    assert rows[0].defcon_reached is True
+
+
+def test_compute_live_bonus_def_below_threshold_is_not_reached(db_conn):
+    _seed_players_with_positions(db_conn, [(1, "Defender1", "DEF")])
+    payload = {"elements": [
+        {"id": 1, "stats": {"minutes": 90, "bps": 20, "goals_scored": 0, "assists": 0,
+                             "defensive_contribution": 9},
+         "explain": [{"fixture": 100}]},
+    ]}
+
+    rows = compute_live_bonus(db_conn, payload)
+    assert rows[0].defcon_reached is False
+
+
+def test_compute_live_bonus_mid_needs_the_real_higher_threshold(db_conn):
+    """Real rule: MID/FWD threshold is 12 (CBIRT, recoveries included), not
+    10 like DEF - the exact same defensive_contribution count that would
+    reach it for a DEF must NOT be flagged reached for a MID."""
+    _seed_players_with_positions(db_conn, [(1, "Mid1", "MID")])
+    payload = {"elements": [
+        {"id": 1, "stats": {"minutes": 90, "bps": 20, "goals_scored": 0, "assists": 0,
+                             "defensive_contribution": 10},
+         "explain": [{"fixture": 100}]},
+    ]}
+
+    rows = compute_live_bonus(db_conn, payload)
+    assert rows[0].defcon_threshold == 12
+    assert rows[0].defcon_reached is False
+
+
+def test_compute_live_bonus_gkp_is_never_defcon_eligible(db_conn):
+    """Real rule: scoring.defensive_contribution.GKP is 0 - GKP is not
+    eligible regardless of how high a raw count they somehow rack up."""
+    _seed_players_with_positions(db_conn, [(1, "Keeper1", "GKP")])
+    payload = {"elements": [
+        {"id": 1, "stats": {"minutes": 90, "bps": 20, "goals_scored": 0, "assists": 0,
+                             "defensive_contribution": 99},
+         "explain": [{"fixture": 100}]},
+    ]}
+
+    rows = compute_live_bonus(db_conn, payload)
+    assert rows[0].defcon_threshold is None
+    assert rows[0].defcon_reached is False
+
+
+def _defcon_row(player_id, defcon_reached, defensive_contribution=0, defcon_threshold=10):
+    return LiveBonusRow(
+        player_id=player_id, web_name="X", fixture_id=100, bps=0, provisional_bonus=0,
+        confirmed_bonus=None, minutes=90, goals_scored=0, assists=0,
+        defensive_contribution=defensive_contribution, defcon_threshold=defcon_threshold,
+        defcon_reached=defcon_reached,
+    )
+
+
+def test_diff_live_rows_fires_defcon_event_once_on_the_true_flip():
+    previous = {1: _defcon_row(1, defcon_reached=False, defensive_contribution=8)}
+    current = [_defcon_row(1, defcon_reached=True, defensive_contribution=10)]
+
+    events, new_state = diff_live_rows(previous, current)
+
+    defcon_events = [e for e in events if e.kind == "defcon"]
+    assert len(defcon_events) == 1
+    assert "10/10" in defcon_events[0].detail
+    assert new_state[1].defcon_reached is True
+
+
+def test_diff_live_rows_does_not_refire_defcon_once_already_reached():
+    previous = {1: _defcon_row(1, defcon_reached=True, defensive_contribution=10)}
+    current = [_defcon_row(1, defcon_reached=True, defensive_contribution=13)]  # still climbing, already reached
+
+    events, _ = diff_live_rows(previous, current)
+
+    assert [e for e in events if e.kind == "defcon"] == []

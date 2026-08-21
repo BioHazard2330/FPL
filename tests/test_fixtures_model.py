@@ -6,6 +6,7 @@ from fpl_agent.models.fixtures import (
     fixture_difficulty,
     fixture_window_score,
     live_or_reference_event,
+    team_fixture_ticker,
 )
 
 _TEAMS = [
@@ -77,6 +78,34 @@ def test_fixture_window_score_empty_when_no_fixtures_in_range(db_conn):
 
     assert window.fixture_count == 0
     assert window.avg_attack_difficulty == 0.0
+
+
+def test_team_fixture_ticker_uses_the_opponents_real_venue_strength(db_conn):
+    """Real FDR ticker (2026-08-21, per direct user ask - checked live
+    against FPL Copilot's real methodology first): a single 1-5 difficulty
+    per fixture, from the OPPONENT's strength at the venue they're playing
+    (their away strength if they're visiting us, home strength if we're
+    visiting them) - the real, standard FDR convention, not a blended
+    multi-game average (that's what fixture_window_score is for)."""
+    _seed(db_conn)
+
+    home_team_ticker = team_fixture_ticker(db_conn, team_id=1, n_gw=1)
+    assert len(home_team_ticker) == 1
+    assert home_team_ticker[0].event == 1
+    assert home_team_ticker[0].opponent_short == "AWY"
+    assert home_team_ticker[0].is_home is True
+    assert home_team_ticker[0].difficulty == 5  # Away FC's real strength_overall_away
+
+    away_team_ticker = team_fixture_ticker(db_conn, team_id=2, n_gw=1)
+    assert len(away_team_ticker) == 1
+    assert away_team_ticker[0].opponent_short == "HOM"
+    assert away_team_ticker[0].is_home is False
+    assert away_team_ticker[0].difficulty == 3  # Home FC's real strength_overall_home
+
+
+def test_team_fixture_ticker_empty_outside_the_window(db_conn):
+    _seed(db_conn)
+    assert team_fixture_ticker(db_conn, team_id=1, n_gw=1, from_event=5) == []
 
 
 def _seed_teams_and_fixtures(conn):

@@ -7,12 +7,15 @@ from fpl_agent.config import load_storage_budget
 from fpl_agent.database.connection import get_connection, transaction
 from fpl_agent.ingestion.change_detection import (
     detect_player_lifecycle_changes,
+    detect_price_changes,
     detect_setpiece_changes,
     snapshot_player_state,
+    snapshot_price_state,
     snapshot_setpiece_state,
 )
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.raw_store import prune_raw
+from fpl_agent.models.rules import invalidate_cache_for_connection
 from fpl_agent.normalization.fpl_core import (
     flatten_rules,
     normalize_chip_windows,
@@ -181,6 +184,11 @@ def sync_rules(conn: sqlite3.Connection, flat_rules: dict, season: str, source: 
                 (key, season, next_version, effective_date, source, value_json),
             )
             changed += 1
+    if changed:
+        # A real, previously-cached current_season()/get_rule() read on this
+        # same connection must see this change, not the stale pre-sync value
+        # - see rules.py::invalidate_cache_for_connection's own docstring.
+        invalidate_cache_for_connection(conn)
     return changed
 
 
@@ -213,7 +221,19 @@ def update_source_health(
     conn.commit()
 
 
-def run_sync() -> dict:
+def run_sync(tracked_squad_ids: set[int] | None = None) -> dict:
+    """`tracked_squad_ids` (2026-08-21 live-gameweek layer) is optional and
+    additive - default `None` preserves every existing caller's behavior
+    exactly (`fpl sync`, `readiness`, `final-check`, `season-sim` all still
+    call this with no args). Only escalates a real price-change
+    change_events row to HIGH severity (so it clears the alert bar and
+    reaches a push notification) when the player is in the caller-supplied
+    set; passed in rather than resolved here specifically to avoid a real
+    import cycle - `ingestion/my_team.py` (home of
+    `resolve_tracked_squad_ids`) already imports `update_source_health` FROM
+    this module, so this module importing my_team.py back would be
+    circular. `cli/main.py::run_scheduled` resolves it and passes it
+    through."""
     adapter = FPLApiAdapter()
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
@@ -246,6 +266,7 @@ def run_sync() -> dict:
         # capture prior state before upserting, so change detection has something to diff against
         prev_player_state = snapshot_player_state(conn)
         prev_setpiece_state = snapshot_setpiece_state(conn)
+        prev_price_state = snapshot_price_state(conn)
 
         with transaction(conn):
             _upsert_many(conn, "teams", normalize_teams(bootstrap), now)
@@ -255,7 +276,11 @@ def run_sync() -> dict:
             _upsert_many(conn, "players", new_player_rows, now)
             _upsert_many(conn, "fixtures", normalize_fixtures(fixtures_fetch.data), now)
 
-            price_changed = sync_price_history(conn, normalize_player_prices(bootstrap), now)
+            new_price_rows = normalize_player_prices(bootstrap)
+            price_changed = sync_price_history(conn, new_price_rows, now)
+            price_events = detect_price_changes(
+                conn, prev_price_state, new_price_rows, now, "fpl_api_bootstrap", tracked_squad_ids,
+            )
             ownership_changed = sync_ownership_history(conn, normalize_player_ownership(bootstrap), now)
             momentum_changed = sync_transfer_momentum_history(
                 conn, normalize_player_transfer_momentum(bootstrap), now
@@ -294,6 +319,7 @@ def run_sync() -> dict:
             "strength_changes": strength_changed,
             "lifecycle_events": lifecycle_events,
             "setpiece_events": setpiece_events,
+            "price_events": price_events,
             "rules_changed": rules_changed,
             "season": season,
             "raw_files_pruned": pruned,

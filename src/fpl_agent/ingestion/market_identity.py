@@ -7,6 +7,20 @@ sometimes linked to a current FPL team.
 """
 import sqlite3
 
+# Real perf gap found 2026-08-21 (forensic audit): profiled a single real
+# `expected_points()` call and found this function alone issuing 25 real SQL
+# round-trips for ONE player - it's a pure, deterministic (source, source_name)
+# -> market_team_id mapping that never changes mid-process, but was never
+# cached, so every caller (expected_points.py's fixture-goals resolution,
+# squad_churn.py, scenario_engine.py, every ingestion source) re-hits the DB
+# every single time. Across a real 599-player squad build this was a
+# measured, dominant cost (~71,000 total SQL calls, ~109s of a ~157s run -
+# more than the actual Dixon-Coles model fitting). Keyed by (id(conn), source,
+# source_name), same connection-identity-guarded pattern
+# expected_points.py::_dc_model_cache already uses, so a closed/replaced
+# connection can't produce a false cache hit.
+_market_team_cache: dict[tuple[int, str, str], tuple[sqlite3.Connection, int]] = {}
+
 # get_or_create_market_team's fallback for a brand-new market team only does an
 # EXACT match against teams.name/short_name - real external sources routinely
 # use a club's full/formal name (e.g. "Manchester United", "Tottenham
@@ -51,11 +65,17 @@ def _normalize(name: str) -> str:
 
 
 def get_or_create_market_team(conn: sqlite3.Connection, source: str, source_name: str) -> int:
+    cache_key = (id(conn), source, source_name)
+    cached = _market_team_cache.get(cache_key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
     alias = conn.execute(
         "SELECT market_team_id FROM team_name_aliases WHERE source=? AND source_name=?",
         (source, source_name),
     ).fetchone()
     if alias:
+        _market_team_cache[cache_key] = (conn, alias["market_team_id"])
         return alias["market_team_id"]
 
     norm = _normalize(source_name)
@@ -79,6 +99,7 @@ def get_or_create_market_team(conn: sqlite3.Connection, source: str, source_name
         (market_team_id, source, source_name),
     )
     conn.commit()
+    _market_team_cache[cache_key] = (conn, market_team_id)
     return market_team_id
 
 

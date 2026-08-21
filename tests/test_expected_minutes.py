@@ -1,3 +1,5 @@
+import pytest
+
 from fpl_agent.ingestion.sync import _upsert_many, sync_stats_snapshot
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.normalization.fpl_core import (
@@ -49,6 +51,93 @@ def _set_ownership(conn, player_id, selected_by_percent):
     conn.commit()
 
 
+def _seed_team_news(conn, team_id, latest_news):
+    conn.execute(
+        "INSERT INTO predicted_lineup_teams (team_id, formation, next_match_text, latest_news, "
+        "source, source_tier, fetched_at) VALUES (?, '4-3-3', 'Test FC (H)', ?, 'test', 'strong_reporter', 't0')",
+        (team_id, latest_news),
+    )
+    conn.commit()
+
+
+def test_rotation_risk_blocks_the_per_start_rate_override(db_conn):
+    """Real gap found 2026-08-21 (user pushed back directly on real GW1 picks -
+    Osula/Gyokeres/Dorgu - checked by hand, confirmed real): the predicted-
+    lineup 'starting' flag shouldn't raise the estimate when the SAME scrape's
+    own free-text news plainly hedges about this exact player (see
+    models/team_news_risk.py's module docstring for the real evidence)."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=1650, starts=19)  # real per-start rate: 86.8
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    _seed_team_news(db_conn, 1, "A new signing may miss out, unless he displaces Test Player up front.")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"  # override blocked
+    assert result.expected_minutes == pytest.approx(1650 / 38, abs=0.5)  # season average, not the 86.8 per-start rate
+    assert result.rotation_risk is not None
+    assert "Test Player" in result.rotation_risk
+
+
+def test_rotation_risk_blocks_the_weak_evidence_starter_floor(db_conn):
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")  # no season history at all - basis starts as "no_data_available"
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    _seed_team_news(db_conn, 1, "It could be two from three of Test Player and others up top.")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "no_data_available"  # the 75-minute floor never applied
+    assert result.expected_minutes == 0.0
+    assert result.rotation_risk is not None
+
+
+def test_no_rotation_risk_text_still_allows_the_override(db_conn):
+    """Regression guard: the fix above must not suppress the override when
+    there genuinely is no hedge language for this player - Foden's real case
+    (predicted starting, team news exists but never mentions him at all)."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=1650, starts=19)
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    _seed_team_news(db_conn, 1, "Everything looks settled at the back, no fresh injury concerns this week.")
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "predicted_lineup_confirmed_starting"
+    assert result.expected_minutes == pytest.approx(86.8, abs=0.1)
+    assert result.rotation_risk is None
+
+
+def test_blend_stops_at_a_genuine_season_gap_not_a_phantom_early_career_row(db_conn):
+    """Real gap found 2026-08-21 (Gyokeres, while investigating the rotation-
+    risk complaint above): a player's only OTHER player_season_history row can
+    be from years before they ever played in England (a real FPL API
+    artifact) - blending it in as if it were "2 seasons ago" dragged an
+    established current player's estimate down ~35%. The blend must stop at
+    the first genuine multi-season gap, not include every row LIMIT returns."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=2217, starts=26, season_name="2025/26")
+    _insert_season_history(db_conn, player_id=1, minutes=0, starts=0, season_name="2018/19")  # phantom old row
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"
+    # Full weight on the real 2025/26 row alone - NOT diluted by the 2018/19 phantom row
+    assert result.expected_minutes == pytest.approx(min(2217 / 38, 90), abs=0.1)
+
+
 def test_uses_last_season_prior_when_no_current_data(db_conn):
     bootstrap = make_bootstrap()
     _seed(db_conn, bootstrap, "t0")
@@ -60,6 +149,81 @@ def test_uses_last_season_prior_when_no_current_data(db_conn):
     assert result.confidence == "LOW"
     assert result.classification == "FIT"
     assert 85 <= result.expected_minutes <= 90  # 3420/38 = 90, capped, undamped (FIT)
+
+
+def test_confirmed_starter_uses_real_per_start_rate_not_season_average(db_conn):
+    """Real gap found 2026-08-21 (forensic audit vs PlanFPL.com on a real
+    user-built squad): a player with a genuine partial-squad-involvement
+    history (19/38 starts, like Maguire) gets minutes/38=45 as a season
+    average - correct for "will he even be selected", wrong for a week we
+    already know he starts. His real per-start rate (minutes/starts) is the
+    better estimate once a confirmed start exists."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=1650, starts=19)  # real per-start rate: 86.8
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "predicted_lineup_confirmed_starting"
+    assert result.expected_minutes == pytest.approx(86.8, abs=0.1)
+
+
+def test_per_start_rate_never_fires_without_a_real_confirmed_start(db_conn):
+    """Same real partial-involvement history as above, but no predicted-lineup
+    confirmation this week - must stay at the honest season-average estimate,
+    not silently assume a start that hasn't been confirmed."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=1650, starts=19)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"
+    assert result.expected_minutes == pytest.approx(1650 / 38, abs=0.5)
+
+
+def test_per_start_rate_requires_a_real_minimum_sample(db_conn):
+    """A single real start is too noisy to trust as a per-start rate - a
+    player confirmed starting with only 1-4 real starts last season keeps
+    the season-average estimate instead."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=90, starts=1)  # one real match, full 90
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"
+    assert result.expected_minutes == pytest.approx(90 / 38, abs=0.5)
+
+
+def test_per_start_rate_never_decreases_a_well_evidenced_estimate(db_conn):
+    """A confirmed starter whose per-start rate is actually LOWER than the
+    already-computed season-average base (a real, if unusual, pattern - e.g.
+    a player who nearly always starts but is frequently subbed early) must
+    not be dragged down by this check - only ever raises the estimate."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, starts=38)  # 90 min/start, matches the flat average
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "last_season_prior_no_current_data"  # unchanged - no improvement available
+    assert result.expected_minutes == pytest.approx(90.0, abs=0.5)
 
 
 def test_no_data_at_all_returns_zero(db_conn):
@@ -215,6 +379,63 @@ def test_market_conviction_override_when_real_ownership_is_high_despite_no_data(
     assert result.basis == "market_conviction_override"
     assert result.confidence == "LOW"
     assert result.expected_minutes == 60.0
+
+
+def test_predicted_lineup_confirmed_starter_overrides_no_data(db_conn):
+    """Real gap found 2026-08-21: a user-built real GW1 squad included a
+    genuine new signing (Jacquet, Liverpool) this project had zero
+    statistical signal on - expected_minutes gave him a flat 0.0 despite
+    ingestion/predicted_lineups_source.py independently confirming him as a
+    real predicted STARTER that same week. A specific per-fixture
+    starting-XI prediction is real, current evidence - stronger than the
+    ownership proxy market_conviction_override already uses, and available
+    even when real ownership hasn't had time to catch up on a brand-new
+    signing."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "predicted_lineup_confirmed_starting"
+    assert result.expected_minutes == 75.0
+
+
+def test_predicted_lineup_signal_takes_precedence_over_market_conviction(db_conn):
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _set_ownership(db_conn, 1, 20.4)  # would otherwise trigger market_conviction_override at 60.0
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "predicted_lineup_confirmed_starting"
+    assert result.expected_minutes == 75.0
+
+
+def test_predicted_lineup_bench_status_does_not_override(db_conn):
+    """Only a real 'starting' row is strong enough evidence - bench/doubt/
+    out/banned must not silently inflate a weak-evidence player's minutes."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'doubt', NULL, 50, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "no_data_available"
+    assert result.expected_minutes == 0.0
 
 
 def test_market_conviction_override_does_not_fire_below_the_ownership_threshold(db_conn):

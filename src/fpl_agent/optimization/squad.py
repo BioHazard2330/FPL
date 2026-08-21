@@ -11,8 +11,27 @@ from dataclasses import dataclass, field
 
 import pulp
 
-from fpl_agent.models.expected_points import expected_points
+from fpl_agent.ingestion.lineup_probability_source import get_start_percent
+from fpl_agent.models.expected_points import expected_points, expected_points_window
 from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.models.team_news_risk import rotation_risk_snippet
+
+# Real, hard user directive (2026-08-21): "I dont want people in my squad
+# that wont even start or has very rare chance to start. simple as is."
+# Raised from 50 to 70 the same day, second real pushback: "hincapie doesnt
+# have the greatest start either. 60% is too less, thats almost a coin
+# flip. not possible." - 50% (a bare majority) wasn't a strong enough bar
+# for the user's actual standard; 70% is a real, comfortably-above-coin-
+# flip threshold, not just "more likely than not." Applies ONLY to what
+# optimise_squad is allowed to SELECT for a brand-new squad - never to
+# build_player_pool's other callers (rate_team.py rating an EXISTING
+# squad, build_team.py's narrowly-missed list), which need the full,
+# unfiltered pool to faithfully report on a squad someone already has or
+# nearly missed rather than silently pretending a real player doesn't
+# exist. must_include_ids (an explicit caller override) is exempt, same
+# "the caller's own deliberate call" precedent optimise_squad's own
+# docstring already establishes for that parameter.
+_MIN_START_PERCENT_FOR_SQUAD = 70
 
 # A bench player's real expected weekly contribution is far below a
 # starter's - they only score when autosubbed in (a non-playing starter) or
@@ -46,10 +65,30 @@ def build_player_pool(
 ) -> list[PlayerCandidate]:
     """objective picks which ExpectedPoints field becomes `xp` (the value the
     optimiser maximises) - "median" for a best-EV squad, "ceiling" for a
-    upside-oriented one (section 94's structure C). floor/median/ceiling/confidence
-    are always carried through regardless, so callers can inspect risk either way."""
+    upside-oriented one (section 94's structure C). floor/ceiling/confidence/
+    expected_minutes are always the single-next-match risk read (from
+    expected_points(n_gw=1)) regardless of n_gw - a risk band and a playing-time
+    estimate don't have a defined multi-gameweek meaning the way a point total does.
+
+    `median`/`xp` (objective="median") come from expected_points_window(), the
+    REAL cumulative sum across n_gw real fixtures - correctly sums a double
+    gameweek, correctly zeroes a blank, rotation-damps each extra match. Fixed
+    2026-08-21: n_gw previously flowed into expected_points()'s own n_gw, which
+    only smooths ONE blended-difficulty snapshot over that many gameweeks of
+    context (module docstring: "a window of context, not a multi-match total") -
+    so `fpl build-squad --gw-window 5` was silently picking a squad off a single
+    averaged-difficulty match, never off real summed value across 5 gameweeks,
+    despite the flag's name. Same latent gap affected chips.py's wildcard/
+    free-hit rebuild valuation (_cached_optimise_squad(conn, horizon_gw)) - now
+    also correctly reflects real cumulative rebuild value over the horizon, not
+    a smoothed one-match proxy. objective="ceiling" has no defined multi-gameweek
+    meaning (expected_points_window only produces a median total) - raises
+    ValueError if combined with n_gw>1 rather than silently falling back to a
+    single-match ceiling while everything else in the pool is windowed."""
     if objective not in ("median", "ceiling"):
         raise ValueError(f"objective must be 'median' or 'ceiling', got {objective!r}")
+    if objective == "ceiling" and n_gw > 1:
+        raise ValueError("objective='ceiling' has no multi-gameweek window definition - use n_gw=1")
 
     exclude_ids = exclude_ids or set()
     rows = conn.execute(
@@ -70,18 +109,47 @@ def build_player_pool(
         ).fetchone()
         if price_row is None:
             continue
-        ep = expected_points(conn, r["id"], n_gw=n_gw)
+        ep = expected_points(conn, r["id"], n_gw=1)
+        window_median = expected_points_window(conn, r["id"], n_gw=n_gw).total_median
         pool.append(
             PlayerCandidate(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 team_id=r["team_id"], team_short=r["team_short"],
                 price_tenths=price_row["value_tenths"],
-                xp=ep.ceiling if objective == "ceiling" else ep.median,
-                median=ep.median, floor=ep.floor, ceiling=ep.ceiling, confidence=ep.confidence,
+                xp=ep.ceiling if objective == "ceiling" else window_median,
+                median=window_median, floor=ep.floor, ceiling=ep.ceiling, confidence=ep.confidence,
                 expected_minutes=ep.expected_minutes,
             )
         )
     return pool
+
+
+def _low_start_confidence_ids(conn: sqlite3.Connection, candidate_ids: list[int]) -> set[int]:
+    """Real ids a new squad must never include - a real start_percent below
+    `_MIN_START_PERCENT_FOR_SQUAD` (ingestion/lineup_probability_source.py)
+    OR a real rotation-risk keyword hit (models/team_news_risk.py) - EITHER
+    signal excludes, not just whichever one happens to have data for a
+    given player. Real, disclosed reason this is an OR rather than only
+    consulting the keyword source as a fallback: the two sources
+    demonstrably disagree for real players (Guehi: 97% per the percentage
+    source, but fantasyfootballscout's own prose says "may have to miss out
+    again" the same day) - caught live 2026-08-21 when the earlier
+    percent-takes-precedence version still selected several squad members
+    the keyword source had real hedge text for, directly contradicting the
+    user's explicit "I dont want people in my squad that wont even start...
+    simple as is." When two real sources disagree, exclude rather than
+    trust the more optimistic one. A player covered by NEITHER source is
+    still not excluded - absence of evidence isn't evidence of a real risk,
+    same honesty posture the rest of this project's heuristics use."""
+    excluded = set()
+    for pid in candidate_ids:
+        percent = get_start_percent(conn, pid)
+        if percent is not None and percent < _MIN_START_PERCENT_FOR_SQUAD:
+            excluded.add(pid)
+            continue
+        if rotation_risk_snippet(conn, pid) is not None:
+            excluded.add(pid)
+    return excluded
 
 
 @dataclass(frozen=True)
@@ -139,6 +207,17 @@ def optimise_squad(
     pool = build_player_pool(conn, n_gw=n_gw, exclude_ids=exclude_ids, objective=objective)
     if not pool:
         return SquadResult(squad=[], total_cost_tenths=0, total_xp=0.0, status="Infeasible (empty pool)")
+
+    low_confidence_ids = _low_start_confidence_ids(conn, [c.player_id for c in pool])
+    if must_include_ids:
+        low_confidence_ids -= must_include_ids  # an explicit caller override still wins
+    if low_confidence_ids:
+        pool = [c for c in pool if c.player_id not in low_confidence_ids]
+        if not pool:
+            return SquadResult(
+                squad=[], total_cost_tenths=0, total_xp=0.0,
+                status="Infeasible (every remaining candidate has a real, unlikely-to-start signal)",
+            )
 
     if must_include_ids:
         pool_ids = {c.player_id for c in pool}
@@ -222,10 +301,26 @@ class StartingXI:
     vice_captain: PlayerCandidate | None = None
 
 
-def pick_starting_xi(conn: sqlite3.Connection, squad: list[PlayerCandidate]) -> StartingXI:
+def pick_starting_xi(
+    conn: sqlite3.Connection, squad: list[PlayerCandidate], must_start_ids: set[int] | None = None,
+) -> StartingXI:
     """Best valid XI from an already-chosen 15. Small search space (15 players,
     4 positions) - greedy-by-xP within each position's min/max play bounds,
-    then fill remaining slots up to 11 by best xP regardless of position."""
+    then fill remaining slots up to 11 by best xP regardless of position.
+
+    `must_start_ids` (2026-08-21) - real, explicit override: `optimise_squad`'s
+    own `must_include_ids` only guarantees SQUAD membership, not a starting
+    spot (real gap found live - a forced-in player with a thin real per-90
+    track record, e.g. a promising but unproven signing, still lost the XI
+    place to established starters on pure median, even on an easy fixture -
+    the user's real, explicit intent was for them to actually START, not
+    just make the 15). Forced starters are placed FIRST, before the greedy
+    min-play fill, same "caller's own deliberate call" precedent
+    `optimise_squad`'s `must_include_ids` already established. Silently
+    skips a forced id if the formation genuinely has no room left at their
+    position (e.g. two forced GKPs) rather than raising - same graceful-
+    limit handling the existing min-play fill already uses."""
+    must_start_ids = must_start_ids or set()
     play_bounds = {
         r["singular_name_short"]: (r["squad_min_play"], r["squad_max_play"])
         for r in conn.execute("SELECT singular_name_short, squad_min_play, squad_max_play FROM element_types").fetchall()
@@ -238,8 +333,24 @@ def pick_starting_xi(conn: sqlite3.Connection, squad: list[PlayerCandidate]) -> 
         players.sort(key=lambda c: c.xp, reverse=True)
 
     starting: list[PlayerCandidate] = []
+    for c in squad:
+        if c.player_id not in must_start_ids or len(starting) >= 11:
+            continue
+        pos_max = play_bounds.get(c.position, (0, 11))[1]
+        pos_count = sum(1 for s in starting if s.position == c.position)
+        if pos_count < pos_max:
+            starting.append(c)
+
     for position, (min_play, _max_play) in play_bounds.items():
-        starting.extend(by_position.get(position, [])[:min_play])
+        pos_count = sum(1 for s in starting if s.position == position)
+        needed = max(min_play - pos_count, 0)
+        for c in by_position.get(position, []):
+            if needed <= 0 or len(starting) >= 11:
+                break
+            if c in starting:
+                continue
+            starting.append(c)
+            needed -= 1
 
     remaining = sorted(
         (c for c in squad if c not in starting),

@@ -85,6 +85,38 @@ def test_backfill_football_data_idempotent(db_conn):
     assert odds_by_match[arsenal_match_id] == 1.3
 
 
+_TEN_MATCH_CSV = (
+    "Date,HomeTeam,AwayTeam,FTHG,FTAG,AvgH,AvgD,AvgA,Avg>2.5,Avg<2.5\n"
+    + "".join(
+        f"{10 + i:02d}/0{1 + i % 5}/25,Man City,Chelsea,2,1,1.45,4.8,7.2,1.9,1.95\n"
+        for i in range(10)
+    )
+)
+
+
+def test_backfill_football_data_invalidates_the_dc_fit_caches(db_conn):
+    """Real, pre-existing gap closed 2026-08-21 alongside the DC-fit
+    as_of_date coarsening (see expected_points.py::invalidate_dc_model_cache's
+    own docstring): backfill_football_data is match_results_history's only
+    writer, but had never invalidated the two expected_points.py caches keyed
+    off that table. Two-part proof, same pattern this project's other cache
+    tests use: prime a cached fit (needs >=10 real matches to actually fit
+    rather than fall back to None - _TEN_MATCH_CSV, not the 2-match
+    _SAMPLE_CSV), backfill a genuinely later real result, confirm the cache
+    doesn't silently keep serving the pre-backfill fit."""
+    from fpl_agent.models.expected_points import _get_or_fit_dc_model
+
+    backfill_football_data(db_conn, "2024-25", csv_text=_TEN_MATCH_CSV)
+    model_before = _get_or_fit_dc_model(db_conn, "2026-08-22")
+    assert model_before is not None
+
+    later_csv = _TEN_MATCH_CSV + "15/07/26,Man City,Chelsea,1,1,1.45,4.8,7.2,1.9,1.95\n"
+    backfill_football_data(db_conn, "2024-25", csv_text=later_csv)
+
+    model_after = _get_or_fit_dc_model(db_conn, "2026-08-22")
+    assert model_after is not model_before
+
+
 def test_football_data_team_names_resolve_to_the_same_market_team_as_fpl(db_conn):
     """Regression guard for a real bug: football-data.co.uk emits "Man United"
     and "Tottenham" while FPL's own teams.name is "Man Utd"/"Spurs" - without

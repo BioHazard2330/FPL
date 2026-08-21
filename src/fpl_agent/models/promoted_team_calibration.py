@@ -27,6 +27,32 @@ from fpl_agent.ingestion.market_identity import get_or_create_market_team
 from fpl_agent.models.squad_churn import prior_season
 from fpl_agent.models.team_strength_dc import DixonColesModel, Match, TeamStrength, fit_dixon_coles
 
+# Real perf gap found 2026-08-21 (forensic audit, part 2): fit_secondary_division
+# is a pure function of (division, season) - it depends on secondary_division_
+# match_results, never on the live PL fit's as_of_date - but
+# augment_model_with_promoted_teams() was calling it twice (historical +
+# candidate Championship season) on EVERY expected_points.py::_get_or_fit_dc_model
+# cache miss, and that cache is keyed per as_of_date (a live GW1 pool build hits
+# several distinct fixture dates, so several distinct misses). Profiled a real
+# 599-player build_player_pool(n_gw=1) after fixing the position_average_per90
+# gap above: this was 25.6s of the remaining 51.5s (50%) - 8 real Dixon-Coles
+# refits of the exact same two Championship seasons. Same (id(conn), ...)-keyed,
+# identity-checked cache pattern as the rest of this session's perf fixes.
+# Invalidated from ingestion/football_data_source.py::backfill_secondary_division
+# whenever it actually writes rows, same discipline as models/rules.py's
+# sync_rules() hook.
+_MISSING = object()  # a real cached "no data for this division/season" is distinct from "not cached yet"
+_secondary_division_cache: dict[tuple[int, str, str], tuple[sqlite3.Connection, object]] = {}
+
+
+def invalidate_cache_for_connection(conn: sqlite3.Connection) -> None:
+    """Same safety discipline as models/rules.py's own function of this name -
+    called after a real write to secondary_division_match_results
+    (fpl backfill-secondary-division) on this connection."""
+    key = id(conn)
+    for cache_key in [k for k in _secondary_division_cache if k[0] == key]:
+        del _secondary_division_cache[cache_key]
+
 
 def load_secondary_division_matches(conn: sqlite3.Connection, division: str, season: str) -> tuple[list[Match], list[int]]:
     """Same Match/team_ids shape as team_strength_dc.py's own
@@ -45,10 +71,20 @@ def load_secondary_division_matches(conn: sqlite3.Connection, division: str, sea
 
 
 def fit_secondary_division(conn: sqlite3.Connection, division: str, season: str) -> DixonColesModel:
+    key = (id(conn), division, season)
+    cached = _secondary_division_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        if cached[1] is _MISSING:
+            raise ValueError(f"no secondary-division matches for {division} {season}")
+        return cached[1]
+
     matches, team_ids = load_secondary_division_matches(conn, division, season)
     if len(team_ids) < 2 or not matches:
+        _secondary_division_cache[key] = (conn, _MISSING)
         raise ValueError(f"no secondary-division matches for {division} {season}")
-    return fit_dixon_coles(matches, team_ids)
+    model = fit_dixon_coles(matches, team_ids)
+    _secondary_division_cache[key] = (conn, model)
+    return model
 
 
 @dataclass(frozen=True)

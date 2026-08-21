@@ -1,4 +1,8 @@
+from fpl_agent.ingestion.sync import sync_rules
 from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.normalization.fpl_core import flatten_rules
+
+from test_sync import make_bootstrap
 
 
 def test_current_season_ignores_non_bootstrap_rows_even_with_a_higher_id(db_conn):
@@ -49,3 +53,26 @@ def test_get_rule_unaffected_by_source(db_conn):
     db_conn.commit()
 
     assert get_rule(db_conn, "1999-00", "scoring.assists") == 3
+
+
+def test_current_season_and_get_rule_see_a_real_sync_on_the_same_connection(db_conn):
+    """Real gap checked before shipping the 2026-08-21 caching fix, not
+    assumed safe: both functions now cache per-connection for performance
+    (a real, measured squad-build bottleneck). If a real `fpl sync` runs on
+    the SAME connection after an earlier read already populated the cache,
+    the next read must see the fresh synced value, not a stale one - this
+    would be a genuine, dangerous correctness bug (every budget/club-limit/
+    scoring read in the app goes through these two functions)."""
+    bootstrap = make_bootstrap(squad_total_spend=1000)
+    sync_rules(db_conn, flatten_rules(bootstrap), "2026-27", "fpl_api_bootstrap", "t0")
+    db_conn.commit()
+
+    assert current_season(db_conn) == "2026-27"  # populates the cache
+    assert get_rule(db_conn, "2026-27", "rules.squad_total_spend") == 1000  # populates the cache
+
+    bootstrap2 = make_bootstrap(squad_total_spend=1050)
+    sync_rules(db_conn, flatten_rules(bootstrap2), "2026-27", "fpl_api_bootstrap", "t1")
+    db_conn.commit()
+
+    assert get_rule(db_conn, "2026-27", "rules.squad_total_spend") == 1050
+    assert current_season(db_conn) == "2026-27"

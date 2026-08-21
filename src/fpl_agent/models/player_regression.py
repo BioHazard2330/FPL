@@ -30,6 +30,23 @@ def _date_clause(as_of_date: str | None) -> tuple[str, tuple]:
 
 _SUPPORTED_STATS = ("goals", "assists", "xg", "xa", "yellow_cards")
 
+# Real perf gap found 2026-08-21 (forensic audit, continued): position_average_per90/
+# season_position_average_per90 are population-level priors - the return value depends
+# only on (position, stat, season, as_of_date/before_season), never on which player
+# called it - but every player_shrunk_rates()/season_shrunk_rate() call re-issued the
+# full aggregate JOIN query, once per stat, per player. Profiled a real 599-player
+# build_player_pool(n_gw=1): 11,980 calls to position_average_per90 (5 stats x 2,396
+# player_shrunk_rates calls) for what's genuinely at most a few dozen distinct
+# (position, stat, season, as_of_date) combinations in any single run - 132s of a
+# 184s total. Same (id(conn), ...)-keyed, identity-checked cache pattern
+# models/rules.py::current_season/get_rule already established, for the same reason:
+# static for the life of a connection except when the underlying table is written
+# (fpl backfill-xg for player_match_stats_history, fpl sync-history for
+# player_season_history) - both call invalidate_cache_for_connection() below after a
+# real write, same safety discipline as rules.py's sync_rules() hook.
+_position_avg_cache: dict[tuple[int, str, str, str, str | None], tuple[sqlite3.Connection, float]] = {}
+_season_position_avg_cache: dict[tuple[int, str, str, str | None], tuple[sqlite3.Connection, float]] = {}
+
 
 def position_average_per90(
     conn: sqlite3.Connection,
@@ -40,6 +57,11 @@ def position_average_per90(
 ) -> float:
     if stat not in _SUPPORTED_STATS:
         raise ValueError(f"unsupported stat: {stat}")
+    key = (id(conn), position, stat, season, as_of_date)
+    cached = _position_avg_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
     clause, extra = _date_clause(as_of_date)
     row = conn.execute(
         f"SELECT SUM(pm.{stat}) AS total, SUM(pm.minutes) AS minutes "
@@ -48,9 +70,9 @@ def position_average_per90(
         f"WHERE et.singular_name_short = ? AND pm.season = ? {clause}",
         (position, season) + extra,
     ).fetchone()
-    if not row or not row["minutes"]:
-        return 0.0
-    return (row["total"] or 0.0) / (row["minutes"] / 90)
+    result = 0.0 if not row or not row["minutes"] else (row["total"] or 0.0) / (row["minutes"] / 90)
+    _position_avg_cache[key] = (conn, result)
+    return result
 
 
 def player_shrunk_rates(conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None) -> dict:
@@ -94,6 +116,11 @@ def season_position_average_per90(
     identifier support in sqlite3)."""
     if column not in _SEASON_FALLBACK_COLUMNS:
         raise ValueError(f"unsupported season fallback column: {column}")
+    key = (id(conn), position, column, before_season)
+    cached = _season_position_avg_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
     clause, params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
     row = conn.execute(
         f"SELECT SUM(psh.{column}) AS total, SUM(psh.minutes) AS minutes "
@@ -102,9 +129,21 @@ def season_position_average_per90(
         f"WHERE et.singular_name_short = ? AND psh.{column} IS NOT NULL AND psh.minutes IS NOT NULL {clause}",
         (position,) + params,
     ).fetchone()
-    if not row or not row["minutes"]:
-        return 0.0
-    return (row["total"] or 0.0) / (row["minutes"] / 90)
+    result = 0.0 if not row or not row["minutes"] else (row["total"] or 0.0) / (row["minutes"] / 90)
+    _season_position_avg_cache[key] = (conn, result)
+    return result
+
+
+def invalidate_cache_for_connection(conn: sqlite3.Connection) -> None:
+    """Same safety discipline as models/rules.py's own function of this name:
+    called after a real write to player_match_stats_history (fpl backfill-xg)
+    or player_season_history (fpl sync-history) on this connection, so a
+    stale population-average prior can't survive past the write that
+    invalidated it."""
+    key = id(conn)
+    for cache in (_position_avg_cache, _season_position_avg_cache):
+        for cache_key in [k for k in cache if k[0] == key]:
+            del cache[cache_key]
 
 
 def season_shrunk_rate(

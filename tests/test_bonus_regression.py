@@ -1,4 +1,8 @@
-from fpl_agent.models.bonus_regression import expected_bonus_per90, position_average_bonus_per90
+from fpl_agent.models.bonus_regression import (
+    expected_bonus_per90,
+    invalidate_cache_for_connection,
+    position_average_bonus_per90,
+)
 
 
 def _seed_ref_data(conn):
@@ -90,6 +94,31 @@ def test_expected_bonus_per90_no_prior_returns_pure_positional_average(db_conn):
     # matches=0 -> shrink_rate's convex combination collapses to the prior exactly
     assert result.raw_per90 == 0.0
     assert result.shrunk_per90 == 1.8
+
+
+def test_position_average_bonus_per90_is_cached_per_connection(db_conn):
+    # Real perf fix, 2026-08-21: same population-prior caching gap as
+    # player_regression.py::position_average_per90. Proves the cache is actually
+    # hit (stale after an uninvalidated write) and invalidate_cache_for_connection
+    # clears it.
+    _seed_ref_data(db_conn)
+    _seed_player(db_conn, 10, "BigSample")
+    _insert_season_row(db_conn, 10, "2023/24", bonus=36, minutes=1800)
+    db_conn.commit()
+
+    first = position_average_bonus_per90(db_conn, "FWD")
+    assert abs(first - 36 / 20) < 1e-9
+
+    _seed_player(db_conn, 11, "SmallSample")
+    _insert_season_row(db_conn, 11, "2023/24", bonus=2, minutes=90)
+    db_conn.commit()
+
+    assert position_average_bonus_per90(db_conn, "FWD") == first  # stale on purpose
+
+    invalidate_cache_for_connection(db_conn)
+    fresh = position_average_bonus_per90(db_conn, "FWD")
+    assert abs(fresh - 38 / 21) < 1e-9
+    assert fresh != first
 
 
 def test_expected_bonus_per90_raises_for_unknown_player(db_conn):

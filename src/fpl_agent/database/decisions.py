@@ -48,6 +48,30 @@ def get_decision(conn: sqlite3.Connection, decision_id: int) -> Decision | None:
     )
 
 
+def latest_decision_of_type(conn: sqlite3.Connection, decision_type: str) -> Decision | None:
+    """Most recent already-logged decision of one type - a cheap read for a
+    caller that wants the last real computed result (e.g. `fpl chips`'s
+    wildcard/free-hit values) without re-running the expensive computation
+    that produced it. See monitoring/dashboard.py's Chip Strategy panel
+    (2026-08-21) for why this matters: wildcard_value/freehit_value each
+    re-solve the full squad ILP, real minutes not milliseconds - baking that
+    into every dashboard regen (itself already on a real per-cycle budget)
+    would be the wrong tradeoff. Returns None if this type has never been
+    logged - callers must treat that as "no value available yet," not zero."""
+    row = conn.execute(
+        "SELECT id, decision_type, summary, detail, model_version, confidence, created_at "
+        "FROM decisions WHERE decision_type=? ORDER BY id DESC LIMIT 1",
+        (decision_type,),
+    ).fetchone()
+    if row is None:
+        return None
+    return Decision(
+        id=row["id"], decision_type=row["decision_type"], summary=row["summary"],
+        detail=json.loads(row["detail"]), model_version=row["model_version"],
+        confidence=row["confidence"], created_at=row["created_at"],
+    )
+
+
 def list_decisions(conn: sqlite3.Connection, limit: int = 20) -> list[Decision]:
     rows = conn.execute(
         "SELECT id, decision_type, summary, detail, model_version, confidence, created_at "

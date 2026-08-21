@@ -1,6 +1,8 @@
 from fpl_agent.models.player_regression import (
+    invalidate_cache_for_connection,
     player_share_of_team_xg,
     player_shrunk_rates,
+    position_average_per90,
     season_position_average_per90,
     season_shrunk_rate,
     shrink_rate,
@@ -206,6 +208,79 @@ def test_season_shrunk_rate_raises_for_unknown_player(db_conn):
         assert False, "expected ValueError"
     except ValueError as e:
         assert "999" in str(e)
+
+
+def test_position_average_per90_is_cached_per_connection(db_conn):
+    # Real perf fix, 2026-08-21: position_average_per90 is a pure (position, stat,
+    # season, as_of_date) aggregate - cached rather than re-querying on every call.
+    # Proves the cache actually short-circuits the query (second call sees stale
+    # data after an uninvalidated write), then proves invalidate_cache_for_connection
+    # clears it and a fresh query reflects the new row.
+    _seed_players_and_matches(db_conn)
+    first = position_average_per90(db_conn, "FWD", "goals", "2024-25")
+    assert abs(first - 17 / 16) < 1e-9  # 15 (player1) + 2 (player2) goals / 16 matches
+
+    # Insert another match without going through any writer that invalidates the
+    # cache - a direct write, same as a test would do, simulating an out-of-band change.
+    db_conn.execute(
+        "INSERT INTO player_match_stats_history "
+        "(understat_match_id, understat_player_id, player_id, market_team_id, season, match_date, "
+        "minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+        "VALUES ('m-new','p-new',1,1,'2024-25','2024-09-20',90,5,0,10,2.0,0.0,3,0,0,'2026-01-01T00:00:00Z')"
+    )
+    db_conn.commit()
+
+    still_cached = position_average_per90(db_conn, "FWD", "goals", "2024-25")
+    assert still_cached == first  # stale on purpose - proves the cache is actually hit, not a no-op
+
+    invalidate_cache_for_connection(db_conn)
+    fresh = position_average_per90(db_conn, "FWD", "goals", "2024-25")
+    assert abs(fresh - 22 / 17) < 1e-9  # 17 + 5 new goals / 17 matches
+    assert fresh != first
+
+
+def test_position_average_per90_cache_keys_on_as_of_date_separately(db_conn):
+    # Different as_of_date values must never share a cache entry - this is the
+    # exact leakage boundary the walk-forward backtest depends on.
+    _seed_players_and_matches(db_conn)
+    live = position_average_per90(db_conn, "FWD", "goals", "2024-25", as_of_date=None)
+    asof = position_average_per90(db_conn, "FWD", "goals", "2024-25", as_of_date="2024-09-15")
+    assert live != asof
+    # re-querying each returns the same cached value it returned the first time
+    assert position_average_per90(db_conn, "FWD", "goals", "2024-25", as_of_date=None) == live
+    assert position_average_per90(db_conn, "FWD", "goals", "2024-25", as_of_date="2024-09-15") == asof
+
+
+def test_season_position_average_per90_is_cached_per_connection(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (10,10,'P10',1,1,'a','t0')"
+    )
+    _seed_season_history(conn, 10, "2023/24", goals_scored=18, expected_assists=0, minutes=900)
+    conn.commit()
+
+    first = season_position_average_per90(conn, "FWD", "goals_scored")
+    assert abs(first - 18 / 10) < 1e-9
+
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (11,11,'P11',1,1,'a','t0')"
+    )
+    _seed_season_history(conn, 11, "2023/24", goals_scored=9, expected_assists=0, minutes=900)
+    conn.commit()
+
+    assert season_position_average_per90(conn, "FWD", "goals_scored") == first  # still cached, stale on purpose
+
+    invalidate_cache_for_connection(conn)
+    fresh = season_position_average_per90(conn, "FWD", "goals_scored")
+    assert abs(fresh - 27 / 20) < 1e-9
+    assert fresh != first
 
 
 def test_position_average_per90_boundary_is_strict_less_than(db_conn):

@@ -69,6 +69,8 @@ Three interface notes, all deliberate:
 import sqlite3
 from dataclasses import dataclass
 
+import numpy as np
+
 from fpl_agent.ingestion.cross_league_source import get_cross_league_prior
 from fpl_agent.ingestion.market_identity import get_or_create_market_team
 from fpl_agent.models.blend import (
@@ -93,6 +95,7 @@ from fpl_agent.models.player_regression import (
 )
 from fpl_agent.models.promoted_team_calibration import augment_model_with_promoted_teams
 from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.models.scenario_sampling import sample_fixture_scorelines, sample_player_trial_points
 from fpl_agent.models.squad_churn import prior_season, team_churn_ratio
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
@@ -113,19 +116,109 @@ _CHURN_SHRINK_CAP = 0.4
 # Keyed by (id(conn), as_of_date); the connection itself is stored alongside the
 # model so its id() can't be recycled into a false cache hit after it's closed.
 _dc_model_cache: dict[tuple[int, str], tuple[sqlite3.Connection, object]] = {}
+_last_match_date_cache: dict[int, tuple[sqlite3.Connection, str | None]] = {}
 
 
 def _fpl_team_name(conn: sqlite3.Connection, team_id: int) -> str:
     return conn.execute("SELECT name FROM teams WHERE id=?", (team_id,)).fetchone()["name"]
 
 
+def _last_real_match_date(conn: sqlite3.Connection) -> str | None:
+    """Cached per connection, same `(id(conn), ...)`-keyed, identity-checked
+    pattern as `models/rules.py`/`position_average_per90` - a real, cheap
+    aggregate (`MAX(match_date)`) that doesn't depend on which fixture is
+    asking, called once per distinct as_of_date candidate by
+    `_dc_fit_as_of_date` below. Invalidated by
+    `invalidate_last_match_date_cache` whenever `match_results_history`
+    actually gains a new row (wired into
+    `ingestion/football_data_source.py::backfill_football_data`, the table's
+    only writer)."""
+    key = id(conn)
+    cached = _last_match_date_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    row = conn.execute("SELECT MAX(match_date) AS d FROM match_results_history").fetchone()
+    result = row["d"] if row else None
+    _last_match_date_cache[key] = (conn, result)
+    return result
+
+
+def invalidate_last_match_date_cache(conn: sqlite3.Connection) -> None:
+    _last_match_date_cache.pop(id(conn), None)
+
+
+def invalidate_dc_model_cache(conn: sqlite3.Connection) -> None:
+    """Real pre-existing gap closed while adding the two caches above
+    (`_last_match_date_cache`/`_dc_model_cache`'s own coarsening): neither
+    cache had an invalidation hook before this - `_get_or_fit_dc_model`'s own
+    docstring already disclosed that gap for `_dc_model_cache` alone
+    ("not invalidated by new match ingestion"). Wired into
+    `ingestion/football_data_source.py::backfill_football_data`, the sole
+    writer of `match_results_history` (the table both caches key off)."""
+    key = id(conn)
+    _last_match_date_cache.pop(key, None)
+    for cache_key in [k for k in _dc_model_cache if k[0] == key]:
+        del _dc_model_cache[cache_key]
+
+
+def _dc_fit_as_of_date(conn: sqlite3.Connection, as_of_date: str) -> str:
+    """Coarsens the Dixon-Coles fit cutoff for a genuinely FUTURE (unplayed
+    as of `as_of_date`) fixture to one shared boundary - the day after the
+    last real result in `match_results_history` - instead of that fixture's
+    own exact date. Real perf gap this closes (2026-08-21, "Dashboard regen
+    performance" continuation item): profiled `fpl dashboard` at 19 separate
+    real Dixon-Coles refits (~4.9s each, ~92s of a ~124s profiled total) for
+    a 5-gameweek fixture ticker, one per distinct real calendar date the
+    ticker's ~100 fixtures happened to fall on - all of them genuinely
+    future/unplayed, so every one of those 19 fits is mathematically
+    provable to be IDENTICAL, not merely close, to the others: shifting
+    `as_of_date` shifts every candidate match's `days_since`
+    (`team_strength_dc.py`'s time-decay input) by the SAME number of days,
+    which rescales every match's decay weight by the same positive constant
+    - a uniform positive rescaling of a weighted log-likelihood sum never
+    changes its argmax (`sum(c*w_i*loglik_i)` and `sum(w_i*loglik_i)` share
+    the same maximizer for any `c>0`). That proof only holds when the set of
+    matches included in the fit is unchanged between the two candidate
+    dates, which "genuinely future" guarantees directly: no real match can
+    exist between the coarsened boundary and the fixture's own date if the
+    fixture itself hasn't been played yet. Falls back to `as_of_date`
+    untouched whenever it is NOT strictly after the last real result
+    (already-played/same-day fixtures, or no results synced at all) -
+    correctness over speed there, and this is exactly why it lives inside
+    `_get_or_fit_dc_model` as a cache-key transform rather than changing what
+    any caller passes in: every caller (this module's own two call sites,
+    plus `scenario_engine.py`) gets the collapsed cache key for free, and a
+    caller genuinely asking about an already-played date is never affected.
+    Deliberately does NOT touch `_fixture_odds_row`'s own date parameter
+    anywhere - that lookup needs the fixture's real exact date to find its
+    real odds row, an entirely separate concern from the DC-fit cutoff, and
+    conflating the two would silently break odds matching for any fixture
+    whose date differs from the coarsened boundary. Structurally unreachable
+    from `backtesting/harness.py` (confirmed by grep, same as
+    `_get_or_fit_dc_model` itself - that module never imports
+    `expected_points.py` at all), so this has zero walk-forward leakage
+    surface to guard against."""
+    last_match_date = _last_real_match_date(conn)
+    if last_match_date is None or as_of_date <= last_match_date:
+        return as_of_date
+    from datetime import date, timedelta
+    y, m, d = (int(p) for p in last_match_date[:10].split("-"))
+    coarse = (date(y, m, d) + timedelta(days=1)).isoformat()
+    return min(coarse, as_of_date)
+
+
 def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
-    """Cached per (connection, as_of_date) - refitting Dixon-Coles (a numerical
-    optimization over every team) on every single player lookup would be
-    needlessly slow; callers within the same backtest round or the same live
-    prediction pass share one fit. The cache is not invalidated by new match
-    ingestion, so a long-lived process that syncs mid-run would keep the older
-    fit for an already-seen as_of_date.
+    """Cached per (connection, coarsened as_of_date) - refitting Dixon-Coles
+    (a numerical optimization over every team) on every single player lookup
+    would be needlessly slow; callers within the same backtest round or the
+    same live prediction pass share one fit. `_dc_fit_as_of_date` collapses
+    every genuinely-future `as_of_date` to one shared boundary before this
+    cache is even consulted (see its own docstring for the correctness proof)
+    - a live pass asking about several different future fixture dates in the
+    same gameweek window now shares a single real fit instead of one each.
+    The cache is not invalidated by new match ingestion, so a long-lived
+    process that syncs mid-run would keep the older fit for an already-seen
+    as_of_date.
 
     Only ever called from the live path (_blended_fixture_goals, in turn
     called by expected_points()/expected_points_window()/scenario_engine.py -
@@ -133,6 +226,7 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
     the team blend at all, see this module's own docstring), so augmenting
     with current_season(conn)'s promoted-team calibration here is always
     correct - there is no historical-replay leakage risk to guard against."""
+    as_of_date = _dc_fit_as_of_date(conn, as_of_date)
     key = (id(conn), as_of_date)
     cached = _dc_model_cache.get(key)
     if cached is not None:
@@ -509,6 +603,66 @@ def _fixture_goals_for(conn: sqlite3.Connection, fixture_row, team_id: int) -> t
     return _blended_fixture_goals(conn, fixture_row["id"], team_id, opponent_id, _fixture_date(fixture_row))
 
 
+_FLOOR_CEILING_TRIALS = 500
+_FLOOR_PERCENTILE = 10
+_CEILING_PERCENTILE = 90
+
+
+def _sampled_floor_ceiling(
+    conn: sqlite3.Connection, rates: dict, fixtures_with_goals: list[tuple], median: float,
+    effective_minutes_fraction: float, ceiling_matches: int,
+) -> tuple[float, float]:
+    """Real P10/P90 from the same Monte-Carlo per-trial point model
+    scenario_engine.py already uses for season-long simulation (Poisson-
+    correlated Dixon-Coles scorelines, per-trial minutes-bucket/goals/
+    assists/cards/bonus draws) - replaces the old flat multiplicative
+    heuristic (median*0.5 floor, median*1.8+goal-upside ceiling), which this
+    project's own CLAUDE.md had disclosed as "not fit to real tail-outcome
+    data" since Pillar 1 Plan 1b. Falls back to that same heuristic only when
+    there's no real fixture to sample from (a genuine blank gameweek) -
+    fabricating a Dixon-Coles rho with no fixture to fit it from would be
+    less honest than the disclosed heuristic it replaces.
+
+    Home/away orientation matters here and is easy to get backwards:
+    `_fixture_goals_for` returns (team, opponent) goals, but
+    sample_fixture_scorelines' Dixon-Coles tau correlation is asymmetric
+    between the true home/away sides, not team/opponent - re-orients to
+    (home, away) before sampling and back to (team, opponent) after, exactly
+    like scenario_engine.py's own `_draw_fixture_for_team` does, rather than
+    naively feeding team/opponent goals in as if they were home/away. Takes
+    (fixture_row, (team_goals, opp_goals)) pairs - the caller's own already-
+    computed goals_pairs, reused rather than calling _fixture_goals_for again
+    (each call can trigger a real Dixon-Coles refit on a cache miss, and this
+    function is called once per player per squad build - a second redundant
+    call site here was a real, measured perf regression, caught before
+    shipping this)."""
+    if not fixtures_with_goals:
+        floor = round(median * 0.5, 2)
+        ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction * ceiling_matches, 2)
+        return floor, ceiling
+
+    conceded_rate = get_rule(conn, rates["rules_season"], f"scoring.goals_conceded.{rates['position']}", 0) or 0
+    if rates["position"] not in ("DEF", "GKP"):
+        conceded_rate = 0
+
+    rng = np.random.default_rng()
+    total = np.zeros(_FLOOR_CEILING_TRIALS)
+    for f, (team_goals, opp_goals) in fixtures_with_goals:
+        is_home = f["team_h"] == rates["team_id"]
+        lam, mu = (team_goals, opp_goals) if is_home else (opp_goals, team_goals)
+
+        dc_model = _get_or_fit_dc_model(conn, _fixture_date(f))
+        rho = dc_model.rho if dc_model is not None else 0.0
+
+        home_goals, away_goals = sample_fixture_scorelines(rng, lam, mu, rho, _FLOOR_CEILING_TRIALS)
+        trial_team_goals, trial_opp_goals = (home_goals, away_goals) if is_home else (away_goals, home_goals)
+        total = total + sample_player_trial_points(rng, rates, conceded_rate, trial_team_goals, trial_opp_goals)
+
+    floor = round(float(np.percentile(total, _FLOOR_PERCENTILE)), 2)
+    ceiling = round(float(np.percentile(total, _CEILING_PERCENTILE)), 2)
+    return floor, ceiling
+
+
 @dataclass(frozen=True)
 class ExpectedPoints:
     player_id: int
@@ -591,8 +745,9 @@ def expected_points(
         median = _match_components(conn, rates, team_goals, opp_goals)
         ceiling_matches = 1
 
-    floor = round(median * 0.5, 2)
-    ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction * ceiling_matches, 2)
+    floor, ceiling = _sampled_floor_ceiling(
+        conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,
+    )
 
     return ExpectedPoints(
         player_id=player_id, position=rates["position"], floor=floor, median=round(median, 2),

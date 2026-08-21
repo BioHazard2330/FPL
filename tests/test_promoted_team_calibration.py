@@ -1,9 +1,12 @@
+import pytest
+
 from fpl_agent.ingestion.market_identity import get_or_create_market_team
 from fpl_agent.models.promoted_team_calibration import (
     CalibrationShift,
     augment_model_with_promoted_teams,
     compute_calibration_shift,
     fit_secondary_division,
+    invalidate_cache_for_connection,
     load_secondary_division_matches,
     seed_promoted_team_strength,
 )
@@ -46,6 +49,34 @@ def test_fit_secondary_division(db_conn):
     _seed_secondary_division(db_conn)
     model = fit_secondary_division(db_conn, "E1", "2024-25")
     assert set(model.teams) == {1, 2, 3}
+
+
+def test_fit_secondary_division_is_cached_per_connection(db_conn):
+    # Real perf fix, 2026-08-21 part 2: fit_secondary_division only depends on
+    # (division, season) - a real Dixon-Coles numerical fit, expensive to redo.
+    # Proves the second call returns the exact same (not just equal) model
+    # object rather than refitting, and that invalidate_cache_for_connection
+    # forces a real refit.
+    _seed_secondary_division(db_conn)
+    first = fit_secondary_division(db_conn, "E1", "2024-25")
+    second = fit_secondary_division(db_conn, "E1", "2024-25")
+    assert second is first  # identity, not just equality - proves no refit happened
+
+    invalidate_cache_for_connection(db_conn)
+    third = fit_secondary_division(db_conn, "E1", "2024-25")
+    assert third is not first  # cache cleared - a genuine new fit object
+    assert set(third.teams) == set(first.teams)  # same underlying data -> same result
+
+
+def test_fit_secondary_division_caches_the_no_data_case_too(db_conn):
+    # The ValueError path (no matches for this division/season) must also be
+    # cached - otherwise the cache never applies to the honest "nothing to
+    # calibrate with" branch augment_model_with_promoted_teams hits every
+    # time there's no backfilled data yet.
+    with pytest.raises(ValueError):
+        fit_secondary_division(db_conn, "E1", "2099-00")
+    with pytest.raises(ValueError):
+        fit_secondary_division(db_conn, "E1", "2099-00")  # still raises - cached, not silently fixed
 
 
 def _team(market_team_id, attack, defence):

@@ -1,8 +1,84 @@
 from click.testing import CliRunner
 
 from fpl_agent.cli.main import cli
-from fpl_agent.monitoring.dashboard import generate_dashboard_html
+from fpl_agent.ingestion.my_team import set_my_team_entry_id
+from fpl_agent.monitoring.dashboard import (
+    _format_kickoff,
+    _local_time_span,
+    _match_intelligence_html,
+    _risk_monitor_html,
+    generate_dashboard_html,
+)
 from test_optimization_squad import _seed
+
+
+# --- Full UI/UX revamp (2026-08-21, direct user request - "premium FPL
+# optimizer dashboard") ----------------------------------------------------
+
+
+def test_risk_monitor_shows_action_required_for_confirmed_unavailable(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute("UPDATE players SET status='u', news='Long-term injury' WHERE id=1")
+    db_conn.commit()
+
+    result = _risk_monitor_html(db_conn, {1})
+
+    assert "risk-severity-action" in result
+    assert "Action required" in result
+    assert "P1" in result  # _seed's own web_name for player 1
+
+
+def test_risk_monitor_shows_low_risk_for_fit_but_monitored(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute("UPDATE players SET status='a' WHERE id=1")
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, retrieved_at, stats_hash, "
+        "chance_of_playing_this_round, chance_of_playing_next_round) VALUES (1,'t0','h0',75,100)"
+    )
+    db_conn.commit()
+
+    result = _risk_monitor_html(db_conn, {1})
+
+    assert "risk-severity-low" in result
+    assert "Low risk" in result
+
+
+def test_risk_monitor_default_state_is_low_risk_not_fabricated(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _risk_monitor_html(db_conn, {1})
+
+    assert "risk-severity-low" in result
+    assert "No availability or rotation concerns" in result
+
+
+def test_dashboard_decision_center_shows_real_captain_and_no_fabricated_transfer(db_conn):
+    """AI Decisions panel (section 14) - reorganizes real existing data,
+    never fabricates. With no transfer decision ever logged, the panel shows
+    an honest "no action taken yet" state (2026-08-21, fourth session,
+    section 9: "a sophisticated optimizer sometimes says 'do nothing' -
+    represent that confidently") - never a fabricated recommendation, and
+    never silently absent either."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "AI Decisions" in result
+    assert "Transfer Watch" in result
+    assert "No transfer analysis logged yet" in result
+
+
+def test_dashboard_decision_center_shows_a_real_logged_transfer(db_conn):
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(db_conn, "transfer", "Bruno G. -> Anderson nets +1.18 xP", {"a": 1}, confidence="low")
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Transfer Watch" in result
+    assert "Bruno G." in result
 
 
 def test_generate_dashboard_html_composes_without_crashing(db_conn):
@@ -16,13 +92,16 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
 
     assert "<html" in result
     assert "fpl-agent dashboard" in result
-    assert "My Team" in result
+    assert "Recommended Squad" in result
+    assert "AI Decisions" in result
     assert "Live Tracking" in result
-    assert "Availability risks" in result
+    assert "Risk Monitor" in result
     assert "Squad Changes" in result
     assert "Transfer News" in result
     assert "Price Moves" in result
-    assert "Latest Recommendations" in result
+    assert "Team Outlook" in result
+    assert "Chip Strategy" in result
+    assert "Latest Recommendations" not in result  # removed 2026-08-21, direct user request
     assert "System health" in result
     assert f'content="{60}"' in result  # meta-refresh tag present, tightened from 300 to 60s
 
@@ -82,17 +161,119 @@ def test_dashboard_price_moves_panel_honest_empty_state_preseason(db_conn):
     assert "No price changes yet" in result
 
 
-def test_dashboard_latest_recommendations_panel_shows_real_decisions(db_conn):
+
+def test_dashboard_health_panel_summary_reports_all_healthy(db_conn, monkeypatch):
+    """Decoupled from real readiness computation (a bare _seed fixture is
+    genuinely not a fully-healthy system - several readiness checks are
+    real-degraded on minimal data, which is correct behavior, not this
+    test's concern) - mocks both real health sources directly to isolate
+    the summary-aggregation logic itself."""
+    import fpl_agent.monitoring.dashboard as dash_mod
+    from fpl_agent.monitoring.readiness import ReadinessCheck
+
+    monkeypatch.setattr(dash_mod, "run_readiness_checks", lambda conn: [
+        ReadinessCheck(name="Database", status="OK", detail=""),
+        ReadinessCheck(name="Rules", status="OK", detail=""),
+    ])
+    monkeypatch.setattr(dash_mod, "get_source_health", lambda conn: [])
+
+    result = dash_mod._health_summary_html(db_conn)
+
+    assert "2/2 healthy" in result
+    assert "health-summary-ok" in result
+    assert "health-summary-warn" not in result
+
+
+def test_dashboard_health_panel_summary_names_a_real_degraded_source(db_conn, monkeypatch):
+    import fpl_agent.monitoring.dashboard as dash_mod
+    from fpl_agent.monitoring.readiness import ReadinessCheck
+
+    from fpl_agent.monitoring.source_status import SourceStatus
+
+    monkeypatch.setattr(dash_mod, "run_readiness_checks", lambda conn: [
+        ReadinessCheck(name="Database", status="OK", detail=""),
+    ])
+    monkeypatch.setattr(dash_mod, "get_source_health", lambda conn: [
+        SourceStatus(source_name="fpl_api_bootstrap", last_success="t0", last_failure="t1",
+                     last_error=None, latency_ms=1, failure_count=3, parser_version=None),
+    ])
+
+    result = dash_mod._health_summary_html(db_conn)
+
+    assert "health-summary-warn" in result
+    assert "fpl_api_bootstrap" in result
+
+
+def test_chip_strategy_panel_shows_real_value_keyed_by_chip_name(db_conn, monkeypatch):
+    """Regression for a real bug caught before shipping (2026-08-21):
+    ChipWindow.chip_type is a broad category ("team"/"transfer"), not the
+    chip's own name ("bboost"/"3xc") - looking the value dict up by
+    chip_type silently always missed and fell through to the "run `fpl
+    chips`" muted fallback for every chip, every time. Fixed to key by
+    w.name; this pins it so it can't quietly regress."""
+    import fpl_agent.monitoring.dashboard as dash_mod
+    from fpl_agent.optimization.chips import ChipWindow
+
+    monkeypatch.setattr(
+        dash_mod, "eligible_chips",
+        lambda conn, event=None: [
+            ChipWindow(name="bboost", number=1, start_event=1, stop_event=19, chip_type="team", eligible_now=True),
+        ],
+    )
+    monkeypatch.setattr(dash_mod, "bench_boost_value", lambda conn, squad_ids: 12.34)
+    monkeypatch.setattr(dash_mod, "triple_captain_value", lambda conn, squad_ids: 5.0)
+
+    result = dash_mod._chip_strategy_html(db_conn, {1, 2, 3})
+
+    assert "12.3 xP" in result
+    assert "run `fpl chips` for value" not in result
+
+
+def test_chip_strategy_panel_reads_wildcard_freehit_from_the_decision_journal(db_conn, monkeypatch):
+    """2026-08-21: wildcard_value/freehit_value each re-solve the full squad
+    ILP (measured: well over a minute per real solve) - too expensive to
+    call live on every dashboard regen. Reads the last value `fpl chips`
+    already logged instead of recomputing, with a real "as of" age rather
+    than presenting a stale number as fresh."""
+    import fpl_agent.monitoring.dashboard as dash_mod
     from fpl_agent.database.decisions import log_decision
+    from fpl_agent.optimization.chips import ChipWindow
 
-    _seed(db_conn, budget_tenths=950, club_limit=4)
-    log_decision(db_conn, "transfer", "Bruno G. -> Anderson nets +1.18 xP", {"a": 1}, confidence="low")
-    db_conn.commit()
+    monkeypatch.setattr(
+        dash_mod, "eligible_chips",
+        lambda conn, event=None: [
+            ChipWindow(name="wildcard", number=1, start_event=1, stop_event=19, chip_type="transfer", eligible_now=True),
+            ChipWindow(name="freehit", number=1, start_event=1, stop_event=19, chip_type="transfer", eligible_now=True),
+        ],
+    )
+    monkeypatch.setattr(dash_mod, "bench_boost_value", lambda conn, squad_ids: 0.0)
+    monkeypatch.setattr(dash_mod, "triple_captain_value", lambda conn, squad_ids: 0.0)
+    log_decision(db_conn, "chip", "bboost=0 tc=0 wildcard=7.3 freehit=-1.2", {"wildcard_5gw": 7.3, "free_hit": -1.2})
 
-    result = generate_dashboard_html(db_conn)
+    result = dash_mod._chip_strategy_html(db_conn, {1, 2, 3})
 
-    assert "Bruno G. -&gt; Anderson nets +1.18 xP" in result or "Bruno G. -> Anderson nets +1.18 xP" in result
-    assert "transfer" in result
+    assert "7.3 xP" in result
+    assert "-1.2 xP" in result
+    assert "as of" in result
+    assert "run `fpl chips` for value" not in result
+
+
+def test_chip_strategy_panel_falls_back_when_nothing_ever_logged(db_conn, monkeypatch):
+    import fpl_agent.monitoring.dashboard as dash_mod
+    from fpl_agent.optimization.chips import ChipWindow
+
+    monkeypatch.setattr(
+        dash_mod, "eligible_chips",
+        lambda conn, event=None: [
+            ChipWindow(name="wildcard", number=1, start_event=1, stop_event=19, chip_type="transfer", eligible_now=True),
+        ],
+    )
+    monkeypatch.setattr(dash_mod, "bench_boost_value", lambda conn, squad_ids: 0.0)
+    monkeypatch.setattr(dash_mod, "triple_captain_value", lambda conn, squad_ids: 0.0)
+
+    result = dash_mod._chip_strategy_html(db_conn, {1, 2, 3})
+
+    assert "run `fpl chips` for value" in result
 
 
 def test_generate_dashboard_html_escapes_untrusted_text(db_conn):
@@ -179,6 +360,74 @@ def test_dashboard_live_tracking_shows_real_bonus_when_match_in_progress(db_conn
     assert "+3" in result or "+2" in result  # provisional bonus badge for the top BPS scorer
 
 
+def test_dashboard_live_tracking_shows_defcon_progress_for_a_def(db_conn):
+    """2026-08-21 (live-gameweek layer item 2/4): a DEF's real live
+    defensive_contribution count and threshold now show inline - reached
+    renders the DEFCON +2 badge, not-yet-reached renders plain progress
+    text, and neither is fabricated for a player the source doesn't cover
+    (defcon_threshold is None, no badge at all - covered by the sibling
+    test below). Calls `_live_tracking_html` directly with an explicit
+    squad_ids, not through `generate_dashboard_html`'s real (unmocked here)
+    optimizer - which player it actually picks for the recommended 15 is
+    not this test's concern, only whether the panel renders DEFCON data
+    correctly for a real live payload."""
+    from fpl_agent.monitoring.dashboard import _live_tracking_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (1,'Gameweek 1','2026-08-21T17:30:00Z',1, 0,0,0,1,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 1, ?)", (now,),
+    )
+    db_conn.commit()
+
+    # Player 10 is a real DEF (team 1) in the shared _seed fixture -
+    # threshold 10, reached here (defensive_contribution=12).
+    live_payload = {
+        "elements": [
+            {"id": 10, "stats": {"minutes": 60, "bps": 25, "goals_scored": 0, "assists": 0,
+                                  "defensive_contribution": 12},
+             "explain": [{"fixture": 1}]},
+        ]
+    }
+
+    result = _live_tracking_html(db_conn, {10}, live_payload)
+
+    assert "DEFCON +2" in result  # only rendered inside a live-row badge, not the CSS block
+    assert "12/10" in result
+
+
+def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
+    """GKP is never DEFCON-eligible (defcon_threshold is None) - the panel
+    must not fabricate a "0/None" or any other progress badge for one."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (1,'Gameweek 1','2026-08-21T17:30:00Z',1, 0,0,0,1,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 1, ?)", (now,),
+    )
+    db_conn.commit()
+
+    live_payload = {
+        "elements": [
+            {"id": 1, "stats": {"minutes": 60, "bps": 25, "goals_scored": 0, "assists": 0}, "explain": [{"fixture": 1}]},
+        ]
+    }
+
+    result = generate_dashboard_html(db_conn, live_payload=live_payload)
+
+    assert "DEFCON +2" not in result
+    assert "DefCon" not in result
+
+
 def test_dashboard_transfer_news_panel_renders_synced_items(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     now = "t0"
@@ -232,6 +481,245 @@ def test_write_dashboard_does_not_fetch_live_data_outside_a_live_window(db_conn,
     main_mod._write_dashboard()  # must not raise
 
 
+def test_dashboard_fixture_ticker_panel_shows_real_per_gameweek_difficulty(db_conn):
+    """Real fix, 2026-08-21: the dashboard's headline xP number was a
+    blended multi-GW sum (a real misreading of the user's own "fixture
+    watch, 5 matches" ask - real competitor tools show a per-gameweek
+    colored FDR ticker, never a single blended number). This panel is the
+    corrected version - one row per squad club, one cell per upcoming
+    fixture, never averaged into one figure."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Fixture Ticker" in result
+    assert "fdr-cell" in result
+
+
+# --- Match Intelligence Core panel (Pillar 4 Slice A, 2026-08-21) ---------
+
+
+def test_match_intelligence_panel_empty_state_without_squad(db_conn):
+    assert "No squad" in _match_intelligence_html(db_conn, set())
+
+
+def test_match_intelligence_panel_empty_state_with_squad_but_no_synced_match(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = _match_intelligence_html(db_conn, {1})
+    assert "No match intelligence synced yet" in result
+
+
+def test_match_intelligence_panel_shows_real_synced_match_and_implications(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    # Player 1 (from _seed) is on team_id=1 - a match involving team 1 should
+    # surface in the panel.
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'PRE_MATCH',NULL,NULL,"
+        "'fotmob','2026-08-21T15:00:00+00:00','high')"
+    )
+    db_conn.commit()
+    match_id = db_conn.execute("SELECT id FROM match_intelligence").fetchone()["id"]
+    db_conn.execute(
+        "INSERT INTO player_fpl_implications (match_id, player_id, signal, direction, reason, confidence, created_at) "
+        "VALUES (?, 1, 'ROLE', 'POSITIVE', 'started, advanced position', 'medium', '2026-08-21T15:05:00+00:00')",
+        (match_id,),
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "Premier League" in result
+    assert "PRE_MATCH" in result
+    assert "not yet analyzed" in result  # no match_observations rows yet
+    assert "POSITIVE/ROLE" in result
+    assert "started, advanced position" in result
+
+
+def test_match_intelligence_panel_shows_provisional_headline_for_non_full_time_analysis(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'HALFTIME',1,0,"
+        "'fotmob','2026-08-21T19:50:00+00:00','high')"
+    )
+    db_conn.commit()
+    match_id = db_conn.execute("SELECT id FROM match_intelligence").fetchone()["id"]
+    db_conn.execute(
+        "INSERT INTO match_analysis_summary (match_id, phase, headline, uncertainties, analysis_version, generated_at) "
+        "VALUES (?, 'HALFTIME', 'Home side ahead at the break', 'small sample', 'qual-v1', '2026-08-21T19:50:05+00:00')",
+        (match_id,),
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "PROVISIONAL" in result
+    assert "Home side ahead at the break" in result
+
+
+def test_match_intelligence_panel_prefers_full_time_headline_over_provisional(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'FULL_TIME',2,0,"
+        "'fotmob','2026-08-21T21:00:00+00:00','high')"
+    )
+    db_conn.commit()
+    match_id = db_conn.execute("SELECT id FROM match_intelligence").fetchone()["id"]
+    db_conn.execute(
+        "INSERT INTO match_analysis_summary (match_id, phase, headline, uncertainties, analysis_version, generated_at) "
+        "VALUES (?, 'HALFTIME', 'provisional headline', NULL, 'qual-v1', '2026-08-21T19:50:05+00:00')",
+        (match_id,),
+    )
+    db_conn.execute(
+        "INSERT INTO match_analysis_summary (match_id, phase, headline, uncertainties, analysis_version, generated_at) "
+        "VALUES (?, 'FULL_TIME', 'final full-time headline', NULL, 'qual-v1', '2026-08-21T21:00:05+00:00')",
+        (match_id,),
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "final full-time headline" in result
+    assert "provisional headline" not in result
+
+
+def test_dashboard_fixture_ticker_covers_every_real_team_not_just_the_squad(db_conn):
+    """Real gap found live 2026-08-21: the ticker only showed squad clubs -
+    real competitor tickers (FPL Copilot/FFS) are always league-wide.
+    _seed only puts squad members on teams 1-4, so a non-squad team (e.g. a
+    higher id created by _seed's own 4-team fixture) still appearing proves
+    the panel isn't scoped to the squad anymore."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    for i in range(1, 5):
+        assert f">T{i}<" in result  # every _TEAMS short_name from the fixture, not just squad ones
+
+
+def test_dashboard_fixture_ticker_shows_real_projected_goals_and_clean_sheet(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    # _seed itself carries no fixtures/events - add a real one so the ticker
+    # has something to compute xGF/clean-sheet% from, rather than an
+    # all-blank row (which would make this assertion pass for the wrong
+    # reason if xGF/CS text ever appeared elsewhere on the page).
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',1,0,0,1,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,team_h_score,team_a_score,"
+        "team_h_difficulty,team_a_difficulty,finished,started,updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,NULL,NULL,3,3,0,0,'t0')"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "xGF" in result
+    assert "CS " in result
+
+
+def test_format_kickoff_is_human_readable_not_raw_iso():
+    """Real bug fixed 2026-08-21: Live Tracking printed the raw ISO-8601
+    kickoff string straight from the DB."""
+    formatted = _format_kickoff("2026-08-21T19:00:00Z")
+    assert formatted == "Fri 21 Aug, 19:00 UTC"
+
+
+def test_format_kickoff_handles_missing_time():
+    assert _format_kickoff(None) == "TBC"
+    assert _format_kickoff("not-a-real-timestamp") == "TBC"
+
+
+def test_local_time_span_carries_the_real_utc_instant_for_client_side_conversion():
+    """Real fix, 2026-08-21 ("kickoff time isnt correct" - checked live
+    against FPL's own API and confirmed the synced data was already
+    correct; the real bug was showing raw UTC instead of the viewer's own
+    local time, same as the official FPL app does). The real UTC instant is
+    carried in data-utc for the page's own script to convert client-side -
+    checked here since a server-side test can't know the test-runner's
+    timezone, so the browser-side conversion itself isn't unit-testable."""
+    html = _local_time_span("2026-08-21T19:00:00Z")
+    assert "data-utc='2026-08-21T19:00:00Z'" in html
+    assert "Fri 21 Aug, 19:00 UTC" in html  # the no-JS fallback text
+
+
+def test_local_time_span_handles_missing_time():
+    assert _local_time_span(None) == "TBC"
+
+
+def test_dashboard_includes_the_local_time_conversion_script(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "local-time" in result
+    assert "toLocaleString" in result
+
+
+def test_dashboard_no_compare_panel_without_a_saved_entry_id(db_conn):
+    # Real, not-yet-configured state (no `fpl my-team --entry-id` ever run) -
+    # must not show a "Your Team vs Optimized" panel with nothing behind it.
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'id="compare"' not in result  # the actual rendered section, not just the English phrase (which also appears in a CSS comment)
+    assert "Recommended Squad" in result  # the model's own recommendation
+
+
+def test_dashboard_shows_compare_panel_once_an_entry_id_is_saved(db_conn):
+    # Real perf/feature addition, 2026-08-21 - the user gave a real FPL entry
+    # id; once saved, the dashboard must show a real "Your Team vs Optimized"
+    # comparison (manager identity + real season history vs the model's own
+    # build), 2026-08-21 revamp: reorganized from two disconnected panels
+    # into one real side-by-side comparison (section 11).
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    db_conn.execute(
+        "INSERT INTO my_team_entry (entry_id, manager_name, region_name, favourite_team_id, "
+        "joined_time, started_event, retrieved_at) VALUES (7378572,'Pranav Nair','Netherlands',16,'t0',1,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO my_team_season_history (entry_id, season_name, total_points, rank, rank_percentage, retrieved_at) "
+        "VALUES (7378572,'2025/26',2191,1000697,'8','t0')"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'id="compare"' in result
+    assert "Recommended Squad" in result
+    assert "Pranav Nair" in result
+    assert "2191" in result  # real season-history points, shown honestly since no synced picks exist yet this test
+
+
+def test_dashboard_compare_panel_honest_empty_state_with_zero_real_data(db_conn):
+    """A saved entry id with neither synced picks nor season history yet
+    (a real, genuine preseason state) must show the honest "not available"
+    message, never a fabricated comparison."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    db_conn.execute(
+        "INSERT INTO my_team_entry (entry_id, manager_name, region_name, favourite_team_id, "
+        "joined_time, started_event, retrieved_at) VALUES (7378572,'Pranav Nair','Netherlands',16,'t0',1,'t0')"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "not available yet" in result
+
+
 def test_dashboard_cli_command_prints_the_real_written_path(monkeypatch, tmp_path):
     """Exercises the actual `fpl dashboard` click command body, not just the
     underlying _write_dashboard() function - would have caught the real bug
@@ -242,7 +730,10 @@ def test_dashboard_cli_command_prints_the_real_written_path(monkeypatch, tmp_pat
     import fpl_agent.cli.main as main_mod
 
     fake_path = tmp_path / "dashboard.html"
-    monkeypatch.setattr(main_mod, "_write_dashboard", lambda: fake_path)
+    monkeypatch.setattr(
+        main_mod, "_write_dashboard",
+        lambda gw_window=1, must_include_ids=None, must_start_ids=None, exclude_ids=None: fake_path,
+    )
 
     result = CliRunner().invoke(cli, ["dashboard"])
 

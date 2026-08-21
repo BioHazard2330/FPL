@@ -4,6 +4,7 @@ from fpl_agent.models.defensive_contribution import (
     DEFCON_THRESHOLDS,
     defcon_points_probability,
     expected_defcon_actions_per90,
+    invalidate_cache_for_connection,
     position_average_defcon_per90,
 )
 
@@ -72,6 +73,31 @@ def test_expected_defcon_actions_per90_leakage_free_with_before_season(db_conn):
     result = expected_defcon_actions_per90(db_conn, player_id=10, before_season="2025/26")
 
     assert result.raw_per90 == 9.0  # only the 2024/25 row, the later season must not leak in
+
+
+def test_position_average_defcon_per90_is_cached_per_connection(db_conn):
+    # Real perf fix, 2026-08-21: same population-prior caching gap as
+    # player_regression.py::position_average_per90. Proves the cache is actually
+    # hit (stale after an uninvalidated write) and invalidate_cache_for_connection
+    # clears it.
+    _seed_ref_data(db_conn)
+    _seed_player(db_conn, 10, "BigSample")
+    _insert_season_row(db_conn, 10, "2025/26", defcon=450, minutes=3600)
+    db_conn.commit()
+
+    first = position_average_defcon_per90(db_conn, "DEF")
+    assert abs(first - 450 / 40) < 1e-9
+
+    _seed_player(db_conn, 11, "SmallSample")
+    _insert_season_row(db_conn, 11, "2025/26", defcon=10, minutes=90)
+    db_conn.commit()
+
+    assert position_average_defcon_per90(db_conn, "DEF") == first  # stale on purpose
+
+    invalidate_cache_for_connection(db_conn)
+    fresh = position_average_defcon_per90(db_conn, "DEF")
+    assert abs(fresh - 460 / 41) < 1e-9
+    assert fresh != first
 
 
 def test_defcon_points_probability_gkp_is_always_zero():

@@ -16,10 +16,30 @@ import sqlite3
 
 from fpl_agent.models.player_regression import ShrunkRate, shrink_rate
 
+# Real perf gap found 2026-08-21 (forensic audit, part 3): same population-prior
+# caching gap as player_regression.py::position_average_per90/
+# season_position_average_per90 - the return value depends only on
+# (position, before_season), never on which player called it. Same
+# (id(conn), ...)-keyed, identity-checked cache pattern. Invalidated from
+# ingestion/history_sync.py alongside the player_regression.py caches, since
+# both read player_season_history and are written by the same sync.
+_position_avg_bonus_cache: dict[tuple[int, str, str | None], tuple[sqlite3.Connection, float]] = {}
+
+
+def invalidate_cache_for_connection(conn: sqlite3.Connection) -> None:
+    key = id(conn)
+    for cache_key in [k for k in _position_avg_bonus_cache if k[0] == key]:
+        del _position_avg_bonus_cache[cache_key]
+
 
 def position_average_bonus_per90(
     conn: sqlite3.Connection, position: str, before_season: str | None = None
 ) -> float:
+    key = (id(conn), position, before_season)
+    cached = _position_avg_bonus_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
     clause, params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
     row = conn.execute(
         "SELECT SUM(psh.bonus) AS total, SUM(psh.minutes) AS minutes "
@@ -28,9 +48,9 @@ def position_average_bonus_per90(
         f"WHERE et.singular_name_short = ? AND psh.bonus IS NOT NULL AND psh.minutes IS NOT NULL {clause}",
         (position,) + params,
     ).fetchone()
-    if not row or not row["minutes"]:
-        return 0.0
-    return (row["total"] or 0.0) / (row["minutes"] / 90)
+    result = 0.0 if not row or not row["minutes"] else (row["total"] or 0.0) / (row["minutes"] / 90)
+    _position_avg_bonus_cache[key] = (conn, result)
+    return result
 
 
 def expected_bonus_per90(

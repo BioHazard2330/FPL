@@ -703,3 +703,161 @@ def test_player_match_rates_uses_cross_league_prior_before_positional_average(db
     assert rates["shrunk_goals90"] == 0.9
     assert rates["shrunk_xa90"] == 0.35
     assert rates["shrunk_goals90"] != positional_average_rates["shrunk_goals90"]
+
+
+# --- DC-fit as_of_date coarsening (2026-08-21, "Dashboard regen performance"
+# continuation item) ------------------------------------------------------
+
+
+def _seed_matches_up_to(conn, last_match_date, home_id, away_id, season="2025-26"):
+    """12 real matches (enough to clear _get_or_fit_dc_model's >=10 threshold),
+    the last one landing exactly on last_match_date - mirrors _seed_market_history
+    but without inserting anything ON the fixture's own future date, so the
+    coarsening path (as_of_date strictly after the last real result) is
+    actually exercised rather than short-circuited like the module's other
+    fixtures (which deliberately seed a match ON _FIXTURE_DATE itself)."""
+    for i in range(11):
+        h, a = (home_id, away_id) if i % 2 == 0 else (away_id, home_id)
+        conn.execute(
+            "INSERT INTO match_results_history (season, match_date, home_team_id, away_team_id, "
+            "home_goals, away_goals, source, retrieved_at) VALUES (?,?,?,?,?,?,'test','t0')",
+            (season, f"2025-0{1 + i % 5}-{10 + i:02d}", h, a, 2, 1),
+        )
+    conn.execute(
+        "INSERT INTO match_results_history (season, match_date, home_team_id, away_team_id, "
+        "home_goals, away_goals, source, retrieved_at) VALUES (?,?,?,?,3,0,'test','t0')",
+        (season, last_match_date, home_id, away_id),
+    )
+    conn.commit()
+
+
+def test_dc_fit_as_of_date_coarsens_future_dates_to_shared_boundary(db_conn):
+    from fpl_agent.models.expected_points import _dc_fit_as_of_date
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    chelsea = get_or_create_market_team(db_conn, "fpl", "Chelsea")
+    _seed_matches_up_to(db_conn, "2026-05-20", arsenal, chelsea)
+
+    # Two genuinely different real fixture dates within the same future
+    # gameweek window, same real-world situation the fixture ticker hits
+    # across a 5-GW span - both must collapse to the identical boundary.
+    assert _dc_fit_as_of_date(db_conn, "2026-08-22") == "2026-05-21"
+    assert _dc_fit_as_of_date(db_conn, "2026-08-25") == "2026-05-21"
+
+
+def test_dc_fit_as_of_date_leaves_already_played_or_no_data_dates_unchanged(db_conn):
+    from fpl_agent.models.expected_points import _dc_fit_as_of_date
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    # No match_results_history rows at all - nothing to coarsen against.
+    assert _dc_fit_as_of_date(db_conn, "2026-08-22") == "2026-08-22"
+
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    chelsea = get_or_create_market_team(db_conn, "fpl", "Chelsea")
+    _seed_matches_up_to(db_conn, "2026-05-20", arsenal, chelsea)
+    # A date on or before the last real result must never be coarsened -
+    # coarsening it could silently change which real matches are included.
+    assert _dc_fit_as_of_date(db_conn, "2026-05-20") == "2026-05-20"
+    assert _dc_fit_as_of_date(db_conn, "2026-01-01") == "2026-01-01"
+
+
+def test_get_or_fit_dc_model_shares_one_fit_across_future_dates(db_conn):
+    """The real perf claim, proven directly rather than only via the wall-clock
+    numbers in CLAUDE.md: two different future as_of_dates return the exact
+    SAME model object (`is`, not just `==`) - no second refit happened -
+    same identity-proof pattern test_fit_secondary_division_is_cached_per_connection
+    already established for the analogous promoted_team_calibration cache."""
+    from fpl_agent.models.expected_points import _get_or_fit_dc_model
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    chelsea = get_or_create_market_team(db_conn, "fpl", "Chelsea")
+    _seed_matches_up_to(db_conn, "2026-05-20", arsenal, chelsea)
+
+    model_a = _get_or_fit_dc_model(db_conn, "2026-08-22")
+    model_b = _get_or_fit_dc_model(db_conn, "2026-08-25")
+    assert model_a is not None
+    assert model_a is model_b
+
+
+def test_invalidate_dc_model_cache_clears_a_future_fit_after_new_results_land(db_conn):
+    """Proves invalidate_dc_model_cache is genuinely load-bearing, not a
+    silent no-op: a real new match landing between the two dates changes
+    which as_of_date is even eligible for coarsening (the new match becomes
+    the new "last real result"), and the stale cached fit must not survive
+    that - same two-part proof (cache hit AND invalidation clears it)
+    test_position_average_per90_cache_keys_on_as_of_date_separately-style
+    tests in this project already use."""
+    from fpl_agent.models.expected_points import _get_or_fit_dc_model, invalidate_dc_model_cache
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    chelsea = get_or_create_market_team(db_conn, "fpl", "Chelsea")
+    _seed_matches_up_to(db_conn, "2026-05-20", arsenal, chelsea)
+
+    model_before = _get_or_fit_dc_model(db_conn, "2026-08-22")
+    assert model_before is not None
+
+    # A real new match lands well after the previous last-known result -
+    # invalidate_dc_model_cache is what a real writer (backfill_football_data)
+    # calls after this exact kind of insert.
+    db_conn.execute(
+        "INSERT INTO match_results_history (season, match_date, home_team_id, away_team_id, "
+        "home_goals, away_goals, source, retrieved_at) VALUES ('2025-26','2026-07-15',?,?,1,1,'test','t0')",
+        (arsenal, chelsea),
+    )
+    db_conn.commit()
+    invalidate_dc_model_cache(db_conn)
+
+    # Bypassing the cache (out-of-band) must now reflect the new boundary -
+    # the coarsened date itself has moved forward.
+    from fpl_agent.models.expected_points import _dc_fit_as_of_date
+    assert _dc_fit_as_of_date(db_conn, "2026-08-22") == "2026-07-16"
+
+    model_after = _get_or_fit_dc_model(db_conn, "2026-08-22")
+    assert model_after is not model_before
+
+
+def test_dc_fit_coarsening_produces_mathematically_identical_model_params(db_conn):
+    """Independent of the cache mechanism entirely: fits Dixon-Coles directly
+    (bypassing _get_or_fit_dc_model/the cache) at two different future
+    as_of_dates with nothing real happening between them, and asserts the
+    fitted attack/defence/home-advantage/rho parameters are equal - the
+    actual mathematical claim _dc_fit_as_of_date's docstring makes (a uniform
+    positive rescaling of every match's decay weight can't change the
+    weighted-log-likelihood argmax), not just that the cache happens to
+    return the same object."""
+    from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    arsenal = get_or_create_market_team(db_conn, "fpl", "Arsenal")
+    chelsea = get_or_create_market_team(db_conn, "fpl", "Chelsea")
+    _seed_matches_up_to(db_conn, "2026-05-20", arsenal, chelsea)
+
+    matches_a, teams_a = load_matches_for_fitting(db_conn, "2026-08-22")
+    matches_b, teams_b = load_matches_for_fitting(db_conn, "2026-05-21")
+    model_a = fit_dixon_coles(matches_a, teams_a)
+    model_b = fit_dixon_coles(matches_b, teams_b)
+
+    # abs=1e-3, not 1e-6: L-BFGS-B's own convergence tolerance (gtol/ftol
+    # defaults) means two runs that share the exact same theoretical argmax
+    # still land at very slightly different floating-point optima depending
+    # on the numerical path the optimizer took there - real solver noise, not
+    # evidence the two objectives differ. 1e-3 is loose enough to absorb that
+    # noise while still tight enough that two genuinely DIFFERENT fits
+    # (different match sets, or a bug in the rescaling argument) would fail
+    # it easily - the un-coarsened baseline this test compares against
+    # differs by ~1.4e-5 here, two orders of magnitude inside this bound.
+    assert model_a.home_advantage == pytest.approx(model_b.home_advantage, abs=1e-3)
+    assert model_a.rho == pytest.approx(model_b.rho, abs=1e-3)
+    assert set(model_a.teams) == set(model_b.teams)
+    for team_id, strength_a in model_a.teams.items():
+        strength_b = model_b.teams[team_id]
+        assert strength_a.attack == pytest.approx(strength_b.attack, abs=1e-3)
+        assert strength_a.defence == pytest.approx(strength_b.defence, abs=1e-3)

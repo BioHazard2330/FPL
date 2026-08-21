@@ -31,10 +31,28 @@ from fpl_agent.models.player_regression import ShrunkRate, shrink_rate
 
 DEFCON_THRESHOLDS: dict[str, int | None] = {"DEF": 10, "MID": 12, "FWD": 12, "GKP": None}
 
+# Real perf gap found 2026-08-21 (forensic audit, part 3): same population-prior
+# caching gap as bonus_regression.py::position_average_bonus_per90 - depends
+# only on (position, before_season), never on which player called it. Same
+# (id(conn), ...)-keyed cache pattern, invalidated alongside it from
+# ingestion/history_sync.py (both read player_season_history).
+_position_avg_defcon_cache: dict[tuple[int, str, str | None], tuple[sqlite3.Connection, float]] = {}
+
+
+def invalidate_cache_for_connection(conn: sqlite3.Connection) -> None:
+    key = id(conn)
+    for cache_key in [k for k in _position_avg_defcon_cache if k[0] == key]:
+        del _position_avg_defcon_cache[cache_key]
+
 
 def position_average_defcon_per90(
     conn: sqlite3.Connection, position: str, before_season: str | None = None
 ) -> float:
+    key = (id(conn), position, before_season)
+    cached = _position_avg_defcon_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
     clause, params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
     row = conn.execute(
         "SELECT SUM(psh.defensive_contribution) AS total, SUM(psh.minutes) AS minutes "
@@ -44,9 +62,9 @@ def position_average_defcon_per90(
         f"AND psh.minutes IS NOT NULL {clause}",
         (position,) + params,
     ).fetchone()
-    if not row or not row["minutes"]:
-        return 0.0
-    return (row["total"] or 0.0) / (row["minutes"] / 90)
+    result = 0.0 if not row or not row["minutes"] else (row["total"] or 0.0) / (row["minutes"] / 90)
+    _position_avg_defcon_cache[key] = (conn, result)
+    return result
 
 
 def expected_defcon_actions_per90(
