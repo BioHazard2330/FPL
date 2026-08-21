@@ -36,6 +36,7 @@ from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.models.expected_points import _fixture_goals_for
 from fpl_agent.models.fixtures import live_or_reference_event, team_fixture_ticker
 from fpl_agent.models.live_bonus import compute_live_bonus
+from fpl_agent.models.live_rank import estimate_squad_live_points
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.team_outlook import squad_team_outlooks
 from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
@@ -45,7 +46,10 @@ from fpl_agent.ingestion.predicted_lineups_source import get_predicted_lineup_fo
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.build_team import generate_build_team_report
+from fpl_agent.optimization.decision_engine import evaluate_locked_squad
+from fpl_agent.optimization.locked_squad import get_locked_squad
 from fpl_agent.optimization.rate_team import rate_team
+from fpl_agent.optimization.squad import validate_starting_xi
 from fpl_agent.optimization.chips import (
     bench_boost_value,
     eligible_chips,
@@ -59,7 +63,23 @@ _REFRESH_SECONDS = 60  # client-side reload cadence - tightened 2026-08-20 (was 
 # fpl run-scheduled last ran (scheduler/adaptive.py now retightens that too, 15-360min by
 # real deadline-proximity - see config/freshness.yaml), reloading the static HTML file
 # itself is free, so there's no cost to checking far more often than that.
-_CHANGE_EVENT_TYPES = ("new_player", "removed_player", "club_change", "status_change")
+_CHANGE_EVENT_TYPES = (
+    "new_player", "removed_player", "club_change", "status_change",
+    # Real gap closed 2026-08-21 (locked-squad product architecture pass,
+    # direct user request: "the dashboard is the primary notification
+    # surface, not PowerShell popups"). These three event types have been
+    # written to change_events since the live-gameweek layer (same day,
+    # earlier) - already scoped to tracked_squad_ids at write time by their
+    # own detectors, already deduplicated (each only fires on a genuine
+    # diff against the prior snapshot, or once per real fixture for
+    # kickoff_reminder - see ingestion/change_detection.py's own
+    # docstrings) - but were never actually rendered anywhere on the
+    # dashboard itself before this, only ever pushed as a toast/terminal
+    # alert. price_change deliberately excluded here - it already has its
+    # own dedicated `_price_changes_html` panel, showing it here too would
+    # duplicate the same row.
+    "predicted_lineup_change", "start_percent_change", "kickoff_reminder",
+)
 _POSITION_ORDER = ["GKP", "DEF", "MID", "FWD"]
 # Fixed categorical order per the dataviz skill's validated palette (slots 1-4):
 # assigning hues by the job they do (position identity) in the palette's own
@@ -644,8 +664,8 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
     ).fetchall() if squad_ids else []
     team_ids = {r["team_id"] for r in team_rows}
 
-    fixtures = conn.execute(
-        "SELECT f.kickoff_time, f.started, f.finished, th.short_name AS home, ta.short_name AS away, "
+    fixtures_raw = conn.execute(
+        "SELECT f.id, f.kickoff_time, f.started, f.finished, th.short_name AS home, ta.short_name AS away, "
         "th.code AS home_code, ta.code AS away_code "
         "FROM fixtures f JOIN teams th ON th.id=f.team_h JOIN teams ta ON ta.id=f.team_a "
         "WHERE f.event=? AND (f.team_h IN ({ids}) OR f.team_a IN ({ids})) ORDER BY f.kickoff_time".format(
@@ -654,8 +674,30 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
         (event, *team_ids, *team_ids) if team_ids else (event,),
     ).fetchall()
 
-    if not fixtures:
+    if not fixtures_raw:
         return _LiveWindow("unknown", event, None, "")
+
+    # Real gap found live 2026-08-21 (the actual Arsenal v Coventry match's
+    # own real full-time): FPL's own `fixtures.finished` only updates on the
+    # regular (15min-6h, deadline-aware) scheduler cadence - the whole point
+    # of this session's live-match-poller pass was a FASTER real source
+    # (FotMob via match_intelligence, ~25s). Without this override, "My
+    # Live Score"/the hero state stayed stuck on LIVE for many real minutes
+    # after the match had actually finished, purely waiting on the slower
+    # source to catch up - confirmed live, not hypothetical. `finished` is
+    # overridden to true only when match_intelligence has a real FULL_TIME
+    # row for that exact fixture (via fpl_fixture_id) - never the reverse
+    # (a stale/absent FotMob row never un-finishes a fixture FPL's own API
+    # already confirmed finished).
+    mi_full_time = {
+        r["fpl_fixture_id"] for r in conn.execute(
+            "SELECT fpl_fixture_id FROM match_intelligence WHERE status='FULL_TIME' AND fpl_fixture_id IS NOT NULL"
+        ).fetchall()
+    }
+    fixtures = [
+        {**dict(f), "finished": 1 if (f["finished"] or f["id"] in mi_full_time) else 0}
+        for f in fixtures_raw
+    ]
 
     any_live = any(f["started"] and not f["finished"] for f in fixtures)
     all_finished = all(f["finished"] for f in fixtures)
@@ -766,6 +808,7 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
 
 _CHANGE_CATEGORY_LABEL = {
     "status_change": "availability", "new_player": "new", "removed_player": "removed", "club_change": "transfer",
+    "predicted_lineup_change": "lineup", "start_percent_change": "start%", "kickoff_reminder": "kickoff",
 }
 _STATUS_LABELS = {"a": "available", "i": "injured", "s": "suspended", "u": "unavailable", "d": "doubtful"}
 # Real severity rank (best -> worst) over the exact same status codes FPL's
@@ -808,6 +851,20 @@ def _describe_change_event(conn: sqlite3.Connection, event_type: str, entity_id:
         old_s = _STATUS_LABELS.get(old_value, old_value or "?")
         new_s = _STATUS_LABELS.get(new_value, new_value or "?")
         return f"<strong>{_esc(name)}</strong> status: {_esc(old_s)} &rarr; {_esc(new_s)}"
+    if event_type == "predicted_lineup_change":
+        old_s = old_value or "unknown"
+        new_s = new_value or "dropped from lineup coverage"
+        return f"<strong>{_esc(name)}</strong> predicted status: {_esc(old_s)} &rarr; {_esc(new_s)}"
+    if event_type == "start_percent_change":
+        return f"<strong>{_esc(name)}</strong> start probability: {_esc(str(old_value))}% &rarr; {_esc(str(new_value))}%"
+    if event_type == "kickoff_reminder":
+        fixture = conn.execute(
+            "SELECT ht.short_name AS home, at.short_name AS away FROM fixtures f "
+            "JOIN teams ht ON ht.id = f.team_h JOIN teams at ON at.id = f.team_a WHERE f.id=?",
+            (entity_id,),
+        ).fetchone()
+        matchup = f"{fixture['home']} v {fixture['away']}" if fixture else f"fixture #{entity_id}"
+        return f"<strong>{_esc(matchup)}</strong> kicks off soon ({_esc(_format_kickoff(new_value))})"
     return f"<strong>{_esc(name)}</strong> {_esc(event_type)}"
 
 
@@ -1012,12 +1069,211 @@ def _cached_fixture_goals_for(conn: sqlite3.Connection, fixture_row, team_id: in
     return away_goals, home_goals
 
 
+_LIVE_STALENESS_SECONDS = 90  # while a match is LIVE/HALFTIME, data older than this reads as delayed, not fresh
+
+
+def _seconds_since(iso_ts: str | None) -> int | None:
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(int((datetime.now(timezone.utc) - ts).total_seconds()), 0)
+
+
+def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -> str:
+    """Real match incidents (migration 0025, live-match-feed pass) - never
+    LLM-authored, straight from FotMob's own structured event/shot data
+    (see models/match_intelligence.py::parse_match_events's own docstring
+    for exactly what is and isn't available). Most recent first - standard
+    live-ticker convention."""
+    rows = conn.execute(
+        "SELECT me.minute, me.event_type, me.description, p.web_name AS player_web_name "
+        "FROM match_events me LEFT JOIN players p ON p.id = me.player_id "
+        "WHERE me.match_id=? ORDER BY me.minute DESC, me.id DESC LIMIT ?",
+        (match_id, limit),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No match events recorded yet.</div>"
+    items = []
+    for r in rows:
+        minute_label = f"{_esc(str(r['minute']))}&prime;" if r["minute"] is not None else "&mdash;"
+        items.append(
+            f"<div class='match-feed-item'><span class='match-feed-minute'>{minute_label}</span>"
+            f"<span class='match-feed-type'>{_esc(r['event_type'])}</span>"
+            f"<span class='match-feed-desc'>{_esc(r['description'])}</span></div>"
+        )
+    return "<div class='match-feed'>" + "\n".join(items) + "</div>"
+
+
+def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
+                              away_team_id: int | None, squad_ids: set[int]) -> str:
+    """Real per-match FotMob state (minutes/goals/assists/rating) for locked-
+    squad members involved in THIS match - deliberately separate from the
+    Live Tracking panel's own FPL-official BPS/DEFCON/provisional-bonus
+    numbers (a different real source, see fpl live-bonus) - section 10's
+    ownership split: raw football state here, fantasy-scoring state there."""
+    team_ids = [t for t in (home_team_id, away_team_id) if t is not None]
+    if not squad_ids or not team_ids:
+        return "<div class='empty-state'>No locked-squad players in this match.</div>"
+    placeholders = ",".join("?" * len(squad_ids))
+    team_placeholders = ",".join("?" * len(team_ids))
+    rows = conn.execute(
+        f"SELECT p.web_name, pms.minutes, pms.goals, pms.assists, pms.rating, pms.started "
+        f"FROM players p LEFT JOIN player_match_state pms ON pms.player_id = p.id AND pms.match_id=? "
+        f"WHERE p.id IN ({placeholders}) AND p.team_id IN ({team_placeholders})",
+        (match_id, *squad_ids, *team_ids),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No locked-squad players in this match.</div>"
+    items = []
+    for r in rows:
+        # Real gap in the underlying per-match state, not fabricated around:
+        # `minutes` can be None while a match is genuinely LIVE even for a
+        # real starter (FotMob's own live minutes field isn't always
+        # populated mid-match) - `started` is the honest signal for
+        # "is this player actually playing right now", checked first.
+        if r["started"]:
+            bits = []
+            if r["minutes"] is not None:
+                bits.append(f"{_esc(str(r['minutes']))}&prime;")
+            if r["goals"]:
+                bits.append(f"{r['goals']}G")
+            if r["assists"]:
+                bits.append(f"{r['assists']}A")
+            if r["rating"] is not None:
+                bits.append(f"rating {r['rating']:.1f}")
+            detail = " &middot; ".join(bits) if bits else "on the pitch"
+        elif r["started"] == 0:
+            detail = f"{_esc(str(r['minutes']))}&prime; (sub)" if r["minutes"] else "unused sub"
+        else:
+            detail = "no data for this match yet"
+        items.append(f"<div class='match-feed-item'><span class='match-feed-desc'><strong>{_esc(r['web_name'])}</strong> {detail}</span></div>")
+    return "<div class='match-feed'>" + "\n".join(items) + "</div>"
+
+
+def _squad_play_status_counts(conn: sqlite3.Connection, player_ids, event: int | None) -> dict[str, int]:
+    """Real per-player played/live/yet-to-play classification for a squad
+    (dashboard-state pass, 2026-08-21) - one of the primary LIVE-state
+    questions ("how much of my team is still exposed to the remaining
+    fixtures"). A player with 2+ fixtures this event (a real double
+    gameweek) is "live" if ANY of them is in progress, "played" only once
+    ALL of them are finished - never fabricated for a blank-gameweek player
+    (fixture_count=0 - correctly "yet to play", nothing to contradict that
+    reading)."""
+    counts = {"played": 0, "live": 0, "yet_to_play": 0}
+    if not player_ids or event is None:
+        counts["yet_to_play"] = len(player_ids or [])
+        return counts
+    placeholders = ",".join("?" * len(player_ids))
+    rows = conn.execute(
+        f"SELECT p.id AS player_id, "
+        f"MAX(CASE WHEN f.started=1 AND f.finished=0 THEN 1 ELSE 0 END) AS any_live, "
+        f"MIN(COALESCE(f.finished, 0)) AS all_finished, COUNT(f.id) AS fixture_count "
+        f"FROM players p LEFT JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event=? "
+        f"WHERE p.id IN ({placeholders}) GROUP BY p.id",
+        (event, *player_ids),
+    ).fetchall()
+    for r in rows:
+        if r["fixture_count"] == 0:
+            counts["yet_to_play"] += 1
+        elif r["any_live"]:
+            counts["live"] += 1
+        elif r["all_finished"]:
+            counts["played"] += 1
+        else:
+            counts["yet_to_play"] += 1
+    return counts
+
+
+@dataclass(frozen=True)
+class _MyLiveScore:
+    points: float
+    captain_points: float | None
+    captain_name: str | None
+    played: int
+    live: int
+    yet_to_play: int
+    bench: int
+
+
+def _compute_my_live_score(conn: sqlite3.Connection, locked, live_payload: dict | None, event: int | None) -> "_MyLiveScore | None":
+    """Real "My Live Score" (dashboard-state pass, 2026-08-21) - the single
+    most-requested LiveFPL/FPL.page-style metric this project didn't have.
+    `estimate_squad_live_points` already exists (built for `fpl live-rank`)
+    and reads FPL's own already-computed live `total_points` per element
+    (provisional bonus included) - reused, not reimplemented. Real
+    multipliers preferred from the actual synced squad (`source==
+    "synced_real"`, ground truth incl. any real chip) - the locked_decision
+    fallback (no real sync yet) approximates captain=2x/starters=1x/bench=0x
+    and is labeled as a projection, never presented as the real score."""
+    if locked is None or live_payload is None:
+        return None
+    if locked.source == "synced_real":
+        entry_id = None
+        row = conn.execute(
+            "SELECT value FROM app_meta WHERE key='my_team_entry_id'"
+        ).fetchone()
+        entry_id = int(row["value"]) if row else None
+        if entry_id is None:
+            return None
+        picks_rows = conn.execute(
+            "SELECT player_id, multiplier FROM my_team_picks WHERE entry_id=? AND event=?",
+            (entry_id, locked.event),
+        ).fetchall()
+        picks = [(r["player_id"], r["multiplier"]) for r in picks_rows]
+    else:
+        starter_ids = {c.player_id for c in locked.xi.starting}
+        cap_id = locked.xi.captain.player_id if locked.xi.captain else None
+        picks = [(pid, 2 if pid == cap_id else 1) for pid in starter_ids]
+
+    points = estimate_squad_live_points(picks, live_payload)
+    stats_by_id = {e["id"]: e.get("stats", {}) for e in live_payload.get("elements", []) if "id" in e}
+    cap = locked.xi.captain
+    cap_points = None
+    if cap is not None:
+        cap_stats = stats_by_id.get(cap.player_id)
+        if cap_stats is not None:
+            multiplier = next((m for pid, m in picks if pid == cap.player_id), 2)
+            cap_points = cap_stats.get("total_points", 0) * multiplier
+
+    all_ids = [c.player_id for c in locked.xi.starting]
+    status = _squad_play_status_counts(conn, all_ids, event)
+    return _MyLiveScore(
+        points=points, captain_points=cap_points, captain_name=cap.web_name if cap else None,
+        played=status["played"], live=status["live"], yet_to_play=status["yet_to_play"],
+        bench=len(locked.xi.bench),
+    )
+
+
+def _dashboard_state(squad_window_state: str) -> str:
+    """The one real signal driving the dashboard's three product states
+    (2026-08-21, dashboard-state pass) - reuses `_squad_live_window`'s
+    already-real pre/live/post/unknown classification (no new detection
+    logic, no second source of truth). "unknown" (no fixtures resolvable
+    for the squad's own teams at all) reads as PRE_DEADLINE - the honest
+    default when there's nothing live to report."""
+    return {"live": "LIVE", "post": "POST_MATCH"}.get(squad_window_state, "PRE_DEADLINE")
+
+
 def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     """Match Intelligence Core (Pillar 4 Slice A, 2026-08-21) - additive panel,
     shown only when at least one `match_intelligence` row involves a squad
     team. Reads only what's already persisted (`fpl sync-match`/the
     match-intelligence-analysis skill write these tables) - never computes or
-    fabricates anything itself."""
+    fabricates anything itself.
+
+    Match Centre extension (2026-08-21, live-match-feed pass) - for a LIVE/
+    HALFTIME match, the card also shows a real score/minute header, the raw
+    match feed (_match_feed_html), and locked-squad players' real per-match
+    state (_match_your_players_html) - all real, persisted data, never
+    computed here. Freshness is checked against the real `retrieved_at`
+    timestamp - "Live data delayed" replaces the live badge rather than
+    silently presenting stale data as current (section 14 of the live-
+    match-feed spec)."""
     if not squad_ids:
         return "<div class='empty-state'>No squad to scope match intelligence to yet.</div>"
     team_ids = {r["team_id"] for r in conn.execute(
@@ -1064,11 +1320,35 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
             for i in impl_rows
         ) or "<div class='outlook-news'>no FPL implications recorded yet</div>"
         score = f"{m['home_score'] if m['home_score'] is not None else '-'}-{m['away_score'] if m['away_score'] is not None else '-'}"
+
+        match_centre_html = ""
+        if m["status"] in ("LIVE", "HALFTIME"):
+            home_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["home_team_id"],)).fetchone()
+            away_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["away_team_id"],)).fetchone()
+            home_short = home_name["short_name"] if home_name else "?"
+            away_short = away_name["short_name"] if away_name else "?"
+            minute_label = _esc(m["live_minute"]) if m["live_minute"] else ("HT" if m["status"] == "HALFTIME" else "")
+            stale_seconds = _seconds_since(m["retrieved_at"])
+            if stale_seconds is not None and stale_seconds > _LIVE_STALENESS_SECONDS:
+                live_badge = f"<span class='outlook-chip outlook-alert'>Live data delayed &middot; last update {_esc(_relative_time(m['retrieved_at']))}</span>"
+            else:
+                live_badge = f"<span class='outlook-chip live-now-tag'>LIVE DATA &middot; {stale_seconds if stale_seconds is not None else '?'}s ago</span>"
+            match_centre_html = f"""
+  <div class="outlook-head" style="margin-top:10px">
+    <strong>{_esc(home_short)} {m['home_score'] if m['home_score'] is not None else 0} &ndash; {m['away_score'] if m['away_score'] is not None else 0} {_esc(away_short)}</strong>
+    <span class="outlook-chip">{minute_label}</span>{live_badge}
+  </div>
+  <div class="bench-label" style="margin-top:8px">Match Feed</div>
+  {_match_feed_html(conn, m["id"])}
+  <div class="bench-label" style="margin-top:8px">Your Players</div>
+  {_match_your_players_html(conn, m["id"], m["home_team_id"], m["away_team_id"], squad_ids)}"""
+
         cards.append(f"""<div class="outlook-card">
   <div class="outlook-head"><strong>{_esc(m['competition'] or '')}</strong>
     <span class="outlook-chip">{_esc(m['status'])}</span><span class="outlook-chip">score {_esc(score)}</span></div>
   <div class="outlook-churn">{verdict}</div>
   {impl_html}
+  {match_centre_html}
   <div class="outlook-news">source={_esc(m['source'])} retrieved_at={_esc(m['retrieved_at'])}</div>
 </div>""")
     return "\n".join(cards)
@@ -1148,7 +1428,7 @@ def _fixture_ticker_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     return "\n".join(rows_html)
 
 
-def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int]) -> str:
+def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int], decision=None) -> str:
     """"AI Decisions" (2026-08-21, direct user request, section 14) -
     "the place where I look and immediately know what should I actually
     do." Explicitly a REORGANIZATION per the user's own instruction ("if
@@ -1156,10 +1436,63 @@ def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int])
     rather than duplicating them") - every card below reads a value this
     project already computes elsewhere (captaincy.py's CaptainOption,
     the decisions journal's own transfer/chip entries, build_team.py's own
-    risks list), nothing new is calculated here."""
+    risks list), nothing new is calculated here.
+
+    `decision` (2026-08-21, locked-squad product architecture pass) - an
+    optional `optimization.decision_engine.SquadDecision`, passed only when
+    a real squad is locked. When present, Captain/Transfer Watch become
+    real KEEP-vs-CHANGE deltas against the LOCKED squad's own captain/
+    players (the optimizer as a decision layer, not an independent squad
+    generator) instead of a flat "best pick" fact with no comparison to
+    what's actually owned. `decision=None` (the default, and every existing
+    caller before this pass) reproduces the exact prior Mode-A behavior -
+    a bare best-captain-fact card and the last manually-logged transfer, if
+    any - unchanged."""
     cards = []
 
-    if report.captain:
+    if decision is not None:
+        ca = decision.captain_action
+        if ca.kind == "unavailable":
+            cards.append("""<div class="decision-card">
+  <div class="decision-kicker">Captain <span class="decision-action">N/A</span></div>
+  <div class="decision-detail">No real captaincy evidence available for the locked squad yet.</div>
+</div>""")
+        elif ca.kind == "keep":
+            cur = ca.current
+            cards.append(f"""<div class="decision-card decision-positive">
+  <div class="decision-kicker">Captain <span class="decision-action">KEEP</span></div>
+  <div class="decision-headline">{_captain_html(cur.web_name)}</div>
+  <div class="decision-detail">Remains the preferred captain &middot; median {cur.median:.1f} xP &middot;
+    {_esc(cur.confidence)} confidence</div>
+</div>""")
+        else:  # "change"
+            cur, sug = ca.current, ca.suggested
+            cur_bit = f"{_esc(cur.web_name)} &rarr; " if cur is not None else ""
+            delta_bit = f" (+{ca.delta:.1f} xP)" if ca.delta is not None else ""
+            cards.append(f"""<div class="decision-card decision-alert">
+  <div class="decision-kicker">Captain <span class="decision-action">CHANGE</span></div>
+  <div class="decision-headline">{cur_bit}{_captain_html(sug.web_name)}</div>
+  <div class="decision-detail">Real median gain{delta_bit} &middot; {_esc(sug.confidence)} confidence</div>
+</div>""")
+
+        ta = decision.transfer_action
+        if ta.kind == "keep":
+            cards.append("""<div class="decision-card decision-positive">
+  <div class="decision-kicker">Transfer Watch <span class="decision-action">KEEP</span></div>
+  <div class="decision-detail">Current squad remains the preferred configuration - no realistic swap
+    clears enough real marginal value to justify a change.</div>
+</div>""")
+        else:  # "transfer"
+            c = ta.candidate
+            cards.append(f"""<div class="decision-card decision-alert">
+  <div class="decision-kicker">Transfer Watch <span class="decision-action">TRANSFER</span></div>
+  <div class="decision-headline">{_esc(c.player_out_name)} &rarr; {_esc(c.player_in_name)}</div>
+  <div class="decision-detail">Real net gain <span class="decision-metric">+{ta.delta:.1f} xP</span>
+    over 3 GW (hit-cost aware)</div>
+</div>""")
+
+        risks_for_card = decision.risks
+    elif report.captain:
         cap = report.captain
         fixture_bit = ""
         if cap.opponent_short:
@@ -1214,31 +1547,34 @@ def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int])
   {reasons_html}
 </div>""")
 
-    # Real "no action" state (2026-08-21, fourth session, section 9: "a
-    # sophisticated optimizer sometimes says 'do nothing' - represent that
-    # confidently") - the card used to simply not render at all when no
-    # transfer decision had ever been logged, which reads as a missing
-    # feature, not an analytical conclusion. Honest distinction kept: this
-    # is "no analysis has been run yet", NOT a fabricated "the optimizer
-    # concluded no transfer is worth making" (that claim would need a real
-    # logged decision saying so, which this branch explicitly doesn't have).
-    transfer_decision = latest_decision_of_type(conn, "transfer")
-    if transfer_decision is not None:
-        cards.append(f"""<div class="decision-card">
+        # Real "no action" state (2026-08-21, fourth session, section 9: "a
+        # sophisticated optimizer sometimes says 'do nothing' - represent that
+        # confidently") - the card used to simply not render at all when no
+        # transfer decision had ever been logged, which reads as a missing
+        # feature, not an analytical conclusion. Honest distinction kept: this
+        # is "no analysis has been run yet", NOT a fabricated "the optimizer
+        # concluded no transfer is worth making" (that claim would need a real
+        # logged decision saying so, which this branch explicitly doesn't have).
+        transfer_decision = latest_decision_of_type(conn, "transfer")
+        if transfer_decision is not None:
+            cards.append(f"""<div class="decision-card">
   <div class="decision-kicker">Transfer Watch &middot; {_esc(_relative_time(transfer_decision.created_at))}
     <span class="decision-action">REVIEW</span></div>
   <div class="decision-detail">{_esc(transfer_decision.summary)}</div>
 </div>""")
-    else:
-        cards.append("""<div class="decision-card">
+        else:
+            cards.append("""<div class="decision-card">
   <div class="decision-kicker">Transfer Watch <span class="decision-action">N/A</span></div>
   <div class="decision-detail">No transfer analysis logged yet - run <code>fpl transfers --search</code>.</div>
 </div>""")
+        risks_for_card = report.risks
+    else:
+        risks_for_card = report.risks
 
-    risk_count = len(report.risks)
+    risk_count = len(risks_for_card)
     risk_cls = "decision-alert" if risk_count else "decision-positive"
     risk_action = "REVIEW" if risk_count else "OK"
-    risk_detail = _esc(report.risks[0]) if report.risks else "No availability or rotation concerns flagged."
+    risk_detail = _esc(risks_for_card[0]) if risks_for_card else "No availability or rotation concerns flagged."
     cards.append(f"""<div class="decision-card {risk_cls}">
   <div class="decision-kicker">Risks <span class="decision-action">{risk_action}</span></div>
   <div class="decision-headline">{risk_count} player{'s' if risk_count != 1 else ''} flagged</div>
@@ -1351,7 +1687,25 @@ def generate_dashboard_html(
     default unchanged (GW1, no forced picks) so the scheduled/unattended
     regeneration path (`fpl run-scheduled`) is untouched; `fpl dashboard`'s
     own CLI flags let a manual regen reflect the same real preferences
-    `fpl build-team --gw-window/--must-include` already does."""
+    `fpl build-team --gw-window/--must-include` already does.
+
+    Locked-squad product architecture (2026-08-21): a bare call (no explicit
+    override args - the scheduled-regen/no-flags-manual signature) checks
+    `optimization.locked_squad.get_locked_squad()` first. When something is
+    genuinely locked (a real synced FPL squad, or a locked `fpl build-team
+    --must-include ...` decision), the main pitch renders THAT squad, never
+    a freshly re-solved one - the optimizer becomes a decision layer over it
+    (`optimization.decision_engine.evaluate_locked_squad`) instead of an
+    independent squad generator competing with it. An explicit override
+    call (any of gw_window/must_include_ids/must_start_ids/exclude_ids set)
+    is treated as a deliberate Mode-A "what if" exploration and always shows
+    the freshly-built optimizer squad, unchanged from prior behavior."""
+    default_call = (
+        gw_window == 1 and must_include_ids is None and must_start_ids is None and exclude_ids is None
+    )
+    locked = get_locked_squad(conn) if default_call else None
+    decision = evaluate_locked_squad(conn, locked) if locked is not None else None
+
     report = generate_build_team_report(
         conn, gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
         exclude_ids=exclude_ids,
@@ -1359,27 +1713,59 @@ def generate_dashboard_html(
     now = datetime.now(timezone.utc).isoformat()
 
     primary = report.structures[0] if report.structures else None
-    squad_ids = {c.player_id for c in primary.result.squad} if primary and primary.result.squad else set()
 
     my_team_entry_id = get_my_team_entry_id(conn)
 
-    headline_xp = 0.0
-    squad_value_m = 0.0
-    bank_m = 0.0
-    if primary and primary.result.squad:
-        headline_xp = sum(c.median for c in primary.xi.starting) + (primary.xi.captain.median if primary.xi.captain else 0.0)
-        season = current_season(conn)
-        budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000) if season else 1000
-        squad_value_m = primary.result.total_cost_tenths / 10
-        bank_m = (budget_tenths - primary.result.total_cost_tenths) / 10
+    squad_error_html = ""
+    if locked is not None:
+        squad_ids = set(locked.squad_ids)
+        display_xi = locked.xi
+        cap_id = locked.xi.captain.player_id if locked.xi.captain else None
+        vc_id = locked.xi.vice_captain.player_id if locked.xi.vice_captain else None
+        captain_name = locked.xi.captain.web_name if locked.xi.captain else "n/a"
+        vice_name = locked.xi.vice_captain.web_name if locked.xi.vice_captain else "n/a"
+        risks_list = decision.risks if decision is not None else []
+        headline_xp = sum(c.median for c in locked.xi.starting) + (locked.xi.captain.median if locked.xi.captain else 0.0)
+        squad_value_m = locked.squad_value_tenths / 10
+        if locked.bank_tenths is not None:
+            bank_m = locked.bank_tenths / 10
+        else:
+            season = current_season(conn)
+            budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000) if season else 1000
+            bank_m = (budget_tenths - locked.squad_value_tenths) / 10
+        pitch_heading = "My Locked Squad"
+        pitch_html = ""
+        validation_problems = validate_starting_xi(display_xi)
+        if validation_problems:
+            squad_error_html = (
+                "<div class='empty-state'>SYSTEM ERROR: locked squad failed validation - "
+                + "; ".join(_esc(p) for p in validation_problems) + "</div>"
+            )
+        else:
+            pitch_html = _pitch_html_from_xi(conn, display_xi, cap_id, vc_id)
+    else:
+        squad_ids = {c.player_id for c in primary.result.squad} if primary and primary.result.squad else set()
+        captain_name = report.captain.web_name if report.captain else "n/a"
+        vice_name = report.vice.web_name if report.vice else "n/a"
+        risks_list = report.risks
+        headline_xp = 0.0
+        squad_value_m = 0.0
+        bank_m = 0.0
+        if primary and primary.result.squad:
+            headline_xp = sum(c.median for c in primary.xi.starting) + (primary.xi.captain.median if primary.xi.captain else 0.0)
+            season = current_season(conn)
+            budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000) if season else 1000
+            squad_value_m = primary.result.total_cost_tenths / 10
+            bank_m = (budget_tenths - primary.result.total_cost_tenths) / 10
+        pitch_heading = "Optimizer Recommendation"
+        pitch_html = _pitch_html(conn, report)
 
     compare_panel = ""
     if my_team_entry_id is not None:
         compare_panel = f"""
   <section class="panel panel-compare" id="compare">
     <h2>Your Team vs Optimized</h2>
-    {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m,
-                          report.captain.web_name if report.captain else 'n/a', squad_ids)}
+    {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids)}
   </section>"""
 
     reference_event = live_or_reference_event(conn)
@@ -1405,6 +1791,64 @@ def generate_dashboard_html(
     optimizer_status = "READY" if primary and primary.result.squad else "NO SQUAD"
     optimizer_status_cls = "status-ok" if optimizer_status == "READY" else "status-bad"
 
+    # Dashboard-state architecture (2026-08-21) - one real signal
+    # (_squad_live_window, already computed above) drives which of the
+    # three product states (PRE_DEADLINE/LIVE/POST_MATCH) this render is
+    # in. Same components throughout - state only changes emphasis (a body
+    # CSS class + which hero metrics show), never a second dashboard.
+    dash_state = _dashboard_state(live_window.state)
+    my_live_score = _compute_my_live_score(conn, locked, live_payload, live_window.event)
+    # Real consistency fix (2026-08-21, found live): a real squad spans many
+    # different kickoff times across a whole gameweek, so `dash_state` can
+    # honestly read PRE_DEADLINE (no fixture live right now, not everything
+    # finished either) in the real gap between two of a squad's own
+    # matches - but `my_live_score` (gated on `live_payload` being fetchable
+    # at all this event, not on the 3-way state split) stays populated and
+    # correctly still glows. The label must agree with the number it's
+    # sitting next to, not the coarser 3-state model alone - both are driven
+    # by the same `my_live_score is not None` condition now.
+    if my_live_score is not None:
+        hero_state_label = "FINAL" if dash_state == "POST_MATCH" else "LIVE"
+    else:
+        hero_state_label = xp_label
+
+    # Real state-aware panel ordering (dashboard-state pass, 2026-08-21) -
+    # these five sections are plain block-level <section> elements (no
+    # shared flex/grid parent), so a CSS `order` property alone would be
+    # dead code - genuine reordering happens here, by choosing which
+    # already-built string comes first, never by duplicating markup.
+    # PRE_DEADLINE reproduces the exact original document order (squad,
+    # decisions, risks, compare, live) byte-for-byte - zero risk to every
+    # existing test/behavior that predates this pass.
+    squad_section_html = f"""<section class="panel panel-team" id="squad">
+  <h2>{_esc(pitch_heading)}
+    <span class="panel-subtitle">{headline_xp:.1f} projected xP &middot; £{squad_value_m:.1f}m &middot;
+      {_captain_html(captain_name)} captain</span></h2>
+  {squad_error_html}{pitch_html}
+</section>"""
+    decisions_section_html = f"""<section class="panel panel-decisions" id="decisions">
+  <h2>AI Decisions <span class="panel-subtitle">what should you actually do</span></h2>
+  {_decision_center_html(conn, report, squad_ids, decision=decision)}
+</section>"""
+    risks_section_html = f"""<section class="panel panel-risks" id="risks">
+  <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
+  <div class="risk-monitor">
+{_risk_monitor_html(conn, squad_ids)}
+  </div>
+</section>"""
+    live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live">
+  <h2>Live Tracking</h2>
+  {_live_tracking_html(conn, squad_ids, live_payload)}
+</section>"""
+
+    if dash_state == "LIVE":
+        panel_order = [live_section_html, decisions_section_html, squad_section_html, risks_section_html, compare_panel]
+    elif dash_state == "POST_MATCH":
+        panel_order = [live_section_html, squad_section_html, decisions_section_html, risks_section_html, compare_panel]
+    else:
+        panel_order = [squad_section_html, decisions_section_html, risks_section_html, compare_panel, live_section_html]
+    ordered_panels_html = "\n\n".join(p for p in panel_order if p)
+
     fixtures_fresh = _source_freshness(conn, "fpl_api_fixtures")
     fixtures_fresh_html = f"<span class='freshness-tag'>Updated {_esc(fixtures_fresh)}</span>" if fixtures_fresh else ""
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
@@ -1424,7 +1868,7 @@ def generate_dashboard_html(
 {_CSS}
 </style>
 </head>
-<body>
+<body class="state-{_esc(dash_state.lower())}">
 <header class="topbar">
   <div class="topbar-brand-block">
     <div class="brand">FPL Agent</div>
@@ -1454,58 +1898,42 @@ def generate_dashboard_html(
 
 <section class="hero" id="overview">
   <div class="hero-primary">
-    <div class="hero-gw">{_esc(gw_label)} &middot; {_esc(xp_label)}</div>
-    <div class="hero-xp">{headline_xp:.1f}<span class="unit">xP</span></div>
+    <div class="hero-gw">{_esc(gw_label)} &middot; {_esc(hero_state_label)}</div>
+    {f'<div class="hero-xp hero-xp-live">{my_live_score.points:.0f}<span class="unit">pts</span></div>' if my_live_score is not None else f'<div class="hero-xp">{headline_xp:.1f}<span class="unit">xP</span></div>'}
   </div>
   <div class="hero-support">
     <div class="hero-metric">
       <div class="hero-metric-label">Captain</div>
-      <div class="hero-metric-value">{_captain_html(report.captain.web_name) if report.captain else 'n/a'}</div>
+      <div class="hero-metric-value">{_captain_html(captain_name)}{f" &middot; {my_live_score.captain_points:.0f} pts" if my_live_score is not None and my_live_score.captain_points is not None else ""}</div>
     </div>
     <div class="hero-metric">
       <div class="hero-metric-label">Vice Captain</div>
-      <div class="hero-metric-value">{_esc(report.vice.web_name if report.vice else 'n/a')}</div>
+      <div class="hero-metric-value">{_esc(vice_name)}</div>
+    </div>
+    {f'''<div class="hero-metric">
+      <div class="hero-metric-label">Played / Live / To Play</div>
+      <div class="hero-metric-value">{my_live_score.played} / {my_live_score.live} / {my_live_score.yet_to_play}</div>
     </div>
     <div class="hero-metric">
+      <div class="hero-metric-label">Projected xP</div>
+      <div class="hero-metric-value">{headline_xp:.1f}</div>
+    </div>''' if my_live_score is not None else f'''<div class="hero-metric">
       <div class="hero-metric-label">Squad Value</div>
       <div class="hero-metric-value">£{squad_value_m:.1f}m</div>
     </div>
     <div class="hero-metric">
       <div class="hero-metric-label">In the Bank</div>
       <div class="hero-metric-value">£{bank_m:.1f}m</div>
-    </div>
+    </div>'''}
   </div>
   <div class="hero-strip">
-    <div class="hero-strip-item"><span class="hero-strip-label">Risks</span><span class="hero-strip-value">{len(report.risks)}</span></div>
+    <div class="hero-strip-item"><span class="hero-strip-label">Risks</span><span class="hero-strip-value">{len(risks_list)}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Next kickoff</span><span class="hero-strip-value">{kickoff_html}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Optimizer</span><span class="hero-strip-value {optimizer_status_cls}">{_esc(optimizer_status)}</span></div>
   </div>
 </section>
 
-<section class="panel panel-team" id="squad">
-  <h2>Optimizer Recommendation
-    <span class="panel-subtitle">{headline_xp:.1f} projected xP &middot; £{squad_value_m:.1f}m &middot;
-      {_captain_html(report.captain.web_name) if report.captain else 'n/a'} captain</span></h2>
-  {_pitch_html(conn, report)}
-</section>
-
-<section class="panel panel-decisions" id="decisions">
-  <h2>AI Decisions <span class="panel-subtitle">what should you actually do</span></h2>
-  {_decision_center_html(conn, report, squad_ids)}
-</section>
-
-<section class="panel panel-risks" id="risks">
-  <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
-  <div class="risk-monitor">
-{_risk_monitor_html(conn, squad_ids)}
-  </div>
-</section>
-{compare_panel}
-
-<section class="panel panel-live" id="live">
-  <h2>Live Tracking</h2>
-  {_live_tracking_html(conn, squad_ids, live_payload)}
-</section>
+{ordered_panels_html}
 
 <section class="panel panel-ticker" id="fixtures">
   <h2>Fixture Ticker <span class="panel-subtitle">next {_FDR_TICKS} - green easy, red hard, real FPL strength ratings</span></h2>
@@ -2223,6 +2651,32 @@ _CSS = """
     color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
   .change-desc { color: var(--fg); flex: 1; }
   .change-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+
+  /* --- Match Feed (live-match-feed pass, 2026-08-21) - a real
+     minute/type/description ticker, never fabricated - compact rows, not
+     a card wall (section 9 of the spec: "extremely scannable"). --- */
+  .match-feed { display: flex; flex-direction: column; gap: 3px; max-height: 260px; overflow-y: auto; }
+  .match-feed-item { display: flex; align-items: baseline; gap: 8px; font-size: 0.86rem;
+    padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
+  .match-feed-minute { font-family: "Titillium Web", sans-serif; font-weight: 800; font-size: 0.9rem;
+    color: var(--accent); flex-shrink: 0; min-width: 2.6em; }
+  .match-feed-type { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
+  .match-feed-desc { color: var(--fg); flex: 1; }
+
+  /* --- Dashboard-state architecture (2026-08-21): one real signal
+     (dash_state, computed in generate_dashboard_html) reorders the SAME
+     panels by choosing which already-built section string renders first -
+     never a second dashboard, never duplicated markup (see
+     "ordered_panels_html" in dashboard.py - real DOM reordering, not a
+     CSS `order` property, since these sections have no shared flex/grid
+     parent for `order` to act on). This block is purely the visual
+     emphasis half: the LIVE state's promoted Live Tracking panel gets a
+     real glowing accent border so it reads as "this is what matters right
+     now", not just a change in position. --- */
+  .hero-xp-live { color: var(--accent-2); text-shadow: 0 0 24px color-mix(in srgb, var(--accent-2) 45%, transparent); }
+  .panel-live-emphasis { border-color: var(--accent-2);
+    box-shadow: 0 0 0 1px var(--accent-2), 0 12px 34px -14px color-mix(in srgb, var(--accent-2) 35%, transparent); }
 
   .price-list { display: flex; flex-direction: column; gap: 4px; }
   .price-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;

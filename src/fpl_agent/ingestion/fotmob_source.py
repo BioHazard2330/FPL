@@ -7,11 +7,17 @@ from datetime import datetime, timezone
 
 import requests
 
+from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
 from fpl_agent.ingestion.market_identity import get_or_create_market_team, normalize_common_team_name
 from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
 from fpl_agent.ingestion.raw_store import save_raw
 from fpl_agent.ingestion.sync import update_source_health
-from fpl_agent.models.match_intelligence import parse_match, parse_player_states, parse_team_states
+from fpl_agent.models.match_intelligence import (
+    parse_match,
+    parse_match_events,
+    parse_player_states,
+    parse_team_states,
+)
 
 _MATCHES_URL = "https://www.fotmob.com/api/data/matches"
 _MATCH_DETAILS_URL = "https://www.fotmob.com/api/data/matchDetails"
@@ -99,7 +105,8 @@ def refresh_in_progress_matches(conn) -> dict:
     posture every other run-scheduled step already uses."""
     now = datetime.now(timezone.utc)
     rows = conn.execute(
-        "SELECT mi.id, mi.fotmob_match_id, mi.kickoff_utc, ht.name AS home_name, at.name AS away_name "
+        "SELECT mi.id, mi.fotmob_match_id, mi.status AS prior_status, mi.kickoff_utc, "
+        "ht.name AS home_name, at.name AS away_name "
         "FROM match_intelligence mi "
         "JOIN teams ht ON ht.id = mi.home_team_id "
         "JOIN teams at ON at.id = mi.away_team_id "
@@ -121,12 +128,30 @@ def refresh_in_progress_matches(conn) -> dict:
             skipped += 1
             continue
         try:
-            sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
+            result = sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
             refreshed += 1
+            maybe_enqueue_analysis(conn, row["id"], row["prior_status"], row["home_name"], row["away_name"], result)
         except FotMobFetchError:
             failed += 1
 
     return {"refreshed": refreshed, "skipped": skipped, "failed": failed}
+
+
+def maybe_enqueue_analysis(
+    conn, match_id: int, prior_status: str, home_name: str, away_name: str, result: dict,
+) -> None:
+    """Real, automatic FULL_TIME/HALFTIME -> qualitative-analysis-job hook
+    (matchday-autonomy pass, 2026-08-22). Called from both this project's
+    real match-lifecycle entry points (this function, used by the slow
+    `run-scheduled` cadence, and `fpl live-match-poll`'s own fast loop) -
+    `enqueue_analysis_job`'s own (match_id, phase) idempotency means both
+    detecting the same real transition is safe, never a duplicate job."""
+    new_status = result["status"]
+    score = f"{home_name} {result.get('home_score')}-{result.get('away_score')} {away_name}"
+    if new_status == "FULL_TIME" and prior_status != "FULL_TIME":
+        enqueue_analysis_job(conn, match_id, "FULL_TIME", f"{score} (final)")
+    elif new_status == "HALFTIME" and prior_status != "HALFTIME":
+        enqueue_analysis_job(conn, match_id, "HALFTIME", f"{score} (halftime)")
 
 
 def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) -> dict:
@@ -160,16 +185,16 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
     conn.execute(
         "INSERT INTO match_intelligence "
         "(fotmob_match_id, fpl_fixture_id, competition, kickoff_utc, home_team_id, away_team_id, "
-        "status, home_score, away_score, source, retrieved_at, confidence, raw_source_reference) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "status, home_score, away_score, source, retrieved_at, confidence, raw_source_reference, live_minute) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(fotmob_match_id) DO UPDATE SET "
         "fpl_fixture_id=excluded.fpl_fixture_id, competition=excluded.competition, kickoff_utc=excluded.kickoff_utc, "
         "home_team_id=excluded.home_team_id, away_team_id=excluded.away_team_id, status=excluded.status, "
         "home_score=excluded.home_score, away_score=excluded.away_score, retrieved_at=excluded.retrieved_at, "
-        "raw_source_reference=excluded.raw_source_reference",
+        "raw_source_reference=excluded.raw_source_reference, live_minute=excluded.live_minute",
         (match.fotmob_match_id, fpl_fixture_id, match.competition, match.kickoff_utc,
          home_fpl_team_id, away_fpl_team_id, match.status, match.home_score, match.away_score,
-         _SOURCE_NAME, now, "high", str(raw_path)),
+         _SOURCE_NAME, now, "high", str(raw_path), match.live_minute),
     )
     match_id = conn.execute(
         "SELECT id FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)
@@ -217,6 +242,33 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
              ts.corners, _SOURCE_NAME, now, "medium"),
         )
 
+    # Real live match-feed incidents (goals/cards/subs/shots) - separate
+    # append-only table (match_events, migration 0025), never mixed with
+    # the qualitative match_observations layer. is_home resolves straight
+    # to the two real FPL team ids already computed above (no team-name
+    # matching needed); player resolution reuses the fotmob_player_id ->
+    # player_id crosswalk this same sync just wrote into player_match_state,
+    # rather than re-running name matching a second time.
+    for me in parse_match_events(payload):
+        event_team_id = home_fpl_team_id if me.is_home else (away_fpl_team_id if me.is_home is False else None)
+        event_player_id = None
+        if me.fotmob_player_id is not None:
+            row = conn.execute(
+                "SELECT player_id FROM player_match_state WHERE match_id=? AND fotmob_player_id=?",
+                (match_id, me.fotmob_player_id),
+            ).fetchone()
+            event_player_id = row["player_id"] if row else None
+        conn.execute(
+            "INSERT INTO match_events "
+            "(match_id, source, source_event_id, minute, event_type, team_id, player_id, description, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(match_id, source, source_event_id) DO UPDATE SET "
+            "minute=excluded.minute, team_id=excluded.team_id, player_id=excluded.player_id, "
+            "description=excluded.description, retrieved_at=excluded.retrieved_at",
+            (match_id, _SOURCE_NAME, me.source_event_id, me.minute, me.event_type,
+             event_team_id, event_player_id, me.description, now),
+        )
+
     conn.commit()
     update_source_health(conn, _SOURCE_NAME, success=True, error=None)
 
@@ -227,6 +279,8 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
         "kickoff_utc": match.kickoff_utc,
         "home_team": match.home_team_name,
         "away_team": match.away_team_name,
+        "home_score": match.home_score,
+        "away_score": match.away_score,
         "players_ingested": len(player_states),
         "players_resolved": players_resolved,
         "team_states_ingested": len(team_states),

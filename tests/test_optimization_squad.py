@@ -371,3 +371,53 @@ def test_higher_bench_weight_produces_a_stronger_bench(db_conn, monkeypatch):
     high_bench_xp = sum(c.xp for c in high_xi.bench)
 
     assert high_bench_xp > low_bench_xp
+
+
+# --- validate_starting_xi (2026-08-21, locked-squad product architecture) -
+
+
+def test_validate_starting_xi_accepts_a_clean_11_4_split():
+    from fpl_agent.optimization.squad import StartingXI, validate_starting_xi
+
+    starting = [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(1, 12)]
+    bench = [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(12, 16)]
+    xi = StartingXI(starting=starting, bench=bench, captain=starting[0], vice_captain=starting[1])
+
+    assert validate_starting_xi(xi) == []
+
+
+def test_validate_starting_xi_catches_a_player_in_both_starting_and_bench():
+    from fpl_agent.optimization.squad import StartingXI, validate_starting_xi
+
+    p1 = SimpleNamespace(player_id=1, web_name="P1")
+    starting = [p1] + [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(2, 12)]
+    bench = [p1] + [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(12, 15)]
+    xi = StartingXI(starting=starting, bench=bench, captain=starting[0], vice_captain=starting[1])
+
+    problems = validate_starting_xi(xi)
+
+    assert any("both starting XI and bench" in p for p in problems)
+    assert "1" in problems[0] or "[1]" in problems[0]
+
+
+def test_validate_starting_xi_catches_captain_not_in_starting_xi():
+    from fpl_agent.optimization.squad import StartingXI, validate_starting_xi
+
+    starting = [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(1, 12)]
+    bench = [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(12, 16)]
+    xi = StartingXI(starting=starting, bench=bench, captain=bench[0], vice_captain=starting[1])
+
+    problems = validate_starting_xi(xi)
+
+    assert any("is not in the starting XI" in p for p in problems)
+
+
+def test_validate_starting_xi_catches_more_than_11_starters():
+    from fpl_agent.optimization.squad import StartingXI, validate_starting_xi
+
+    starting = [SimpleNamespace(player_id=i, web_name=f"P{i}") for i in range(1, 13)]
+    xi = StartingXI(starting=starting, bench=[], captain=starting[0], vice_captain=starting[1])
+
+    problems = validate_starting_xi(xi)
+
+    assert any("expected at most 11" in p for p in problems)

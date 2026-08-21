@@ -208,13 +208,22 @@ def test_live_or_reference_event_prefers_the_live_gameweek_over_is_next(db_conn)
     assert live_or_reference_event(db_conn) == 1
 
 
-def test_live_or_reference_event_falls_back_when_nothing_is_live(db_conn):
+def test_live_or_reference_event_prefers_the_imminent_gameweek_pre_kickoff(db_conn):
+    """Real bug found live 2026-08-21, ~50 minutes before GW1's own real
+    kickoff: this case previously returned 2 (is_next, a week away) instead
+    of 1 (GW1 - not live yet, but its own fixture hasn't been played and is
+    the actual thing about to be live). Fixed via _imminent_unfinished_event -
+    see its own docstring for the full incident."""
     _seed_two_events(db_conn, gw1_started=0, gw1_finished=0)
 
-    assert live_or_reference_event(db_conn) == 2  # same as _reference_event - the honest pre-kickoff state
+    assert live_or_reference_event(db_conn) == 1
 
 
-def test_live_or_reference_event_moves_on_once_gw1_is_finished(db_conn):
+def test_live_or_reference_event_moves_on_once_gw1s_fixture_is_finished(db_conn):
+    """GW1's own fixture has genuinely been played (fixtures.finished=1) -
+    correctly moves on to GW2, even though events.finished stays 0 for days
+    pending bonus confirmation (checked deliberately at the fixture level,
+    not the event level - see _imminent_unfinished_event's own docstring)."""
     _seed_two_events(db_conn, gw1_started=1, gw1_finished=1)
 
     assert live_or_reference_event(db_conn) == 2

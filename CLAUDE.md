@@ -3987,6 +3987,259 @@ they genuinely lack.
   for every other "can't verify until real-world time passes" gap
   (`fpl sync-eo --event 1`, `fpl live-bonus`, `fpl live-rank`, etc).
 
+## Dashboard-state architecture: one product, three states (2026-08-21, same day, continued)
+
+Direct, explicit "final major dashboard architecture pass" request: the dashboard
+was accumulating incremental live-match fixes (locked squad, decision engine,
+match feed, live poller - all earlier the same day) without ever becoming a
+single, durable structure that transforms across a gameweek. The ask: one
+dashboard, three real product states (PRE_DEADLINE/LIVE/POST_MATCH), same
+components throughout, never three separate dashboards, never a redesign
+every gameweek.
+
+- **`_dashboard_state()`** - the single real signal, a thin wrapper over
+  `_squad_live_window()`'s already-real pre/live/post/unknown classification
+  (no second detection mechanism). `body class="state-{live|post_match|
+  pre_deadline}"` carries it into CSS.
+- **Real panel reordering, not CSS `order` (a real bug caught and fixed
+  before shipping)**: the five top-level `<section>` panels (squad/
+  decisions/risks/live/compare) are plain block-level elements with no
+  shared flex/grid parent - a first attempt using CSS `order` was
+  confirmed-live dead code (verified via `get_page_text`, which reflects
+  DOM source order, then via an actual screenshot at the real rendered
+  position). Fixed by building each panel as a named string and choosing
+  concatenation order in Python based on `dash_state`: PRE_DEADLINE
+  reproduces the exact original document order byte-for-byte (zero risk to
+  every pre-existing test); LIVE promotes Live Tracking + AI Decisions
+  above the squad pitch; POST_MATCH promotes Live Tracking + squad.
+  Regression-tested by asserting real DOM position
+  (`result.index('id="live"') < result.index('id="squad"')`), not just
+  visual inspection.
+- **"My Live Score" - the real, previously-missing LiveFPL-style headline
+  metric.** `models/live_rank.py::estimate_squad_live_points` (already
+  built for `fpl live-rank`) reused, not reimplemented - reads FPL's own
+  live `total_points` per element (provisional bonus included). Real
+  multipliers preferred from the actual synced squad (`my_team_picks`,
+  ground truth including any real chip) when `locked.source ==
+  "synced_real"`; the locked_decision fallback (pre-sync) approximates
+  captain=2x/starters=1x, clearly a projection. `_squad_play_status_counts`
+  - real Played/Live/Yet-to-play classification per starter (a double-
+  gameweek player is "live" if ANY of their fixtures is in progress,
+  "played" only once ALL are finished; a blank-gameweek player is honestly
+  "yet to play", never fabricated). The hero's primary number becomes this
+  live point total (with a real glow/color treatment) during LIVE/
+  POST_MATCH, captain's own live points shown inline, Squad Value/Bank
+  tiles swap for Played/Live/To-Play + Projected xP - same 4-tile grid,
+  different real numbers per state, no new markup.
+- **`_maybe_fetch_live_payload`'s fetch condition widened** from
+  `started=1 AND finished=0` to `started=1` - POST_MATCH's own "My Live
+  Score" needs the same live payload to show final points immediately
+  after full-time (FPL's live endpoint keeps serving final per-player stats
+  before official gameweek stats compute) - the earlier condition would
+  have gone silent the instant a match finished.
+- **Real halftime-detection bug found live, at the actual halftime of the
+  actual match this session verified against.** `derive_status`'s halftime
+  check read `header.status.reason.short` - a field that was never live-
+  verified (its own docstring admitted so) and turned out not to exist at
+  all in the real payload. Fetched the real payload at real halftime:
+  `header.status.liveTime.short == "HT"` is the actual field (already used
+  elsewhere for the live-minute display). Fixed, and the one test that had
+  encoded the wrong field shape corrected to match reality.
+- **`match_events` upgraded from `INSERT OR IGNORE` to a real
+  `ON CONFLICT ... DO UPDATE`** - a genuine gap found live: two
+  administrative FotMob event types (`Half`/`AddedTime`) were rendering
+  their raw type name as the description ("HALF — Half") until a
+  description-quality fix landed, but `INSERT OR IGNORE`'s idempotency
+  meant already-stored rows never picked up the improved text. Real
+  descriptions now render for both ("Half-time", "+ 2 minutes added",
+  FotMob's own real added-time figure) - re-synced live to backfill the
+  already-stored rows, confirmed in the browser.
+- **Match Feed had zero CSS the entire time it existed** (a real gap from
+  earlier the same session's live-match-feed pass - the HTML classes were
+  added but never styled, rendering as unstyled default divs). Added real
+  compact-row styling (minute/type/description, accent-colored minute
+  column, scrollable list) matching this project's existing `.change-item`
+  feed convention.
+- **Live-verified against the real, still-live Arsenal v Coventry match**:
+  screenshotted the hero showing a real "9 pts" live score with a genuine
+  glow treatment, Live Tracking promoted directly under the hero with a
+  real green glowing border (`.panel-live-emphasis`), real HALFTIME
+  transition, and - after halftime ended - a real third goal (Ødegaard,
+  assist Ben White) appearing in the Match Feed with the corrected
+  Half-time/AddedTime labels, "LIVE DATA · 10s ago" freshness.
+- 15 new tests (9 `test_dashboard_state.py`, plus the corrected halftime
+  test) - 675/675 full suite before the halftime/upsert fixes, re-run
+  clean after.
+
+**Update, same day, at the real full-time of the real match: two more genuine
+gaps found by watching the actual transition happen, not by more unit tests.**
+
+- **The hero stayed stuck reporting "GW1 · LIVE" / stale Played-Live-To-Play
+  counts for real minutes after the match had actually finished.** Root
+  cause: `_squad_live_window` (and therefore `_dashboard_state`) reads
+  FPL's own `fixtures.finished` flag, which only updates on the regular
+  scheduler's own slower cadence - the entire reason this session built a
+  faster ~25s live-match-poller (FotMob via `match_intelligence`) was to
+  beat exactly this lag, but nothing had wired the faster source back into
+  the state computation itself. Fixed with a real, one-directional
+  override inside `_squad_live_window`: a fixture reads as finished when
+  EITHER FPL's own flag says so OR `match_intelligence` has a real
+  `FULL_TIME` row for that exact fixture (matched via `fpl_fixture_id`) -
+  never the reverse (a missing/stale FotMob row can never un-finish a
+  fixture FPL's API already confirmed). Live-verified: forced a real
+  `fpl dashboard` regen after the real Arsenal 3-0 Coventry full-time and
+  confirmed the state genuinely updated within one regen, not one
+  scheduler cycle later.
+- **A second, more interesting real finding, not a bug in the fix above but
+  a real limit of the 3-state model itself**: the moment Arsenal-Coventry
+  hit full-time, the dashboard's state read PRE_DEADLINE, not POST_MATCH -
+  correctly, once reasoned through: a real locked squad spans players
+  across ~10 different fixtures scattered over a whole gameweek weekend,
+  and `_squad_live_window`'s "post" state requires ALL of a squad's
+  fixtures finished, not just the one that just ended. With the rest of
+  GW1 still to kick off, "everything's live" and "everything's finished"
+  are BOTH honestly false - PRE_DEADLINE was the correct fallback by the
+  letter of the 3-state model, but it produced a real, visible
+  inconsistency: the hero's own label ("GW1 · Projected xP") stopped
+  agreeing with the still-live-glowing "15 pts" score sitting right next
+  to it, because the label was driven by the coarser `dash_state` while
+  the number was driven by the finer "is a live payload even fetchable
+  right now" condition. Fixed by making the label agree with the number it
+  sits beside - both now driven by whether `my_live_score` is populated at
+  all, with `dash_state` only deciding the LIVE-vs-FINAL wording, not
+  whether to show live styling in the first place. The deeper
+  per-fixture-vs-per-gameweek modeling question (should "POST_MATCH" mean
+  "this one match just ended" or "the whole gameweek is over"?) is real
+  and not fully resolved by this fix - disclosed honestly as a genuine,
+  known product-design open question for whenever a full gameweek's worth
+  of real multi-fixture state needs deeper treatment, not silently papered
+  over.
+- 2 new regression tests pin both fixes directly against the real scenario
+  found (a fixture finished per FotMob but not yet per FPL; the label/score
+  consistency case) - 678/678 full suite.
+- **Explicitly deferred, stated honestly rather than attempted under this
+  session's own time pressure**: the full Team Intelligence rebuild
+  (crest/attacking-trend/defensive-trend/rotation per team - real new
+  modelling scope, not dashboard architecture), a dedicated Player
+  Intelligence surface beyond the existing tooltip, live rank as a
+  headline metric (the underlying `fpl live-rank` command exists but
+  samples ~750 real managers per run - too expensive for every dashboard
+  regen; surfacing its last-logged value the same way Chip Strategy
+  already does is a real, cheap follow-up, not done this pass), and full
+  Model-vs-My-Football-View Decision Fusion (explicitly out of scope per
+  the user's own words).
+
+## Matchday autonomy: zero-cost analysis queue + auto-discovery + persistent live poller (2026-08-22)
+
+New session, continuing directly from the (uncommitted at session start, now
+committed) locked-squad/decision-engine/dashboard-state/live-match-poll work
+documented above. User's ask: turn this from "a dashboard I have to babysit
+through Claude Code" into an autonomous system that discovers, tracks,
+finalizes, and analyzes matches on its own, with Claude Code required only
+for the actual qualitative LLM reasoning step, and even that queued rather
+than blocking. One real architectural fork resolved explicitly by the user
+before any code was written (not assumed): **no paid Anthropic API call, no
+local-model (Ollama) substitute - the standing free-resources-only rule
+stays absolute.** The runtime split landed on: everything up to "ready for
+analysis" is fully automatic Python (zero LLM involvement); only the actual
+qualitative reasoning waits for a real Claude Code session, and even that is
+now automatic-on-open rather than something to remember.
+
+- **`qualitative_analysis_jobs`** (migration `0027`) - the queue.
+  `ingestion/analysis_queue.py::enqueue_analysis_job()` is idempotent per
+  `(match_id, phase)`: a pending/processing job is left alone, a `done` job
+  is never reset (real analysis already exists), a `failed` job resets to
+  `pending` so the next drain retries automatically. This idempotency is
+  load-bearing - it's what lets two independent detectors (see below) both
+  observe the same real transition without ever creating two jobs for one
+  event.
+- **`models/match_discovery.py::discover_and_register_matches()`** - closes
+  the single biggest remaining manual step in Pillar 4: `fpl sync-match
+  <home> <away>` used to require a human to type real team names for every
+  fixture, every matchday. This reads the already-synced `fixtures` table
+  (Tier 1, the regular `fpl sync` - no new source) for fixtures whose
+  kickoff falls in a rolling ±4h/+20h window, and auto-registers a
+  `match_intelligence` row (via the existing, already-tested `sync_match`)
+  for any that don't have one yet. Cheap once a fixture is registered (a
+  pure local DB read); only issues a real network call for a genuinely new
+  fixture. Wired into **both** the always-on `fpl run-scheduled` (survives
+  reboots, already registered via Task Scheduler, no manual restart needed)
+  and `fpl live-match-poll`'s own loop (so a match that appears mid-session
+  gets picked up without waiting for the next 30min cycle).
+- **`ingestion/fotmob_source.py::maybe_enqueue_analysis()`** - the real
+  automatic hook, called from both `refresh_in_progress_matches` (the slow
+  `run-scheduled` cadence) and `fpl live-match-poll`'s fast loop right after
+  each `sync_match` call: compares `prior_status` to the freshly-synced
+  `result["status"]` and enqueues a `HALFTIME` or `FULL_TIME` job the moment
+  either transition is first observed (never re-fires on a status that was
+  already true last poll). `sync_match`'s own return dict gained
+  `home_score`/`away_score` (previously computed internally but never
+  returned) so the enqueued job's `evidence_summary` can carry a real
+  human-readable score line, not just a bare status string.
+- **`fpl analysis-queue [--pending/--all]`** - lists queued jobs with the
+  exact next command to run (`fpl match-report <id>` then `fpl match-analyze
+  <id> --phase ... --file ...`). **`fpl match-analyze`** now calls
+  `mark_job_done_for_match_phase()` right after a successful
+  `apply_match_analysis()`, closing the loop the job's automatic creation
+  started - a genuine no-op (not an error) when no job row exists for that
+  (match, phase), e.g. an analysis run by hand before this queue existed.
+- **`.claude/hooks/queue_check.py`** (new `SessionStart` hook, wired into
+  `.claude/settings.json`) - the "automatically detect... before doing
+  anything else" half of the user's own explicit requirement. Runs `fpl
+  analysis-queue --pending` and prints the result into the new session's
+  own context automatically; prints nothing (exits 0 silently) when the
+  queue is empty or the venv/DB isn't ready yet, so a session start is never
+  blocked or noisy on the common case. The LLM reasoning step itself stays a
+  real Claude Code action (reading the job, running the
+  match-intelligence-analysis skill, writing the JSON, calling `fpl
+  match-analyze`) - this hook only ensures it's never silently forgotten.
+- **`scripts/setup_live_poll_scheduler.ps1`** / `remove_live_poll_scheduler.ps1`
+  (built, following `setup_scheduler.ps1`'s exact pattern - hidden-window VBS
+  launcher, `-MultipleInstances IgnoreNew` so a periodic re-trigger while a
+  poller is already genuinely mid-match is a safe no-op) - closes section
+  40/48's "no manual live-watch restart" requirement for users who want the
+  faster ~25s live cadence without remembering to start it each matchday.
+  **Deliberately NOT registered this session** - same standing posture as
+  every other persistent-background-task decision in this project
+  (`setup_scheduler.ps1` itself waited for an explicit "register it now?"
+  answer before Pillar 3) - registering a Task Scheduler entry is a real,
+  system-level, unattended change, not something to do unilaterally even
+  under this project's general dev-work authorization. Run it when ready;
+  `fpl scheduler-status`-style verification wasn't extended to this task
+  this session (a real, disclosed small gap - `Get-ScheduledTask -TaskName
+  FPLAgentLivePoll` is the manual equivalent for now).
+  **Without this registered, the system is still genuinely autonomous at
+  30-min granularity** - `fpl run-scheduled` (already registered, survives
+  reboots) now does auto-discovery + FULL_TIME/HALFTIME detection +
+  analysis-job enqueue on its own regular cadence; the live-poll daemon is a
+  cadence upgrade (25s instead of 30min) for a nicer live-watching
+  experience, not a correctness requirement.
+- **Real scope note, not silently glossed over**: `fpl live-match-poll`
+  itself still exits when nothing is left to track (existing, tested
+  behavior, unchanged) rather than idling forever - the persistence layer
+  above (the new Task Scheduler entry) is what re-launches it, not a change
+  to the command's own loop semantics. This was a deliberate choice over
+  making the command itself never exit: doing so would have broken its
+  existing, real test coverage (`test_full_time_stops_the_poller` asserts a
+  clean exit) for a property (indefinite idling) better owned by the OS
+  scheduler layer anyway.
+- 20 new tests (8 `test_analysis_queue.py`, 4 `test_match_discovery.py`, 5
+  `test_fotmob_source.py`, 4 `test_cli_match_analyze.py`/`analysis-queue`
+  CLI coverage) - full suite green, all pre-existing `live-match-poll`
+  tests (including the FULL_TIME-stops-the-poller and pre-match/live-
+  interval cadence tests) pass unchanged against the new discovery+enqueue
+  wiring, confirming the additions are genuinely additive.
+- **What this does NOT close, stated plainly**: the true single-run browser
+  auto-update tier (section 6's preferred "efficient live DOM/state update")
+  is still the dashboard's existing meta-refresh fallback, not a push
+  mechanism - a real, scoped, disclosed follow-up, not attempted this pass.
+  Full Team/Player/Manager Intelligence beyond what Slice A/A2 already
+  built, Decision Fusion, and calibration/learning (the user's own 50-section
+  spec's later phases) are unstarted - this pass deliberately scoped to
+  Phase 1-3 of that spec's own dependency order (live-snapshot-adjacent
+  plumbing, autonomous discovery/polling, autonomous match lifecycle) since
+  later phases explicitly depend on this runtime foundation existing first.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of

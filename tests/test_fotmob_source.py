@@ -244,3 +244,80 @@ def test_refresh_in_progress_matches_counts_failures_without_raising(monkeypatch
     result = refresh_in_progress_matches(db_conn)
     assert result["failed"] == 1
     assert result["refreshed"] == 0
+
+
+# --- matchday-autonomy pass (2026-08-22): automatic analysis-job enqueue ---
+
+import copy
+
+
+def _full_time_payload():
+    payload = copy.deepcopy(_DETAILS_PAYLOAD)
+    payload["general"]["started"] = True
+    payload["general"]["finished"] = True
+    payload["header"]["status"] = {"started": True, "finished": True}
+    payload["header"]["teams"][0]["score"] = 3
+    payload["header"]["teams"][1]["score"] = 0
+    return payload
+
+
+def _halftime_payload():
+    payload = copy.deepcopy(_DETAILS_PAYLOAD)
+    payload["general"]["started"] = True
+    payload["header"]["status"] = {"started": True, "finished": False, "liveTime": {"short": "HT"}}
+    return payload
+
+
+def test_sync_match_result_includes_the_real_score(monkeypatch, db_conn):
+    _seed(db_conn)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: _full_time_payload())
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    result = sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+
+    assert result["home_score"] == 3
+    assert result["away_score"] == 0
+
+
+def test_refresh_enqueues_a_full_time_analysis_job_on_transition(monkeypatch, db_conn):
+    kickoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    _seed_match_intelligence_row(db_conn, "LIVE", kickoff)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: _full_time_payload())
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    refresh_in_progress_matches(db_conn)
+
+    job = db_conn.execute(
+        "SELECT phase, status, evidence_summary FROM qualitative_analysis_jobs"
+    ).fetchone()
+    assert job["phase"] == "FULL_TIME"
+    assert job["status"] == "pending"
+    assert "Arsenal" in job["evidence_summary"] and "3-0" in job["evidence_summary"]
+
+
+def test_refresh_enqueues_a_halftime_analysis_job_on_transition(monkeypatch, db_conn):
+    kickoff = datetime.now(timezone.utc) - timedelta(minutes=50)
+    _seed_match_intelligence_row(db_conn, "LIVE", kickoff)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: _halftime_payload())
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    refresh_in_progress_matches(db_conn)
+
+    job = db_conn.execute("SELECT phase, status FROM qualitative_analysis_jobs").fetchone()
+    assert job["phase"] == "HALFTIME"
+    assert job["status"] == "pending"
+
+
+def test_refresh_does_not_reenqueue_when_already_full_time(monkeypatch, db_conn):
+    # Prior status already FULL_TIME is filtered out by refresh_in_progress_matches'
+    # own WHERE clause before sync_match is even called - confirms no job appears.
+    kickoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    _seed_match_intelligence_row(db_conn, "FULL_TIME", kickoff)
+
+    refresh_in_progress_matches(db_conn)
+
+    count = db_conn.execute("SELECT COUNT(*) c FROM qualitative_analysis_jobs").fetchone()["c"]
+    assert count == 0

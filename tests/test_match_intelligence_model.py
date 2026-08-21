@@ -64,7 +64,10 @@ def test_parse_match_reads_real_confirmed_fields():
 def test_derive_status_pre_match_live_halftime_full_time():
     assert derive_status({"started": False, "finished": False}) == PRE_MATCH
     assert derive_status({"started": True, "finished": False}) == LIVE
-    assert derive_status({"started": True, "finished": False}, {"reason": {"short": "HT"}}) == HALFTIME
+    # Real field confirmed live 2026-08-21 against the actual Arsenal v
+    # Coventry match at real halftime - the original guess (`reason.short`)
+    # doesn't exist in the real payload at all; `liveTime.short` does.
+    assert derive_status({"started": True, "finished": False}, {"liveTime": {"short": "HT"}}) == HALFTIME
     assert derive_status({"started": True, "finished": True}) == FULL_TIME
 
 

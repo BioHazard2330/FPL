@@ -720,6 +720,77 @@ def test_dashboard_compare_panel_honest_empty_state_with_zero_real_data(db_conn)
     assert "not available yet" in result
 
 
+# --- Scheduled-dashboard squad mismatch fix (2026-08-21) ------------------
+# `_write_dashboard()` is the single function both `fpl run-scheduled`'s
+# automatic regen and a bare `fpl dashboard` call go through - before this
+# fix it always built an unconstrained squad even when a real
+# `fpl build-team --must-include ...` decision had already locked one in.
+
+
+def test_write_dashboard_passes_bare_args_straight_through(db_conn, tmp_path, monkeypatch):
+    """Superseded same day by the locked-squad product architecture pass:
+    `_write_dashboard()` no longer resolves the lock itself - that
+    responsibility moved entirely to `generate_dashboard_html`'s own
+    `get_locked_squad()` check (see its docstring), which also correctly
+    prefers a real synced FPL squad over the decision-journal fallback this
+    function used to check on its own. Keeping both would double-resolve
+    and fight each other (confirmed live: it rendered "Optimizer
+    Recommendation" instead of "My Locked Squad" for an already-locked,
+    already-synced real squad) - `_write_dashboard` is now a genuine dumb
+    passthrough, and this test pins exactly that."""
+    import fpl_agent.cli.main as main_mod
+
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "get_connection", lambda: db_conn)
+    captured = {}
+
+    def fake_generate(conn, live_payload=None, gw_window=1, must_include_ids=None, must_start_ids=None, exclude_ids=None):
+        captured.update(gw_window=gw_window, must_include_ids=must_include_ids,
+                         must_start_ids=must_start_ids, exclude_ids=exclude_ids)
+        return "<html></html>"
+
+    monkeypatch.setattr(main_mod, "generate_dashboard_html", fake_generate)
+
+    main_mod._write_dashboard(gw_window=3, must_include_ids={1}, must_start_ids={1}, exclude_ids={2})
+
+    assert captured == {"gw_window": 3, "must_include_ids": {1}, "must_start_ids": {1}, "exclude_ids": {2}}
+
+
+def test_dashboard_after_a_real_locked_build_team_run_shows_the_locked_squad(db_conn, tmp_path, monkeypatch):
+    """End-to-end: a real `fpl build-team --must-include ... --must-start ...`
+    CLI run (production code path, not a mock) persists real ids in its
+    decision - then a bare, unconstrained scheduled-style regen must render
+    that same locked squad, not a fresh unconstrained optimizer pick."""
+    # Deliberately does NOT monkeypatch main_mod.get_connection to the shared
+    # db_conn object - build_team's own `conn.close()` would then close the
+    # test's only connection out from under it. Same real wiring quirk
+    # already documented for test_e2e_plan1a_lifecycle.py: let the real
+    # (unpatched) get_connection() open a fresh connection to the same temp
+    # DB file each call, exactly like production - db_conn's own fixture
+    # already monkeypatches DATA_DIR/DB_PATH globally for that.
+    import fpl_agent.cli.main as main_mod
+
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    build_result = CliRunner().invoke(
+        cli, ["build-team", "--no-sync", "--must-include", "20,21,22", "--must-start", "20"],
+    )
+    assert build_result.exit_code == 0, build_result.output
+
+    decision = db_conn.execute(
+        "SELECT detail FROM decisions WHERE decision_type='build_team' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    import json as _json
+    detail = _json.loads(decision["detail"])
+    assert set(detail["must_include_ids"]) == {20, 21, 22}
+    assert detail["must_start_ids"] == [20]
+
+    path = main_mod._write_dashboard()
+    rendered = path.read_text(encoding="utf-8")
+    assert "P20" in rendered  # _seed's own web_name for the forced must-include/must-start player
+
+
 def test_dashboard_cli_command_prints_the_real_written_path(monkeypatch, tmp_path):
     """Exercises the actual `fpl dashboard` click command body, not just the
     underlying _write_dashboard() function - would have caught the real bug
@@ -739,3 +810,159 @@ def test_dashboard_cli_command_prints_the_real_written_path(monkeypatch, tmp_pat
 
     assert result.exit_code == 0, result.output
     assert str(fake_path) in result.output
+
+
+# --- Locked-squad product architecture (2026-08-21) -----------------------
+# The pitch is MY TEAM once something is locked, not a freshly re-solved
+# optimizer squad - see optimization/locked_squad.py and
+# optimization/decision_engine.py for the underlying machinery this wires
+# into the dashboard.
+
+
+def test_dashboard_shows_optimizer_recommendation_heading_when_nothing_locked(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Optimizer Recommendation" in result
+    assert "My Locked Squad" not in result
+
+
+def test_dashboard_shows_my_locked_squad_heading_and_real_squad_once_locked(db_conn):
+    from test_optimization_locked_squad import _seed_real_picks
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "My Locked Squad" in result
+    assert "Optimizer Recommendation" not in result
+    assert "P30" in result  # the real synced captain (id 30) from the locked picks
+
+
+def test_dashboard_explicit_override_still_shows_optimizer_recommendation_even_when_locked(db_conn):
+    """A manual `fpl dashboard --must-include ...` call is a deliberate
+    Mode-A exploration - must bypass the lock, unchanged from prior
+    behavior."""
+    from test_optimization_locked_squad import _seed_real_picks
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn)
+
+    result = generate_dashboard_html(db_conn, must_include_ids={20})
+
+    assert "Optimizer Recommendation" in result
+
+
+def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain(db_conn, monkeypatch):
+    from test_optimization_locked_squad import _seed_real_picks
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, captain_id=30)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'decision-action">KEEP</span>' in result or "Captain <span class=\"decision-action\">KEEP</span>" in result
+
+
+def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squad(db_conn, monkeypatch):
+    """Section 20's explicit requirement: an invalid locked XI must never
+    render silently."""
+    import fpl_agent.monitoring.dashboard as dash_mod
+    from fpl_agent.optimization.locked_squad import LockedSquadState
+    from fpl_agent.optimization.squad import StartingXI
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    from fpl_agent.optimization.squad import build_player_pool
+    pool = {c.player_id: c for c in build_player_pool(db_conn, n_gw=1)}
+    dup = pool[1]
+    xi = StartingXI(starting=[dup] + [pool[i] for i in (10, 11, 12, 13, 20, 21, 22, 30, 31, 32)],
+                     bench=[dup, pool[14], pool[23], pool[33]], captain=dup, vice_captain=pool[10])
+    broken = LockedSquadState(
+        source="synced_real", event=1, squad_ids=frozenset({1, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 14, 23, 33}),
+        xi=xi, bank_tenths=10, squad_value_tenths=900, decision_id=None,
+    )
+    monkeypatch.setattr(dash_mod, "get_locked_squad", lambda conn: broken)
+    monkeypatch.setattr(dash_mod, "evaluate_locked_squad", lambda conn, locked: None)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "SYSTEM ERROR" in result
+    assert "both starting XI and bench" in result
+
+
+# --- Squad Changes panel extended for live-gameweek alert types (2026-08-21,
+# locked-squad product architecture pass, section 13/14: "dashboard first,
+# not PowerShell popups") ---------------------------------------------------
+
+
+def test_squad_changes_panel_shows_predicted_lineup_change(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('predicted_lineup_change','player',1,'starting','bench','t0','[]','strong_reporter','HIGH',NULL,0)"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "predicted status: starting" in result
+    assert "bench" in result
+
+
+def test_squad_changes_panel_shows_start_percent_change(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('start_percent_change','player',1,'80','40','t0','[]','strong_reporter','HIGH',NULL,0)"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "start probability: 80%" in result
+    assert "40%" in result
+
+
+def test_squad_changes_panel_shows_kickoff_reminder_with_real_teams(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',1,0,0,1,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,finished,started,updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('kickoff_reminder','fixture',1,NULL,'2026-08-21T19:00:00Z','t0','[]','CONFIRMED','HIGH',NULL,0)"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "T1 v T2" in result
+    assert "kicks off soon" in result
+
+
+def test_squad_changes_panel_does_not_show_price_change_twice(db_conn):
+    """price_change already has its own dedicated Price Moves panel - the
+    Squad Changes panel must not duplicate the same row."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) VALUES "
+        "('price_change','player',1,'45','50','t0','[]','CONFIRMED','MEDIUM','rise',0)"
+    )
+    db_conn.commit()
+
+    import fpl_agent.monitoring.dashboard as dash_mod
+    result = dash_mod._squad_changes_html(db_conn)
+
+    assert "No squad changes detected yet this session." in result

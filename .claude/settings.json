@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\2003p\\FPL\\fpl-agent\\.venv\\Scripts\\python.exe\" \"C:\\Users\\2003p\\FPL\\fpl-agent\\.claude\\hooks\\queue_check.py\"",
+            "statusMessage": "Checking for pending qualitative-analysis jobs..."
+          }
+        ]
+      }
     ]
   }
 }

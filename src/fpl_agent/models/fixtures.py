@@ -160,14 +160,44 @@ def current_live_event(conn: sqlite3.Connection) -> int | None:
     return row["event"] if row else None
 
 
+def _imminent_unfinished_event(conn: sqlite3.Connection) -> int | None:
+    """Real bug found live 2026-08-21, ~50 minutes before GW1's own kickoff:
+    `_reference_event()`'s is_next already pointed at GW2 (a week away) the
+    moment GW1's deadline passed, and `current_live_event()` correctly
+    returns None until a fixture genuinely starts - so `live_or_reference_event`
+    was falling all the way through to GW2 for the entire pre-kickoff window,
+    which made `fpl live-watch` (run with no explicit --squad) build against
+    a fresh unconstrained squad for the WRONG gameweek, watching the wrong 15
+    players and the wrong fixtures on the actual live-verification night this
+    function's own docstring exists for. The real gap: nothing between "live
+    right now" and "the next deadline" ever considered "not live yet, but
+    this gameweek's own matches haven't been played and aren't done" - the
+    correct definition of "the gameweek live-tracking should reference" isn't
+    is_next (a planning concept, deadline-driven) or "started right now" (too
+    narrow, misses the whole pre-kickoff window) - it's the earliest
+    gameweek that still has a real unplayed fixture. Deliberately keyed off
+    the FIXTURE's own `finished` flag, not `events.finished` (which stays 0
+    for days after every match ends, pending bonus confirmation - using it
+    alone would never let this move on to GW2 once GW1's matches are
+    genuinely all played)."""
+    row = conn.execute(
+        "SELECT MIN(event) AS event FROM fixtures WHERE finished = 0"
+    ).fetchone()
+    return row["event"] if row and row["event"] is not None else None
+
+
 def live_or_reference_event(conn: sqlite3.Connection) -> int | None:
-    """Prefer a genuinely in-progress gameweek over the planning-oriented
-    `_reference_event()` - use this for anything that needs "what's live
-    right now" (live-bonus, live-watch, the dashboard's Live Tracking
-    panel), never for transfer/captaincy/projection planning, which
-    correctly wants the next actionable deadline instead."""
+    """Prefer a genuinely in-progress gameweek, then the earliest gameweek
+    with a real unplayed fixture, over the planning-oriented
+    `_reference_event()` - use this for anything that needs "what's live or
+    about to be live" (live-bonus, live-watch, live-rank, the dashboard's
+    Live Tracking panel), never for transfer/captaincy/projection planning,
+    which correctly wants the next actionable deadline instead."""
     live = current_live_event(conn)
-    return live if live is not None else _reference_event(conn)
+    if live is not None:
+        return live
+    imminent = _imminent_unfinished_event(conn)
+    return imminent if imminent is not None else _reference_event(conn)
 
 
 @dataclass(frozen=True)

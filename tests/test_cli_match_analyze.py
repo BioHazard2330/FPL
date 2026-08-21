@@ -53,6 +53,44 @@ def test_match_analyze_cmd_persists_payload(tmp_path, db_conn):
     assert "implications written   1" in result.output
 
 
+def test_match_analyze_cmd_marks_the_matching_queue_job_done(tmp_path, db_conn):
+    _seed_match(db_conn, status="FULL_TIME")
+    match_id = db_conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id='5795363'").fetchone()["id"]
+    from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
+    enqueue_analysis_job(db_conn, match_id, "FULL_TIME", "Arsenal 3-0 Coventry (final)")
+    payload_path = tmp_path / "analysis.json"
+    payload_path.write_text(json.dumps(_PAYLOAD), encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["match-analyze", "5795363", "--phase", "full_time", "--file", str(payload_path)])
+
+    assert result.exit_code == 0, result.output
+    status = db_conn.execute(
+        "SELECT status FROM qualitative_analysis_jobs WHERE match_id=? AND phase='FULL_TIME'", (match_id,)
+    ).fetchone()["status"]
+    assert status == "done"
+
+
+def test_analysis_queue_cmd_lists_a_pending_job(db_conn):
+    _seed_match(db_conn, status="FULL_TIME")
+    match_id = db_conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id='5795363'").fetchone()["id"]
+    from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
+    enqueue_analysis_job(db_conn, match_id, "FULL_TIME", "Arsenal 3-0 Coventry (final)")
+
+    result = CliRunner().invoke(cli, ["analysis-queue"])
+
+    assert result.exit_code == 0, result.output
+    assert "FULL_TIME" in result.output
+    assert "Arsenal" in result.output
+    assert "fpl match-analyze 5795363" in result.output
+
+
+def test_analysis_queue_cmd_reports_none_pending(db_conn):
+    result = CliRunner().invoke(cli, ["analysis-queue"])
+
+    assert result.exit_code == 0, result.output
+    assert "no pending qualitative-analysis jobs" in result.output
+
+
 def test_match_analyze_cmd_refuses_full_time_before_finish(tmp_path, db_conn):
     _seed_match(db_conn, status="LIVE")
     payload_path = tmp_path / "analysis.json"

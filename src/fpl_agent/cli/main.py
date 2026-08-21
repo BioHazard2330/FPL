@@ -53,12 +53,19 @@ from fpl_agent.ingestion.lineup_probability_source import (
     sync_lineup_probabilities,
 )
 from fpl_agent.models.team_outlook import squad_team_outlooks
-from fpl_agent.ingestion.fotmob_source import FotMobFetchError, refresh_in_progress_matches, sync_match
+from fpl_agent.ingestion.fotmob_source import (
+    FotMobFetchError,
+    maybe_enqueue_analysis,
+    refresh_in_progress_matches,
+    sync_match,
+)
 from fpl_agent.ingestion.qualitative_analysis import (
     QualitativeAnalysisError,
     apply_match_analysis,
     record_user_observation,
 )
+from fpl_agent.ingestion.analysis_queue import list_pending_jobs, mark_job_done_for_match_phase
+from fpl_agent.models.match_discovery import discover_and_register_matches
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
@@ -79,7 +86,11 @@ from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.monitoring.storage import measure_storage
-from fpl_agent.optimization.build_team import generate_build_team_report
+from fpl_agent.optimization.build_team import (
+    LockedDecisionIncomplete,
+    generate_build_team_report,
+    resolve_locked_constraints,
+)
 from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.optimization.chips import (
     _cached_optimise_squad,
@@ -467,6 +478,55 @@ def match_report_cmd(fotmob_match_id: str):
     conn.close()
 
 
+@cli.command("analysis-queue")
+@click.option("--pending/--all", default=True, help="show only pending/processing jobs (default) or every job ever created")
+def analysis_queue_cmd(pending: bool):
+    """List qualitative-analysis jobs (matchday-autonomy pass, 2026-08-22) -
+    the zero-cost queue FULL_TIME/HALFTIME detection writes to automatically
+    (see `fpl live-match-poll`/`fpl run-scheduled`). No LLM call happens
+    here or anywhere in this project's own Python runtime - this command
+    only surfaces what's waiting for the next real Claude Code session's
+    qualitative-analysis skill + `fpl match-analyze` to actually process.
+    Also run automatically at the start of every Claude Code session for
+    this project (`.claude/hooks/queue_check.py`) so a pending job is never
+    silently missed."""
+    conn = get_connection()
+    if pending:
+        jobs = list_pending_jobs(conn)
+    else:
+        rows = conn.execute(
+            "SELECT j.id, j.match_id, j.phase, j.status, j.evidence_summary, j.created_at, "
+            "mi.fotmob_match_id, mi.kickoff_utc, ht.name AS home_name, at.name AS away_name "
+            "FROM qualitative_analysis_jobs j "
+            "JOIN match_intelligence mi ON mi.id = j.match_id "
+            "JOIN teams ht ON ht.id = mi.home_team_id JOIN teams at ON at.id = mi.away_team_id "
+            "ORDER BY j.created_at"
+        ).fetchall()
+        from fpl_agent.ingestion.analysis_queue import AnalysisJob
+        jobs = [
+            AnalysisJob(
+                id=r["id"], match_id=r["match_id"], fotmob_match_id=r["fotmob_match_id"], phase=r["phase"],
+                status=r["status"], evidence_summary=r["evidence_summary"], created_at=r["created_at"],
+                home_name=r["home_name"], away_name=r["away_name"], kickoff_utc=r["kickoff_utc"],
+            )
+            for r in rows
+        ]
+    conn.close()
+    if not jobs:
+        click.echo("no pending qualitative-analysis jobs" if pending else "no qualitative-analysis jobs recorded yet")
+        return
+    for j in jobs:
+        click.echo(
+            f"job={j.id:<4} [{j.status:<10}] {j.phase:<10} {j.home_name} v {j.away_name} "
+            f"(fotmob={j.fotmob_match_id})  {j.evidence_summary or ''}"
+        )
+        click.echo(
+            f"           -> fpl match-report {j.fotmob_match_id}   "
+            f"then write the skill's JSON and run: fpl match-analyze {j.fotmob_match_id} "
+            f"--phase {j.phase.lower()} --file <path.json>"
+        )
+
+
 @cli.command("match-analyze")
 @click.argument("fotmob_match_id")
 @click.option("--phase", required=True, type=click.Choice(["pre_match", "live", "halftime", "full_time"], case_sensitive=False))
@@ -475,7 +535,9 @@ def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
     """Persist a qualitative analysis payload (Pillar 4 Slice A2). The single
     validated write path the LLM skill uses - never raw SQL from the skill
     itself. Idempotent per (match, phase); a full_time write is refused
-    unless the match has genuinely finished."""
+    unless the match has genuinely finished. Marks the matching
+    analysis-queue job (if one exists - matchday-autonomy pass, 2026-08-22)
+    'done', closing the loop that job's automatic creation started."""
     import json
 
     with open(payload_path, encoding="utf-8") as f:
@@ -493,6 +555,7 @@ def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
         click.echo(f"match-analyze failed: {e}", err=True)
         conn.close()
         raise SystemExit(1)
+    mark_job_done_for_match_phase(conn, match["id"], phase.upper())
     conn.close()
     click.echo(f"phase                  {result['phase']}")
     click.echo(f"observations written   {result['observations_written']}")
@@ -867,6 +930,24 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled match-intelligence refresh failed - not fatal to the sync itself")
 
+    # Auto-discovery (matchday-autonomy pass, 2026-08-22) - the real,
+    # always-on backbone for section 3/40's "no manual fpl sync-match"
+    # requirement. This step runs on the ALREADY-REGISTERED Windows Task
+    # Scheduler cadence (survives reboots, no manual restart needed, unlike
+    # `fpl live-match-poll` which is an optional fast-cadence booster a user
+    # starts by hand for a snappier live view - see that command's own
+    # docstring). Cheap once a fixture is already registered (pure local DB
+    # read), only a real network call for a genuinely new fixture.
+    try:
+        discovery_result = discover_and_register_matches(conn)
+        if discovery_result["registered"]:
+            logger.info(
+                "run-scheduled match discovery: %d newly registered, %d already tracked, %d failed",
+                discovery_result["registered"], discovery_result["skipped"], discovery_result["failed"],
+            )
+    except Exception:
+        logger.exception("run-scheduled match discovery failed - not fatal to the sync itself")
+
     conn.close()
 
     if retighten_msg:
@@ -927,10 +1008,15 @@ def _dashboard_path():
 
 
 def _maybe_fetch_live_payload(conn) -> dict | None:
-    """Only issues a network call when a fixture is genuinely in progress -
-    cheap and honest, matches this project's live-bonus CLI command's own
-    fetch pattern. Returns None outside any live window (the common case,
-    including all of preseason) with zero network traffic. Uses
+    """Only issues a network call when a fixture is genuinely in progress OR
+    has just finished (dashboard-state pass, 2026-08-21) - cheap and honest,
+    matches this project's live-bonus CLI command's own fetch pattern.
+    Returns None outside any relevant window (the common case, including
+    all of preseason) with zero network traffic. Dropped the `finished=0`
+    filter deliberately: the real "My Live Score" POST_MATCH state needs
+    this same payload to show final points immediately after full-time,
+    before official gameweek stats are computed - FPL's live endpoint keeps
+    serving the final per-player stats for a just-finished match. Uses
     live_or_reference_event(), not _reference_event() directly - the latter
     would report the FOLLOWING gameweek for the entire real GW1 match
     window (is_next flips at the deadline, not at kickoff or full-time),
@@ -939,7 +1025,7 @@ def _maybe_fetch_live_payload(conn) -> dict | None:
     if event_num is None:
         return None
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1 AND finished=0", (event_num,)
+        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
     ).fetchone()
     if not row or not row["n"]:
         return None
@@ -958,6 +1044,21 @@ def _write_dashboard(
 ) -> None:
     conn = get_connection()
     try:
+        # Real fix, 2026-08-21 (superseded same day by the locked-squad
+        # product architecture pass - see generate_dashboard_html's own
+        # docstring): this function used to pre-resolve the locked
+        # `build_team` decision itself and pass it down as explicit
+        # override args. That now DOUBLE-resolves against
+        # generate_dashboard_html's own, strictly better lock check
+        # (optimization.locked_squad.get_locked_squad, which also checks
+        # the real synced FPL squad first) - passing pre-resolved args down
+        # made generate_dashboard_html treat a genuine bare call as if it
+        # were a deliberate Mode-A override, which is exactly backwards
+        # (confirmed live: it rendered "Optimizer Recommendation" instead
+        # of "My Locked Squad" for an already-locked, already-synced real
+        # squad). generate_dashboard_html is now the single place that
+        # decides "bare call -> check the lock" - this function just passes
+        # whatever the caller gave it straight through, unchanged.
         live_payload = _maybe_fetch_live_payload(conn)
         html_content = generate_dashboard_html(
             conn, live_payload=live_payload, gw_window=gw_window,
@@ -1288,7 +1389,27 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
             conn.close()
             raise SystemExit(1)
     else:
-        report = generate_build_team_report(conn)
+        # Same real gap as the scheduled-dashboard squad mismatch (see
+        # optimization/build_team.py::resolve_locked_constraints) - a bare
+        # unconstrained generate_build_team_report() call here would watch a
+        # fresh, different squad from whatever the user actually locked via
+        # `fpl build-team --must-include ...`, exactly the failure caught
+        # live 2026-08-21: live-watch started tracking 15 different players
+        # for the wrong reasons minutes before a real kickoff.
+        try:
+            locked = resolve_locked_constraints(conn)
+        except LockedDecisionIncomplete as exc:
+            logging.getLogger("fpl_agent.cli").warning(
+                "live-watch: %s - falling back to the unconstrained default", exc
+            )
+            locked = None
+        if locked is not None:
+            report = generate_build_team_report(
+                conn, gw_window=locked.gw_window, must_include_ids=set(locked.must_include_ids) or None,
+                must_start_ids=set(locked.must_start_ids) or None, exclude_ids=set(locked.exclude_ids) or None,
+            )
+        else:
+            report = generate_build_team_report(conn)
         if not report.structures or not report.structures[0].result.squad:
             click.echo("no squad available - pass --squad explicitly or run fpl build-team first", err=True)
             conn.close()
@@ -1364,6 +1485,111 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
                 notifier.send(alert)
 
             time.sleep(interval)
+    except KeyboardInterrupt:
+        click.echo("\nstopped")
+    finally:
+        conn.close()
+
+
+@cli.command("live-match-poll")
+@click.option("--interval", default=25, type=int,
+              help="poll interval in seconds while a match is genuinely LIVE/HALFTIME (default 25)")
+@click.option("--max-hours", default=3.0, type=float, help="safety cap on total watch duration")
+def live_match_poll_cmd(interval: int, max_hours: float):
+    """Fast, real live-match polling for Match Intelligence Core (2026-08-21,
+    live-match-feed pass) - a deliberate, narrow exception to this project's
+    single-shot-command convention, same shape as `fpl live-watch` (which
+    this is NOT a duplicate of - see ownership split below). Separate from:
+    - the regular `fpl run-scheduled` cadence (15min-6h, deadline-aware) -
+      unchanged, still handles FPL sync/lineups/news/my-team/alerts;
+    - `fpl live-watch` (~75s) - FPL FANTASY events (goals/assists/bonus/
+      DEFCON for YOUR squad specifically, pushed as notifications).
+    This command owns RAW FOOTBALL EVENTS (real match incidents/commentary
+    evidence - goals/cards/subs/shots, straight from FotMob, never LLM-
+    authored) - refreshing match_intelligence/player_match_state/
+    team_match_state/match_events, the real data the dashboard's Match
+    Centre reads. Only polls fast while a tracked match is genuinely LIVE/
+    HALFTIME - backs off to a slow pre-kickoff cadence (never hammers
+    FotMob for a match that hasn't started) and stops entirely once nothing
+    tracked remains not-FULL_TIME (a real FULL_TIME triggers one final sync
+    - the qualitative Slice A2 analysis itself stays a separate, deliberate
+    skill invocation once `fpl match-report` shows FULL_TIME, unchanged)."""
+    conn = get_connection()
+    stop_at = time.monotonic() + max_hours * 3600
+    consecutive_failures = 0
+    pre_kickoff_interval = max(interval * 4, 60)
+    max_backoff_seconds = 120
+
+    click.echo(
+        f"live-match-poll: {interval}s while LIVE/HALFTIME, {pre_kickoff_interval}s pre-kickoff - Ctrl+C to stop"
+    )
+
+    try:
+        while time.monotonic() < stop_at:
+            # Auto-discovery (matchday-autonomy pass, 2026-08-22) - closes
+            # the real remaining manual step: this used to require a human
+            # to have already run `fpl sync-match <home> <away>` by hand for
+            # every fixture before this loop would ever see it. Cheap once
+            # today's fixtures are already registered (a local DB read, no
+            # network) - only issues a real request for a genuinely new,
+            # not-yet-tracked fixture. Non-fatal: a discovery hiccup must
+            # never stop an otherwise-healthy poll of already-tracked matches.
+            try:
+                discover_and_register_matches(conn)
+            except Exception as e:
+                click.echo(f"live-match-poll: auto-discovery failed this tick ({e}) - continuing", err=True)
+
+            rows = conn.execute(
+                "SELECT mi.id, mi.fotmob_match_id, mi.status AS prior_status, mi.kickoff_utc, "
+                "ht.name AS home_name, at.name AS away_name "
+                "FROM match_intelligence mi "
+                "JOIN teams ht ON ht.id = mi.home_team_id JOIN teams at ON at.id = mi.away_team_id "
+                "WHERE mi.status != 'FULL_TIME'"
+            ).fetchall()
+            if not rows:
+                click.echo("no tracked match left to poll (none active, or all finished) - stopping")
+                break
+
+            any_live = False
+            any_failure = False
+            for row in rows:
+                if not row["kickoff_utc"]:
+                    continue
+                try:
+                    kickoff = datetime.fromisoformat(row["kickoff_utc"].replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                try:
+                    result = sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
+                except FotMobFetchError as e:
+                    any_failure = True
+                    last_success_row = conn.execute(
+                        "SELECT last_success FROM source_health WHERE source_name='fotmob'"
+                    ).fetchone()
+                    last_success = last_success_row["last_success"] if last_success_row else None
+                    click.echo(
+                        f"live-match-poll: {row['home_name']} v {row['away_name']} - Live data delayed "
+                        f"({e}) - last known state kept, last real update {last_success or 'unknown'}", err=True,
+                    )
+                    continue
+                maybe_enqueue_analysis(conn, row["id"], row["prior_status"], row["home_name"], row["away_name"], result)
+                if result["status"] in ("LIVE", "HALFTIME"):
+                    any_live = True
+                elif result["status"] == "FULL_TIME" and row["prior_status"] != "FULL_TIME":
+                    click.echo(
+                        f"{row['home_name']} v {row['away_name']}: FULL_TIME - final sync done, "
+                        "stopping fast polling for this match. Qualitative analysis job queued - "
+                        "run `fpl analysis-queue` next time Claude Code opens."
+                    )
+
+            consecutive_failures = consecutive_failures + 1 if any_failure else 0
+            if consecutive_failures:
+                sleep_for = min(interval * (2 ** min(consecutive_failures, 4)), max_backoff_seconds)
+            elif any_live:
+                sleep_for = interval
+            else:
+                sleep_for = pre_kickoff_interval
+            time.sleep(sleep_for)
     except KeyboardInterrupt:
         click.echo("\nstopped")
     finally:
@@ -1515,6 +1741,16 @@ def build_team(sync: bool, gw_window: int, must_include: str | None, must_start:
         "risks": report.risks,
         "narrowly_missed": [c.web_name for c in report.narrowly_missed],
         "watchlist": report.watchlist,
+        # Real ids, not just the web_names above - the actual persistence
+        # gap behind the scheduled-dashboard squad mismatch (2026-08-21):
+        # without these, a later scheduled dashboard regen has no reliable
+        # way to reconstruct which real squad this decision locked in, and
+        # a web_name is not a safe substitute (this project has hit real
+        # name collisions before - Gabriel/Martinelli, Raya/Martin).
+        "must_include_ids": sorted(must_include_ids) if must_include_ids else [],
+        "must_start_ids": sorted(must_start_ids) if must_start_ids else [],
+        "exclude_ids": sorted(exclude_ids) if exclude_ids else [],
+        "gw_window": gw_window,
     }
     decision_id = log_decision(
         conn, "build_team", f"first team: {primary.label}, total_xp={gw1_xp}",

@@ -301,6 +301,36 @@ class StartingXI:
     vice_captain: PlayerCandidate | None = None
 
 
+def validate_starting_xi(xi: StartingXI) -> list[str]:
+    """Real, explicit validation gate (2026-08-21, locked-squad product
+    architecture pass) - a rendering caller must check this and refuse to
+    render rather than silently show a broken pitch. Returns a list of
+    human-readable problems, empty when the XI is genuinely valid. Checked
+    directly against `optimise_squad`/`pick_starting_xi`/`rate_team`'s own
+    real code paths this session and could not reproduce a duplicate-player
+    state live - `rate_team.py::rate_team` already carries its own
+    deduplication fix for a related historical incident (see its own
+    docstring) - this is a permanent safety net regardless of root cause,
+    not a patch for a reproduced bug."""
+    problems: list[str] = []
+    all_ids = [c.player_id for c in xi.starting] + [c.player_id for c in xi.bench]
+    seen: set[int] = set()
+    duplicates: set[int] = set()
+    for pid in all_ids:
+        if pid in seen:
+            duplicates.add(pid)
+        seen.add(pid)
+    if duplicates:
+        problems.append(f"player(s) appear in both starting XI and bench: {sorted(duplicates)}")
+    if len(xi.starting) > 11:
+        problems.append(f"starting XI has {len(xi.starting)} players, expected at most 11")
+    if xi.captain is not None and xi.captain.player_id not in {c.player_id for c in xi.starting}:
+        problems.append(f"captain ({xi.captain.web_name}) is not in the starting XI")
+    if xi.vice_captain is not None and xi.vice_captain.player_id not in {c.player_id for c in xi.starting}:
+        problems.append(f"vice-captain ({xi.vice_captain.web_name}) is not in the starting XI")
+    return problems
+
+
 def pick_starting_xi(
     conn: sqlite3.Connection, squad: list[PlayerCandidate], must_start_ids: set[int] | None = None,
 ) -> StartingXI:
