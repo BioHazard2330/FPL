@@ -11,7 +11,9 @@ from dataclasses import dataclass
 
 from fpl_agent.ingestion.market_identity import get_or_create_market_team, normalize_common_team_name
 from fpl_agent.models.manager_change import detect_manager_change_signals
+from fpl_agent.models.manager_intelligence import ManagerIntelligence, manager_intelligence
 from fpl_agent.models.squad_churn import team_churn_ratio
+from fpl_agent.models.team_intelligence import TeamQualitativeIntelligence, team_qualitative_intelligence
 
 # Thresholds are a disclosed heuristic (not fit to real outcome data - no
 # season has been played yet to fit against), same honesty posture as every
@@ -31,6 +33,8 @@ class TeamOutlook:
     lineup_news: str | None
     formation: str | None
     manager_change: str | None
+    qualitative: TeamQualitativeIntelligence | None  # post-match tactical read + trend, None until Slice A2 has analyzed a real match for this team
+    tactics: ManagerIntelligence | None  # real formation/rotation/sub-timing pattern from match history, None until >=2 real matches observed
 
 
 def _churn_label(ratio: float | None) -> str:
@@ -73,6 +77,9 @@ def team_outlook(conn, team_id: int, news_limit: int = 5) -> TeamOutlook:
             f"{manager_signal.matched_titles[0]}"
         )
 
+    qual = team_qualitative_intelligence(conn, team_id)
+    qualitative = qual if (qual.current_tactical_signal is not None or qual.trends) else None
+
     return TeamOutlook(
         team_id=team_id, team_name=team_row["name"], churn_ratio=ratio,
         churn_label=_churn_label(ratio),
@@ -80,6 +87,8 @@ def team_outlook(conn, team_id: int, news_limit: int = 5) -> TeamOutlook:
         lineup_news=lineup_row["latest_news"] if lineup_row else None,
         formation=lineup_row["formation"] if lineup_row else None,
         manager_change=manager_change_text,
+        qualitative=qualitative,
+        tactics=manager_intelligence(conn, team_id),
     )
 
 

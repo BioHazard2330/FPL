@@ -655,7 +655,86 @@ def team_outlook_cmd(squad: str):
             click.echo(f"  latest: {o.lineup_news}")
         for n in o.recent_news:
             click.echo(f"  news [{n['source_tier']}] {n['title']}")
+        if o.tactics.note:
+            click.echo(f"  tactical pattern: {o.tactics.note}")
+        else:
+            click.echo(
+                f"  tactical pattern: {o.tactics.matches_observed} real matches, "
+                f"formation {o.tactics.most_common_formation or '?'}, "
+                f"rotation rate {o.tactics.starting_xi_rotation_rate}, "
+                f"avg first sub {o.tactics.avg_first_substitution_minute}'"
+            )
+        if o.qualitative:
+            if o.qualitative.current_tactical_signal:
+                click.echo(f"  post-match read: {o.qualitative.current_tactical_signal}")
+            for t in o.qualitative.trends:
+                click.echo(f"    [{t.signal}] {t.label} (currently {t.current_direction}, n={t.sample_size})")
         click.echo()
+
+
+@cli.command("player-intelligence")
+@click.argument("player_id", type=int)
+def player_intelligence_cmd(player_id: int):
+    """Persistent Player Intelligence (2026-08-22) - the current post-match
+    qualitative snapshot (Slice A2) plus a real per-signal trend
+    (NEW_SIGNAL/PERSISTENT_TREND/REVERSAL/NOISE) computed over that
+    player's own match_observations history. Empty output means no
+    qualitative analysis has been run for this player yet - run
+    `fpl match-analyze` for a real finished match first."""
+    from fpl_agent.models.player_intelligence import player_intelligence
+
+    conn = get_connection()
+    try:
+        pi = player_intelligence(conn, player_id)
+    except ValueError as e:
+        click.echo(f"player-intelligence failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    conn.close()
+
+    click.echo(f"{pi.web_name} (player_id={pi.player_id})")
+    if pi.current_role:
+        click.echo(f"  role: {pi.current_role}")
+        click.echo(f"  tactical signal: {pi.current_tactical_signal}")
+        click.echo(f"  FPL outlook: {pi.current_fpl_outlook} (confidence={pi.current_confidence})")
+        click.echo(f"  as of match_id={pi.last_match_id}, generated {pi.generated_at}")
+    else:
+        click.echo("  no qualitative analysis recorded yet")
+    if pi.trends:
+        click.echo("  trends:")
+        for t in pi.trends:
+            click.echo(f"    [{t.signal}] {t.label} - currently {t.current_direction} (n={t.sample_size}, history={t.history})")
+
+
+@cli.command("manager-intelligence")
+@click.argument("team_id", type=int)
+def manager_intelligence_cmd(team_id: int):
+    """Real, evidence-based team-level tactical-pattern profile (2026-08-22) -
+    formation frequency, starting-XI rotation rate, average first-substitution
+    minute, aggregated across that team's own real match history. Not a named
+    manager profile (no source gives manager identity separate from the team) -
+    see the module docstring for why. A real manager change (`fpl
+    manager-changes`) invalidates this profile's historical continuity."""
+    from fpl_agent.models.manager_intelligence import manager_intelligence
+
+    conn = get_connection()
+    try:
+        mi = manager_intelligence(conn, team_id)
+    except ValueError as e:
+        click.echo(f"manager-intelligence failed: {e}", err=True)
+        conn.close()
+        raise SystemExit(1)
+    conn.close()
+
+    click.echo(f"{mi.team_name} (team_id={mi.team_id}) - {mi.matches_observed} real FULL_TIME match(es) observed")
+    if mi.note:
+        click.echo(f"  {mi.note}")
+        return
+    click.echo(f"  most common formation: {mi.most_common_formation}")
+    for formation, count in sorted(mi.formation_frequency.items(), key=lambda kv: -kv[1]):
+        click.echo(f"    {formation}: {count}")
+    click.echo(f"  starting XI rotation rate: {mi.starting_xi_rotation_rate} (0.0=never changes, 1.0=fully different every match)")
+    click.echo(f"  avg first substitution minute: {mi.avg_first_substitution_minute}")
 
 
 @cli.command("manager-changes")

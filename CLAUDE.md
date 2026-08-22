@@ -4240,6 +4240,92 @@ now automatic-on-open rather than something to remember.
   plumbing, autonomous discovery/polling, autonomous match lifecycle) since
   later phases explicitly depend on this runtime foundation existing first.
 
+## Player/Team/Manager Intelligence (2026-08-22, same day, continued)
+
+Continuing straight down the user's own phase order ("Continue") into Phase
+4: persistent Team/Player Intelligence + a first Manager Intelligence pass.
+Real, disclosed scoping decision made before writing any code: Slice A2's
+`player_qualitative_state`/`team_qualitative_state` are CURRENT-STATE tables
+(one row per subject, overwritten every FULL_TIME analysis) - they have no
+memory of what a signal looked like before the latest match, so "NEW SIGNAL
+/ PERSISTENT TREND / REVERSAL / NOISE" (the user's own spec, section 16)
+literally cannot be computed from them alone. The real history already
+exists elsewhere: `match_observations` is append-only, keyed per match, and
+already carries `fpl_signal`/`fpl_direction` per observation - no new table
+needed, just a real read across it.
+
+- **`models/qualitative_trends.py::classify_direction_history()`** - one
+  shared, deterministic rule used by both player and team intelligence (a
+  player's ROLE trend and a team's TEAM_ATTACK trend judged by the same
+  standard, not two subtly different heuristics). Real, disclosed threshold
+  taken literally from the spec's own "do not declare persistent trends from
+  tiny samples" warning: 1 real observation = NEW_SIGNAL; the two most
+  recent disagreeing = REVERSAL; two most recent agreeing but a real third,
+  older observation contradicting them = NOISE (two lucky matches in a row
+  shouldn't look more settled than they are); two-or-more genuinely
+  consistent = PERSISTENT_TREND. `signal_trends_for_subject()` groups by the
+  real `fpl_signal` value, ordered by real match kickoff time (not insertion
+  order - a re-analyzed older match must never look newer), and explicitly
+  excludes HALFTIME-phase rows (provisional evidence from an unfinished
+  match must never seed a trend).
+- **`models/player_intelligence.py`** / **`models/team_intelligence.py`** -
+  thin, honest fusion: the current snapshot (Slice A2's existing tables)
+  plus the real trend read above. A subject with zero qualitative evidence
+  returns an honestly empty object, never a fabricated one.
+  `squad_player_intelligence()` silently omits squad members with no real
+  evidence at all, rather than returning an all-None row for them.
+- **`models/manager_intelligence.py`** - the real, structurally-derived half
+  of "Manager Intelligence" (spec section 18). Real, disclosed scope
+  decision: this project tracks no separate manager identity/tenure (no
+  free source gives one independent of the team) - rather than fabricate
+  one, this aggregates real formation frequency, starting-XI rotation rate
+  (Jaccard distance between consecutive matches' real starting XIs), and
+  average first-substitution minute across a team's own match history
+  (`team_match_state`/`player_match_state`, already-collected Slice A data,
+  no new ingestion). Requires >=2 real FULL_TIME matches before saying
+  anything beyond an honest "insufficient history" note - matches this
+  project's own standing discipline (`manager_change.py`'s 2-source
+  corroboration bar, `squad_churn.py`'s None-when-unknown contract). A real
+  manager change (`fpl manager-changes`, Pillar 2) invalidates this
+  profile's historical continuity - the caller's job to check that
+  separately, since this module has no way to know when a manager actually
+  changed (it only sees the team).
+- **Wired into `models/team_outlook.py`** (the existing "automatic football
+  pundit" fusion, 2026-08-21) rather than built as a disconnected parallel
+  surface - `TeamOutlook` gained `qualitative`/`tactics` fields, both real
+  reads, both `None`/note-carrying honestly when there's nothing yet to
+  report. `fpl team-outlook --squad` and the dashboard's existing Team
+  Outlook panel print/render the new signals automatically, no separate
+  command needed for the team side. Player-level intelligence has no
+  existing per-player command to extend, so it gets a new
+  **`fpl player-intelligence <player_id>`**; team-level structural pattern
+  gets its own **`fpl manager-intelligence <team_id>`** (kept separate from
+  `team-outlook` since it answers a genuinely different question - "how does
+  this team set up/rotate" vs "what should I know about this team right
+  now").
+- Dashboard's Team Outlook panel gained two small, additive lines: the
+  team's current post-match tactical-signal chip (when Slice A2 has
+  actually analyzed a match for that team) and a real "typically X
+  formation, rotation N" line (when >=2 real matches exist) - both `None`-
+  gated, never fabricated placeholders.
+- 30 new tests (`test_qualitative_trends.py`, `test_player_intelligence.py`,
+  `test_manager_intelligence.py`, `test_team_intelligence.py`,
+  `test_cli_intelligence.py`) plus the existing `test_team_outlook.py`
+  suite re-verified green against the extended `TeamOutlook` dataclass
+  (only one real construction site in the whole codebase, confirmed by
+  grep before changing it).
+- **What this does NOT close, stated plainly**: this is real evidence
+  accumulation over what Slice A2 already produces - it does not itself
+  generate new qualitative analysis, so its value is currently limited by
+  how many real matches have actually been analyzed (zero in-season matches
+  analyzed as of this session - GW1 is the still-open first real test case,
+  same "not yet outcome-verified, schema/logic-verified instead" honesty
+  posture as `fpl live-bonus`/`fpl live-rank` before their first live
+  match). Decision Fusion (Model vs Football Intelligence vs My View,
+  section 26-27) and calibration/learning (section 28) remain unstarted -
+  both explicitly depend on enough real analyzed matches existing to reason
+  over, which this pass doesn't yet have.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of

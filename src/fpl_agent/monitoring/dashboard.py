@@ -1013,6 +1013,8 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             extras.append(f"<span class='outlook-chip'>{_esc(o.formation)}</span>")
         if o.manager_change:
             extras.append(f"<span class='outlook-chip outlook-alert'>manager change signal</span>")
+        if o.qualitative and o.qualitative.current_tactical_signal:
+            extras.append(f"<span class='outlook-chip'>{_esc(o.qualitative.current_tactical_signal)}</span>")
         # Real fixture-quality signal (2026-08-21, third session, section
         # 16: "team outlook should feel like an intelligence layer over the
         # fixture ticker") - the same real avg-difficulty read the ticker
@@ -1023,11 +1025,20 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             f"Next 5: {_esc(quality[1])} run</div>"
         ) if quality else ""
         badge_url = _official_badge_url(team_codes.get(o.team_id, 0))
+        # Real, structurally-derived tactical pattern (manager_intelligence.py,
+        # 2026-08-22) - only rendered once >=2 real matches exist to say
+        # anything honest about it (o.tactics.note is None in that case).
+        tactics_html = (
+            f"<div class='outlook-fixtures'><span class='dot dot-ok'></span>"
+            f"Typically {_esc(o.tactics.most_common_formation or '?')}, "
+            f"rotation {o.tactics.starting_xi_rotation_rate}</div>"
+        ) if o.tactics and o.tactics.note is None else ""
         cards.append(f"""<div class="outlook-card">
   <div class="outlook-head"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">
     <strong>{_esc(o.team_name)}</strong>{''.join(extras)}</div>
   <div class="outlook-churn"><span class="dot dot-{churn_dot_cls}"></span>{_esc(o.churn_label)}</div>
   {quality_html}
+  {tactics_html}
   {"<div class='outlook-news'>" + _esc(_truncate(o.lineup_news)) + "</div>" if o.lineup_news else ""}
 </div>""")
     return "\n".join(cards)
