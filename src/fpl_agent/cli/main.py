@@ -737,6 +737,39 @@ def manager_intelligence_cmd(team_id: int):
     click.echo(f"  avg first substitution minute: {mi.avg_first_substitution_minute}")
 
 
+@cli.command("decision-fusion")
+@click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
+def decision_fusion_cmd(squad: str):
+    """Model vs Football Intelligence vs My View - captain decision only
+    (2026-08-22, spec section 26/27). Rule-based, never an arbitrary score:
+    shows the quant model's pick, the qualitative read's pick (only when a
+    real PERSISTENT trend exists, not a one-match blip), and your own
+    recorded observation (`fpl match-note`), then a verdict - MODEL_WINS /
+    QUALITATIVE_WINS / UNDECIDED / INSUFFICIENT_EVIDENCE - with a real,
+    disclosed reason. Never auto-resolves a genuine disagreement with your
+    own recorded view (recommend only, per this project's standing rule)."""
+    from fpl_agent.models.decision_fusion import compare_captain_views
+
+    player_ids = [int(x) for x in squad.split(",")]
+    conn = get_connection()
+    try:
+        comparison = compare_captain_views(conn, player_ids)
+    finally:
+        conn.close()
+
+    click.echo("CAPTAIN - Model vs Football Intelligence vs My View")
+    if comparison.model_pick:
+        click.echo(f"  Model:       {comparison.model_pick.web_name} - {comparison.model_reason}")
+    else:
+        click.echo(f"  Model:       (none) - {comparison.model_reason}")
+    click.echo(f"  Football:    {comparison.qualitative_pick_name or '(no qualitative signal)'}"
+               + (f" - {comparison.qualitative_reason}" if comparison.qualitative_reason else ""))
+    click.echo(f"  My view:     {comparison.user_pick_name or '(no recorded observation)'}"
+               + (f" - {comparison.user_reason}" if comparison.user_reason else ""))
+    click.echo(f"  Verdict:     {comparison.verdict}")
+    click.echo(f"  Why:         {comparison.explanation}")
+
+
 @cli.command("manager-changes")
 @click.option("--days", default=7, type=int, help="lookback window in days")
 def manager_changes_cmd(days: int):

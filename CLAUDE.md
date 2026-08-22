@@ -4326,6 +4326,62 @@ needed, just a real read across it.
   both explicitly depend on enough real analyzed matches existing to reason
   over, which this pass doesn't yet have.
 
+## Decision Fusion: Model vs Football Intelligence vs My View (2026-08-22, same day, continued)
+
+Continuing straight down the user's own phase order into section 26/27.
+Real, explicit constraint taken directly from the spec: "Do not implement
+arbitrary scoring" / "Do NOT simply average scores" - this is a rule-based
+comparison and verdict, never a weighted-sum fusion score. Scoped tightly
+to the one concrete example the spec itself gives (captain: "Model:
+Haaland / Football: Haaland / My view: Isak / Final: undecided") rather
+than a generic multi-decision-type framework - extending to transfers/chips
+is real future work once this pattern is proven against a real disagreement.
+
+- **`models/decision_fusion.py::compare_captain_views()`** - three real,
+  independently-sourced picks: the quant model's best-median captain
+  (`optimization.captaincy.evaluate_captaincy`, unchanged), the qualitative
+  read's pick (the squad member with the most recent real POSITIVE
+  `player_fpl_implications` row for a captaincy-relevant signal -
+  GOAL_THREAT/CREATION/ROLE), and the user's own pick (`user_observations`,
+  written via `fpl match-note`). Verdict is one of exactly 4 explicit
+  labels (`MODEL_WINS`/`QUALITATIVE_WINS`/`UNDECIDED`/
+  `INSUFFICIENT_EVIDENCE`), picked by a documented rule, never a score: a
+  qualitative disagreement only wins when that player's own trend for the
+  same signal is genuinely `PERSISTENT_TREND` (reuses
+  `qualitative_trends.py` - a single good match is real evidence but not
+  grounds to override a calibrated model on its own); a real recorded user
+  observation that disagrees is **never auto-resolved either direction**
+  (`UNDECIDED`, per section 83's "recommend only" boundary) - the fusion
+  shows the disagreement, the user still decides.
+- **`fpl decision-fusion --squad <ids>`** - the standalone, explicit view.
+- **Wired additively into `optimization/decision_engine.py`** -
+  `CaptainAction` gained an optional `qualitative_note` field (default
+  `None`, both existing construction sites untouched, confirmed no
+  positional/equality assertions on `CaptainAction` existed anywhere in the
+  test suite before adding it). `_attach_qualitative_note()` only ever
+  *attaches an FYI note* when the real comparison finds `QUALITATIVE_WINS`/
+  `UNDECIDED` - the KEEP/CHANGE verdict itself is completely untouched,
+  same pure-quant-delta logic as before this pass, zero regression risk to
+  already-tested behavior. Failure inside the fusion call (e.g. no real
+  captaincy data at all) is caught and silently skipped rather than
+  breaking the surrounding squad decision. Dashboard's AI Decisions panel
+  renders the note under the Captain card when present, additive-only
+  markup (a fresh `<div>`, nothing existing restructured).
+- 6 new tests (`test_decision_fusion.py`, `test_cli_decision_fusion.py`) -
+  no-disagreement/model-wins, a single new-signal correctly NOT overriding
+  the model, a real two-match persistent trend correctly overriding it, a
+  real user observation correctly landing on UNDECIDED rather than being
+  auto-resolved, and the empty-squad insufficient-evidence case.
+- **What this does NOT close, stated plainly**: this reasons over exactly
+  one decision type (captain). Transfer/chip fusion, and the calibration/
+  learning loop that would eventually let this project say which of the
+  three views has actually been more accurate over time (spec section 28),
+  remain unstarted - both genuinely depend on more real analyzed-match and
+  real-outcome data existing than this still-preseason/GW1-pending session
+  has to work with, same honest "schema/logic-verified, not yet
+  outcome-verified" posture as everything else built ahead of real live
+  data this session.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of

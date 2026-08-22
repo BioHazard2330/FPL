@@ -1470,20 +1470,32 @@ def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int],
 </div>""")
         elif ca.kind == "keep":
             cur = ca.current
+            # Decision Fusion FYI (2026-08-22, spec section 27) - only ever
+            # additive, never changes the KEEP verdict above it.
+            qual_bit = (
+                f"<div class='decision-detail decision-fusion-note'>Football Intelligence: {_esc(ca.qualitative_note)}</div>"
+                if ca.qualitative_note else ""
+            )
             cards.append(f"""<div class="decision-card decision-positive">
   <div class="decision-kicker">Captain <span class="decision-action">KEEP</span></div>
   <div class="decision-headline">{_captain_html(cur.web_name)}</div>
   <div class="decision-detail">Remains the preferred captain &middot; median {cur.median:.1f} xP &middot;
     {_esc(cur.confidence)} confidence</div>
+  {qual_bit}
 </div>""")
         else:  # "change"
             cur, sug = ca.current, ca.suggested
             cur_bit = f"{_esc(cur.web_name)} &rarr; " if cur is not None else ""
             delta_bit = f" (+{ca.delta:.1f} xP)" if ca.delta is not None else ""
+            qual_bit = (
+                f"<div class='decision-detail decision-fusion-note'>Football Intelligence: {_esc(ca.qualitative_note)}</div>"
+                if ca.qualitative_note else ""
+            )
             cards.append(f"""<div class="decision-card decision-alert">
   <div class="decision-kicker">Captain <span class="decision-action">CHANGE</span></div>
   <div class="decision-headline">{cur_bit}{_captain_html(sug.web_name)}</div>
   <div class="decision-detail">Real median gain{delta_bit} &middot; {_esc(sug.confidence)} confidence</div>
+  {qual_bit}
 </div>""")
 
         ta = decision.transfer_action

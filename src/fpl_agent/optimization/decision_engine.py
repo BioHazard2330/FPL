@@ -15,6 +15,7 @@ in the entire pool" - a squad already near-optimal should get told so, not
 compared to a fantasy budget-unconstrained team.
 """
 
+import dataclasses
 import sqlite3
 from dataclasses import dataclass
 
@@ -38,6 +39,7 @@ class CaptainAction:
     current: CaptainOption | None
     suggested: CaptainOption | None
     delta: float | None
+    qualitative_note: str | None = None  # set only on a real QUALITATIVE_WINS/UNDECIDED disagreement (decision_fusion.py)
 
 
 @dataclass(frozen=True)
@@ -98,12 +100,32 @@ def _evaluate_transfer(conn: sqlite3.Connection, locked: LockedSquadState) -> Tr
     return TransferAction("transfer", best_candidate, best_candidate.net_ev_3gw)
 
 
+def _attach_qualitative_note(conn: sqlite3.Connection, squad_ids: list[int], captain_action: CaptainAction) -> CaptainAction:
+    """Additive-only Decision Fusion wiring (2026-08-22, spec section 27) -
+    never changes the KEEP/CHANGE verdict itself (that stays pure quant
+    delta, unchanged behavior/tests), only attaches an FYI note when the
+    real Model-vs-Football-Intelligence-vs-My-View comparison
+    (decision_fusion.py) finds a genuine disagreement worth surfacing.
+    Failure here (e.g. no real captaincy data) must never break the
+    surrounding squad decision - caught and silently skipped."""
+    from fpl_agent.models.decision_fusion import compare_captain_views
+
+    try:
+        comparison = compare_captain_views(conn, squad_ids)
+    except Exception:
+        return captain_action
+    if comparison.verdict in ("QUALITATIVE_WINS", "UNDECIDED"):
+        return dataclasses.replace(captain_action, qualitative_note=comparison.explanation)
+    return captain_action
+
+
 def evaluate_locked_squad(conn: sqlite3.Connection, locked: LockedSquadState) -> SquadDecision:
     """The real, computed-every-regen replacement for a manually-triggered
     `fpl transfers`/`fpl captain` run - the dashboard's AI Decisions panel
     now shows this live instead of only reflecting the last decision the
     user happened to log by hand."""
     captain_action = _evaluate_captain(conn, locked)
+    captain_action = _attach_qualitative_note(conn, sorted(locked.squad_ids), captain_action)
     transfer_action = _evaluate_transfer(conn, locked)
 
     from fpl_agent.models.availability import list_availability
