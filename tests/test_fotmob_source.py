@@ -95,6 +95,38 @@ def test_find_match_returns_none_when_not_found(monkeypatch):
     assert find_match(date(2026, 8, 21), "Nonexistent FC", "Nobody") is None
 
 
+# --- real live bugs found + fixed 2026-08-22 (matchday-autonomy, real GW1
+# fixture-discovery pass): two genuinely different real clubs FPL's own team
+# names couldn't reach through the existing loose substring match alone.
+
+_REAL_MISMATCH_PAYLOAD = {
+    "leagues": [{
+        "name": "Premier League",
+        "matches": [
+            {"id": 1, "home": {"name": "Nottm Forest"}, "away": {"name": "Leeds"},
+             "status": {"utcTime": "2026-08-22T14:00:00.000Z"}},
+            {"id": 2, "home": {"name": "Hull"}, "away": {"name": "Man United"},
+             "status": {"utcTime": "2026-08-22T11:30:00.000Z"}},
+        ],
+    }],
+}
+
+
+def test_find_match_resolves_forest_despite_an_apostrophe_mismatch(monkeypatch):
+    # Real bug: FPL's own team name is "Nott'm Forest", FotMob's real listing
+    # says "Nottm Forest" - same club, differ only by the apostrophe.
+    monkeypatch.setattr(fotmob_mod, "fetch_matches_for_date", lambda d: _REAL_MISMATCH_PAYLOAD)
+    assert find_match(date(2026, 8, 22), "Nott'm Forest", "Leeds") == "1"
+
+
+def test_find_match_resolves_man_utd_via_either_of_two_known_aliases(monkeypatch):
+    # Real bug: "Man Utd" has two long-form aliases in the crosswalk
+    # ("Manchester United" and "Man United") - only trying the first
+    # silently missed a real fixture whose FotMob name matched the second.
+    monkeypatch.setattr(fotmob_mod, "fetch_matches_for_date", lambda d: _REAL_MISMATCH_PAYLOAD)
+    assert find_match(date(2026, 8, 22), "Hull City", "Man Utd") == "2"
+
+
 def test_sync_match_upserts_match_player_and_team_state(monkeypatch, db_conn):
     _seed(db_conn)
     monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")

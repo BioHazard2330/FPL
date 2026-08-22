@@ -1814,6 +1814,22 @@ def generate_dashboard_html(
     optimizer_status = "READY" if primary and primary.result.squad else "NO SQUAD"
     optimizer_status_cls = "status-ok" if optimizer_status == "READY" else "status-bad"
 
+    # Real live-rank headline (2026-08-22) - same cheap-read-of-already-
+    # logged-state pattern as Chip Strategy above: `fpl live-rank` samples
+    # ~750 real managers per run (the heaviest network call in this
+    # project), far too expensive to trigger from every dashboard regen -
+    # this only ever reads the last real result `fpl live-rank` itself
+    # already logged to the decision journal. `None` (nothing shown) when
+    # it's never been run - never a fabricated placeholder rank.
+    live_rank_decision = latest_decision_of_type(conn, "live_rank")
+    live_rank_html = ""
+    if live_rank_decision is not None:
+        live_rank_html = (
+            f'<div class="hero-strip-item"><span class="hero-strip-label">Live rank (est.)</span>'
+            f'<span class="hero-strip-value">{_esc(live_rank_decision.summary)} '
+            f'&middot; {_esc(_relative_time(live_rank_decision.created_at))}</span></div>'
+        )
+
     # Dashboard-state architecture (2026-08-21) - one real signal
     # (_squad_live_window, already computed above) drives which of the
     # three product states (PRE_DEADLINE/LIVE/POST_MATCH) this render is
@@ -1877,12 +1893,21 @@ def generate_dashboard_html(
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
     news_fresh_html = f"<span class='panel-subtitle freshness-tag'>Updated {_esc(news_fresh)}</span>" if news_fresh else ""
 
+    # Real, state-aware browser reload cadence (2026-08-22, tonight's-matches
+    # pass) - `fpl live-match-poll` now regenerates this file roughly every
+    # `interval` seconds while a match is genuinely LIVE (see its own
+    # docstring), so a flat 60s client reload was slower than the data
+    # backing it actually refreshes. POST_MATCH/PRE_DEADLINE keep the
+    # original 60s - nothing regenerates faster than that outside a live
+    # match anyway (the 30min run-scheduled cadence dominates instead).
+    refresh_seconds = 20 if dash_state == "LIVE" else _REFRESH_SECONDS
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="{_REFRESH_SECONDS}">
+<meta http-equiv="refresh" content="{refresh_seconds}">
 <title>fpl-agent dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1901,7 +1926,7 @@ def generate_dashboard_html(
     <span class="gw-badge">{_esc(gw_label)}</span>
     <div class="refresh-indicator">
       <span class="pulse-dot small"></span>
-      snapshot {_esc(_relative_time(now))} &middot; next in <span id="refresh-countdown">{_REFRESH_SECONDS}s</span>
+      snapshot {_esc(_relative_time(now))} &middot; next in <span id="refresh-countdown">{refresh_seconds}s</span>
     </div>
     <a class="btn-refresh" href="" title="Reload now">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.05-6.77"/><path d="M21 3v6h-6"/></svg>
@@ -1953,6 +1978,7 @@ def generate_dashboard_html(
     <div class="hero-strip-item"><span class="hero-strip-label">Risks</span><span class="hero-strip-value">{len(risks_list)}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Next kickoff</span><span class="hero-strip-value">{kickoff_html}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Optimizer</span><span class="hero-strip-value {optimizer_status_cls}">{_esc(optimizer_status)}</span></div>
+    {live_rank_html}
   </div>
 </section>
 
@@ -2070,7 +2096,7 @@ def generate_dashboard_html(
 (function() {{
   var el = document.getElementById('refresh-countdown');
   if (!el) return;
-  var remaining = {_REFRESH_SECONDS};
+  var remaining = {refresh_seconds};
   setInterval(function() {{
     remaining = remaining > 0 ? remaining - 1 : 0;
     el.textContent = remaining + 's';

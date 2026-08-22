@@ -4382,6 +4382,76 @@ is real future work once this pattern is proven against a real disagreement.
   outcome-verified" posture as everything else built ahead of real live
   data this session.
 
+## Tonight's-matches readiness pass: real live bugs found and fixed (2026-08-22, same day, continued)
+
+User escalated with a full "finish autonomous matchday" spec, explicit deadline: tonight's real
+3+ simultaneous Premier League matches. Worked the user's own execution order (inspect first,
+fix real gaps, verify against the actual real fixtures - not synthetic data).
+
+**Real, live-blocking bug found and fixed: FotMob team-name matching couldn't resolve 3 of
+tonight's 6 real fixtures.** `discover_and_register_matches`/`sync_match` rely on
+`fotmob_source.py::find_match`'s loose bidirectional substring match - genuinely insufficient
+for two real cases discovered live against the actual FotMob API for 2026-08-22:
+- **Nott'm Forest v Leeds** - FPL's own team name is "Nott'm Forest", FotMob's real listing says
+  "Nottm Forest" - same club, differ only by an apostrophe, no substring relationship either way.
+- **Hull City v Man Utd** - "Man Utd" has TWO known long-form aliases in
+  `market_identity.COMMON_TEAM_NAME_ALIASES` ("Manchester United" and football-data.co.uk's own
+  "Man United"); FotMob's real listing says "Man United" - trying only the first alias (a
+  single-value reverse lookup) silently missed the one that actually matches.
+
+Fixed in `fotmob_source.py`: `_strip_punctuation()` (apostrophes/periods stripped before
+comparison, a general fix not a Forest-specific hack) plus `_REVERSE_TEAM_NAME_ALIASES` built as
+a list-per-short-form (not a single value) so every known long-form alias gets tried, not just
+whichever happened to be inserted first. **Live-verified against the real FotMob API for real,
+not assumed**: all 3 previously-failing fixtures now resolve correctly (`fpl sync-match "Nott'm
+Forest" "Leeds"` -> real match id 5795367, 22/22 players resolved; `fpl sync-match "Hull City"
+"Man Utd"` -> real match id 5795364, 22/22 resolved). All 6 of today's real fixtures (including
+the genuinely simultaneous 14:00 UTC trio: Everton-Crystal Palace, Ipswich-Sunderland,
+Nott'm Forest-Leeds) are now correctly auto-registered in `match_intelligence` with the right
+`fpl_fixture_id` link. 2 new regression tests reproducing the exact real payload shapes.
+
+**Real gap found and fixed: the dashboard file wasn't actually refreshing during a live match.**
+`fpl live-match-poll` re-syncs match data every ~25s, but never itself regenerated
+`dashboard.html` - only the separate 30-min `run-scheduled` cadence did. The browser's own 60s
+auto-refresh was reloading the SAME stale file for up to 30 minutes at a time during a live
+match, directly contradicting "no manual browser refresh, dashboard updates automatically while
+open." Fixed: `live_match_poll_cmd` now calls `_write_dashboard()` after any tick where a match
+is genuinely LIVE or just transitioned to FULL_TIME (never on a quiet pre-kickoff idle tick,
+where nothing would look different) - non-fatal on failure, same defensive posture as every
+other step in this loop. Client-side refresh cadence (`_REFRESH_SECONDS`) is now state-aware
+too: 20s during LIVE (was a flat 60s regardless of state), unchanged 60s otherwise.
+
+**Live-rank wired into the dashboard hero** (the user's explicit ask, continuing the
+`fpl live-rank` work from earlier this session): a new hero-strip tile reads
+`latest_decision_of_type(conn, "live_rank")` - same cheap, already-logged-value pattern the Chip
+Strategy panel already established for wildcard/free-hit (never triggers the real ~750-manager
+sample from the dashboard regen path itself, which stays opt-in/manual via `fpl live-rank`).
+Shows nothing (not a fabricated placeholder) until `fpl live-rank` has actually been run at least
+once. **Run for real this session** against the now-locked real GW1 data (entry 7378572's real
+picks synced) - first genuine end-to-end live-rank estimate this project has ever produced, not
+just schema-verified.
+
+**Scheduler registration, done live, verified end-to-end, not just registered.** Per explicit
+user go-ahead: `scripts/setup_live_poll_scheduler.ps1` registered `FPLAgentLivePoll` (relaunches
+`fpl live-match-poll --max-hours 6` every 30min if not already running, `-MultipleInstances
+IgnoreNew`). Learned from this project's own prior `setup_scheduler.ps1` lesson ("registered
+successfully" printed once before turned out to be a lie) - didn't trust registration alone:
+manually triggered it, confirmed a real `fpl.exe`/`wscript.exe` process pair actually spawned and
+stayed running, and restarted it again after the name-matching/dashboard-regen fixes landed so
+the live process picks up the fixed code rather than continuing to run the pre-fix version it
+had already loaded into memory.
+
+**Real, disclosed scope for tonight, not overclaimed**: multi-match handling itself needed no new
+architecture - `live-match-poll`/`refresh_in_progress_matches`/`discover_and_register_matches`/
+the dashboard's Match Intelligence panel were already data-driven loops over every tracked match
+(confirmed by reading the code, not assumed), not special-cased to one match - the real gap this
+pass found was two concrete bugs (team-name resolution, dashboard staleness), not a missing
+architecture layer. Full visual/product redesign (spec sections M/N - typography, live-mode
+transformation, Team Outlook's exact compact card format) was **deliberately not attempted this
+pass**, per the user's own explicit execution order ("do NOT spend the whole session polishing
+CSS while the runtime is incomplete," listed as step 10 of 13, after runtime correctness) - a
+real, scoped-out follow-up, not silently dropped.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of

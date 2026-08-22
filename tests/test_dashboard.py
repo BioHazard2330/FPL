@@ -81,6 +81,27 @@ def test_dashboard_decision_center_shows_a_real_logged_transfer(db_conn):
     assert "Bruno G." in result
 
 
+def test_hero_shows_no_live_rank_tile_when_never_run(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Live rank (est.)" not in result
+
+
+def test_hero_shows_the_last_logged_live_rank(db_conn):
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(db_conn, "live_rank", "estimated live rank ~123,456 (event 1, 42 pts)", {"event": 1})
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Live rank (est.)" in result
+    assert "123,456" in result
+
+
 def test_generate_dashboard_html_composes_without_crashing(db_conn):
     """Plumbing test, same spirit as test_rate_team.py - real (unmocked)
     expected_points() over a small synthetic pool won't produce meaningful

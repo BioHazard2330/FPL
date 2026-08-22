@@ -8,7 +8,11 @@ from datetime import datetime, timezone
 import requests
 
 from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
-from fpl_agent.ingestion.market_identity import get_or_create_market_team, normalize_common_team_name
+from fpl_agent.ingestion.market_identity import (
+    COMMON_TEAM_NAME_ALIASES,
+    get_or_create_market_team,
+    normalize_common_team_name,
+)
 from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
 from fpl_agent.ingestion.raw_store import save_raw
 from fpl_agent.ingestion.sync import update_source_health
@@ -51,21 +55,67 @@ def fetch_matches_for_date(day: date_cls) -> dict:
     return _get(_MATCHES_URL, {"date": day.strftime("%Y%m%d")})
 
 
+# Reverse of the project's own long-form->FPL-short-form alias table
+# (market_identity.py) - built once at import time. Real, live gap found
+# 2026-08-22 (the first time this project actually tried to auto-discover
+# a real fixture involving a club whose FPL short name isn't a substring
+# match of FotMob's own longer name either way): "Nott'm Forest" vs FotMob's
+# "Nottingham Forest" share no common substring run despite being the same
+# club - `find_match`'s existing loose bidirectional substring check can't
+# bridge that gap on its own, unlike e.g. "Coventry"/"Coventry City" which
+# genuinely are substrings of each other. This reverse map lets `find_match`
+# also try the long form FotMob is more likely to use whenever the caller's
+# own name happens to be a known FPL-short-form alias target.
+# A list per short form, not a single value - real gap found live
+# 2026-08-22: "Man Utd" has TWO known long-form aliases in the source dict
+# ("manchester united" and "man united", the latter being football-data.
+# co.uk's own short form) and FotMob's real listing uses neither exactly
+# ("Man United") - only trying the first alias (a single-value dict would
+# have picked "manchester united" and missed the one that actually
+# substring-matches FotMob's real name) silently failed to find a real,
+# live Hull vs Man United fixture.
+_REVERSE_TEAM_NAME_ALIASES: dict[str, list[str]] = {}
+for _long, _short in COMMON_TEAM_NAME_ALIASES.items():
+    _REVERSE_TEAM_NAME_ALIASES.setdefault(_short.strip().lower(), []).append(_long)
+
+
+def _strip_punctuation(name: str) -> str:
+    # Real, live gap found 2026-08-22: FPL's "Nott'm Forest" vs FotMob's own
+    # "Nottm Forest" - same club, differ only by an apostrophe. Stripping
+    # apostrophes/periods before comparison is a general fix (any future
+    # club-name punctuation mismatch, not just this one), not a Forest-
+    # specific special case.
+    return name.replace("'", "").replace(".", "")
+
+
+def _name_candidates(team_name: str) -> list[str]:
+    lower = team_name.strip().lower()
+    candidates = {lower, _strip_punctuation(lower)}
+    for alt in _REVERSE_TEAM_NAME_ALIASES.get(lower, []):
+        candidates.add(alt)
+        candidates.add(_strip_punctuation(alt))
+    return list(candidates)
+
+
 def find_match(day: date_cls, home_team_name: str, away_team_name: str) -> str | None:
     """Searches every league FotMob returns for that date for a case-insensitive
     substring match on both team names - real fixture names sometimes carry a
     club suffix FPL's own short name doesn't (e.g. FotMob's "Coventry City" vs
     FPL's "Coventry"), so this is intentionally loose in both directions
-    rather than an exact-equality match. Returns the first match found; raises
+    rather than an exact-equality match. Also tries each name's known
+    long-form alias (see `_REVERSE_TEAM_NAME_ALIASES` above) for the real
+    cases where the two names share no substring at all (e.g. "Nott'm
+    Forest" vs "Nottingham Forest"). Returns the first match found; raises
     nothing - `None` means genuinely not found, caller decides what to do."""
     payload = fetch_matches_for_date(day)
-    home_lower, away_lower = home_team_name.strip().lower(), away_team_name.strip().lower()
+    home_candidates = _name_candidates(home_team_name)
+    away_candidates = _name_candidates(away_team_name)
     for league in payload.get("leagues", []):
         for match in league.get("matches", []):
-            match_home = (match.get("home", {}).get("name") or "").lower()
-            match_away = (match.get("away", {}).get("name") or "").lower()
-            home_hit = home_lower in match_home or match_home in home_lower
-            away_hit = away_lower in match_away or match_away in away_lower
+            match_home = _strip_punctuation((match.get("home", {}).get("name") or "").lower())
+            match_away = _strip_punctuation((match.get("away", {}).get("name") or "").lower())
+            home_hit = any(c in match_home or match_home in c for c in home_candidates)
+            away_hit = any(c in match_away or match_away in c for c in away_candidates)
             if home_hit and away_hit:
                 return str(match["id"])
     return None
