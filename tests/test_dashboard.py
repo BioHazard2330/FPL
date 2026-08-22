@@ -1100,3 +1100,121 @@ def test_match_intelligence_panel_sorts_full_time_before_pre_match(db_conn):
     result = _match_intelligence_html(db_conn, {1})
 
     assert result.index("FULL_TIME") < result.index("match-intel-row")
+
+
+# --- ACTUAL vs LIVE vs NEXT-projection player cards (2026-08-22, "does not
+# clearly distinguish CURRENT GAMEWEEK REALITY from FUTURE PROJECTIONS") --
+
+
+def _pitch_test_xi():
+    from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
+
+    played = PlayerCandidate(
+        player_id=1, web_name="P1", position="GKP", team_id=1, team_short="T1",
+        price_tenths=45, xp=3.0, median=3.0, floor=1.5, ceiling=5.4, confidence="medium",
+        expected_minutes=90.0,
+    )
+    not_started = PlayerCandidate(
+        player_id=10, web_name="P10", position="DEF", team_id=3, team_short="T3",
+        price_tenths=45, xp=4.0, median=4.0, floor=2.0, ceiling=7.2, confidence="medium",
+        expected_minutes=90.0,
+    )
+    return StartingXI(starting=[played, not_started], bench=[], captain=None, vice_captain=None)
+
+
+def test_pitch_shows_actual_points_for_a_finished_fixture_not_projected_xp(db_conn):
+    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+        "VALUES (1,'GW1','2026-08-21T17:30:00Z',1,0,0,0,1,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,1,1,'t0')"
+    )
+    db_conn.commit()
+    live_payload = {"elements": [{"id": 1, "stats": {"total_points": 9, "minutes": 90}}]}
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, live_payload, 1)
+
+    assert "player-actual" in result
+    assert "9 <span class='unit'>pts</span>" in result
+    assert "was 3.0 xP" in result
+
+
+def test_pitch_shows_live_points_for_an_in_progress_fixture(db_conn):
+    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+        "VALUES (1,'GW1','2026-08-21T17:30:00Z',1,0,0,0,1,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,0,1,'t0')"
+    )
+    db_conn.commit()
+    live_payload = {"elements": [{"id": 1, "stats": {"total_points": 2, "minutes": 45}}]}
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, live_payload, 1)
+
+    assert "player-live" in result
+    assert "2 <span class='unit'>pts</span>" in result
+    assert "live &middot; 45&prime;" in result
+
+
+def test_pitch_shows_next_xp_projection_for_a_yet_to_play_player(db_conn):
+    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, None, None)
+
+    assert "next-tag" in result
+    assert "NEXT" in result
+    assert "4.0 <span class='unit'>xP</span>" in result
+
+
+def test_pitch_never_shows_xp_as_current_performance_once_a_match_has_played(db_conn):
+    """The one real invariant this whole fix exists to guarantee: a player
+    whose match has genuinely finished shows exactly ONE points figure (the
+    real ACTUAL one), never the bare future-xP div a not-yet-played
+    teammate on the same pitch correctly still shows."""
+    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+        "VALUES (1,'GW1','2026-08-21T17:30:00Z',1,0,0,0,1,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,1,1,'t0')"
+    )
+    db_conn.commit()
+    live_payload = {"elements": [{"id": 1, "stats": {"total_points": 9, "minutes": 90}}]}
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, live_payload, 1)
+
+    # P1's real match finished - exactly one ACTUAL card; P10 hasn't played
+    # yet - exactly one NEXT-projection card. Never both/neither for either.
+    assert result.count("player-actual") == 1
+    assert result.count("class='player-xp'") == 1
+
+
+# --- Team Outlook table rebuild (2026-08-22, "Do NOT keep the current
+# quote/card treatment... make it a compact table") ---------------------
+
+
+def test_team_outlook_renders_as_a_real_table(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "outlook-table" in result
+    assert "<th>Tactical signal</th>" in result
+    assert "<th>Fixture quality</th>" in result
+    assert "<th>FPL signal</th>" in result

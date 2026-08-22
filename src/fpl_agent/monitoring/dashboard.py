@@ -353,6 +353,7 @@ def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
 def _player_card(
     c, *, is_captain: bool, is_vice: bool, lineup_info: dict | None = None, team_code: int | None = None,
     bench_order: int | None = None, next_fixture: tuple[str, bool, int] | None = None,
+    play_state: str | None = None, actual_points: float | None = None, live_minutes: int | None = None,
 ) -> str:
     light, dark = _POSITION_ACCENT.get(c.position, _POSITION_ACCENT["MID"])
     armband = ""
@@ -389,6 +390,31 @@ def _player_card(
 
     bench_badge = f"<span class='bench-order'>{bench_order}</span>" if bench_order is not None else ""
     cap_class = " is-captain" if is_captain else ""
+
+    # Real ACTUAL vs LIVE vs NEXT-projection distinction (2026-08-22,
+    # "fundamental PRODUCT problem" fix, direct user ask: "never display xP
+    # as though it represents current GW performance"). `play_state` is a
+    # real per-player fact (`_player_play_states`, same fixtures table the
+    # hero's own Played/Live/To-Play count already reads); `actual_points`
+    # is FPL's own real live `total_points` for this player this event
+    # (present for both an in-progress AND an already-finished match - the
+    # live endpoint keeps serving it after full-time), never fabricated -
+    # `None` means "no live payload was fetchable this cycle," which falls
+    # back to the projection with an honest label rather than a blank card.
+    if play_state == "played" and actual_points is not None:
+        points_html = (
+            f"<div class='player-actual'>{actual_points:.0f} <span class='unit'>pts</span></div>"
+            f"<div class='player-xp-ref'>was {c.median:.1f} xP</div>"
+        )
+    elif play_state == "live" and actual_points is not None:
+        minutes_bit = f" &middot; {live_minutes}&prime;" if live_minutes is not None else ""
+        points_html = (
+            f"<div class='player-actual player-live'><span class='pulse-dot small'></span>"
+            f"{actual_points:.0f} <span class='unit'>pts</span></div>"
+            f"<div class='player-xp-ref'>live{minutes_bit}</div>"
+        )
+    else:
+        points_html = f"<div class='player-xp'>{c.median:.1f} <span class='unit'>xP</span><span class='next-tag'>NEXT</span></div>"
 
     # Hover/focus tooltip (2026-08-21 direct user request) - real data
     # already computed for this exact card (floor/median/ceiling/
@@ -427,22 +453,36 @@ def _player_card(
   </div>
   <div class="player-name">{_esc(c.web_name)}</div>
   <div class="player-meta">{_esc(c.team_short)} &middot; £{c.price_tenths / 10:.1f}m</div>
-  <div class="player-xp">{c.median:.1f} <span class="unit">xP</span></div>
+  {points_html}
   {lineup_badge}
   {tooltip}
 </div>"""
 
 
-def _pitch_html_from_xi(conn: sqlite3.Connection, xi, cap_id: int | None, vc_id: int | None) -> str:
+def _pitch_html_from_xi(
+    conn: sqlite3.Connection, xi, cap_id: int | None, vc_id: int | None,
+    live_payload: dict | None = None, event: int | None = None,
+) -> str:
     """Shared pitch renderer - takes a bare `StartingXI` + captain/vice ids so
     both the model's own recommendation (`_pitch_html`) and the user's REAL
     synced squad (`_real_team_pitch_html`, 2026-08-21) render identically
-    rather than duplicating the card-layout logic per source."""
+    rather than duplicating the card-layout logic per source.
+
+    `live_payload`/`event` (2026-08-22) - real per-player ACTUAL/LIVE points
+    instead of always showing a future xP projection as if it were current
+    GW performance. Both default to `None` (every pre-existing caller that
+    doesn't pass them keeps the exact prior xP-only behavior - the honest
+    "no live data available" case, not a regression)."""
     if not xi.starting:
         return "<div class='empty-state'>No squad could be built from the current player pool.</div>"
     squad_ids = [c.player_id for c in xi.starting] + [c.player_id for c in xi.bench]
     lineup = get_predicted_lineup_for_squad(conn, squad_ids)
     team_codes = {r["id"]: r["code"] for r in conn.execute("SELECT id, code FROM teams").fetchall()}
+    play_states = _player_play_states(conn, squad_ids, event)
+    stats_by_id = (
+        {e["id"]: e.get("stats", {}) for e in live_payload.get("elements", []) if "id" in e}
+        if live_payload else {}
+    )
 
     # Per-team next-fixture cache (2026-08-21, fourth session) - a handful
     # of distinct teams across a 15-man squad, one `team_fixture_ticker`
@@ -457,6 +497,12 @@ def _pitch_html_from_xi(conn: sqlite3.Connection, xi, cap_id: int | None, vc_id:
                 (entries[0].opponent_short, entries[0].is_home, entries[0].difficulty) if entries else None
             )
         return next_fixture_cache[team_id]
+
+    def _actual_and_minutes(player_id: int) -> tuple[float | None, int | None]:
+        stats = stats_by_id.get(player_id)
+        if stats is None:
+            return None, None
+        return stats.get("total_points"), stats.get("minutes")
 
     by_position: dict[str, list] = {p: [] for p in _POSITION_ORDER}
     for c in xi.starting:
@@ -475,7 +521,9 @@ def _pitch_html_from_xi(conn: sqlite3.Connection, xi, cap_id: int | None, vc_id:
         cards = "\n".join(
             _player_card(c, is_captain=c.player_id == cap_id, is_vice=c.player_id == vc_id,
                          lineup_info=lineup.get(c.player_id), team_code=team_codes.get(c.team_id),
-                         next_fixture=_next_fixture_for(c.team_id))
+                         next_fixture=_next_fixture_for(c.team_id), play_state=play_states.get(c.player_id),
+                         actual_points=_actual_and_minutes(c.player_id)[0],
+                         live_minutes=_actual_and_minutes(c.player_id)[1])
             for c in players
         )
         rows.append(
@@ -490,7 +538,9 @@ def _pitch_html_from_xi(conn: sqlite3.Connection, xi, cap_id: int | None, vc_id:
     bench_cards = "\n".join(
         _player_card(c, is_captain=c.player_id == cap_id, is_vice=c.player_id == vc_id,
                      lineup_info=lineup.get(c.player_id), team_code=team_codes.get(c.team_id), bench_order=i + 1,
-                     next_fixture=_next_fixture_for(c.team_id))
+                     next_fixture=_next_fixture_for(c.team_id), play_state=play_states.get(c.player_id),
+                     actual_points=_actual_and_minutes(c.player_id)[0],
+                     live_minutes=_actual_and_minutes(c.player_id)[1])
         for i, c in enumerate(xi.bench)
     )
 
@@ -501,13 +551,13 @@ def _pitch_html_from_xi(conn: sqlite3.Connection, xi, cap_id: int | None, vc_id:
 <div class="pitch-row bench-row">{bench_cards}</div>"""
 
 
-def _pitch_html(conn: sqlite3.Connection, report) -> str:
+def _pitch_html(conn: sqlite3.Connection, report, live_payload: dict | None = None, event: int | None = None) -> str:
     if not report.structures or not report.structures[0].result.squad:
         return "<div class='empty-state'>No squad could be built from the current player pool.</div>"
     primary = report.structures[0]
     cap_id = report.captain.player_id if report.captain else None
     vc_id = report.vice.player_id if report.vice else None
-    return _pitch_html_from_xi(conn, primary.xi, cap_id, vc_id)
+    return _pitch_html_from_xi(conn, primary.xi, cap_id, vc_id, live_payload, event)
 
 
 def _real_team_html(conn: sqlite3.Connection, entry_id: int) -> str:
@@ -1038,10 +1088,16 @@ def _truncate(text: str | None, limit: int = 220) -> str:
 
 
 def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """The "automatic football pundit" panel (2026-08-21) - real squad churn,
-    predicted formation, corroborated manager-change signal, and the latest
-    team-news paragraph for every club represented in the squad. Every field
-    traces to a DB row already synced - see models/team_outlook.py."""
+    """Real compact FPL intelligence TABLE (rebuilt 2026-08-22, direct user
+    instruction: "Do NOT keep the current quote/card treatment... make it a
+    compact table: CREST | TEAM | TACTICAL SIGNAL | FIXTURE QUALITY | FPL
+    SIGNAL. Expandable for detail.") - one real scannable row per team, the
+    same underlying real data `models/team_outlook.py` already computes
+    (churn/formation/manager-change/qualitative signal/fixture run/quoted
+    news), just reorganized into a table instead of a card grid. Detail
+    (churn label, formation, manager-change alert, the real quoted news
+    text) moves into a real `<details>` row a user opens on demand, never
+    forced onto the default scan."""
     if not squad_ids:
         return "<div class='empty-state'>No squad to build an outlook for yet.</div>"
     outlooks = squad_team_outlooks(conn, list(squad_ids))
@@ -1050,43 +1106,63 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
 
     churn_cls = lambda ratio: "bad" if (ratio or 0) >= 0.15 else ("warn" if (ratio or 0) >= 0.07 else "ok")
     team_codes = {r["id"]: r["code"] for r in conn.execute("SELECT id, code FROM teams").fetchall()}
-    cards = []
+    rows = []
     for o in outlooks:
         churn_dot_cls = churn_cls(o.churn_ratio) if o.churn_ratio is not None else "warn"
-        extras = []
-        if o.formation:
-            extras.append(f"<span class='outlook-chip'>{_esc(o.formation)}</span>")
-        if o.manager_change:
-            extras.append(f"<span class='outlook-chip outlook-alert'>manager change signal</span>")
-        if o.qualitative and o.qualitative.current_tactical_signal:
-            extras.append(f"<span class='outlook-chip'>{_esc(o.qualitative.current_tactical_signal)}</span>")
-        # Real fixture-quality signal (2026-08-21, third session, section
-        # 16: "team outlook should feel like an intelligence layer over the
-        # fixture ticker") - the same real avg-difficulty read the ticker
-        # itself is built from, not a separate metric.
-        quality = _fixture_quality(conn, o.team_id)
-        quality_html = (
-            f"<div class='outlook-fixtures'><span class='dot dot-{quality[0]}'></span>"
-            f"Next 5: {_esc(quality[1])} run</div>"
-        ) if quality else ""
         badge_url = _official_badge_url(team_codes.get(o.team_id, 0))
-        # Real, structurally-derived tactical pattern (manager_intelligence.py,
-        # 2026-08-22) - only rendered once >=2 real matches exist to say
-        # anything honest about it (o.tactics.note is None in that case).
-        tactics_html = (
-            f"<div class='outlook-fixtures'><span class='dot dot-ok'></span>"
-            f"Typically {_esc(o.tactics.most_common_formation or '?')}, "
-            f"rotation {o.tactics.starting_xi_rotation_rate}</div>"
-        ) if o.tactics and o.tactics.note is None else ""
-        cards.append(f"""<div class="outlook-card">
-  <div class="outlook-head"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">
-    <strong>{_esc(o.team_name)}</strong>{''.join(extras)}</div>
-  <div class="outlook-churn"><span class="dot dot-{churn_dot_cls}"></span>{_esc(o.churn_label)}</div>
-  {quality_html}
-  {tactics_html}
-  {"<div class='outlook-quote'>" + _esc(_truncate(o.lineup_news)) + "</div>" if o.lineup_news else ""}
-</div>""")
-    return "\n".join(cards)
+
+        # TACTICAL SIGNAL column - real qualitative read if Slice A2 has
+        # analyzed a match for this team, else the real predicted formation,
+        # else an honest em-dash (never a fabricated placeholder).
+        tactical_signal = o.qualitative.current_tactical_signal if o.qualitative else None
+        tactical_cell = _esc(tactical_signal or o.formation or "&mdash;")
+
+        # FIXTURE QUALITY column - same real avg-difficulty read the ticker
+        # itself is built from.
+        quality = _fixture_quality(conn, o.team_id)
+        quality_cell = (
+            f"<span class='dot dot-{quality[0]}'></span>{_esc(quality[1])}" if quality else "&mdash;"
+        )
+
+        # FPL SIGNAL column - real qualitative FPL implication when one
+        # exists, else the churn read (the one signal always available,
+        # every team's squad-turnover ratio is computed regardless of
+        # whether Slice A2 has analyzed a real match for them yet).
+        fpl_implication = o.qualitative.current_fpl_implication if o.qualitative else None
+        fpl_cell = (
+            f"{_esc(fpl_implication)}" if fpl_implication
+            else f"<span class='dot dot-{churn_dot_cls}'></span>{_esc(o.churn_label)}"
+        )
+
+        detail_bits = [f"<div><span class='dot dot-{churn_dot_cls}'></span>{_esc(o.churn_label)}</div>"]
+        if o.formation:
+            detail_bits.append(f"<div>Predicted formation: {_esc(o.formation)}</div>")
+        if o.manager_change:
+            detail_bits.append(f"<div class='outlook-alert-text'>{_esc(o.manager_change)}</div>")
+        if o.tactics and o.tactics.note is None:
+            detail_bits.append(
+                f"<div>Typically {_esc(o.tactics.most_common_formation or '?')}, "
+                f"rotation {o.tactics.starting_xi_rotation_rate}</div>"
+            )
+        if o.lineup_news:
+            detail_bits.append(f"<div class='outlook-quote'>{_esc(_truncate(o.lineup_news))}</div>")
+
+        rows.append(f"""<tr class="outlook-row">
+  <td class="outlook-td-team"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">{_esc(o.team_name)}</td>
+  <td>{tactical_cell}</td>
+  <td>{quality_cell}</td>
+  <td>{fpl_cell}</td>
+</tr>
+<tr class="outlook-detail-row"><td colspan="4"><details><summary>Details</summary>
+  {''.join(detail_bits)}
+</details></td></tr>""")
+
+    return f"""<table class="outlook-table">
+<thead><tr><th>Team</th><th>Tactical signal</th><th>Fixture quality</th><th>FPL signal</th></tr></thead>
+<tbody>
+{''.join(rows)}
+</tbody>
+</table>"""
 
 
 _FDR_TICKS = 5  # real FPL Copilot default - matches the "5 matches" the user actually meant
@@ -1211,37 +1287,69 @@ def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_
     return "<div class='match-feed'>" + "\n".join(items) + "</div>"
 
 
+def _player_play_states(conn: sqlite3.Connection, player_ids, event: int | None) -> dict[int, str]:
+    """Real per-player "played" | "live" | "yet_to_play" classification
+    (extracted 2026-08-22, visual-redesign-part-2 pass, from
+    `_squad_play_status_counts`'s own row-level logic, so the pitch cards
+    and the hero's aggregate counts derive from the exact same real per-
+    player facts rather than two separate queries that could drift). A
+    player with 2+ fixtures this event (a real double gameweek) is "live"
+    if ANY of them is in progress, "played" only once ALL of them are
+    finished - never fabricated for a blank-gameweek player (fixture_count
+    =0 - correctly "yet to play", nothing to contradict that reading)."""
+    if not player_ids or event is None:
+        return {pid: "yet_to_play" for pid in (player_ids or [])}
+    placeholders = ",".join("?" * len(player_ids))
+    # Same real fast-source override `_squad_live_window` already applies
+    # (2026-08-21) and this function was missing until caught live
+    # 2026-08-22: FPL's own `fixtures.finished` only updates on the slower
+    # scheduled-sync cadence, so a player card could keep showing "live"
+    # for many real minutes after `match_intelligence` (FotMob, ~25s) had
+    # already confirmed FULL_TIME - confirmed live against the real
+    # Arsenal 3-0 Coventry match (Calafiori's card still said "live - 80'"
+    # after the match had genuinely finished). Never the reverse - a
+    # stale/absent FotMob row can never un-finish a fixture FPL's own API
+    # already confirmed.
+    mi_full_time = {
+        r["fpl_fixture_id"] for r in conn.execute(
+            "SELECT fpl_fixture_id FROM match_intelligence WHERE status='FULL_TIME' AND fpl_fixture_id IS NOT NULL"
+        ).fetchall()
+    }
+    rows = conn.execute(
+        f"SELECT p.id AS player_id, f.id AS fixture_id, f.started AS started, f.finished AS finished "
+        f"FROM players p LEFT JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event=? "
+        f"WHERE p.id IN ({placeholders})",
+        (event, *player_ids),
+    ).fetchall()
+    by_player: dict[int, list[tuple[int, int]]] = {}
+    for r in rows:
+        by_player.setdefault(r["player_id"], []).append((r["started"], r["finished"] or (r["fixture_id"] in mi_full_time)))
+        if r["fixture_id"] is None:
+            by_player[r["player_id"]] = []
+
+    states: dict[int, str] = {}
+    for pid in player_ids:
+        fixtures_for_player = by_player.get(pid, [])
+        if not fixtures_for_player:
+            states[pid] = "yet_to_play"
+        elif any(started and not finished for started, finished in fixtures_for_player):
+            states[pid] = "live"
+        elif all(finished for _started, finished in fixtures_for_player):
+            states[pid] = "played"
+        else:
+            states[pid] = "yet_to_play"
+    return states
+
+
 def _squad_play_status_counts(conn: sqlite3.Connection, player_ids, event: int | None) -> dict[str, int]:
     """Real per-player played/live/yet-to-play classification for a squad
     (dashboard-state pass, 2026-08-21) - one of the primary LIVE-state
     questions ("how much of my team is still exposed to the remaining
-    fixtures"). A player with 2+ fixtures this event (a real double
-    gameweek) is "live" if ANY of them is in progress, "played" only once
-    ALL of them are finished - never fabricated for a blank-gameweek player
-    (fixture_count=0 - correctly "yet to play", nothing to contradict that
-    reading)."""
+    fixtures"). Aggregates `_player_play_states` - see that function's own
+    docstring for the real per-player rule."""
     counts = {"played": 0, "live": 0, "yet_to_play": 0}
-    if not player_ids or event is None:
-        counts["yet_to_play"] = len(player_ids or [])
-        return counts
-    placeholders = ",".join("?" * len(player_ids))
-    rows = conn.execute(
-        f"SELECT p.id AS player_id, "
-        f"MAX(CASE WHEN f.started=1 AND f.finished=0 THEN 1 ELSE 0 END) AS any_live, "
-        f"MIN(COALESCE(f.finished, 0)) AS all_finished, COUNT(f.id) AS fixture_count "
-        f"FROM players p LEFT JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event=? "
-        f"WHERE p.id IN ({placeholders}) GROUP BY p.id",
-        (event, *player_ids),
-    ).fetchall()
-    for r in rows:
-        if r["fixture_count"] == 0:
-            counts["yet_to_play"] += 1
-        elif r["any_live"]:
-            counts["live"] += 1
-        elif r["all_finished"]:
-            counts["played"] += 1
-        else:
-            counts["yet_to_play"] += 1
+    for state in _player_play_states(conn, player_ids, event).values():
+        counts[state] += 1
     return counts
 
 
@@ -1506,13 +1614,19 @@ def _fixture_ticker_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             # the exact same real difficulty/venue data the cell's own color
             # already encodes, not a second visual element competing for
             # space in an already-dense cell.
+            # Real declutter fix (2026-08-22, "genuinely scannable" ask) -
+            # xGF/CS% used to render inline on every single cell (10 real
+            # numbers per team row) alongside the opponent code, competing
+            # with the one thing a fixture ticker actually needs to
+            # communicate at a glance: is this fixture easy or hard. Both
+            # numbers are NOT dropped - still real, still here, just moved
+            # into the hover/title tooltip (the "Advanced/Details view" a
+            # scannable default needs) rather than always-on inline text.
             cells.append(
                 f"<div class='fdr-cell fdr-{fdr_cls}' "
                 f"title='GW{e.event}: {_esc(r['short_name'])} vs {_esc(e.opponent_short)} {venue_word} - "
                 f"{_esc(_FIXTURE_QUALITY_LABEL[fdr_cls])} (xGF {goals_for:.1f}, CS {cs_pct}%)'>"
                 f"<div class='fdr-opp'>{_esc(e.opponent_short)}{'(H)' if e.is_home else '(A)'}</div>"
-                f"<div class='fdr-stat'>xGF {goals_for:.1f}</div>"
-                f"<div class='fdr-stat'>CS {cs_pct}%</div>"
                 f"</div>"
             )
         blanks = _FDR_TICKS - len(entries)
@@ -1866,6 +1980,11 @@ def generate_dashboard_html(
 
     my_team_entry_id = get_my_team_entry_id(conn)
 
+    # Moved earlier (was below pitch rendering) - real ACTUAL/LIVE/NEXT
+    # player-card state (2026-08-22) needs the reference event before the
+    # pitch itself is built, not after. Second `live_or_reference_event`
+    # call below removed; this is the one real source of truth now.
+    reference_event = live_or_reference_event(conn)
     squad_error_html = ""
     if locked is not None:
         squad_ids = set(locked.squad_ids)
@@ -1892,7 +2011,7 @@ def generate_dashboard_html(
                 + "; ".join(_esc(p) for p in validation_problems) + "</div>"
             )
         else:
-            pitch_html = _pitch_html_from_xi(conn, display_xi, cap_id, vc_id)
+            pitch_html = _pitch_html_from_xi(conn, display_xi, cap_id, vc_id, live_payload, reference_event)
     else:
         squad_ids = {c.player_id for c in primary.result.squad} if primary and primary.result.squad else set()
         captain_name = report.captain.web_name if report.captain else "n/a"
@@ -1908,7 +2027,7 @@ def generate_dashboard_html(
             squad_value_m = primary.result.total_cost_tenths / 10
             bank_m = (budget_tenths - primary.result.total_cost_tenths) / 10
         pitch_heading = "Optimizer Recommendation"
-        pitch_html = _pitch_html(conn, report)
+        pitch_html = _pitch_html(conn, report, live_payload, reference_event)
 
     compare_panel = ""
     if my_team_entry_id is not None:
@@ -1918,7 +2037,6 @@ def generate_dashboard_html(
     {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids)}
   </section>"""
 
-    reference_event = live_or_reference_event(conn)
     gw_label = f"GW{reference_event}" if reference_event is not None else "GW?"
     xp_label = "Projected xP" if gw_window == 1 else f"{gw_window}-GW Projected xP"
 
@@ -2568,6 +2686,18 @@ _CSS = """
   .player-meta { font-size: 0.78rem; color: #5a5964; margin-top: 2px; font-weight: 600; }
   .player-xp { font-size: 0.94rem; font-weight: 800; color: #146c3a; margin-top: 5px; }
   .player-xp .unit { font-weight: 600; color: #706f7a; font-size: 0.72rem; }
+  /* Real ACTUAL vs LIVE vs NEXT distinction (2026-08-22) - a played/live
+     player's real points is the dominant number on the card (bigger,
+     bolder than a projection ever was); the xP reference for an already-
+     played player is deliberately small and muted ("was X.X xP") - a
+     backward-looking footnote, never presented at the same weight as the
+     real result next to it. */
+  .player-actual { font-size: 1.05rem; font-weight: 900; color: #146c3a; margin-top: 5px; }
+  .player-actual .unit { font-weight: 600; color: #706f7a; font-size: 0.72rem; }
+  .player-actual.player-live { color: #d4145a; display: flex; align-items: center; gap: 4px; }
+  .player-xp-ref { font-size: 0.66rem; color: #8a8894; margin-top: 1px; }
+  .next-tag { font-size: 0.55rem; font-weight: 700; letter-spacing: 0.05em; color: #8a8894;
+    margin-left: 4px; vertical-align: middle; }
   .armband { position: absolute; top: -10px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
     font-size: 0.66rem; font-weight: 900; display: flex; align-items: center; justify-content: center;
     border: 2.5px solid #fff; z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
@@ -2662,6 +2792,26 @@ _CSS = """
   .match-intel-row-meta { color: var(--muted); font-size: 0.75rem; }
   .outlook-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; }
   .outlook-badge { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+  /* Real Team Outlook table (2026-08-22) - replaces the old card grid.
+     CREST|TEAM|TACTICAL SIGNAL|FIXTURE QUALITY|FPL SIGNAL as one real
+     scannable row per team; a real <details> row underneath carries the
+     rest (churn/formation/manager-change/quoted news) so it's there on
+     demand, never forced into the default scan. */
+  .outlook-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .outlook-table th { text-align: left; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--faint); padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .outlook-row td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .outlook-td-team { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
+  .outlook-detail-row td { padding: 0 10px; border-bottom: 1px solid var(--border); }
+  .outlook-detail-row details { padding: 6px 0 10px; }
+  .outlook-detail-row summary { cursor: pointer; font-size: 0.72rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+  .outlook-detail-row details > div { margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
+  .outlook-alert-text { color: var(--fpl-pink); }
+  @media (max-width: 640px) {
+    .outlook-table { font-size: 0.76rem; }
+    .outlook-table th:nth-child(2), .outlook-row td:nth-child(2) { display: none; }
+  }
   .outlook-fixtures { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
   .outlook-fixtures .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .outlook-chip { font-size: 0.65rem; font-weight: 600; color: var(--muted); background: var(--surface);
@@ -2976,6 +3126,7 @@ _CSS = """
     .player-name { font-size: 0.85rem; max-width: 108px; }
     .player-meta { font-size: 0.67rem; }
     .player-xp { font-size: 0.82rem; }
+    .player-actual { font-size: 0.9rem; }
   }
   html { scroll-behavior: smooth; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
