@@ -4587,6 +4587,48 @@ own "do not declare success because tests pass" instruction:**
   schema/logic-verified from the dashboard-state-architecture pass earlier this session, not
   freshly re-confirmed against a second live match today.
 
+## ACTUAL vs PROJECTED - the fundamental product fix (2026-08-22, same day, continued)
+
+Direct user framing: "does not clearly distinguish CURRENT GAMEWEEK REALITY from FUTURE
+PROJECTIONS... Never display xP as though it represents current GW performance." A real,
+severe correctness gap - every pitch card showed a future xP projection regardless of
+whether the player's real match had already finished, was live, or hadn't started.
+
+- **`_player_play_states()`** (extracted from `_squad_play_status_counts`'s own row logic) -
+  real per-player played/live/yet_to_play, same fixtures data the hero's Played/Live/To-Play
+  count already used, now the single source both derive from.
+- Player cards: a finished match shows real ACTUAL points (FPL's own live `total_points`,
+  bold, dominant) + a small muted "was X.X xP" footnote; a live match shows real LIVE points
+  + minute with a pulse indicator; only a genuinely not-yet-played player shows xP, now
+  explicitly tagged NEXT.
+- **Real live bug caught mid-fix, not hypothetical**: `_player_play_states` was missing the
+  same FotMob-FULL_TIME override `_squad_live_window` already has - live-verified against the
+  real Arsenal 3-0 Coventry result, Calafiori's card said "live · 80'" for real minutes after
+  the match had genuinely finished (FPL's own `fixtures.finished` flag lags the faster FotMob
+  source, same class of bug fixed once already this session for the hero/dash_state). Fixed
+  with the identical `match_intelligence WHERE status='FULL_TIME'` override pattern - after
+  the fix, Calafiori/Tzolis correctly show "9 pts"/"6 pts · was X.X xP", and the hero's own
+  Played/Live/To-Play flipped from the wrong "0/2/9" to the correct "2/0/9" live on the real
+  page, confirming both counts now derive from the same corrected logic.
+- **Team Outlook rebuilt as a real table** (Team | Tactical Signal | Fixture Quality | FPL
+  Signal), reversing last pass's quote-card treatment per direct instruction - a `<details>`
+  row per team carries churn/formation/manager-change/quoted news on demand.
+- **Fixture ticker decluttered** - xGF/CS% moved from always-on inline text into the existing
+  hover/title tooltip (already carried both numbers - nothing dropped, just no longer
+  competing with the one thing the ticker needs to communicate at a glance).
+- 9 new tests (ACTUAL/LIVE/NEXT card states x4, Team Outlook table x1, plus regressions).
+  Live-verified against the real live GW1 dashboard at desktop/390/375/360px via real DOM
+  measurement (`scrollWidth`/`innerWidth`, not just screenshots) - zero horizontal overflow,
+  correct 2-ACTUAL/13-NEXT split confirmed at every width. 743/743 full suite.
+- **What's still open from this pass's own ask, disclosed honestly**: point 4 (match ->
+  player -> team -> decision propagation "flowing through" visibly) is real but still blocked
+  on the same root cause as before - zero real matches have been through an actual
+  `fpl match-analyze` run yet (Arsenal-Coventry's FULL_TIME job has sat in the queue since
+  earlier this session, genuinely pending real football-analyst reasoning, not a technical
+  gap). Points 2/3/8's deeper "current team vs delta" framing already exists via the Decision
+  Fusion/decision-engine work from earlier this session - not independently re-audited against
+  this pass's specific wording.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
