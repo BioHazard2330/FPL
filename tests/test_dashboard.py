@@ -6,6 +6,7 @@ from fpl_agent.monitoring.dashboard import (
     _format_kickoff,
     _local_time_span,
     _match_intelligence_html,
+    _news_html,
     _risk_monitor_html,
     generate_dashboard_html,
 )
@@ -1011,3 +1012,91 @@ def test_squad_changes_panel_does_not_show_price_change_twice(db_conn):
     result = dash_mod._squad_changes_html(db_conn)
 
     assert "No squad changes detected yet this session." in result
+
+
+# --- Visual-redesign pass, real-bugs-found (2026-08-22, "STOP making
+# incremental CSS improvements" session) ------------------------------
+
+
+def _seed_news(conn, source, external_id, title, published_at="2026-08-22T06:00:00Z"):
+    conn.execute(
+        "INSERT INTO news_items (source, source_tier, external_id, title, link, published_at, retrieved_at) "
+        "VALUES (?,'strong_reporter',?,?, 'http://x', ?, 't0')",
+        (source, external_id, title, published_at),
+    )
+    conn.commit()
+
+
+def test_news_panel_dedupes_the_same_real_headline_from_two_sources(db_conn):
+    # Real, live-verified bug: BBC PL RSS and BBC general football RSS can
+    # both syndicate the identical wire story as two separate real rows -
+    # the panel must show it once, not twice back to back.
+    _seed_news(db_conn, "bbc_pl", "guid1", "Flex your football brain with our daily quizzes")
+    _seed_news(db_conn, "bbc_general", "guid2", "Flex your football brain with our daily quizzes")
+
+    result = _news_html(db_conn, set())
+
+    assert result.count("Flex your football brain") == 1
+
+
+def test_news_panel_keeps_two_genuinely_different_headlines(db_conn):
+    _seed_news(db_conn, "bbc_pl", "guid1", "Arsenal sign new midfielder")
+    _seed_news(db_conn, "sky", "guid2", "Liverpool injury update")
+
+    result = _news_html(db_conn, set())
+
+    assert "Arsenal sign new midfielder" in result
+    assert "Liverpool injury update" in result
+
+
+def test_match_intelligence_panel_never_shows_a_raw_debug_string(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'FULL_TIME',3,0,"
+        "'fotmob','2026-08-21T21:00:00.123456+00:00','high')"
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "retrieved_at=" not in result
+    assert "source=fotmob" not in result
+    assert "Updated" in result
+
+
+def test_match_intelligence_panel_renders_a_compact_row_for_a_bare_pre_match_fixture(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "source, retrieved_at, confidence) "
+        "VALUES ('5795370','Premier League','2026-08-30T14:00:00.000Z',1,2,'PRE_MATCH',"
+        "'fotmob','2026-08-22T06:00:00+00:00','high')"
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "match-intel-row" in result
+    assert "not yet analyzed" not in result
+
+
+def test_match_intelligence_panel_sorts_full_time_before_pre_match(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) VALUES "
+        "('5795371','Premier League','2026-08-30T14:00:00.000Z',1,2,'PRE_MATCH',NULL,NULL,"
+        "'fotmob','2026-08-22T06:00:00+00:00','high'),"
+        "('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'FULL_TIME',3,0,"
+        "'fotmob','2026-08-21T21:00:00+00:00','high')"
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert result.index("FULL_TIME") < result.index("match-intel-row")

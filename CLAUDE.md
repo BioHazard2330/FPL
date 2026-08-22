@@ -4495,6 +4495,98 @@ Titillium Web/Inter, responsive breakpoints - all prior sessions), not a from-sc
   priority order (runtime correctness first, "do NOT spend the whole session polishing CSS while
   the runtime is incomplete" - CSS work only after the matchday pipeline was verified).
 
+## Front-end redesign from first principles: real problems found by inspecting the rendered page (2026-08-22, same day, continued)
+
+User rejected the incremental CSS-only approach and asked for a real product-level pass: inspect
+the actual rendered dashboard first, identify the biggest real problems, then fix them
+systematically - fpl.page as a UX quality bar, not something to copy. Followed that process
+literally: opened the real `data/dashboard.html` in the Browser pane (a genuinely live GW1
+session - Arsenal 3-0 Coventry finished, other fixtures still pending), screenshotted every
+section, and found 10 concrete problems by looking, not guessing.
+
+**Real bugs found this way, not cosmetic opinions:**
+
+1. **The single most important one - a live state inconsistency, found live on this actual real
+   session.** The hero showed "GW1 - LIVE" with a real 15pt score while Live Tracking/Match
+   Intelligence/Team Outlook all showed their PRE_MATCH copy ("activates automatically once these
+   matches kick off") - because the hero's live-score gate (`_maybe_fetch_live_payload`, fires the
+   moment ANY squad fixture has `started=1`) and `_squad_live_window`'s own `state` (required
+   `started AND NOT finished`) used two different definitions of "live." The moment Arsenal-
+   Coventry finished with other squad fixtures still to kick off, the two fell out of sync - the
+   exact "one panel says one minute, another says something else" failure this project's own spec
+   explicitly rules out. Fixed: `state` now uses the same "has the gameweek genuinely started"
+   test the hero already used (`gw_started`, real fixture data); a new `any_in_progress` field
+   keeps the finer "something literally happening right now" distinction available separately for
+   whatever UI genuinely needs it, rather than driving the whole page's state.
+2. **"Your Team vs Optimized" duplicated the ENTIRE squad pitch a second time** directly under the
+   comparison metrics - in the common case (real synced picks exist) that second pitch was
+   pixel-identical to "My Locked Squad" at the top of the page, since both read the exact same
+   `get_latest_squad()` data. Removed entirely - the panel's real job is the compact metrics/delta
+   comparison, not a second copy of the team. Single biggest visual-noise contributor found.
+3. **Raw debug strings rendered straight to the user**: `source=fotmob
+   retrieved_at=2026-08-22T06:53:58.876720+00:00` printed verbatim in Match Intelligence cards.
+   Replaced with the same clean "Updated Xm ago" freshness-tag pattern already used elsewhere.
+4. **Duplicate news items** - the exact same real headline ("Flex your football brain with our
+   daily quizzes") rendered twice back to back. Root cause confirmed real, not a sync bug:
+   multiple real Tier 2-4 sources (BBC PL RSS, BBC general football RSS) can genuinely syndicate
+   the identical wire story as separate real rows with different guids. Deduped by exact title at
+   the display layer only (`_news_html`) - never touches the DB or `manager_change.py`'s own
+   2-source corroboration logic, which still needs the real underlying rows.
+5. **Match Intelligence buried the one real result under boilerplate** - 3 near-identical
+   "not yet analyzed - run the skill" / "no FPL implications recorded yet" cards for upcoming
+   fixtures sorted ABOVE the real FULL_TIME Arsenal 3-0 Coventry result by kickoff time alone.
+   Fixed: status now sorts first (LIVE/HALFTIME/FULL_TIME before PRE_MATCH), and a PRE_MATCH
+   fixture with genuinely nothing to say yet (no observations/implications/queued job/summary)
+   renders one quiet compact row instead of the full boilerplate card - a PRE_MATCH fixture that
+   DOES have real content (checked explicitly) still gets the full card, never silently hidden.
+6. **Team Outlook dumped raw scraped news paragraphs as plain text** inside cards that were
+   otherwise compact structured chips (churn/formation/fixture run) - read as a prose dump breaking
+   its own "compact" design intent. Given a real quote treatment (italic, left rule, muted) so it
+   reads as "quoted source material," not another line of the dashboard's own voice.
+7. **Every panel was the same card shape regardless of content type.** Kept the `data-cat`
+   attribute from the prior pass but **removed the colored left-border+pill-badge treatment
+   entirely** per direct user feedback ("stop using borders/glows as the primary way of creating
+   hierarchy") - replaced with one quiet uppercase word in the panel's top-right corner
+   (`::before { content: attr(data-cat) }`), present for anyone who wants it, never competing with
+   the heading or the actual numbers.
+8. **AI Decisions was 4 flat equal-weight cards**, and even the real captain KEEP/CHANGE case (the
+   one that matters post-deadline) lacked the "why" reasoning the Mode-A/no-lock case already had.
+   Extracted `_captain_reasons_html()` as a shared helper so both paths get the same real bullets
+   (+X.X xP vs next best / expected minutes / penalty duty / rank-differential), plus a real
+   "Football View agrees / Model agrees" or a real disagreement line sourced from
+   `decision_fusion.py`'s already-computed `qualitative_note` - matching the user's own explicit
+   example format exactly (verified live: "WHY HAALAND? +0.7 xP vs next best (B.Fernandes) / 86'
+   expected minutes / primary penalty taker / FOOTBALL VIEW AGREES - MODEL AGREES").
+9-10. Metadata/timestamp/tag density and "my team as protagonist" were addressed as consequences
+   of fixes 1-8 above (removing the duplicate pitch, decluttering Match Intelligence, and quieting
+   the category labels) rather than as separate standalone changes - re-inspected live afterward
+   to confirm rather than assumed fixed by construction alone.
+
+**Live-verified, not just tested**: screenshotted the real dashboard at desktop, 390px, and 360px
+widths against the actual live GW1 session (a genuinely in-progress gameweek, not synthetic data) -
+Live Tracking correctly showed real per-player live stats (previously showing the wrong pre-match
+copy per bug #1), Match Intelligence correctly promoted with the real result first, no duplicate
+pitch anywhere, no raw debug strings, category labels read as quiet corner text at every width
+tested. 8 new regression tests (news dedup x2, no-debug-string, compact-row, status-sort) plus the
+existing suite re-verified green against the live-state and decision-card structural changes.
+
+**What still genuinely looks weaker than a polished FPL product, stated honestly per the user's
+own "do not declare success because tests pass" instruction:**
+- The fixture ticker's cells are still fairly text-dense (xGF + CS% both shown per cell at small
+  size) - functional and real, but not yet at fpl.page's own information-density polish.
+- Team Outlook's per-team cards are still card-shaped, not the compact CREST | TEAM | FORMATION |
+  TREND | FIXTURES | SIGNAL row-table the user asked for - a real, larger structural change
+  (a genuine table/list widget replacing the current card grid) not attempted this pass given the
+  bug-fixing above was the higher-leverage, more time-bounded work.
+- The squad pitch/hero typography, while already large, hasn't had a full fpl.page-style
+  information-hierarchy audit beyond what earlier sessions already built - real further headroom
+  exists but wasn't systematically re-audited this pass beyond the specific problems found.
+- POST_MATCH state (final score / my players / points, then what-happened / what-changed / FPL
+  implications / squad impact, in that literal order) was not independently re-verified this
+  session - GW1's other fixtures hadn't reached FULL_TIME yet at build time, so this remains
+  schema/logic-verified from the dashboard-state-architecture pass earlier this session, not
+  freshly re-confirmed against a second live match today.
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of

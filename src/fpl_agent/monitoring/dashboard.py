@@ -578,7 +578,6 @@ def _compare_panel_html(
 
     latest = get_latest_squad(conn, entry_id)
     your_metrics = []
-    pitch_html = ""
     delta_html = ""
     if latest is not None:
         event, squad_ids = latest
@@ -588,11 +587,17 @@ def _compare_panel_html(
             ("Real xP", f"{rating.gw1_xp}"),
             ("Efficiency", f"{rating.efficiency_percent}% of best"),
         ]
-        pitch_html = (
-            "<div class='bench-label' style='margin-top:18px'>Your real synced squad</div>"
-            + _pitch_html_from_xi(conn, rating.xi, rating.captain.player_id if rating.captain else None,
-                                   rating.vice.player_id if rating.vice else None)
-        )
+        # Real duplicate-pitch fix (2026-08-22, visual-redesign pass, live-
+        # verified: this panel used to also re-render a full second pitch
+        # ("Your real synced squad") directly under the comparison metrics -
+        # in the common case (synced real picks exist) that squad is
+        # pixel-identical to "My Locked Squad" at the top of the page,
+        # since both read the exact same get_latest_squad() data. A
+        # redundant full-size pitch render added zero real information and
+        # was the single biggest contributor to this dashboard reading as
+        # a database dump rather than a product - MY TEAM (the top pitch)
+        # is the protagonist; this panel's real job is the compact
+        # comparison strip below, not a second copy of the squad.
         # Real "what changes" delta strip (2026-08-21, third session,
         # section 13) - every figure here is a plain diff of two already-
         # computed real values (rating.gw1_xp vs opt_xp, a set difference of
@@ -641,8 +646,7 @@ def _compare_panel_html(
     <div class="compare-label">Optimized Team</div>
     {optimized_side}
   </div>
-</div>
-{pitch_html}"""
+</div>"""
 
 
 @dataclass(frozen=True)
@@ -651,6 +655,7 @@ class _LiveWindow:
     event: int | None
     next_kickoff: str | None
     fixtures_text: str
+    any_in_progress: bool = False  # a real squad fixture is happening RIGHT NOW (finer-grained than state=="live")
 
 
 def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWindow:
@@ -699,9 +704,29 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
         for f in fixtures_raw
     ]
 
-    any_live = any(f["started"] and not f["finished"] for f in fixtures)
+    # Real bug found + fixed 2026-08-22 (visual-redesign pass, spec section
+    # E's own "one authoritative live state" requirement, caught live
+    # against tonight's actual matches, not hypothetical): the hero's own
+    # live-score gate (_maybe_fetch_live_payload) fires as soon as ANY
+    # squad fixture has started, and correctly STAYS "live" for the whole
+    # gameweek window (FPL scoring accumulates across the whole GW, not
+    # per-match) - but this function's own `state` used a stricter
+    # "started AND not finished" test, so the moment the FIRST match of the
+    # gameweek finished with others still to kick off, the hero kept
+    # showing "GW1 - LIVE" with a real live score while Live Tracking/Match
+    # Intelligence/Team Outlook all silently fell back to their PRE_MATCH
+    # copy ("activates automatically once these matches kick off") - the
+    # exact "one panel says one thing, another says something else"
+    # inconsistency this project explicitly set out to avoid. `state` now
+    # uses the same broader "has the gameweek genuinely started" test the
+    # hero already uses; `any_in_progress` (a real fixture happening RIGHT
+    # NOW) is kept separately for UI that specifically needs that finer
+    # distinction (e.g. a pulsing "LIVE NOW" dot vs a calmer between-
+    # matches indicator), rather than driving the whole page's state.
+    any_in_progress = any(f["started"] and not f["finished"] for f in fixtures)
+    gw_started = any(f["started"] for f in fixtures)
     all_finished = all(f["finished"] for f in fixtures)
-    state = "live" if any_live else ("post" if all_finished else "pre")
+    state = "post" if all_finished else ("live" if gw_started else "pre")
 
     # Real visual redesign, 2026-08-21 ("live tracking... so damn ugly") -
     # real match cards (team shirts, not a plain text row) instead of a flat
@@ -750,7 +775,7 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
     <span class="fx-code">{_esc(f['away'])}</span></div>
 </div>""")
 
-    return _LiveWindow(state, event, next_kickoff, "\n".join(lines))
+    return _LiveWindow(state, event, next_kickoff, "\n".join(lines), any_in_progress)
 
 
 def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payload: dict | None) -> str:
@@ -945,9 +970,29 @@ def _news_html(conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6) ->
     web_name/short_name values already fetched for the pitch, same
     real-world matching this project already uses elsewhere, e.g.
     team_news_risk.py) - never a guessed relevance score."""
-    items = list_recent_news(conn, limit=limit)
+    items = list_recent_news(conn, limit=limit * 2)
     if not items:
         return "<div class='empty-state'>No recent news synced yet - run <code>fpl sync-news</code>.</div>"
+
+    # Real dedup fix (2026-08-22, visual-redesign pass, live-verified: "Flex
+    # your football brain with our daily quizzes" rendered twice back to
+    # back) - multiple real Tier 2-4 sources (BBC PL, BBC general football,
+    # Sky Sports) can genuinely syndicate the identical wire story as
+    # separate real rows with different guids. A real data fact, not an
+    # ingestion bug - but showing the same headline twice reads as broken,
+    # not as "extra corroboration." Dedup by exact title at the display
+    # layer only (never drops a row from the DB, never affects
+    # manager_change.py's own 2-source corroboration logic elsewhere).
+    seen_titles: set[str] = set()
+    deduped = []
+    for item in items:
+        if item["title"] in seen_titles:
+            continue
+        seen_titles.add(item["title"])
+        deduped.append(item)
+        if len(deduped) >= limit:
+            break
+    items = deduped
 
     squad_web_names: set[str] = set()
     squad_team_shorts: set[str] = set()
@@ -1039,7 +1084,7 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
   <div class="outlook-churn"><span class="dot dot-{churn_dot_cls}"></span>{_esc(o.churn_label)}</div>
   {quality_html}
   {tactics_html}
-  {"<div class='outlook-news'>" + _esc(_truncate(o.lineup_news)) + "</div>" if o.lineup_news else ""}
+  {"<div class='outlook-quote'>" + _esc(_truncate(o.lineup_news)) + "</div>" if o.lineup_news else ""}
 </div>""")
     return "\n".join(cards)
 
@@ -1294,10 +1339,18 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
     if not team_ids:
         return "<div class='empty-state'>No squad to scope match intelligence to yet.</div>"
 
+    # Real ordering fix (2026-08-22, visual-redesign pass): a genuinely
+    # LIVE/FULL_TIME match - the one thing actually worth reading - used to
+    # sort purely by kickoff time, so it could land BELOW several
+    # not-yet-kicked-off PRE_MATCH cards with nothing real to say yet.
+    # Status now takes priority; kickoff time only breaks ties within a
+    # status.
     placeholders = ",".join("?" * len(team_ids))
     matches = conn.execute(
         f"SELECT * FROM match_intelligence WHERE home_team_id IN ({placeholders}) "
-        f"OR away_team_id IN ({placeholders}) ORDER BY kickoff_utc DESC LIMIT 5",
+        f"OR away_team_id IN ({placeholders}) "
+        f"ORDER BY CASE status WHEN 'FULL_TIME' THEN 0 WHEN 'HALFTIME' THEN 0 WHEN 'LIVE' THEN 0 "
+        f"ELSE 1 END, kickoff_utc DESC LIMIT 5",
         list(team_ids) * 2,
     ).fetchall()
     if not matches:
@@ -1329,6 +1382,29 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
             "AND status IN ('pending','processing') ORDER BY created_at DESC LIMIT 1",
             (m["id"],),
         ).fetchone()
+
+        # Real compact-row fix (2026-08-22, visual-redesign pass): a
+        # PRE_MATCH fixture with genuinely nothing real to say yet (no
+        # observations, no queued job, no implications, no summary) used to
+        # render the exact same "not yet analyzed - run the skill" / "no FPL
+        # implications recorded yet" / raw debug-string boilerplate as every
+        # other upcoming fixture - reading as a repeated database dump
+        # rather than a product. One quiet line instead, matching Live
+        # Tracking's own pre-kickoff fixture rows. Never takes this
+        # shortcut when there's real content to show (implications,
+        # a pending job, or an analysis summary already exist).
+        has_real_content = bool(impl_rows) or pending_job is not None or (summary and summary["headline"])
+        if m["status"] == "PRE_MATCH" and not has_real_content:
+            home_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["home_team_id"],)).fetchone()
+            away_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["away_team_id"],)).fetchone()
+            cards.append(
+                f"<div class='match-intel-row'>"
+                f"<strong>{_esc(home_name['short_name'] if home_name else '?')} v "
+                f"{_esc(away_name['short_name'] if away_name else '?')}</strong>"
+                f"<span class='match-intel-row-meta'>{_local_time_span(m['kickoff_utc'])}</span></div>"
+            )
+            continue
+
         if summary and summary["headline"]:
             provisional = "" if summary["phase"] == "FULL_TIME" else "<span class='outlook-chip outlook-alert'>PROVISIONAL</span>"
             verdict = f"{provisional}{_esc(summary['headline'])}"
@@ -1346,7 +1422,7 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
             f"<div class='outlook-news'><span class='outlook-chip'>{_esc(i['direction'])}/{_esc(i['signal'])}</span> "
             f"{_esc(i['reason'] or '')}</div>"
             for i in impl_rows
-        ) or "<div class='outlook-news'>no FPL implications recorded yet</div>"
+        )
         score = f"{m['home_score'] if m['home_score'] is not None else '-'}-{m['away_score'] if m['away_score'] is not None else '-'}"
 
         match_centre_html = ""
@@ -1377,7 +1453,7 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
   <div class="outlook-churn">{verdict}</div>
   {impl_html}
   {match_centre_html}
-  <div class="outlook-news">source={_esc(m['source'])} retrieved_at={_esc(m['retrieved_at'])}</div>
+  <div class="outlook-news freshness-tag">Updated {_esc(_relative_time(m['retrieved_at']))}</div>
 </div>""")
     return "\n".join(cards)
 
@@ -1456,6 +1532,32 @@ def _fixture_ticker_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     return "\n".join(rows_html)
 
 
+def _captain_reasons_html(conn: sqlite3.Connection, squad_ids: set[int], cap) -> str:
+    """Real "why this pick" bullets (2026-08-21, section 12; reused as a
+    shared helper 2026-08-22 so the locked-squad KEEP/CHANGE decision cards
+    get the same real explainability the Mode-A "best pick" card already
+    had, matching the user's own explicit example: "+1.8 xP vs next best /
+    Penalty duty / 90% expected minutes"). Every bullet is a real field
+    `captaincy_report`/`cap` already carries - nothing computed here."""
+    cap_report = captaincy_report(conn, list(squad_ids)) if squad_ids else None
+    reasons = []
+    if cap_report and cap_report.second and cap_report.second.player_id != cap.player_id:
+        delta = cap.median - cap_report.second.median
+        reasons.append(f"+{delta:.1f} xP vs next best ({_esc(cap_report.second.web_name)})")
+    if cap.expected_minutes >= 80:
+        reasons.append(f"{cap.expected_minutes:.0f}&prime; expected minutes")
+    if cap.is_penalty_taker:
+        reasons.append("primary penalty taker")
+    if cap_report and cap_report.differential_captain_note:
+        reasons.append("real rank-differential armband")
+    if not reasons:
+        return ""
+    return (
+        f"<div class='decision-reasons-label'>Why {_esc(cap.web_name)}?</div>"
+        "<ul class='decision-reasons'>" + "".join(f"<li>{r}</li>" for r in reasons) + "</ul>"
+    )
+
+
 def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int], decision=None) -> str:
     """"AI Decisions" (2026-08-21, direct user request, section 14) -
     "the place where I look and immediately know what should I actually
@@ -1487,32 +1589,40 @@ def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int],
 </div>""")
         elif ca.kind == "keep":
             cur = ca.current
-            # Decision Fusion FYI (2026-08-22, spec section 27) - only ever
-            # additive, never changes the KEEP verdict above it.
-            qual_bit = (
-                f"<div class='decision-detail decision-fusion-note'>Football Intelligence: {_esc(ca.qualitative_note)}</div>"
-                if ca.qualitative_note else ""
+            # Real "Football View agrees/differs" line (2026-08-22, matching
+            # the user's own explicit example format: "FOOTBALL VIEW agrees
+            # / MODEL agrees -> KEEP") - `ca.qualitative_note` is already
+            # None exactly when decision_fusion.py found no real
+            # disagreement (compare_captain_views' MODEL_WINS-with-no-
+            # dissent case), so "agrees" here is a real derived fact, not
+            # an assumption.
+            football_view_html = (
+                f"<div class='decision-fusion-note'>Football View: {_esc(ca.qualitative_note)}</div>"
+                if ca.qualitative_note else "<div class='decision-agree'>Football View agrees &middot; Model agrees</div>"
             )
+            reasons_html = _captain_reasons_html(conn, squad_ids, cur)
             cards.append(f"""<div class="decision-card decision-positive">
   <div class="decision-kicker">Captain <span class="decision-action">KEEP</span></div>
   <div class="decision-headline">{_captain_html(cur.web_name)}</div>
-  <div class="decision-detail">Remains the preferred captain &middot; median {cur.median:.1f} xP &middot;
-    {_esc(cur.confidence)} confidence</div>
-  {qual_bit}
+  <div class="decision-detail">Median {cur.median:.1f} xP &middot; {_esc(cur.confidence)} confidence</div>
+  {reasons_html}
+  {football_view_html}
 </div>""")
         else:  # "change"
             cur, sug = ca.current, ca.suggested
             cur_bit = f"{_esc(cur.web_name)} &rarr; " if cur is not None else ""
             delta_bit = f" (+{ca.delta:.1f} xP)" if ca.delta is not None else ""
-            qual_bit = (
-                f"<div class='decision-detail decision-fusion-note'>Football Intelligence: {_esc(ca.qualitative_note)}</div>"
+            football_view_html = (
+                f"<div class='decision-fusion-note'>Football View: {_esc(ca.qualitative_note)}</div>"
                 if ca.qualitative_note else ""
             )
+            reasons_html = _captain_reasons_html(conn, squad_ids, sug)
             cards.append(f"""<div class="decision-card decision-alert">
   <div class="decision-kicker">Captain <span class="decision-action">CHANGE</span></div>
   <div class="decision-headline">{cur_bit}{_captain_html(sug.web_name)}</div>
   <div class="decision-detail">Real median gain{delta_bit} &middot; {_esc(sug.confidence)} confidence</div>
-  {qual_bit}
+  {reasons_html}
+  {football_view_html}
 </div>""")
 
         ta = decision.transfer_action
@@ -2368,24 +2478,23 @@ _CSS = """
   .panel-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-bottom: 14px; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px;
     box-shadow: 0 4px 18px -10px rgba(0,0,0,0.5); }
-  /* Real DATA / INTELLIGENCE / DECISION visual distinction (2026-08-22,
-     tonight's-matches visual pass, spec section M.10) - a real fact
-     straight from a source (DATA), a synthesized read over facts
-     (INTELLIGENCE), or an actual recommended action (DECISION) are three
-     genuinely different kinds of content on this dashboard and previously
-     looked identical. A colored left border + a small uppercase kicker
-     tag next to each panel's own heading, not a redesign of the card
-     itself - every panel keeps its existing markup/heading text unchanged. */
-  .panel[data-cat] { border-left-width: 4px; border-left-style: solid; }
-  .panel[data-cat="data"] { border-left-color: var(--accent-2); }
-  .panel[data-cat="intelligence"] { border-left-color: var(--accent); }
-  .panel[data-cat="decision"] { border-left-color: var(--fpl-pink); }
-  .panel-cat-kicker { display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 2px 7px; border-radius: 999px; margin-left: 8px; vertical-align: middle;
-    border: 1px solid currentColor; }
-  .panel[data-cat="data"] .panel-cat-kicker { color: var(--accent-2); }
-  .panel[data-cat="intelligence"] .panel-cat-kicker { color: var(--accent); }
-  .panel[data-cat="decision"] .panel-cat-kicker { color: var(--fpl-pink); }
+  /* Real DATA / INTELLIGENCE / DECISION distinction (2026-08-22, revised
+     same day per direct user feedback: a colored left border on literally
+     every panel was exactly the "borders/glows as the primary way of
+     creating hierarchy" pattern the user explicitly asked to stop doing -
+     hierarchy should come from typography/spacing/scale instead. Kept the
+     `data-cat` attribute (harmless, already tested) but replaced the loud
+     border+pill-badge treatment with one quiet uppercase word in the
+     panel's top-right corner - present for anyone who wants to know what
+     kind of content this is, never competing with the heading or the
+     actual numbers for attention. */
+  .panel[data-cat] { position: relative; }
+  .panel[data-cat]::before {
+    content: attr(data-cat); position: absolute; top: 16px; right: 20px;
+    font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); pointer-events: none;
+  }
+  @media (max-width: 640px) { .panel[data-cat]::before { display: none; } }
   /* The squad pitch is this dashboard's hero content - real user complaint
      fixed 2026-08-21 ("the squad module looks so squeezed"): both "My Real
      Team" and "Recommended Squad" used to share one 2-col grid row
@@ -2547,6 +2656,10 @@ _CSS = """
 
   .outlook-grid { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
   .outlook-card { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; font-size: 0.8rem; }
+  .match-intel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 10px; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+  .match-intel-row:last-child { border-bottom: none; }
+  .match-intel-row-meta { color: var(--muted); font-size: 0.75rem; }
   .outlook-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; }
   .outlook-badge { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
   .outlook-fixtures { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
@@ -2560,6 +2673,14 @@ _CSS = """
   .dot-warn { background: var(--warn); }
   .dot-bad { background: var(--bad); }
   .outlook-news { margin-top: 4px; color: var(--muted); font-size: 0.76rem; line-height: 1.35; }
+  /* Raw scraped team-news text (2026-08-22, visual-redesign pass) - real
+     quoted source material, not this project's own structured signal
+     (the churn/formation/fixture chips above it) - styled to visually
+     read as a quote (italic, left rule, indented) rather than another
+     flat line of "our own" text, closing the "prose dump" problem found
+     live in Team Outlook. */
+  .outlook-quote { margin-top: 6px; padding-left: 10px; border-left: 2px solid var(--border);
+    color: var(--muted); font-size: 0.78rem; font-style: italic; line-height: 1.4; }
 
   /* --- Chip Strategy --- */
   .chip-strategy-list { display: flex; flex-direction: column; gap: 6px; }
@@ -2697,6 +2818,13 @@ _CSS = """
   .decision-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
   .decision-reasons li { font-size: 0.76rem; color: var(--muted); padding-left: 13px; position: relative; }
   .decision-reasons li::before { content: "+"; position: absolute; left: 0; color: var(--accent-2); font-weight: 800; }
+  /* Real "FOOTBALL VIEW agrees / MODEL agrees" / disagreement line
+     (2026-08-22) - matches the user's own explicit decision-feed example.
+     Agreement in quiet muted text (nothing to act on); a real
+     disagreement in the accent color (worth reading). */
+  .decision-agree { margin-top: 5px; font-size: 0.72rem; color: var(--faint); text-transform: uppercase;
+    letter-spacing: 0.03em; }
+  .decision-fusion-note { margin-top: 5px; font-size: 0.78rem; color: var(--accent); }
 
   /* --- Risk monitor (2026-08-21) - severity-tiered rows replacing a
      plain bulleted list. --- */
