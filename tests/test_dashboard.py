@@ -559,6 +559,30 @@ def test_match_intelligence_panel_shows_real_synced_match_and_implications(db_co
     assert "started, advanced position" in result
 
 
+def test_match_intelligence_panel_shows_real_pending_queue_state(db_conn):
+    # 2026-08-22, tonight's-matches visual pass (spec section O): a genuinely
+    # queued analysis job must render as "QUALITATIVE ANALYSIS - PENDING",
+    # never an empty card and never fabricated analysis text.
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'FULL_TIME',3,0,"
+        "'fotmob','2026-08-21T21:00:00+00:00','high')"
+    )
+    db_conn.commit()
+    match_id = db_conn.execute("SELECT id FROM match_intelligence").fetchone()["id"]
+    from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
+    enqueue_analysis_job(db_conn, match_id, "FULL_TIME", "Team A 3-0 Team B (final)")
+
+    result = _match_intelligence_html(db_conn, {1})
+
+    assert "QUALITATIVE ANALYSIS" in result
+    assert "PENDING" in result
+    assert "will process automatically" in result
+
+
 def test_match_intelligence_panel_shows_provisional_headline_for_non_full_time_analysis(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(

@@ -108,6 +108,48 @@ def test_dashboard_promotes_live_panel_when_a_squad_fixture_is_live(db_conn):
     assert "GW1 &middot; LIVE" in result
 
 
+# --- Match Intelligence / Team Outlook promotion (2026-08-22, tonight's-
+# matches visual pass, spec section N) ---------------------------------
+
+
+def test_match_intelligence_and_team_outlook_promoted_when_live(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, captain_id=30, vice_id=20)
+    _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
+
+    result = generate_dashboard_html(db_conn, live_payload={"elements": []})
+
+    # Real, live promotion: both cards move up next to Live Tracking/AI
+    # Decisions instead of sitting below the fixture ticker.
+    assert result.index('id="match-centre"') < result.index('id="fixtures"')
+    assert result.index('id="football-intelligence"') < result.index('id="fixtures"')
+    # Never rendered twice.
+    assert result.count('id="match-centre"') == 1
+    assert result.count('id="football-intelligence"') == 1
+
+
+def test_match_intelligence_and_team_outlook_stay_put_when_pre_deadline(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    # Original position: inside the fixed Intelligence grid, after fixtures.
+    assert result.index('id="fixtures"') < result.index('id="match-centre"')
+    assert result.index('id="fixtures"') < result.index('id="football-intelligence"')
+
+
+def test_panels_carry_a_real_data_intelligence_decision_category(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'id="squad" data-cat="data"' in result
+    assert 'id="decisions" data-cat="decision"' in result
+    assert 'id="risks" data-cat="decision"' in result
+    assert 'id="football-intelligence" data-cat="intelligence"' in result
+    assert 'id="match-centre" data-cat="intelligence"' in result
+
+
 def test_squad_live_window_treats_match_intelligence_full_time_as_finished(db_conn):
     """Real gap found live 2026-08-21 at the actual full-time of the actual
     Arsenal v Coventry match: FPL's own fixtures.finished only updates on

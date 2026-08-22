@@ -1318,9 +1318,26 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
             "SELECT * FROM match_analysis_summary WHERE match_id=? ORDER BY (phase='FULL_TIME') DESC, generated_at DESC LIMIT 1",
             (m["id"],),
         ).fetchone()
+        # Real "QUALITATIVE ANALYSIS - PENDING" state (2026-08-22, tonight's-
+        # matches visual pass, spec section O) - distinguishes a genuinely
+        # queued job (FULL_TIME already hit, `maybe_enqueue_analysis` already
+        # created a real row) from a match that simply hasn't been analyzed
+        # yet at all (e.g. still PRE_MATCH). Never fabricates analysis text -
+        # this only ever reports real queue state.
+        pending_job = conn.execute(
+            "SELECT phase, created_at FROM qualitative_analysis_jobs WHERE match_id=? "
+            "AND status IN ('pending','processing') ORDER BY created_at DESC LIMIT 1",
+            (m["id"],),
+        ).fetchone()
         if summary and summary["headline"]:
             provisional = "" if summary["phase"] == "FULL_TIME" else "<span class='outlook-chip outlook-alert'>PROVISIONAL</span>"
             verdict = f"{provisional}{_esc(summary['headline'])}"
+        elif pending_job is not None:
+            verdict = (
+                f"<span class='outlook-chip outlook-alert'>QUALITATIVE ANALYSIS &middot; PENDING</span> "
+                f"queued {_esc(_relative_time(pending_job['created_at']))} - will process automatically "
+                f"next time Claude Code opens"
+            )
         elif obs_count == 0:
             verdict = _esc("not yet analyzed - run the match-intelligence-analysis skill")
         else:
@@ -1786,7 +1803,7 @@ def generate_dashboard_html(
     compare_panel = ""
     if my_team_entry_id is not None:
         compare_panel = f"""
-  <section class="panel panel-compare" id="compare">
+  <section class="panel panel-compare" id="compare" data-cat="data">
     <h2>Your Team vs Optimized</h2>
     {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids)}
   </section>"""
@@ -1859,34 +1876,73 @@ def generate_dashboard_html(
     # PRE_DEADLINE reproduces the exact original document order (squad,
     # decisions, risks, compare, live) byte-for-byte - zero risk to every
     # existing test/behavior that predates this pass.
-    squad_section_html = f"""<section class="panel panel-team" id="squad">
+    squad_section_html = f"""<section class="panel panel-team" id="squad" data-cat="data">
   <h2>{_esc(pitch_heading)}
     <span class="panel-subtitle">{headline_xp:.1f} projected xP &middot; £{squad_value_m:.1f}m &middot;
       {_captain_html(captain_name)} captain</span></h2>
   {squad_error_html}{pitch_html}
 </section>"""
-    decisions_section_html = f"""<section class="panel panel-decisions" id="decisions">
+    decisions_section_html = f"""<section class="panel panel-decisions" id="decisions" data-cat="decision">
   <h2>AI Decisions <span class="panel-subtitle">what should you actually do</span></h2>
   {_decision_center_html(conn, report, squad_ids, decision=decision)}
 </section>"""
-    risks_section_html = f"""<section class="panel panel-risks" id="risks">
+    risks_section_html = f"""<section class="panel panel-risks" id="risks" data-cat="decision">
   <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
   <div class="risk-monitor">
 {_risk_monitor_html(conn, squad_ids)}
   </div>
 </section>"""
-    live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live">
+    live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
   {_live_tracking_html(conn, squad_ids, live_payload)}
 </section>"""
 
+    # Real match feed/team-intelligence promotion (2026-08-22, tonight's-
+    # matches visual pass, spec section N: "LIVE MATCH CENTRE | MY PLAYERS |
+    # MATCH FEED | LIVE FPL INTELLIGENCE | DECISIONS"). Same real content,
+    # same heading text (both already asserted on by existing tests, e.g.
+    # "Team Outlook" - left unchanged), just relocated: during LIVE/
+    # POST_MATCH these two cards move up next to Live Tracking/AI Decisions
+    # instead of sitting at the bottom of the fixed Intelligence grid below
+    # the fixture ticker, where a live match's own score/feed/tactical read
+    # would otherwise be the LAST thing on the page. Computed once here,
+    # reused below (never rendered twice) - the fixed grid further down
+    # renders these from the exact same precomputed strings only when they
+    # were NOT already promoted into panel_order.
+    match_intelligence_inner = _match_intelligence_html(conn, squad_ids)
+    match_intelligence_section_html = f"""<section class="panel panel-match-intelligence{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="match-centre" data-cat="intelligence">
+  <h2>Match Intelligence <span class="panel-subtitle">FotMob, structured observed/inferred/FPL layers</span></h2>
+  <div class="outlook-grid">
+{match_intelligence_inner}
+  </div>
+</section>"""
+    team_outlook_inner = _team_outlook_html(conn, squad_ids)
+    team_outlook_section_html = f"""<section class="panel panel-outlook" id="football-intelligence" data-cat="intelligence">
+  <h2>Team Outlook <span class="panel-subtitle">churn, manager news, formation, tactical signal - Tier 1 + 2-4 + qualitative</span></h2>
+  <div class="outlook-grid">
+{team_outlook_inner}
+  </div>
+</section>"""
+
     if dash_state == "LIVE":
-        panel_order = [live_section_html, decisions_section_html, squad_section_html, risks_section_html, compare_panel]
+        panel_order = [
+            live_section_html, match_intelligence_section_html, decisions_section_html,
+            team_outlook_section_html, squad_section_html, risks_section_html, compare_panel,
+        ]
     elif dash_state == "POST_MATCH":
-        panel_order = [live_section_html, squad_section_html, decisions_section_html, risks_section_html, compare_panel]
+        panel_order = [
+            live_section_html, match_intelligence_section_html, squad_section_html,
+            decisions_section_html, team_outlook_section_html, risks_section_html, compare_panel,
+        ]
     else:
         panel_order = [squad_section_html, decisions_section_html, risks_section_html, compare_panel, live_section_html]
     ordered_panels_html = "\n\n".join(p for p in panel_order if p)
+    # PRE_DEADLINE never promotes either card into panel_order above (kept
+    # byte-for-byte identical to this project's existing contract) - the
+    # fixed Intelligence grid below renders them in their original spot in
+    # that case, using these exact same precomputed strings so the content
+    # is identical either way, just its position on the page differs.
+    match_intelligence_promoted = dash_state in ("LIVE", "POST_MATCH")
 
     fixtures_fresh = _source_freshness(conn, "fpl_api_fixtures")
     fixtures_fresh_html = f"<span class='freshness-tag'>Updated {_esc(fixtures_fresh)}</span>" if fixtures_fresh else ""
@@ -1984,7 +2040,7 @@ def generate_dashboard_html(
 
 {ordered_panels_html}
 
-<section class="panel panel-ticker" id="fixtures">
+<section class="panel panel-ticker" id="fixtures" data-cat="data">
   <h2>Fixture Ticker <span class="panel-subtitle">next {_FDR_TICKS} - green easy, red hard, real FPL strength ratings</span></h2>
   <div class="fdr-sort" role="group" aria-label="Sort fixture ticker">
     <span class="fdr-sort-label">Sort</span>
@@ -2000,21 +2056,15 @@ def generate_dashboard_html(
 </section>
 
 <div class="panel-grid" id="intelligence">
-  <section class="panel panel-outlook">
-    <h2>Team Outlook <span class="panel-subtitle">churn, manager news, formation - Tier 1 + 2-4</span></h2>
-    <div class="outlook-grid">
-{_team_outlook_html(conn, squad_ids)}
-    </div>
-  </section>
-
-  <section class="panel panel-chips">
+  {"" if match_intelligence_promoted else team_outlook_section_html}
+  <section class="panel panel-chips" data-cat="decision">
     <h2>Chip Strategy</h2>
     <div class="chip-strategy-list">
 {_chip_strategy_html(conn, squad_ids)}
     </div>
   </section>
 
-  <section class="panel panel-activity">
+  <section class="panel panel-activity" data-cat="data">
     <h2>Activity <span class="panel-subtitle">squad changes + price moves, Tier 1</span></h2>
     <div class="activity-group-label">Squad changes</div>
     <div class="change-list">
@@ -2026,22 +2076,17 @@ def generate_dashboard_html(
     </div>
   </section>
 
-  <section class="panel panel-news">
+  <section class="panel panel-news" data-cat="data">
     <h2>Transfer News <span class="panel-subtitle">journalism, Tier 2-4</span>{news_fresh_html}</h2>
     <div class="news-list">
 {_news_html(conn, squad_ids)}
     </div>
   </section>
 
-  <section class="panel panel-match-intelligence">
-    <h2>Match Intelligence <span class="panel-subtitle">FotMob, structured observed/inferred/FPL layers</span></h2>
-    <div class="outlook-grid">
-{_match_intelligence_html(conn, squad_ids)}
-    </div>
-  </section>
+  {"" if match_intelligence_promoted else match_intelligence_section_html}
 </div>
 
-<section class="panel panel-health" id="system">
+<section class="panel panel-health" id="system" data-cat="data">
   <h2>System health</h2>
 {_health_summary_html(conn)}
   <details class="health-details">
@@ -2323,6 +2368,24 @@ _CSS = """
   .panel-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-bottom: 14px; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px;
     box-shadow: 0 4px 18px -10px rgba(0,0,0,0.5); }
+  /* Real DATA / INTELLIGENCE / DECISION visual distinction (2026-08-22,
+     tonight's-matches visual pass, spec section M.10) - a real fact
+     straight from a source (DATA), a synthesized read over facts
+     (INTELLIGENCE), or an actual recommended action (DECISION) are three
+     genuinely different kinds of content on this dashboard and previously
+     looked identical. A colored left border + a small uppercase kicker
+     tag next to each panel's own heading, not a redesign of the card
+     itself - every panel keeps its existing markup/heading text unchanged. */
+  .panel[data-cat] { border-left-width: 4px; border-left-style: solid; }
+  .panel[data-cat="data"] { border-left-color: var(--accent-2); }
+  .panel[data-cat="intelligence"] { border-left-color: var(--accent); }
+  .panel[data-cat="decision"] { border-left-color: var(--fpl-pink); }
+  .panel-cat-kicker { display: inline-block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 999px; margin-left: 8px; vertical-align: middle;
+    border: 1px solid currentColor; }
+  .panel[data-cat="data"] .panel-cat-kicker { color: var(--accent-2); }
+  .panel[data-cat="intelligence"] .panel-cat-kicker { color: var(--accent); }
+  .panel[data-cat="decision"] .panel-cat-kicker { color: var(--fpl-pink); }
   /* The squad pitch is this dashboard's hero content - real user complaint
      fixed 2026-08-21 ("the squad module looks so squeezed"): both "My Real
      Team" and "Recommended Squad" used to share one 2-col grid row

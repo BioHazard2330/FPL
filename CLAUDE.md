@@ -4452,6 +4452,49 @@ pass**, per the user's own explicit execution order ("do NOT spend the whole ses
 CSS while the runtime is incomplete," listed as step 10 of 13, after runtime correctness) - a
 real, scoped-out follow-up, not silently dropped.
 
+## Dashboard visual pass: DATA/INTELLIGENCE/DECISION + live-mode promotion (2026-08-22, same day, continued)
+
+Per the user's explicit "continue... now visual redevelopment on dashboard" once the runtime
+correctness pass above was verified - deliberately scoped to real, structural improvements over
+the already-mature visual foundation (dark theme, FPL brand palette, official shirt/crest assets,
+Titillium Web/Inter, responsive breakpoints - all prior sessions), not a from-scratch redesign.
+
+- **Real DATA / INTELLIGENCE / DECISION visual distinction (spec section M.10)** - every panel
+  now carries a real `data-cat="data"|"intelligence"|"decision"` attribute and a matching colored
+  left border (teal for DATA, purple for INTELLIGENCE, pink for DECISION - the project's own
+  existing brand palette, no new colors introduced). Attribute-only change, zero risk to any
+  existing heading-text assertion (checked first: `grep` confirmed no test pins the affected
+  section tags' exact opening HTML).
+- **Match Intelligence + Team Outlook promoted during LIVE/POST_MATCH (spec section N)** -
+  previously stuck at the bottom of the fixed Intelligence grid, below the fixture ticker, even
+  during a live match with a real score/feed/tactical read to show. Both are now computed once
+  (`match_intelligence_section_html`/`team_outlook_section_html`) and conditionally placed either
+  in the state-aware top block (LIVE/POST_MATCH, promoted next to Live Tracking/AI Decisions) or
+  left in their original fixed-grid position (PRE_DEADLINE, byte-for-byte unchanged - the existing
+  "PRE_DEADLINE reproduces the exact original order" contract this project already established
+  extends to these two cards too). Never rendered twice - a real `match_intelligence_promoted`
+  flag gates the fixed grid's own copy. Match Intelligence also gets the same real
+  `panel-live-emphasis` glow treatment Live Tracking already had, when genuinely LIVE.
+- **Real "QUALITATIVE ANALYSIS - PENDING" state (spec section O)** - the Match Intelligence card
+  now checks the real `qualitative_analysis_jobs` queue (built earlier this session) and
+  distinguishes a genuinely queued FULL_TIME/HALFTIME job ("QUALITATIVE ANALYSIS - PENDING -
+  queued Xh ago - will process automatically next time Claude Code opens") from a match that
+  simply hasn't been analyzed at all yet - never an empty card, never fabricated analysis text,
+  same honesty posture as every other "not yet real-world-verified" feature in this project.
+- 8 new tests (`test_dashboard_state.py` - promotion when LIVE, staying put when PRE_DEADLINE,
+  never duplicated, real category attributes present; `test_dashboard.py` - the pending-queue
+  render). Live-verified against the real generated dashboard too, not just tests: regenerated
+  `fpl dashboard` against the real synced pool, confirmed all `data-cat` attributes present with
+  correct values and PRE_DEADLINE's real fixture-before-match-centre ordering held (matches are
+  still hours from kickoff as of this pass - the LIVE-promoted ordering itself will get its first
+  real live-verification once tonight's matches actually kick off).
+- **What this does NOT close, stated plainly**: the full hero/typography rework (bigger primary
+  numbers everywhere, tighter section hierarchy end to end) was largely already done in an earlier
+  session's "premium redesign" pass and re-checked rather than redone; genuinely new typography
+  work beyond the category system above was not attempted this pass, per the user's own explicit
+  priority order (runtime correctness first, "do NOT spend the whole session polishing CSS while
+  the runtime is incomplete" - CSS work only after the matchday pipeline was verified).
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
