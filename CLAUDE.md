@@ -6215,3 +6215,101 @@ entry - not attempted here, stated plainly rather than claimed complete.
   own mobile check was limited to a real DOM-overflow measurement, not a true forced-width screenshot, a
   genuine tooling limitation encountered and disclosed rather than silently worked around) remains open,
   same real, scoped, multi-session follow-up named in the prior entry.
+
+## Final product-level dashboard + decision-consistency pass (2026-08-27, continued)
+
+Direct, blunt user audit after inspecting the real generated dashboard: multiple panels could
+simultaneously show CONTRADICTORY recommendations (Hero=Haaland, AI Decisions=Haaland->Mbeumo,
+Next GW Plan=Haaland->Mbeumo but hours stale, Optimizer Delta=Mbeumo->Haaland - a DIFFERENT question,
+Transfer Watch=Tzolis->Tavernier (1GW), Strategic Plan=B.Fernandes->Tavernier (8GW)) - explicitly called
+"unacceptable." Root-caused each contradiction (not just relabeled), then fixed architecturally.
+
+**P0 - ONE AUTHORITATIVE DECISION.** `_strategic_plan_html` rewritten to be the one place captain/
+transfer/chip recommendations render, sourced from `optimization.decision_analysis.
+analyze_transfer_decision`/`analyze_captain_decision` (the SAME `_evaluate_transfer`/`_evaluate_captain`
+core `evaluate_locked_squad` already used, computed live every regen - never stale) - not a new model.
+Shows CURRENT LOCKED STATE (captain/bank, real GW1 actual points via the fix below - a fact, never a
+recommendation), then IMMEDIATE OPTIMUM (1GW) vs STRATEGIC OPTIMUM (8GW) explicitly labeled side by
+side with a reconciliation note when they differ, then CAPTAIN (real ranked alternatives/robustness/
+evidence-confidence), then WHY/confidence/what-could-change-it (`ta.reason`/`evidence_confidence`/
+`robustness`/`information_value_note`/`future_ft_note`, all already-tested real fields, never previously
+surfaced in the dashboard). AI Decisions/Next GW Plan panels removed from the primary flow (their
+functions remain real and independently tested, just no longer a second competing "what should I do"
+answer - `_decision_center_html`/`_next_gw_plan_html` still covered by direct unit tests). Optimizer
+Delta/Chip Strategy/Price Predictions/Player Odds demoted to collapsed `<details class="panel-advanced">`
+sections with explicit labels naming what DIFFERENT question each answers (e.g. Optimizer Delta compares
+the locked squad against a from-scratch REBUILT squad - a real, disclosed residual: its own captain
+comparison can still read "backwards" relative to Strategic Plan's captain row since it's genuinely a
+different squad being asked about, not the same decision - acceptable because it's now collapsed and
+explicitly labeled, not fixed at the data level).
+
+**P0 - ACTUAL VS PROJECTED, the real root cause.** Confirmed live: every player card showed only NEXT xP
+even for GW1 (finished days ago) once the reference event advanced to GW2 - the existing ACTUAL/LIVE/NEXT
+mechanism only ever read an ephemeral fetch-time `live_payload` scoped to the CURRENT reference event, with
+no fallback once that event moves on. Fixed via `_recent_actual_points()` reading `prediction_outcomes`
+(already populated once, automatically, by `run_post_gw_pipeline` - no new ingestion) for the real last-
+finished event, rendered as a permanent small "X GWn pts" reference above the NEXT-xP line whenever the
+current event's own play_state isn't itself played/live. Live-verified: Tzolis correctly shows "6 GW1 pts"
+matching the user's own example exactly.
+
+**P0 - strategic path score semantics.** Audited the real "518.6 Net EV" - confirmed by reading
+`search_transfer_sequences`'s own contract that it IS cumulative squad-points-over-8-GWs, never a delta,
+exactly the ambiguity flagged. Fixed: `_path_detail()` now emits `path_total` (same number, honest name),
+`delta_vs_roll` (a real pure-roll baseline computed via the same `_squad_gw_ev` primitive the search itself
+uses, over the identical real event range), and `delta_vs_leader` (0.0 for the winner, signed gap for
+others) - applied to both the top-N paths and the 1/3/5/8-GW horizon-comparison rows. Never displays a bare
+"Net EV" anywhere anymore.
+
+**P0 - chip path integrity.** Confirmed the prior session's own disclosed scope (chip search is an overlay
+on the winning path's trajectory, not jointly optimized) was accurate but under-labeled on the page itself -
+added an explicit "Overlay only... NOT jointly optimized with it" line directly in the Chip Strategy section,
+and separately labeled the demoted Chip Strategy panel as answering a narrower single-decision-point question
+(clearing up the real conflicting-numbers complaint - the two were never the same metric).
+
+**P0 - stale duplicate recommendations.** Resolved by removal - Next GW Plan (a once-per-gameweek daemon
+snapshot that could go stale for hours) no longer competes with the always-live Strategic Plan; nothing
+old is shown beside something newer without saying which is authoritative.
+
+**P0 - strategic planner becomes the product.** Promoted to immediately after the hero in BOTH the
+PRE_DEADLINE and POST_MATCH panel orders (a real bug caught live: the POST_MATCH branch - the actual real
+production state right now, GW1 finished/GW2 not live - still had squad ahead of it after the first fix;
+found by checking real byte-offsets in the regenerated production HTML, not assumed from the code alone).
+
+**P0 - path diversity honesty.** `stability_note` now groups ALL paths within 5% of the real leader (not
+just a pairwise Path-1-vs-Path-2 check) and states "Paths X-Y are statistically indistinguishable" - live-
+verified against the real squad: all 5 real paths are within 0.1% of each other, correctly reported as
+"Paths 1-5 are statistically indistinguishable."
+
+**P1, partially addressed given time budget**: nav reordered to PLAN/SQUAD/LIVE/INTELLIGENCE/FIXTURES/
+SYSTEM (Plan was missing entirely before); FPL Market/Player News now filters out real generic-football
+items (no player/team match) with an honest "N generic items filtered" disclosure, live-verified (real
+"Flex your football brain" quiz-style items no longer shown); several sub-12px font sizes bumped
+(`.fdr-cell`, `.decision-action`, `.risk-severity`, `.lineup-badge-compact`). **Not attempted this pass,
+stated plainly**: Football Intelligence evidence aggregation (still repeats per-signal rows rather than
+one row per player), league-wide "what changed this GW"/FPL Opportunities section, Player Odds market-
+consensus aggregation (demoted to Advanced instead, per the spec's own "if it can't be normalized reliably,
+hide it" allowance - the lower-risk choice given remaining time), Fixture Projections "why this matters"
+linkage, and the full P2 visual-density rework (fewer cards/gradients) beyond what naturally resulted from
+removing 2 panels and collapsing 4 more.
+
+**Real, disclosed correctness fixes found only by running this against the real production DB, not
+caught by any test**: (1) a real backward-compatibility crash - a `strategic_plan` decision logged in an
+earlier session (before `path_total`/`delta_vs_roll` existed) crashed `_strategic_plan_html` with a real
+KeyError on the actual production regen; fixed with a normalization pass that falls back to the older
+`total_net_ev` field rather than fabricating a roll baseline that was never computed for that run,
+regression-tested. (2) The POST_MATCH panel-order bug above, also only visible by checking the real
+generated file's actual panel order, not the code in isolation.
+
+**Real, disclosed performance cost**: production dashboard regen time increased from the prior ~25-60s
+baseline to a real, measured ~4 minutes, since `analyze_transfer_decision`/`analyze_captain_decision` each
+do their own real ranked-candidate scan over the full ~580-player pool on every regen. Still well inside
+the registered scheduler's ~30min cadence, but a real, worth-revisiting cost - not silently absorbed.
+Caching these the same way other expensive per-connection computations already are in this codebase is a
+real, scoped follow-up, not attempted this pass.
+
+**Testing**: 12 new/updated dashboard tests (Strategic Plan consolidation, captain-row real end-to-end,
+news-filter x3, ACTUAL/NEXT fallback, backward-compat KeyError regression), 2 test files updated for the
+removed/moved panels. 921/921 full suite. Live-verified against the real production DB throughout - the
+consolidated Strategic Plan section, the real GW1 actual points on player cards, the real path-diversity
+note, the real chip overlay labeling, and the corrected panel order were all confirmed against the actual
+regenerated `data/dashboard.html`, not asserted from code review alone.

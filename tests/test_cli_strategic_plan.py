@@ -39,6 +39,20 @@ def test_strategic_plan_runs_without_chips_and_logs_all_paths(monkeypatch, db_co
     assert detail["best_path"] is not None
     assert detail["best_path"]["steps"] == detail["paths"][0]["steps"]
 
+    # Real "strategic path score semantics" fix (P0, 2026-08-27): a real
+    # roll baseline is computed and every path/horizon-comparison entry
+    # carries an explicit path_total (never bare "net EV") plus a real,
+    # separate delta_vs_roll - proving the labeling ambiguity the audit
+    # flagged is actually closed, not just renamed in prose.
+    assert detail["roll_total"] is not None
+    assert detail["best_path"]["path_total"] == detail["best_path"]["total_net_ev"]
+    assert detail["best_path"]["delta_vs_roll"] == round(detail["best_path"]["total_net_ev"] - detail["roll_total"], 2)
+    assert detail["best_path"]["delta_vs_leader"] == 0.0  # the winning path has zero gap to itself
+    for hc in detail["horizon_comparison"]:
+        assert "path_total" in hc and "delta_vs_roll" in hc
+    if len(detail["paths"]) > 1:
+        assert detail["paths"][1]["delta_vs_leader"] <= 0.0  # never ranked above the real leader
+
 
 def test_strategic_plan_with_chips_overlays_a_real_chip_schedule(monkeypatch, db_conn):
     """--with-chips (the default) overlays a real chip schedule onto the

@@ -57,29 +57,42 @@ def test_risk_monitor_default_state_is_low_risk_not_fabricated(db_conn):
 
 
 def test_dashboard_decision_center_shows_real_captain_and_no_fabricated_transfer(db_conn):
-    """AI Decisions panel (section 14) - reorganizes real existing data,
-    never fabricates. With no transfer decision ever logged, the panel shows
-    an honest "no action taken yet" state (2026-08-21, fourth session,
-    section 9: "a sophisticated optimizer sometimes says 'do nothing' -
-    represent that confidently") - never a fabricated recommendation, and
-    never silently absent either."""
+    """`_decision_center_html` (section 14) - reorganizes real existing
+    data, never fabricates. With no transfer decision ever logged, the
+    panel shows an honest "no action taken yet" state (2026-08-21, fourth
+    session, section 9: "a sophisticated optimizer sometimes says 'do
+    nothing' - represent that confidently") - never a fabricated
+    recommendation, and never silently absent either.
+
+    Real note (2026-08-27, "final product-level dashboard" pass): this
+    function is no longer wired into `generate_dashboard_html`'s primary
+    flow (Strategic Plan is now the one authoritative decision surface,
+    reading `optimization.decision_analysis` directly) - it remains real,
+    tested, standalone Mode-A/no-locked-squad code, tested directly here
+    rather than through the full page."""
+    from fpl_agent.monitoring.dashboard import _decision_center_html
+    from fpl_agent.optimization.build_team import generate_build_team_report
+
     _seed(db_conn, budget_tenths=950, club_limit=4)
+    report = generate_build_team_report(db_conn)
 
-    result = generate_dashboard_html(db_conn)
+    result = _decision_center_html(db_conn, report, set(), decision=None)
 
-    assert "AI Decisions" in result
     assert "Transfer Watch" in result
     assert "No transfer analysis logged yet" in result
 
 
 def test_dashboard_decision_center_shows_a_real_logged_transfer(db_conn):
     from fpl_agent.database.decisions import log_decision
+    from fpl_agent.monitoring.dashboard import _decision_center_html
+    from fpl_agent.optimization.build_team import generate_build_team_report
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     log_decision(db_conn, "transfer", "Bruno G. -> Anderson nets +1.18 xP", {"a": 1}, confidence="low")
     db_conn.commit()
+    report = generate_build_team_report(db_conn)
 
-    result = generate_dashboard_html(db_conn)
+    result = _decision_center_html(db_conn, report, set(), decision=None)
 
     assert "Transfer Watch" in result
     assert "Bruno G." in result
@@ -192,11 +205,11 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "<html" in result
     assert "fpl-agent dashboard" in result
     assert "Recommended Squad" in result
-    assert "AI Decisions" in result
+    assert "Strategic Plan" in result
     assert "Live Tracking" in result
     assert "Risk Monitor" in result
     assert "Squad Changes" in result
-    assert "Transfer News" in result
+    assert "FPL Market / Player News" in result
     assert "Price Moves" in result
     assert "Team Outlook" in result
     assert "Chip Strategy" in result
@@ -530,11 +543,14 @@ def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
 def test_dashboard_transfer_news_panel_renders_synced_items(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     now = "t0"
-    db_conn.execute(
+    row = db_conn.execute(
         "INSERT INTO news_items (source, source_tier, external_id, title, link, published_at, retrieved_at) "
         "VALUES ('bbc_sport_pl','strong_reporter','guid-1','Player X ruled out for weeks',"
-        "'https://example.com/x','2026-08-19T12:00:00Z',?)", (now,),
-    )
+        "'https://example.com/x','2026-08-19T12:00:00Z',?) RETURNING id", (now,),
+    ).fetchone()
+    # Real player match (2026-08-27 news-filter fix requires one to survive
+    # the FPL-relevance filter) - player 1 already exists via _seed().
+    db_conn.execute("INSERT INTO news_item_players (news_item_id, player_id) VALUES (?, 1)", (row["id"],))
     db_conn.commit()
 
     result = generate_dashboard_html(db_conn)
@@ -1002,6 +1018,11 @@ def test_dashboard_explicit_override_still_shows_optimizer_recommendation_even_w
 
 
 def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain(db_conn, monkeypatch):
+    """Real end-to-end test of the consolidated Strategic Plan CAPTAIN row
+    (2026-08-27, "final product-level dashboard" pass) - captain/transfer
+    verdicts against a real locked squad now render inside Strategic Plan
+    (`optimization.decision_analysis.analyze_captain_decision`), not the
+    removed standalone AI Decisions panel."""
     from test_optimization_locked_squad import _seed_real_picks
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
@@ -1009,7 +1030,7 @@ def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain
 
     result = generate_dashboard_html(db_conn)
 
-    assert 'decision-action">KEEP</span>' in result or "Captain <span class=\"decision-action\">KEEP</span>" in result
+    assert '<strong>CAPTAIN</strong> <span class="decision-action">KEEP</span>' in result
 
 
 def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squad(db_conn, monkeypatch):
@@ -1118,21 +1139,31 @@ def test_squad_changes_panel_does_not_show_price_change_twice(db_conn):
 # incremental CSS improvements" session) ------------------------------
 
 
-def _seed_news(conn, source, external_id, title, published_at="2026-08-22T06:00:00Z"):
-    conn.execute(
+def _seed_news(conn, source, external_id, title, published_at="2026-08-22T06:00:00Z", team_id=None):
+    row = conn.execute(
         "INSERT INTO news_items (source, source_tier, external_id, title, link, published_at, retrieved_at) "
-        "VALUES (?,'strong_reporter',?,?, 'http://x', ?, 't0')",
+        "VALUES (?,'strong_reporter',?,?, 'http://x', ?, 't0') RETURNING id",
         (source, external_id, title, published_at),
-    )
+    ).fetchone()
+    if team_id is not None:
+        exists = conn.execute("SELECT 1 FROM teams WHERE id=?", (team_id,)).fetchone()
+        if not exists:
+            conn.execute(
+                "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,'t0')",
+                (team_id, team_id, f"Team{team_id}", f"T{team_id}"),
+            )
+        conn.execute("INSERT INTO news_item_teams (news_item_id, team_id) VALUES (?,?)", (row["id"], team_id))
     conn.commit()
 
 
 def test_news_panel_dedupes_the_same_real_headline_from_two_sources(db_conn):
     # Real, live-verified bug: BBC PL RSS and BBC general football RSS can
     # both syndicate the identical wire story as two separate real rows -
-    # the panel must show it once, not twice back to back.
-    _seed_news(db_conn, "bbc_pl", "guid1", "Flex your football brain with our daily quizzes")
-    _seed_news(db_conn, "bbc_general", "guid2", "Flex your football brain with our daily quizzes")
+    # the panel must show it once, not twice back to back. Real team match
+    # (team_id=1) so this real FPL-relevant item survives the 2026-08-27
+    # generic-football filter added the same session.
+    _seed_news(db_conn, "bbc_pl", "guid1", "Flex your football brain with our daily quizzes", team_id=1)
+    _seed_news(db_conn, "bbc_general", "guid2", "Flex your football brain with our daily quizzes", team_id=1)
 
     result = _news_html(db_conn, set())
 
@@ -1140,13 +1171,30 @@ def test_news_panel_dedupes_the_same_real_headline_from_two_sources(db_conn):
 
 
 def test_news_panel_keeps_two_genuinely_different_headlines(db_conn):
-    _seed_news(db_conn, "bbc_pl", "guid1", "Arsenal sign new midfielder")
-    _seed_news(db_conn, "sky", "guid2", "Liverpool injury update")
+    _seed_news(db_conn, "bbc_pl", "guid1", "Arsenal sign new midfielder", team_id=1)
+    _seed_news(db_conn, "sky", "guid2", "Liverpool injury update", team_id=2)
 
     result = _news_html(db_conn, set())
 
     assert "Arsenal sign new midfielder" in result
     assert "Liverpool injury update" in result
+
+
+def test_news_panel_filters_out_generic_football_items_with_no_real_player_or_team_match(db_conn):
+    """Real correctness fix (2026-08-27, "final product-level dashboard"
+    pass, direct user complaint: "includes irrelevant football stories like
+    Wrexham and Ronaldo... do not show generic football RSS as an FPL
+    decision feed"). An item with no real player/team match (a quiz, a
+    non-PL story) must not appear in this feed - the panel should instead
+    honestly disclose how many were filtered."""
+    _seed_news(db_conn, "bbc_general", "guid1", "A totally unrelated football quiz")
+    _seed_news(db_conn, "bbc_pl", "guid2", "Arsenal sign new midfielder", team_id=1)
+
+    result = _news_html(db_conn, set())
+
+    assert "Arsenal sign new midfielder" in result
+    assert "A totally unrelated football quiz" not in result
+    assert "1 generic football item(s) filtered" in result
 
 
 def test_match_intelligence_panel_never_shows_a_raw_debug_string(db_conn):
@@ -1276,6 +1324,42 @@ def test_pitch_shows_next_xp_projection_for_a_yet_to_play_player(db_conn):
     assert "next-tag" in result
     assert "NEXT" in result
     assert "4.0 <span class='unit'>xP</span>" in result
+
+
+def test_pitch_shows_last_finished_gws_real_points_alongside_next_xp(db_conn):
+    """Real correctness fix (2026-08-27, "final product-level dashboard"
+    pass, direct user report: "the current squad pitch mostly shows NEXT xP
+    even after GW1 finished"). Once the reference event advances past a
+    real finished gameweek (GW1 done, GW2 now current and not yet started -
+    the normal post-deadline state), the just-finished GW's real archived
+    points (`prediction_outcomes`, written once by the post-GW pipeline)
+    must still show on the card, not silently disappear the moment
+    play_state stops being "played"/"live" for the NEW reference event."""
+    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+        "VALUES (1,'GW1','2026-08-21T17:30:00Z',1,1,1,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+        "VALUES (2,'GW2','2026-08-28T17:30:00Z',2,0,0,1,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO prediction_outcomes (player_id, event, season, actual_points, outcome_recorded_at, predicted_at) "
+        "VALUES (1, 1, '2026-27', 6, 't0', 't0')"
+    )
+    db_conn.commit()
+
+    # No live_payload, event=2 (GW2, not started) - the real post-deadline
+    # state this bug actually occurs in.
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, None, 2)
+
+    assert "player-recent-ref" in result
+    assert "6 <span class='unit'>GW1 pts</span>" in result
+    assert "3.0 <span class='unit'>xP</span><span class='next-tag'>NEXT</span>" in result  # player 1's own NEXT xP still shown alongside it
+    assert "4.0 <span class='unit'>xP</span><span class='next-tag'>NEXT</span>" in result  # player 10 has no GW1 outcome - real, honest absence
 
 
 def test_pitch_never_shows_xp_as_current_performance_once_a_match_has_played(db_conn):
@@ -1436,17 +1520,75 @@ def test_next_gw_plan_panel_shows_real_verdicts_when_logged(db_conn):
     assert "Chip" in result or "CHIP" in result
 
 
-# --- Strategic Plan (2026-08-27, "generate all of it" dashboard pass) ---
+# --- Strategic Plan (2026-08-27, "generate all of it" + "final product-level
+# dashboard" passes) - THE one authoritative decision surface. Needs a real
+# locked squad (`_seed_real_picks` + `get_locked_squad`/`evaluate_locked_squad`)
+# since captain/transfer verdicts now come from `optimization.decision_analysis`,
+# computed against the real locked squad, not just the logged strategic_plan
+# decision alone. ---
 
-def test_strategic_plan_panel_shows_empty_state_when_never_run(db_conn):
+def _locked_and_decision(conn):
+    from fpl_agent.optimization.decision_engine import evaluate_locked_squad
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+    from test_optimization_locked_squad import _seed_real_picks
+
+    _seed_real_picks(conn)
+    locked = get_locked_squad(conn)
+    decision = evaluate_locked_squad(conn, locked)
+    return locked, decision
+
+
+def test_strategic_plan_panel_handles_an_older_decision_missing_path_total(db_conn):
+    """Real bug found live against the real production DB (2026-08-27): a
+    `strategic_plan` decision logged BEFORE this pass added `path_total`/
+    `delta_vs_roll`/`delta_vs_leader` only carries the older `total_net_ev`
+    field - `_strategic_plan_html` crashed with a real KeyError on the real
+    production dashboard regen. Must fall back to `total_net_ev` instead of
+    fabricating a roll baseline that was never computed for that older run."""
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+    log_decision(
+        db_conn, "strategic_plan", "B.Fernandes -> Tavernier (strategic 8GW EV=12.06)",
+        {
+            "horizon_gw": 8, "note": "some note", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": 12.06}],
+            "best_path": {"total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]},
+            "paths": [{"total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]}],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+
+    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+
+    assert "12.1 pts" in result or "12.06" in result or "12.1" in result
+    assert "Path 1" in result
+
+
+def test_strategic_plan_panel_shows_empty_state_when_no_locked_squad(db_conn):
     from fpl_agent.monitoring.dashboard import _strategic_plan_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
-    result = _strategic_plan_html(db_conn)
+    result = _strategic_plan_html(db_conn, None, None, None)
 
-    assert "No strategic plan logged yet" in result
+    assert "No real locked squad" in result
+
+
+def test_strategic_plan_panel_shows_no_search_run_yet_state_with_a_real_locked_squad(db_conn):
+    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+
+    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+
+    assert "no multi-GW search has been run yet" in result
     assert "fpl strategic-plan" in result
+    assert "CURRENT LOCKED STATE" in result
 
 
 def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
@@ -1454,26 +1596,30 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
     from fpl_agent.monitoring.dashboard import _strategic_plan_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
     log_decision(
         db_conn, "strategic_plan", "B.Fernandes -> Tavernier (strategic 8GW EV=12.06)",
         {
             "horizon_gw": 8, "note": "IMMEDIATE optimum (GW1 horizon: Tzolis -> Tavernier) differs from the STRATEGIC optimum (GW8 horizon: B.Fernandes -> Tavernier)",
             "immediate_vs_strategic_differ": True,
             "horizon_comparison": [
-                {"horizon_gw": 1, "opening_action": "Tzolis -> Tavernier", "total_net_ev": 4.62},
-                {"horizon_gw": 8, "opening_action": "B.Fernandes -> Tavernier", "total_net_ev": 12.06},
+                {"horizon_gw": 1, "opening_action": "Tzolis -> Tavernier", "total_net_ev": 4.62, "path_total": 4.62, "delta_vs_roll": 1.0},
+                {"horizon_gw": 8, "opening_action": "B.Fernandes -> Tavernier", "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0},
             ],
             "best_path": {
-                "total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5,
+                "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 1, "final_bank_tenths": 5,
                 "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
             },
             "paths": [
                 {
-                    "total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5,
+                    "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                    "final_free_transfers": 1, "final_bank_tenths": 5,
                     "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
                 },
                 {
-                    "total_net_ev": 11.9, "final_free_transfers": 1, "final_bank_tenths": 3,
+                    "total_net_ev": 11.9, "path_total": 11.9, "delta_vs_roll": 2.84, "delta_vs_leader": -0.16,
+                    "final_free_transfers": 1, "final_bank_tenths": 3,
                     "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
                 },
             ],
@@ -1485,14 +1631,15 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
     )
     db_conn.commit()
 
-    result = _strategic_plan_html(db_conn)
+    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
 
     assert "TRANSFER" in result
     assert "B.Fernandes -&gt; Tavernier" in result or "B.Fernandes -> Tavernier" in result
-    assert "IMMEDIATE optimum" in result
+    assert "IMMEDIATE OPTIMUM" in result and "STRATEGIC OPTIMUM" in result
     assert "Path 1" in result and "Path 2" in result
     assert "WILDCARD" in result  # chip badge, uppercased
-    assert "close" in result  # 12.06 vs 11.9 is well within 5% - path-stability note
+    assert "statistically indistinguishable" in result  # 12.06 vs 11.9 is well within 5%
+    assert "CURRENT LOCKED STATE" in result
 
 
 def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn):
@@ -1500,20 +1647,27 @@ def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn)
     from fpl_agent.monitoring.dashboard import _strategic_plan_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
     log_decision(
         db_conn, "strategic_plan", "ROLL (strategic 8GW EV=5.0)",
         {
             "horizon_gw": 8, "note": "the real opening move (ROLL) is consistent across every horizon checked",
             "immediate_vs_strategic_differ": False,
-            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": 5.0}],
-            "best_path": {"total_net_ev": 5.0, "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]},
-            "paths": [{"total_net_ev": 5.0, "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]}],
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": 5.0, "path_total": 5.0, "delta_vs_roll": 0.0}],
+            "best_path": {
+                "total_net_ev": 5.0, "path_total": 5.0, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            },
+            "paths": [{
+                "total_net_ev": 5.0, "path_total": 5.0, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            }],
             "chip_schedule": {"entries": [], "advisory_hit_recommendations": []},
         },
     )
     db_conn.commit()
 
-    result = _strategic_plan_html(db_conn)
+    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
 
     assert "ROLL" in result
     assert "No chip cleared a real positive value" in result

@@ -2730,13 +2730,28 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
             click.echo(f"     rejected: {ranked.rejected_reason}")
 
 
-def _path_detail(p) -> dict:
+def _path_detail(p, *, roll_total: float | None = None, leader_total: float | None = None) -> dict:
     """Real, serializable snapshot of one TransferSequence - shared between
     the CLI's decision-log detail and any future consumer (the dashboard's
     Strategic Plan section reads exactly this shape from the logged
-    decision, so the two never drift apart)."""
+    decision, so the two never drift apart).
+
+    Real, disclosed labeling fix (2026-08-27, "final product-level
+    dashboard" pass, P0 "strategic path score semantics"): `total_net_ev` is
+    kept as the raw field name (matches TransferSequence's own real
+    contract - the sum of the whole squad's real per-GW EV across the
+    horizon, never a delta), but is never displayed alone anymore -
+    `path_total` names the exact same number under its real, unambiguous
+    meaning, `delta_vs_roll` (None only when no real roll baseline could be
+    computed) is the real, separate "how much better than doing nothing"
+    figure, and `delta_vs_leader` is 0.0 for the winning path and the real,
+    signed gap to it for every other ranked path - never called "net EV" on
+    its own, exactly the ambiguity the audit flagged."""
     return {
-        "total_net_ev": p.total_net_ev, "final_free_transfers": p.final_free_transfers,
+        "total_net_ev": p.total_net_ev, "path_total": p.total_net_ev,
+        "delta_vs_roll": round(p.total_net_ev - roll_total, 2) if roll_total is not None else None,
+        "delta_vs_leader": round(p.total_net_ev - leader_total, 2) if leader_total is not None else 0.0,
+        "final_free_transfers": p.final_free_transfers,
         "final_bank_tenths": p.final_bank_tenths,
         "steps": [
             {
@@ -2797,6 +2812,28 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
         plan = build_strategic_plan(conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon, beam_width=beam_width)
         best = plan.best
 
+        # Real "PATH TOTAL is not the same concept as DELTA VS ROLL" fix
+        # (2026-08-27, "final product-level dashboard" pass, P0 "strategic
+        # path score semantics" - direct user audit: a real ~518 total
+        # squad-points-over-8-GWs figure was being called "Net EV," reading
+        # as though it were an incremental advantage over doing nothing).
+        # `total_net_ev` is genuinely the SUM of the whole squad's real
+        # per-GW EV across the horizon (transfers.py's own documented
+        # contract) - a real, useful, but different number from "how much
+        # better is this than just rolling." Computed here, once, using the
+        # exact same real `_squad_gw_ev` primitive `search_transfer_sequences`
+        # itself already uses for its own roll branch - same real events
+        # (`start_event = _reference_event(conn)`, `horizon` real GWs), the
+        # STARTING squad, zero transfers.
+        from fpl_agent.optimization.transfers import _squad_gw_ev
+
+        roll_cache: dict = {}
+        roll_start_event = _reference_event(conn)
+        roll_total = round(
+            sum(_squad_gw_ev(conn, tuple(squad_ids), e, roll_cache) for e in range(roll_start_event, roll_start_event + horizon)),
+            2,
+        ) if roll_start_event is not None else None
+
         chip_schedule_detail = None
         if with_chips and best is not None:
             click.echo(f"overlaying a real chip schedule onto the winning path ({trials} trials)...")
@@ -2845,23 +2882,38 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
 
         best_summary = (
             f"{plan.horizon_comparison[-1].opening_action if plan.horizon_comparison else 'no path'} "
-            f"(strategic {horizon}GW EV={best.total_net_ev if best else None})"
+            f"(strategic {horizon}GW path total={best.total_net_ev if best else None}, "
+            f"delta vs roll={round(best.total_net_ev - roll_total, 2) if best is not None and roll_total is not None else None})"
         )
+        leader_total = plan.paths[0].total_net_ev if plan.paths else None
+        # Real per-checkpoint delta-vs-roll (same fix, applied to the 1/3/5/8-GW
+        # comparison row too - each checkpoint is its own real, independent
+        # beam-search call sharing the same real start_event, so the SAME roll
+        # baseline machinery/cache applies per checkpoint's own horizon_gw.
+        horizon_comparison_detail = []
+        for c in plan.horizon_comparison:
+            checkpoint_roll_total = (
+                round(sum(_squad_gw_ev(conn, tuple(squad_ids), e, roll_cache) for e in range(roll_start_event, roll_start_event + c.horizon_gw)), 2)
+                if roll_start_event is not None else None
+            )
+            horizon_comparison_detail.append({
+                "horizon_gw": c.horizon_gw, "opening_action": c.opening_action,
+                "path_total": c.total_net_ev, "total_net_ev": c.total_net_ev,
+                "delta_vs_roll": round(c.total_net_ev - checkpoint_roll_total, 2) if checkpoint_roll_total is not None else None,
+            })
         log_decision(
             conn, "strategic_plan", summary=best_summary,
             detail={
                 "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
-                "horizon_comparison": [
-                    {"horizon_gw": c.horizon_gw, "opening_action": c.opening_action, "total_net_ev": c.total_net_ev}
-                    for c in plan.horizon_comparison
-                ],
-                "best_path": _path_detail(best) if best is not None else None,
+                "horizon_comparison": horizon_comparison_detail,
+                "roll_total": roll_total,
+                "best_path": _path_detail(best, roll_total=roll_total, leader_total=leader_total) if best is not None else None,
                 # Real "generate all of it" addition (2026-08-27): the FULL top-N
                 # paths, not just the winner - the dashboard's Strategic Plan
                 # section and `fpl strategic-plan` itself both read this same
                 # list, so a real Path 2/3/4/5 comparison never needs a second
                 # search run.
-                "paths": [_path_detail(p) for p in plan.paths],
+                "paths": [_path_detail(p, roll_total=roll_total, leader_total=leader_total) for p in plan.paths],
                 "chip_schedule": chip_schedule_detail,
             },
             confidence="low",
@@ -2871,15 +2923,20 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
 
     click.echo()
     click.echo(f"HORIZON COMPARISON (immediate vs strategic optimum):")
-    for c in plan.horizon_comparison:
-        click.echo(f"  {c.horizon_gw}GW-horizon opening action: {c.opening_action}  (total_net_ev={c.total_net_ev})")
+    for c in horizon_comparison_detail:
+        roll_bit = f", delta vs roll={c['delta_vs_roll']:+.1f}" if c["delta_vs_roll"] is not None else ""
+        click.echo(f"  {c['horizon_gw']}GW-horizon opening action: {c['opening_action']}  (path total={c['path_total']}{roll_bit})")
     click.echo(f"  {plan.note}")
+    if roll_total is not None:
+        click.echo(f"  real {horizon}-GW ROLL baseline (zero transfers): path total={roll_total}")
 
     click.echo()
     click.echo(f"TOP {len(plan.paths)} REAL {horizon}-GW PATHS:")
     for i, p in enumerate(plan.paths, 1):
         marker = " <- BEST" if i == 1 else ""
-        click.echo(f"Path {i}: total_net_ev={p.total_net_ev}  final_FT={p.final_free_transfers}  final_bank=£{p.final_bank_tenths/10:.1f}m{marker}")
+        delta_roll_bit = f"  delta_vs_roll={round(p.total_net_ev - roll_total, 2):+.1f}" if roll_total is not None else ""
+        delta_leader_bit = f"  delta_vs_leader={round(p.total_net_ev - leader_total, 2):+.1f}" if i > 1 and leader_total is not None else ""
+        click.echo(f"Path {i}: path_total={p.total_net_ev}{delta_roll_bit}{delta_leader_bit}  final_FT={p.final_free_transfers}  final_bank=£{p.final_bank_tenths/10:.1f}m{marker}")
         for st in p.steps:
             action = "ROLL" if st.player_out_id is None else f"{st.player_out_name} -> {st.player_in_name}" + (" (HIT)" if st.uses_hit else "")
             click.echo(f"    GW{st.event}: {action}")
