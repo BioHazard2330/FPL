@@ -491,6 +491,93 @@ def test_market_conviction_override_never_inflates_a_well_evidenced_low_estimate
     assert result.expected_minutes == 20.0  # real recent evidence, unmodified by the high-ownership signal
 
 
+def test_thin_debut_current_season_snapshot_does_not_lock_out_the_predicted_lineup_override(db_conn):
+    """Real gap found 2026-08-26 (GW1-postmortem cold-start audit): a true
+    PL debutant (no player_season_history at all) who picked up even one
+    real 0-minute current-season snapshot (an unused-sub cameo) landed on
+    basis="current_season_only" - not a _WEAK_EVIDENCE_BASES member - which
+    permanently locked out the predicted-lineup/start-percent override even
+    when a real, current source says he's starting THIS week. Confirmed live
+    against a real Chelsea signing before this fix: frozen at 0.0 expected
+    minutes despite a real 40% synced start-percentage and a real "starting"
+    predicted-lineup row."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, average_entry_score, highest_score, updated_at) "
+        "VALUES (2,'Gameweek 0','2026-08-14T17:30:00Z',1,1,1,0,0,NULL,NULL,'t0')"
+    )
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=0 WHERE player_id=1")
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "predicted_lineup_confirmed_starting"
+    assert result.expected_minutes == 75.0
+
+
+def test_thin_debut_override_stops_once_real_multi_gameweek_evidence_accumulates(db_conn):
+    """Current-season evidence must progressively take back over as more
+    real gameweeks accumulate - the thin-debut override is only for the
+    genuinely early, low-sample window."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    for event_id in (2, 3, 4):
+        db_conn.execute(
+            "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+            "is_current, is_next, average_entry_score, highest_score, updated_at) "
+            "VALUES (?,?,?,1,1,1,0,0,NULL,NULL,'t0')",
+            (event_id, f"Gameweek {event_id}", f"2026-08-{10+event_id}T17:30:00Z"),
+        )
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=0 WHERE player_id=1")
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    # 4 finished events now - real evidence (0 real minutes across 4 real
+    # gameweeks) correctly dominates over a predicted-lineup guess.
+    assert result.basis == "current_season_only"
+    assert result.expected_minutes == 0.0
+
+
+def test_thin_debut_override_never_fires_for_a_player_with_real_prior_season_history(db_conn):
+    """The override is scoped to genuine debutants only (prior_row is None) -
+    an established player with real career history behind a currently-low
+    number (e.g. Havertz) must never be caught by this, even during the
+    same early-season low-sample window."""
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=900, starts=6)
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, average_entry_score, highest_score, updated_at) "
+        "VALUES (2,'Gameweek 0','2026-08-14T17:30:00Z',1,1,1,0,0,NULL,NULL,'t0')"
+    )
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=0 WHERE player_id=1")
+    db_conn.execute(
+        "INSERT INTO predicted_lineup_players (team_id, player_id, player_name_raw, predicted_status, "
+        "lineup_row, doubt_percent, fetched_at) VALUES (1, 1, 'Test Player', 'starting', 2, NULL, 't0')"
+    )
+    db_conn.commit()
+
+    result = expected_minutes(db_conn, 1)
+
+    # starts=6 clears _MIN_STARTS_FOR_PER_START_RATE, but no rotation_risk and
+    # per_start_minutes (150.0, capped 90) > base (blended low current+prior) -
+    # the FIRST block (real per-start-rate) is the one allowed to fire here,
+    # not the thin-debut weak-evidence floor.
+    assert result.basis in ("predicted_lineup_confirmed_starting", "blended_current_and_prior_season")
+
+
 def test_doubtful_partially_damps_expected_minutes(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "d"

@@ -5284,3 +5284,110 @@ the genuinely open gaps.
   of it was judged lower-value than the runtime/correctness fixes above given real GW2 planning is the
   actual near-term need. A real follow-up if the user wants a single compact reference doc built from
   what's already here.
+
+## GW2-accuracy implementation audit (2026-08-26, same day, continued)
+
+Direct follow-up: audit the real implementation (not documentation) behind sections C/D/M, with GW2
+accuracy as the priority. Traced every major xP input source -> ingestion -> DB -> projection -> decision
+by reading the actual code, then live-verified each claim against the real production DB. Found and fixed
+real gaps rather than writing an audit report.
+
+**The single biggest real finding: zero 2026-27 match data had been fed back into the live model at
+all, five real days after GW1 finished.** `match_results_history` (feeds Dixon-Coles team strength) and
+`player_match_stats_history` (feeds the primary Understat goals/assists rate path) both showed 0 real
+rows for season `2026-27`, confirmed live via direct query - `fpl backfill-odds`/`fpl backfill-xg` are
+real, already-tested, already-proven commands, but were NEVER wired into the regular automatic cycle for
+the LIVE season, only ever run manually against historical seasons. This meant every player's goals/
+assists rate ran through the season-fallback path all season, and the Dixon-Coles fit never saw a single
+real 2026-27 result. Ran both backfills for real (10 real GW1 matches, 310 real player rows) and wired
+both into `run_scheduled`, but only after fixing two real problems this surfaced:
+- `backfill_understat` had **no idempotency at all** - a second call re-fetched every played match's
+  Understat page again, unsafe to put on any recurring cadence (a monotonically growing re-fetch list as
+  the season progresses). Added a real skip-already-backfilled-match guard (same "idempotent unless
+  --force" contract every other backfill command here already has). `backfill_football_data` was already
+  safe (one small CSV fetch, idempotent upsert) - wired in directly, no fix needed.
+- **A real, previously-undiscovered ~19% player-name resolution gap** in `market_identity.py::
+  resolve_player_id` - exact-match-only (no diacritic folding, no last-name fallback), confirmed live to
+  silently drop 58 of 310 real 2026-27 Understat rows, including B.Fernandes (Understat's "Bruno
+  Fernandes" vs FPL's `web_name="B.Fernandes"`/`second_name="Borges Fernandes"`) - a real, highly-owned,
+  locked-squad player. Fixed by reusing (not duplicating) `predicted_lineups_source.py::
+  match_player_in_team`'s already-proven diacritic-fold + last-word-of-second_name fallback, scoped to
+  the real team the row belongs to (same low-collision-risk property that function's own docstring
+  establishes) - added an optional `team_id` parameter, zero behavior change for any caller that doesn't
+  pass one. Re-ran the backfill after both fixes: unresolved rows dropped from 58 to 10 (~97% resolution,
+  matching the reused function's own proven rate elsewhere).
+
+**Cold-start audit (section 2): tested Tzolis, an established player, and 4 further real new-to-PL
+cases directly.** Confirmed the earlier Tzolis fix is genuinely general, not a patch - `van Ewijk`
+(Coventry, no cross-league match), `Slater`/`Muharemovic` (Hull/Leeds, real GW1 starters) all correctly
+picked up `current_season_only` with real minutes/points the moment they had any real current-season
+evidence. **Found and fixed a second, real, general cold-start bug the same audit surfaced**: a true PL
+debutant (`prior_row is None` - no `player_season_history` at all) who picked up even one real
+current-season snapshot - including a genuine 0-minute unused-sub cameo - landed on
+`basis="current_season_only"`, which is NOT in `_WEAK_EVIDENCE_BASES`, permanently locking out the
+predicted-lineup/start-percent override for the rest of the season even when a real, current, independent
+source disagreed. Confirmed live: a real Chelsea signing (Palestra) frozen at 0.0 expected minutes despite
+a real 40% synced start-percentage and a real "starting" predicted-lineup row. Fixed with a new, narrowly-
+scoped `is_thin_debut` condition (`prior_row is None` AND `finished_events <= 2`) - Palestra: 0.0 -> 15.0
+expected minutes (30 predicted-lineup-implied minutes, correctly halved by his real DOUBTFUL availability
+status - the full pipeline composing correctly, not just one override in isolation). Verified this does
+NOT catch established players with real prior-season history behind a currently-low number (Havertz,
+Tzolis) - both structurally excluded since they have a real `prior_row`, confirmed unchanged by the fix.
+3 new regression tests, including one proving the override correctly stops once 4 real gameweeks of
+current-season evidence accumulate (current-season evidence progressively takes back over, per the
+spec's own requirement).
+
+**Real, disclosed, deliberately-not-fixed finding (section 4/1)**: `player_setpiece_history.
+penalties_order` (real, official, already-ingested Tier 1 data - 20 real current primary penalty takers
+found live, including Haaland/B.Fernandes/Szoboszlai/Calvert-Lewin) is used ONLY for the change-detection
+alert and captaincy's display-only `is_penalty_taker` flag - it never adjusts the goals-rate probability
+inside `expected_points.py` itself. This is a real, live, potentially material gap specifically for a
+player who has RECENTLY become or lost primary penalty duty (their shrinkage-regressed historical rate
+wouldn't yet reflect a new role, or would overstate a lost one). Investigated a fix and deliberately did
+NOT build one this pass: `player_match_stats_history` has no penalty-shot flag at all (Understat's raw
+per-shot `situation` tag was never parsed into the aggregated per-match schema), so any numeric
+adjustment right now would have to be an invented constant (a real PL average penalty-award rate isn't
+sourced from this project's own ingested data) - exactly the "no fake calibration" fabrication risk this
+audit was told to avoid. The real, correct fix (parsing Understat's per-shot penalty tag into a new
+schema field) is a genuine, scoped follow-up, not attempted under this pass's own risk/reward bar.
+
+**Data-source freshness audit (section 3)**: `fpl source-status` checked end to end - all 20 sources
+`OK`, `fpl doctor` clean. Two sources showing old `last_success` timestamps investigated and confirmed
+correct-by-design, not silent staleness: `fpl_api_element_summary` (`sync-history`, only updates once a
+past season fully closes - nothing new exists to fetch mid-season) and `understat_cross_league`/
+`football_data_E1` (promoted-team/cross-league priors, real preseason-only inputs by their own nature -
+correctly don't need re-running once the season's actual squads are set). `football_data`/`understat`
+now show today's real timestamp after the backfill-wiring fix above - live-verified via the real
+`run_scheduled` log, not just asserted (`odds backfill: 10 match(es) upserted`, `xg backfill: 0 new
+match(es) processed` on the following cycle - correctly 0, proving the new idempotency guard works for
+real, not just in a test).
+
+**Decision verification (section 5)**: transfer/captain fusion's disagreement-override logic already has
+real, passing unit-level proof (6 new transfer-fusion tests from earlier today, 5 pre-existing captain
+ones) - a real `PERSISTENT_TREND` case genuinely flips the verdict to `QUALITATIVE_WINS`, a single-match
+signal correctly does not. **Stated honestly, not glossed over**: a real, live disagreement case cannot
+exist in production data yet - `PERSISTENT_TREND` requires 2+ real analyzed matches for the same player/
+signal, and GW1 is still the only gameweek this project has ever run real qualitative analysis against.
+This is a genuine, correct data limitation (the same "not yet outcome-verified, schema/logic-verified
+instead" honesty posture used throughout this project for anything gated on real match volume that
+doesn't exist yet), not a gap in the fusion logic itself - GW2's real analysis will be the first chance to
+observe a real production disagreement.
+
+**Automation verification (section 6) - live-verified against the real production log, not just
+reasoned about.** Ran a real, complete `fpl run-scheduled` cycle end to end and read `logs/fpl_agent.log`
+across the last ~10 real scheduled runs (spanning 2026-08-25/26): confirmed live, in order - sync ->
+odds/xg backfill (new) -> predicted-lineup/start-percent change detection -> live-odds/player-odds sync ->
+news sync -> my-team sync (`picks_fetched=True`, real) -> alert delivery -> dashboard regen, every real
+cycle. Found real, concrete proof each of the six chain links genuinely already fires unattended: a real
+`post-GW pipeline: event=1 decision_id=66` line from a prior real cycle (proves GW-end -> next-GW plan is
+genuinely automatic, not just tested), a real `lineup-probability sync: 1 change event(s)` line (a real
+squad player's start-percent moved - correctly logged, and correctly did NOT trigger a reassessment since
+its real severity was MEDIUM, not HIGH - materiality gating confirmed working on real data, not just the
+synthetic test from earlier today), and real `my-team sync: picks_fetched=True` on every cycle. Zero
+manual CLI invocation was needed to produce any of this - Claude Code's only real role in the whole
+observed chain was the qualitative-analysis skill runs from earlier today, exactly as designed.
+
+**Full suite: 824/824 passing** (812 baseline + 12 new). Every fix in this section live-verified against
+the real production DB (`data/fpl.db`), not only asserted by tests - the backfill re-run, the name-
+resolution improvement, the Palestra recompute, and the real scheduled-cycle log were all checked against
+actual current data.

@@ -112,7 +112,23 @@ def get_or_create_market_team(conn: sqlite3.Connection, source: str, source_name
     return market_team_id
 
 
-def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str) -> int | None:
+def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str, team_id: int | None = None) -> int | None:
+    """`team_id` (real FPL team id, optional) is a real gap-closer found
+    2026-08-26: this only ever tried an EXACT match against
+    `first_name+second_name`/`web_name` - no diacritic folding, no
+    last-name fallback - and confirmed live to silently miss ~19% of a real
+    2026-27 Understat backfill, including B.Fernandes (Understat's real
+    "Bruno Fernandes" vs FPL's `web_name="B.Fernandes"`/
+    `second_name="Borges Fernandes"`), a real, highly-owned, locked-squad
+    player. Reuses `predicted_lineups_source.py::match_player_in_team` (the
+    same diacritic-fold + "maximal munch" + last-word-of-second_name
+    fallback already proven at a 97.2% real match rate for a different
+    source) rather than duplicating that logic - scoped to one real team so
+    the collision risk stays as low as that function's own docstring already
+    establishes. Only tried when the exact match fails AND a team_id is
+    given - existing callers that don't pass one (or a source with no real
+    team context) keep exactly today's exact-match-only behavior, zero
+    regression risk."""
     alias = conn.execute(
         "SELECT player_id FROM player_name_aliases WHERE source=? AND source_name=?",
         (source, source_name),
@@ -125,12 +141,19 @@ def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str) -
         "SELECT id FROM players WHERE LOWER(TRIM(first_name || ' ' || second_name))=? OR LOWER(web_name)=?",
         (norm, norm),
     ).fetchone()
-    if match is None:
+    matched_id = match["id"] if match is not None else None
+
+    if matched_id is None and team_id is not None:
+        from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
+
+        matched_id = match_player_in_team(conn, team_id, source_name)
+
+    if matched_id is None:
         return None
 
     conn.execute(
         "INSERT OR IGNORE INTO player_name_aliases (player_id, source, source_name) VALUES (?, ?, ?)",
-        (match["id"], source, source_name),
+        (matched_id, source, source_name),
     )
     conn.commit()
-    return match["id"]
+    return matched_id

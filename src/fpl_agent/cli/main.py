@@ -1044,6 +1044,43 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
 
+    # Real gap found 2026-08-26 (GW1-postmortem audit): backfill-odds/
+    # backfill-xg were built and proven for historical seasons, but NEVER
+    # wired into the regular cycle for the LIVE season - confirmed live,
+    # zero 2026-27 rows existed in either match_results_history or
+    # player_match_stats_history five real days after GW1 finished. That
+    # means the Dixon-Coles team-strength fit never incorporated a single
+    # real 2026-27 result, and every player's goals/assists rate ran through
+    # the season-fallback path instead of the richer shot-level primary one,
+    # for the entire live season so far. football-data.co.uk publishes one
+    # small CSV per season that's cheap to re-fetch every cycle (its own
+    # upsert is already idempotent). Understat needed a real fix first (see
+    # backfill_understat's own docstring) - it had no skip-already-backfilled
+    # guard at all, unsafe to call on a cadence without it; now idempotent,
+    # so a normal cycle only ever fetches genuinely NEW finished matches.
+    # Both keyed off the live current_season() - never a hardcoded year.
+    season_for_backfill = None
+    try:
+        from fpl_agent.models.rules import current_season as _current_season_for_backfill
+
+        season_for_backfill = _current_season_for_backfill(conn)
+    except Exception:
+        logger.exception("run-scheduled could not resolve the live season - skipping match/xg backfill this cycle")
+    if season_for_backfill is not None:
+        try:
+            odds_backfill = backfill_football_data(conn, season_for_backfill)
+            logger.info("run-scheduled odds backfill: %d match(es) upserted", odds_backfill["matches_inserted"])
+        except Exception:
+            logger.exception("run-scheduled odds backfill failed - not fatal to the sync itself")
+        try:
+            xg_backfill = backfill_understat(conn, season_for_backfill)
+            logger.info(
+                "run-scheduled xg backfill: %d new match(es) processed, %d player row(s)",
+                xg_backfill["matches_processed"], xg_backfill["player_rows_inserted"],
+            )
+        except Exception:
+            logger.exception("run-scheduled xg backfill failed - not fatal to the sync itself")
+
     # Predicted-lineup + start-percent CHANGE detection (2026-08-21, live-
     # gameweek layer) - both sources were already synced by this project
     # (2026-08-21, same day, earlier) but only as current-state snapshots,

@@ -333,7 +333,30 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
                     base = per_start_minutes
                     basis = "predicted_lineup_confirmed_starting"
 
-    if basis in _WEAK_EVIDENCE_BASES:
+    # Real gap found 2026-08-26 (GW1-postmortem cold-start audit): a true PL
+    # debutant (no player_season_history row at all - prior_row is None) who
+    # picked up even one real current-season snapshot (e.g. a single 0-minute
+    # unused-sub appearance) landed on basis="current_season_only" - NOT in
+    # _WEAK_EVIDENCE_BASES - which permanently locked out the predicted-
+    # lineup/start-percent override below for the rest of the season, even
+    # when a real, current, independent source says he's starting THIS week.
+    # Confirmed live: a real Chelsea signing with a genuine 0-minute GW1
+    # cameo stayed frozen at 0.0 expected minutes despite a real 40% synced
+    # start-percentage and a real "starting" predicted-lineup row - exactly
+    # the "missing PL history silently becomes a near-zero projection"
+    # failure this audit was checking for. Gated on `prior_row is None`
+    # (a genuine debutant, never an established player with real career
+    # history behind a currently-low number - e.g. Havertz, who has real
+    # prior_row data and is correctly excluded) AND a small
+    # `finished_events` count (this season's own sample is still too thin
+    # to trust over a real disclosed signal) - as more real gameweeks
+    # accumulate, current-season evidence correctly takes back over (this
+    # override only ever raises the estimate, same safety property every
+    # other override here already has).
+    _THIN_DEBUT_SAMPLE_EVENTS = 2
+    is_thin_debut = prior_row is None and current_per_gw is not None and finished_events <= _THIN_DEBUT_SAMPLE_EVENTS
+
+    if basis in _WEAK_EVIDENCE_BASES or is_thin_debut:
         if start_percent is not None:
             target = _PREDICTED_LINEUP_STARTER_MINUTES * (start_percent / 100)
             if target > base:

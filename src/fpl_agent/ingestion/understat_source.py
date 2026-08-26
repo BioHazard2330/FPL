@@ -115,7 +115,9 @@ def _parse_json(text: str, context: str) -> dict:
 
 def _upsert_player_match_row(conn, season: str, row: dict) -> None:
     market_team_id = get_or_create_market_team(conn, "understat", row["team_name"])
-    player_id = resolve_player_id(conn, "understat", row["player_name"])
+    fpl_team_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (market_team_id,)).fetchone()
+    fpl_team_id = fpl_team_row["fpl_team_id"] if fpl_team_row else None
+    player_id = resolve_player_id(conn, "understat", row["player_name"], team_id=fpl_team_id)
     now = datetime.now(timezone.utc).isoformat()
 
     conn.execute(
@@ -151,9 +153,30 @@ def backfill_understat(
     played = [m for m in matches if m.get("isResult")]
     matches_processed = player_rows_inserted = 0
 
+    # Real gap found 2026-08-26: this function had no idempotency at all - a
+    # re-run re-fetched EVERY played match's Understat page again, discarding
+    # the fetch and only deduping at the final DB upsert. Fine for a one-shot
+    # historical backfill, but unsafe to ever wire into an automatic regular
+    # cycle (the whole point of this fix): calling it every ~30min scheduled
+    # tick as the season progresses would re-fetch a monotonically growing
+    # list of already-backfilled matches forever - wasteful, slow, and the
+    # kind of unnecessary repeated hammering a free, no-key source shouldn't
+    # get. Skips any match_id already present for this season unless forced -
+    # same "idempotent per X unless --force" contract every other backfill
+    # command in this project already uses (fpl sync-eo, fpl live-rank, etc).
+    already_have = {
+        r["understat_match_id"]
+        for r in conn.execute(
+            "SELECT DISTINCT understat_match_id FROM player_match_stats_history WHERE season=?", (season,)
+        ).fetchall()
+    }
+
     for m in played:
         match_id = m["id"]
         match_date = m["datetime"].split(" ")[0]
+
+        if match_id in already_have:
+            continue
 
         if match_pages is not None:
             match_json = match_pages.get(match_id)

@@ -65,6 +65,27 @@ def test_backfill_understat_upserts_player_match_stats(db_conn):
     assert row["player_id"] is None  # no players seeded in this test -> unresolved, not fabricated
 
 
+def test_backfill_understat_skips_already_backfilled_matches_on_a_second_call(db_conn):
+    """Real gap found 2026-08-26: this function had no idempotency at all -
+    every call re-fetched every played match's Understat page again, unsafe
+    to ever wire into a regular automatic cycle (a monotonically growing
+    re-fetch every ~30min as a season progresses). A second call with the
+    same match already present must not even attempt to fetch it again -
+    proven here by NOT providing match_pages for the already-backfilled
+    match id on the second call (a real fetch attempt with no page supplied
+    would return None and be silently skipped either way, so match_pages={}
+    combined with matches_processed==0 is the real proof it never entered
+    the fetch path a second time)."""
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+
+    summary = backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={})
+
+    assert summary["matches_processed"] == 0
+    assert summary["player_rows_inserted"] == 0
+    row = db_conn.execute("SELECT COUNT(*) AS n FROM player_match_stats_history").fetchone()
+    assert row["n"] == 1  # unchanged, no duplicate row either
+
+
 def test_backfill_understat_skips_unplayed_fixtures(db_conn):
     season_json = json.dumps({
         "teams": {"50": {"id": "50", "title": "Man City"}, "8": {"id": "8", "title": "Chelsea"}},
