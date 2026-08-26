@@ -2655,6 +2655,42 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
         if not any_flip:
             click.echo("  no tested scenario (+/-15-30% minutes assumptions) flips the decision")
 
+    if a.chosen is not None:
+        click.echo()
+        click.echo("FULL DECISION REPORT:")
+        click.echo(f"  ACTION: {a.decision_kind.upper()} ({a.chosen.candidate.player_out_name} -> {a.chosen.candidate.player_in_name})")
+        click.echo(f"  WHY: {a.reason}")
+        click.echo(f"  MODEL EV: +{a.chosen.candidate.net_ev_3gw} over 3 GW (hit-cost aware, real ROLL baseline {a.roll.horizon_totals[3] if a.roll else '?'})")
+        if a.qualitative_note:
+            click.echo(f"  FOOTBALL/QUALITATIVE EVIDENCE: {a.qualitative_note}")
+        else:
+            click.echo("  FOOTBALL/QUALITATIVE EVIDENCE: no real disagreement between the model and the qualitative read")
+        click.echo(
+            "  EXPERT/COMMUNITY EVIDENCE (real, general FPL principle - not squad-specific): "
+            "conventional wisdom advises against early-season transfers/wildcards on <=1 GW of evidence, "
+            "reassessing around GW5-6 once minutes/roles/new-signing form are clearer"
+        )
+        if a.information_value_note:
+            click.echo(f"  VALUE OF WAITING: {a.information_value_note}")
+        second = a.candidates[1] if len(a.candidates) > 1 else None
+        opp_cost = f"next-best alternative ({second.candidate.player_out_name}->{second.candidate.player_in_name}) is {second.rejected_reason}" if second else "no real runner-up candidate exists"
+        click.echo(f"  OPPORTUNITY COST: {opp_cost}")
+        click.echo(
+            f"  UNCERTAINTY: evidence_confidence={a.evidence_confidence}  robustness={a.robustness}  "
+            f"decision_confidence={a.decision_confidence}  margin={a.margin_ratio}x threshold"
+        )
+        what_would_change = []
+        if a.margin_ratio is not None and a.margin_ratio < 3.0:
+            what_would_change.append("the margin over the materiality bar is already modest - a small evidence swing could flip it")
+        if second is not None:
+            what_would_change.append(
+                f"if the {second.candidate.player_out_name}->{second.candidate.player_in_name} swap's own 3-GW net "
+                f"EV rose by more than the stated gap, it would overtake the current pick"
+            )
+        if a.evidence_confidence and a.evidence_confidence in ("MEDIUM",):
+            what_would_change.append("a real drop to LOW evidence confidence on either side would downgrade this to REVIEW")
+        click.echo(f"  WHAT WOULD CHANGE THE DECISION: {'; '.join(what_would_change) if what_would_change else 'no single real factor identified this run'}")
+
     click.echo()
     click.echo(f"CAPTAIN: {c.decision_kind.upper()}")
     click.echo(f"reason: {c.reason}")

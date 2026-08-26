@@ -149,6 +149,11 @@ class TransferDecisionAnalysis:
     model_confidence: str | None = None
     decision_confidence: str | None = None
     margin_ratio: float | None = None
+    # Real, disclosed value-of-information check (2026-08-27, "audit against
+    # real GW2 expert reasoning") - informational only, never a second gate
+    # on top of the evidence_confidence one above (the user's own explicit
+    # "do not hard-code a hold" constraint). See models/value_of_information.py.
+    information_value_note: str | None = None
 
 
 def _real_horizon_events(conn: sqlite3.Connection, n_gw: int = _MAX_HORIZON) -> list[int]:
@@ -324,6 +329,20 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
     margin_ratio = round(best.candidate.net_ev_3gw / _TRANSFER_DELTA_THRESHOLD, 2) if best is not None else None
     decision_confidence = _decision_confidence(evidence_confidence, robustness_label, margin_ratio) if best is not None else None
 
+    information_value_note = None
+    if best is not None:
+        try:
+            from fpl_agent.models.value_of_information import assess_information_value
+
+            out_voi = assess_information_value(conn, best.candidate.player_out_id)
+            in_voi = assess_information_value(conn, best.candidate.player_in_id)
+            information_value_note = (
+                f"OUT ({best.candidate.player_out_name}): {out_voi.summary} | "
+                f"IN ({best.candidate.player_in_name}): {in_voi.summary}"
+            )
+        except Exception:
+            information_value_note = None
+
     return TransferDecisionAnalysis(
         event=event, roll=roll, candidates=tuple(options), decision_kind=decision_kind, chosen=chosen,
         expected_advantage_3gw=expected_advantage, robustness=robustness_label, qualitative_note=qualitative_note,
@@ -331,6 +350,7 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         evidence_confidence=evidence_confidence, evidence_reasons=evidence_reasons,
         data_confidence=evidence_confidence, model_confidence=robustness_label,
         decision_confidence=decision_confidence, margin_ratio=margin_ratio,
+        information_value_note=information_value_note,
     )
 
 
