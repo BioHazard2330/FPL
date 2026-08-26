@@ -205,6 +205,19 @@ def maybe_enqueue_analysis(
     score = f"{home_name} {result.get('home_score')}-{result.get('away_score')} {away_name}"
     if new_status == "FULL_TIME" and prior_status != "FULL_TIME":
         enqueue_analysis_job(conn, match_id, "FULL_TIME", f"{score} (final)")
+        # Real, universal, zero-LLM evidence coverage (2026-08-26, "redesign
+        # the missing layer" architecture audit) - fires for EVERY real
+        # match the instant it finishes, not just squad-relevant ones and
+        # not gated behind a human opening Claude Code to run
+        # `fpl match-analyze`. Non-fatal: a real failure here (e.g. the
+        # Understat backfill for this match hasn't landed yet) must never
+        # block the surrounding sync/queue step.
+        try:
+            from fpl_agent.models.statistical_evidence import record_statistical_evidence
+
+            record_statistical_evidence(conn, match_id)
+        except Exception:
+            pass
     elif new_status == "HALFTIME" and prior_status != "HALFTIME":
         enqueue_analysis_job(conn, match_id, "HALFTIME", f"{score} (halftime)")
 

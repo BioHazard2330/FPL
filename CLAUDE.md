@@ -5806,3 +5806,109 @@ current flat-sum squad-EV model - confirmed by algebraic identity, not asserted.
 gap found this pass (Szoboszlai's live penalty-duty upgrade not reaching his goals rate) does not change
 this recommendation, since Szoboszlai was never the leading transfer OR captain candidate either way, but is
 named honestly as real, current, underweighted evidence rather than glossed over.
+
+## "Redesign the missing layer": universal, zero-LLM match evidence (2026-08-26, same day, continued)
+
+Direct architectural audit: why doesn't football information from matches OUTSIDE the locked squad
+materially enter the projection/decision pipeline. Explicit instruction: don't assume the existing
+qualitative system is adequate just because it produces text - trace one real completed match end to end
+and show exactly which pieces of information can and cannot move a decision, then redesign the missing
+layer (not just diagnose it).
+
+**Real trace, Arsenal 3-0 Coventry (match_id=1), the actual pipeline as it exists, checked hop by hop:**
+1. **Raw data**: real, comprehensive, leaguewide, never squad-scoped - `player_match_stats_history`
+   (Understat, 31 real players this match) and `team_match_state` (FotMob: Arsenal 64% poss/20 shots/1.88xG
+   vs Coventry 36%/4/0.20). Confirmed already flowing correctly: this real result is one of 10 real
+   `match_results_history` rows feeding the live Dixon-Coles team-strength fit for EVERY future Arsenal
+   fixture - the quantitative layer was never squad-scoped, verified not assumed.
+2. **Qualitative analysis (LLM, `fpl match-analyze`)**: real, correctly evidence-gated
+   (OBSERVED->INFERRED->FPL_IMPLICATION), but **only ever run for locked-squad players** - confirmed live,
+   100% of the 14 real `player_fpl_implications` rows in production belonged to squad members, 0 to any of
+   the other ~200+ real players whose matches had already been fully processed. This was a real, structural
+   scoping choice in how the skill gets invoked (a human/Claude session analyzing "my squad's players in
+   this match"), not a technical limitation of the schema or the ingested data.
+3. **Structured evidence -> projection**: real and correctly gated where it exists - `qualitative_feed.py`
+   only ever adjusts a component on a real 2+-match PERSISTENT_TREND (`qualitative_trends.py`), so even for
+   the 14 covered players nothing was moving yet (GW1 is everyone's only real match). But for the other
+   ~200 real players - including **Tavernier, the model's own #1 transfer TARGET** - the adjustment
+   mechanism was structurally starved: zero rows existed to ever classify a trend from, regardless of how
+   he actually played.
+4. **Team-level qualitative signal**: real and leaguewide (`match_observations subject_type='team'` DOES
+   cover all 20 real teams, the LLM skill writes those without squad-scoping) - but confirmed via grep that
+   `team_intelligence.py`/`team_qualitative_state`'s only real consumer is `team_outlook.py` (dashboard/CLI
+   display). Zero quantitative model file reads it - a second, independent "produces text but doesn't reach
+   a decision" gap, this one universal rather than squad-scoped.
+
+**What CAN currently change a decision**: any real player's own Understat/FPL data (goals/assists rate,
+minutes, price) and any REAL team's Dixon-Coles-fit strength (via goals results, leaguewide) - both already
+comprehensive. A LOCKED-SQUAD player's own PERSISTENT qualitative trend (2+ real matches) - real but
+currently only possible for the ~14 players who have ever been manually analyzed.
+**What CANNOT**: a non-squad player's qualitative performance, however good or bad, until he happens to
+become a squad member and get manually analyzed - even if the optimizer is actively comparing him as a buy
+target right now. Any team-level tactical/qualitative read at all, for any team, squad or not.
+
+**The redesign - `models/statistical_evidence.py` (new)**: a deterministic, zero-LLM detector that reads
+the SAME already-ingested Understat data (no new ingestion) for EVERY player in a finished match - not
+squad-filtered - and writes real, disclosed, threshold-crossing observations directly into the EXACT SAME
+`match_observations`/`player_fpl_implications` tables the LLM skill writes into, using the SAME
+`fpl_signal` vocabulary (`GOAL_THREAT`/`CREATION`/`MINUTES`) `qualitative_feed.py`/`expected_minutes()`
+already read. Every downstream consumer (`qualitative_trends.py`'s trend classifier,
+`qualitative_feed.py`'s bounded adjustment, `expected_minutes()`'s ROLE/MINUTES override,
+`decision_fusion.py`'s captaincy signal) picks these rows up completely unchanged - zero code needed
+there, because this writes into the schema the LLM path already produces, just with universal coverage and
+zero incremental cost. Real, disclosed thresholds (not fitted to outcome data, same honesty posture as
+every other bar in this project): GOAL_THREAT on 3+ real shots or 0.30+ real xG; CREATION on 2+ real key
+passes or 0.15+ real xA; MINUTES POSITIVE on 60+ real minutes for a real starter, NEGATIVE on a real
+starter withdrawn before 30 minutes (substitutes correctly excluded from the negative branch - they were
+never "withdrawn early", that's the expected shape of being a sub). Deliberately additive, never calling
+`apply_match_analysis` (which deletes-then-replaces a whole `(match_id, phase)` - a second call would have
+destroyed real LLM writeups) - idempotent per `(match_id, subject_id, signal, analysis_version)` via its
+own pre-check, and never touches `player_qualitative_state`/`team_qualitative_state` (the LLM's own
+narrative-synthesis tables, reserved for genuine judgment, not raw threshold crossings).
+
+**Wired automatically into the already-existing, already-scheduled match lifecycle**: `maybe_enqueue_analysis`
+(`fotmob_source.py`) now also calls `record_statistical_evidence` on the real FULL_TIME transition -
+fires from both `run-scheduled`'s slow cadence and `fpl live-match-poll`'s fast loop, zero new manual step,
+zero LLM cost. `run_post_gw_pipeline` also backfills every already-FULL_TIME match on every real run
+(`_backfill_statistical_evidence`, itself cheap/idempotent after the first real write) so this closes the
+gap for matches that finished before this code existed too, not just future ones.
+
+**Real, serious bug found and fixed live while backfilling GW1, not glossed over.** The first real
+production run wrote 1192 rows - roughly 5x too many. Root cause: `detect_match_standouts` originally
+matched Understat rows by `season + match_date` ALONE, and real Premier League fixtures routinely share a
+calendar date (confirmed live: three genuinely simultaneous 14:00 UTC GW1 kickoffs) - a date-only join
+silently pulled every player from every same-day match into each match's own evidence, a real cross-fixture
+contamination bug. **Fixed** by intersecting with the match's own real `player_match_state` roster (the
+same source the `started` check already reads) before matching Understat rows - re-verified live: 329 real,
+correctly-scoped rows (30-37 per match, matching each real match's own real player count), not 1192. A
+dedicated regression test (`test_two_real_matches_on_the_same_calendar_date_do_not_contaminate_each_other`)
+seeds two real same-day matches with disjoint rosters and proves each match's detection stays scoped to its
+own players. The contaminated production rows were deleted and the backfill re-run correctly before any
+further verification.
+
+**Real, live-verified result**: real qualitative-implication coverage went from 14 players (100% squad) to
+**222 players (208 non-squad)** - confirmed via a direct query, not estimated. Tavernier (the optimizer's
+own real #1 transfer target) now has real evidence (GOAL_THREAT: 2 shots/0.48xG; MINUTES: 90 real trusted
+minutes) that genuinely did not exist before this pass. Confirmed this new evidence correctly stays inert
+for now (`qualitative_adjustment=0.0`, both signals classify as real `NEW_SIGNAL`, sample_size=1) - the
+PERSISTENT_TREND gate this project already established for the LLM path applies identically here, so a
+single match still never moves a number; the real payoff is that from GW2 onward, EVERY player's second
+real match - not just the ~14 someone happened to manually analyze - has a genuine chance to earn a real,
+evidence-gated adjustment. Re-ran the real transfer/captain decision after this landed: unchanged
+(Tzolis->Tavernier, +12.06, unaffected) - correct and expected, since nothing yet clears the 2-match bar.
+
+**12 new tests** (`tests/test_statistical_evidence.py` - each real threshold firing/not-firing, the
+substitute-suppression logic, idempotency, the LLM-row-preservation guarantee, and the cross-fixture
+contamination regression). 892/892 full suite. `fpl dashboard` regenerates clean.
+
+**What this does NOT close, stated plainly**: the team-level gap (qualitative tactical reads never
+reaching the quantitative Dixon-Coles fit) remains real and unfixed - deliberately scoped out rather than
+rushed, since folding a qualitative read into the fit risks the fit's own leakage-safety guarantees
+`backtesting/harness.py` depends on, and this pass's time budget didn't support building and proving a
+second, safe, additive team-strength supplement to the same standard as everything else here. A real,
+disclosed, standard technique exists for a SAFER version of this (comparing a team's real match-level
+goals-for/against against its real stored `team_match_state.xg`/`xg_against` - an xG-regression signal,
+well short of touching the fit itself) - named as a genuine, scoped follow-up, not silently dropped. The
+statistical detector's own confidence is deliberately capped at `medium` (never `high`) - a real threshold
+crossing is decent evidence but not equivalent to the nuanced contextual judgment a human/LLM read can add
+(e.g. distinguishing a real tactical shift from a one-off).

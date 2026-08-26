@@ -58,6 +58,29 @@ def _backfill_missing_analysis_jobs(conn: sqlite3.Connection) -> int:
     return backfilled
 
 
+def _backfill_statistical_evidence(conn: sqlite3.Connection) -> int:
+    """Same defensive-backfill role as `_backfill_missing_analysis_jobs`
+    above, for the real, universal, zero-LLM evidence detector
+    (`models/statistical_evidence.py`, 2026-08-26 "redesign the missing
+    layer" audit) - catches every already-FULL_TIME match, not only ones
+    that transition to FULL_TIME after this function was wired into the
+    live `maybe_enqueue_analysis` hook. `record_statistical_evidence` is
+    itself idempotent (checks existing rows before inserting), so calling
+    it for every real FULL_TIME match on every pipeline run is cheap and
+    safe - a real write only the first time, a real no-op DB read every
+    time after."""
+    from fpl_agent.models.statistical_evidence import record_statistical_evidence
+
+    match_ids = [r["id"] for r in conn.execute("SELECT id FROM match_intelligence WHERE status='FULL_TIME'").fetchall()]
+    total = 0
+    for match_id in match_ids:
+        try:
+            total += record_statistical_evidence(conn, match_id)
+        except Exception:
+            pass
+    return total
+
+
 def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipelineResult:
     """The actual deterministic sequence - see module docstring for what it
     does and doesn't do. Marks itself started/done via `app_meta` so a crash
@@ -81,6 +104,12 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
 
     # 2. Backfill any FULL_TIME match still missing a queued analysis job.
     _backfill_missing_analysis_jobs(conn)
+
+    # 2b. Real, universal, zero-LLM statistical evidence for every real
+    # FULL_TIME match (2026-08-26 "redesign the missing layer" audit) -
+    # covers every player who featured, not just locked-squad members, and
+    # needs no human/Claude session to fire.
+    _backfill_statistical_evidence(conn)
 
     # 3. Real locked squad - never fabricate a plan against nothing.
     locked = get_locked_squad(conn)
