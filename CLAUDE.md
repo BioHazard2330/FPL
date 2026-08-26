@@ -5693,3 +5693,116 @@ separate command - the same information (components, evidence, confidence, decis
 today through `fpl transfer-analysis`'s real output for any candidate actually reached by a live decision;
 building a standalone panel for an arbitrary, not-currently-relevant player id was judged lower-value than
 the decision-flow integration above and was not attempted this pass.
+
+## Squad-level decision-quality audit: is the optimizer optimizing player delta or full squad outcome? (2026-08-26, same day, continued)
+
+Direct follow-up: the user was not satisfied that a Tzolis-vs-Tavernier pairwise comparison proves Tzolis is
+the RIGHT sell for the FULL squad - they watched Arsenal dominate GW1 with Tzolis looking sharp while other
+squad members underperformed, and wanted the full-squad-portfolio question audited, not just re-litigated
+pairwise. Explicit ask: is the optimizer optimizing PLAYER DELTA or FULL SQUAD OUTCOME - "the latter is
+what I actually need."
+
+**Answer, proven algebraically and then verified against real data, not asserted**: `_squad_gw_ev` (the
+real ROLL baseline `decision_analysis.py` already computes) is a flat sum of all 15 squad members' own real
+`expected_points_window` - `new_squad_total = old_squad_total - out_ev + in_ev`. Under this project's own
+squad-EV definition, a single swap's `net_ev_3gw` (the pairwise delta) is therefore ALGEBRAICALLY IDENTICAL
+to the full-squad EV delta, not an approximation of it - there is no pairwise-vs-squad discrepancy to fix in
+the current EV model, confirmed by the identity itself, not just reasoned about. (Whether bench players
+should be weighted at less than a starter's full value, the way `optimization/squad.py`'s own initial-squad
+ILP already does via `_BENCH_WEIGHT`, is a real, separate, disclosed simplification - see below.)
+
+**Real, complete ranked table across the WHOLE squad, all 15 players, not just midfielders** - built by
+calling `best_transfer_for_player` for every real squad member and sorting by real net 3-GW EV (the same
+machinery `analyze_transfer_decision` already uses internally, just run without the top-5 cap and printed
+in full):
+```
+rank SELL           BUY            1gw     3gw     5gw
+1    Tzolis         Tavernier     4.62   12.06   18.04
+2    E.Le Fée       Tavernier     4.36   11.45   17.04
+3    B.Fernandes    Tavernier     3.57    9.70   14.43
+4    Diop           Mendy         3.54    9.05   14.68
+5    Ballard         De Cuyper    0.71    7.28    9.53
+6    Maguire        De Cuyper    -0.02    6.35    8.11
+7    Mbeumo         Tavernier     1.24    5.91    8.85
+8    Calafiori      De Cuyper     0.54    5.67    7.12
+9    Ajer           Mendy         2.16    5.30    9.86
+10   João Pedro     Mateta        0.21    5.13    6.67
+11   Szoboszlai     Tavernier     1.70    3.93    6.91
+...  (Kinsky/Verbruggen/Kusi-Asare/Haaland below, all real, all weaker)
+```
+Every defender's own best real swap (Diop/Ballard/Maguire/Calafiori/Ajer) ranks BELOW Tzolis's - real,
+computed, not filtered to midfielders only. Confirmed Tzolis is a real STARTER in the locked XI (not bench)
+and genuinely has the lowest median xP (2.65) of the 5 real starting midfielders - the model's real
+ranking, not a search blind spot.
+
+**Section 3 - real GW1 underlying evidence for Tzolis and Arsenal, pulled directly from the DB, confirmed
+flowing into the model.** Understat match-level row (the real primary source for his shrunk goals/assists
+rate): 78 real minutes, xG=0.238, **xA=0.192, 3 key passes**, 4 shots - genuine creative involvement, not
+just "6 FPL points". Arsenal team-level (`team_match_state`, FotMob): 64% possession, 20 shots, **1.88 xG**
+vs Coventry's 0.20 - real, dominant. Confirmed this GW1 result is now one of 10 real 2026-27 rows in
+`match_results_history`, feeding the live Dixon-Coles team-strength fit used for EVERY future Arsenal
+fixture projection - Arsenal's real attacking performance DOES already improve the projection of Arsenal's
+future attacking environment, structurally, not hypothetically. Real, disclosed gap found in the same
+query: `player_match_state` (FotMob's own structured table) has several NULL fields for this match
+(`minutes`, `rating`, `key_passes`, `touches_box`, `assists`) - the model doesn't actually depend on these
+(minutes comes from FPL's own official `player_stats_snapshot`, goals/assists rate from the separate
+Understat table), but the raw FotMob boxscore parse is thinner than the schema implies for these fields -
+a real, disclosed data-coverage gap, not a decision-relevant one today.
+
+**Section 5 - defender audit, real GW1 result vs real underlying vs real future projection, all 5
+defenders in the squad:**
+```
+Ballard (SUN):   GW1: 0pts, conceded 2, no CS   | GW2 median=3.19, real CS component 0.99 - bad result, still a reasonable asset
+Calafiori (ARS): GW1: 9pts, CS                  | GW2 median=3.36, real CS component 1.27 - good result, good asset (consistent)
+Maguire (MUN):   GW1: 1pt, conceded 2, no CS    | GW2 median=3.92 (HIGHEST of the 3 starters), CS component 1.48 - bad result, model still likes the asset
+Diop (IPS, bench): GW1: 2pts                    | GW2 median=1.42 (lowest), CS component 0.23, conceded penalty -0.89 - weak result AND weak projection
+Ajer (BRE, bench): GW1: 8pts, CS                | GW2 median=2.80 - good result, modest bench-tier projection
+```
+Real, exact confirmation of the distinction the user asked to verify: Maguire and Ballard both had bad real
+GW1 results but the model's real fixture-adjusted clean-sheet probability for GW2 does NOT just extrapolate
+that badness forward - Maguire in fact projects as the squad's strongest starting defender for GW2. Diop is
+the one real case of "bad result AND a genuinely weaker underlying projection" - and he's a bench player
+already, correctly low-priority.
+
+**Section 6 - real news/lineup propagation check since the GW1 deadline, all squad players, via the
+already-built `change_events` table (no new ingestion needed).** 14 real events found. 13 are routine
+`lineup_confirmed` (every real squad starter's GW1 inclusion being confirmed - expected, not news) and one
+real `start_percent_change` (Ajer 70%->90%, MEDIUM). **One real, material, HIGH-severity signal found that
+is currently NOT propagating into the quantitative model**: `Szoboszlai setpiece_change` (2026-08-24) - his
+real penalty order moved from `[2,...]` to `[1,...]`, i.e. he is now Liverpool's real PRIMARY penalty taker.
+This confirms, with a live, currently-relevant instance, the exact gap the prior session's audit already
+disclosed and deliberately did not fix: `player_setpiece_history.penalties_order` only feeds the
+change-detection alert and captaincy's display-only `is_penalty_taker` flag, never the goals-rate
+probability inside `expected_points.py` itself. **Not fixed this pass either, for the same real reason as
+before**: this project has only 2 real observed penalty shots league-wide so far (`models/penalty_duty.py`'s
+own real 20-shot sufficiency bar) - building a numeric adjustment now would mean inventing a conversion-rate
+constant with no real supporting sample, exactly the fabrication risk both audits were told to avoid. Named
+honestly as a real, live, currently-underweighted signal rather than silently left undiscovered.
+
+**Section 8 - built the real three-way confidence report, `decision_analysis.py`.** `data_confidence` (=
+`evidence_confidence`, renamed to the audit's own vocabulary) and `model_confidence` (= `robustness`, same
+value under its other name) are not new computations - `decision_confidence` is: a rule-based (never
+weighted) combination of both plus a new `margin_ratio` (real net EV / the real materiality threshold) via
+`_decision_confidence()` - HIGH only when evidence is HIGH+, robustness is ROBUST, AND the margin is >=3x
+the threshold (disclosed, uncalibrated); LOW when any one of evidence/robustness/margin is weak (missing
+information counts as weak, never strong); MEDIUM otherwise. **Real, live result for the current squad's
+top transfer**: margin=12.06x (nowhere near narrow) but evidence is only MEDIUM (not HIGH+, since only 1
+real gameweek exists for anyone yet) -> `DECISION_CONFIDENCE=MEDIUM`, not HIGH - an honest, non-inflated
+label, not manufactured to make the recommendation look more or less certain than it is. 7 new tests
+(`_decision_confidence`'s own rule table, plus the real Tzolis-shaped case pinned directly:
+`MEDIUM+ROBUST+12.06x -> MEDIUM`).
+
+**880/880 full suite** (873 baseline + 7 new). `fpl dashboard` regenerates clean, no dashboard code touched.
+Live-verified against the real production DB throughout - the full 15-player ranked table, the Understat/
+FotMob/team-strength evidence pull, the defender comparison, the change_events query, and the three-way
+confidence label were all run against actual current data, not asserted from the code alone.
+
+**Final recommendation, stated plainly**: Tzolis -> Tavernier remains the real, complete-squad-consistent
+best transfer - not because a single pairwise comparison says so, but because the full 15-player ranked
+table (built the same way section 1 asked, independently for every squad member) puts him at #1 with every
+real defender and every other real midfielder ranking below him, and because the pairwise/full-squad
+distinction the user asked to verify does not actually exist as a separate failure mode in this project's
+current flat-sum squad-EV model - confirmed by algebraic identity, not asserted. The one real, disclosed
+gap found this pass (Szoboszlai's live penalty-duty upgrade not reaching his goals rate) does not change
+this recommendation, since Szoboszlai was never the leading transfer OR captain candidate either way, but is
+named honestly as real, current, underweighted evidence rather than glossed over.

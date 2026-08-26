@@ -48,6 +48,34 @@ _TOP_N_CANDIDATES = 5  # section 13 of the decision-quality audit: show top 5 re
 # the optimizer permanently unable to recommend anything for months).
 _MIN_EVIDENCE_CONFIDENCE_FOR_ACTION = "MEDIUM"
 
+# Real, disclosed margin bars for the DECISION_CONFIDENCE label (section 8,
+# squad-level audit) - how far the chosen candidate's net EV clears
+# _TRANSFER_DELTA_THRESHOLD, not just whether it clears it at all.
+# Uncalibrated, same honesty posture as every other bar in this module.
+_DECISION_CONFIDENCE_COMFORTABLE_MARGIN = 3.0
+_DECISION_CONFIDENCE_NARROW_MARGIN = 1.5
+
+
+def _decision_confidence(evidence_confidence: str | None, robustness: str | None, margin_ratio: float | None) -> str:
+    """Rule-based combination (never a weighted score) of the three real
+    dimensions the audit asked for: is the data trustworthy
+    (evidence_confidence), is the conclusion stable under resampling
+    (robustness), and is the real EV margin over the materiality bar
+    comfortable or narrow (margin_ratio). Missing information (None) is
+    never treated as strong - it counts as the weak end of that dimension,
+    the same "absence of evidence is not evidence of strength" rule used
+    throughout this project."""
+    weak_evidence = evidence_confidence is None or _LEVEL_RANK[evidence_confidence] < _LEVEL_RANK["MEDIUM"]
+    strong_evidence = evidence_confidence is not None and _LEVEL_RANK[evidence_confidence] >= _LEVEL_RANK["HIGH"]
+    narrow_margin = margin_ratio is None or margin_ratio < _DECISION_CONFIDENCE_NARROW_MARGIN
+    comfortable_margin = margin_ratio is not None and margin_ratio >= _DECISION_CONFIDENCE_COMFORTABLE_MARGIN
+
+    if weak_evidence or robustness == "FRAGILE" or narrow_margin:
+        return "LOW"
+    if strong_evidence and robustness == "ROBUST" and comfortable_margin:
+        return "HIGH"
+    return "MEDIUM"
+
 
 def _safe_confidence(conn: sqlite3.Connection, player_id: int):
     try:
@@ -102,6 +130,25 @@ class TransferDecisionAnalysis:
     # evidence trail behind it. None only when there's no candidate to judge.
     evidence_confidence: str | None = None
     evidence_reasons: tuple[str, ...] = ()
+    # Real, disclosed three-way confidence report (2026-08-26, squad-level
+    # audit, section 8): DATA_CONFIDENCE is `evidence_confidence` above
+    # (renamed here for the audit's own vocabulary - same value, not a
+    # second computation). MODEL_CONFIDENCE is `robustness` (Monte Carlo
+    # stability) under its other name. DECISION_CONFIDENCE combines both
+    # with how far the real net EV clears the materiality bar - a rule
+    # (never a weighted score): HIGH only when the margin is comfortable
+    # (>=3x the threshold, disclosed/uncalibrated) AND both other
+    # dimensions are strong; LOW when either dimension is weak OR the
+    # margin is genuinely narrow (<1.5x); MEDIUM otherwise. This label is
+    # informational only right now - it does not itself gate the verdict
+    # (the evidence_confidence REVIEW gate above already does that); it
+    # answers the audit's explicit "say REVIEW rather than pretending
+    # certainty when the margin is narrow" question by reporting the real
+    # margin honestly rather than hiding it behind a bare EV number.
+    data_confidence: str | None = None
+    model_confidence: str | None = None
+    decision_confidence: str | None = None
+    margin_ratio: float | None = None
 
 
 def _real_horizon_events(conn: sqlite3.Connection, n_gw: int = _MAX_HORIZON) -> list[int]:
@@ -274,11 +321,16 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         chosen = None
         expected_advantage = best.candidate.net_ev_3gw
 
+    margin_ratio = round(best.candidate.net_ev_3gw / _TRANSFER_DELTA_THRESHOLD, 2) if best is not None else None
+    decision_confidence = _decision_confidence(evidence_confidence, robustness_label, margin_ratio) if best is not None else None
+
     return TransferDecisionAnalysis(
         event=event, roll=roll, candidates=tuple(options), decision_kind=decision_kind, chosen=chosen,
         expected_advantage_3gw=expected_advantage, robustness=robustness_label, qualitative_note=qualitative_note,
         future_ft_note=_FUTURE_FT_NOTE, threshold_cleared=threshold_cleared, reason=reason,
         evidence_confidence=evidence_confidence, evidence_reasons=evidence_reasons,
+        data_confidence=evidence_confidence, model_confidence=robustness_label,
+        decision_confidence=decision_confidence, margin_ratio=margin_ratio,
     )
 
 

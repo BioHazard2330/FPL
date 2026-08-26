@@ -4,7 +4,7 @@ import fpl_agent.optimization.decision_analysis as da_mod
 import fpl_agent.optimization.decision_engine as de_mod
 import fpl_agent.optimization.transfers as transfers_mod
 from fpl_agent.optimization.captaincy import CaptainOption
-from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+from fpl_agent.optimization.decision_analysis import _decision_confidence, analyze_captain_decision, analyze_transfer_decision
 from fpl_agent.optimization.locked_squad import LockedSquadState
 from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 from fpl_agent.optimization.transfers import TransferCandidate
@@ -254,3 +254,43 @@ def test_captain_qualitative_note_only_surfaces_on_a_real_disagreement(db_conn, 
     result = analyze_captain_decision(db_conn, locked)
 
     assert result.qualitative_note == "real qualitative reason"
+
+
+def test_decision_confidence_high_needs_strong_evidence_robust_and_a_comfortable_margin():
+    assert _decision_confidence("HIGH", "ROBUST", 5.0) == "HIGH"
+
+
+def test_decision_confidence_low_when_evidence_is_weak_even_with_a_huge_margin():
+    assert _decision_confidence("LOW", "ROBUST", 12.0) == "LOW"
+
+
+def test_decision_confidence_low_when_margin_is_narrow_even_with_strong_evidence():
+    assert _decision_confidence("HIGH", "ROBUST", 1.1) == "LOW"
+
+
+def test_decision_confidence_low_when_robustness_is_fragile():
+    assert _decision_confidence("HIGH", "FRAGILE", 5.0) == "LOW"
+
+
+def test_decision_confidence_medium_for_the_real_tzolis_shaped_case():
+    # Real production shape: MEDIUM evidence, ROBUST, a large real margin -
+    # comfortable margin but not strong (HIGH+) evidence, so MEDIUM not HIGH.
+    assert _decision_confidence("MEDIUM", "ROBUST", 12.06) == "MEDIUM"
+
+
+def test_decision_confidence_treats_missing_information_as_weak_not_strong():
+    assert _decision_confidence(None, None, None) == "LOW"
+
+
+def test_transfer_analysis_reports_the_real_three_way_confidence(db_conn, monkeypatch):
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 5.0, player_out_name="P1", player_in_name="P99")
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(da_mod, "assess_projection_confidence", lambda conn, pid: _fake_confidence(pid, "MEDIUM"))
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.data_confidence == "MEDIUM"
+    assert result.model_confidence == "ROBUST"
+    assert result.margin_ratio == 5.0
+    assert result.decision_confidence == "MEDIUM"

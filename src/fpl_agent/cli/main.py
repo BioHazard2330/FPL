@@ -2600,6 +2600,11 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
         click.echo(f"robustness (Monte Carlo stability): {a.robustness}")
     if a.evidence_confidence:
         click.echo(f"evidence confidence (real data sufficiency): {a.evidence_confidence}")
+    if a.decision_confidence:
+        click.echo(
+            f"DATA_CONFIDENCE={a.data_confidence}  MODEL_CONFIDENCE={a.model_confidence}  "
+            f"DECISION_CONFIDENCE={a.decision_confidence}  (margin={a.margin_ratio}x the real materiality bar)"
+        )
     if a.qualitative_note:
         click.echo(f"football intelligence: {a.qualitative_note}")
     click.echo()
