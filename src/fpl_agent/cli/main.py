@@ -2730,19 +2730,50 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
             click.echo(f"     rejected: {ranked.rejected_reason}")
 
 
+def _path_detail(p) -> dict:
+    """Real, serializable snapshot of one TransferSequence - shared between
+    the CLI's decision-log detail and any future consumer (the dashboard's
+    Strategic Plan section reads exactly this shape from the logged
+    decision, so the two never drift apart)."""
+    return {
+        "total_net_ev": p.total_net_ev, "final_free_transfers": p.final_free_transfers,
+        "final_bank_tenths": p.final_bank_tenths,
+        "steps": [
+            {
+                "event": s.event,
+                "action": "ROLL" if s.player_out_id is None else f"{s.player_out_name} -> {s.player_in_name}",
+                "uses_hit": s.uses_hit,
+            }
+            for s in p.steps
+        ],
+    }
+
+
 @cli.command("strategic-plan")
 @click.option("--squad", default=None, help="comma-separated player ids (default: the real locked squad)")
 @click.option("--bank", default=None, type=float, help="bank in £m - required when --squad is given explicitly")
 @click.option("--free-transfers", default=1, type=int, help="free transfers available (default 1)")
 @click.option("--horizon", default=8, type=int, help="planning horizon in GWs (default 8)")
 @click.option("--beam-width", default=5, type=int, help="how many top real paths to keep (default 5)")
-def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: int, horizon: int, beam_width: int):
+@click.option("--trials", default=300, type=int, help="Monte Carlo trials for the chip overlay (default 300)")
+@click.option("--with-chips/--no-chips", default=True, help="also overlay a real chip schedule onto the winning path (default on - adds real Monte Carlo sampling cost)")
+def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: int, horizon: int, beam_width: int, trials: int, with_chips: bool):
     """Real multi-gameweek strategic path search (2026-08-27) - composes the
     existing, already-tested `search_transfer_sequences` beam search into a
     genuine GW-by-GW plan across the real horizon, plus a real 1/3/5/8-GW
     opening-action comparison showing whether the immediate-optimum transfer
     differs from the strategic-optimum one. Reuses 100% existing machinery -
-    no new search algorithm, no hardcoded roll/transfer bias."""
+    no new search algorithm, no hardcoded roll/transfer bias.
+
+    `--with-chips` (2026-08-27, "generate all of it" pass) overlays a real
+    chip schedule onto the winning path's own squad trajectory - the exact
+    same `schedule_chips` DP `fpl season-sim` already uses, called against
+    THIS path's real per-event squad state rather than a second, separate
+    search dimension (see strategic_planner.py's own module docstring for
+    why joint chip+transfer search inside the beam itself remains a real,
+    disclosed, separate future initiative). All `beam_width` paths (not
+    just the winner) are logged in full, so a dashboard/consumer can read
+    the complete top-N without re-running this ~1-minute search."""
     from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
     from fpl_agent.optimization.strategic_planner import build_strategic_plan
 
@@ -2764,8 +2795,54 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
 
         click.echo(f"searching real {horizon}-GW paths (beam width {beam_width}) - this can take under a minute...")
         plan = build_strategic_plan(conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon, beam_width=beam_width)
-
         best = plan.best
+
+        chip_schedule_detail = None
+        if with_chips and best is not None:
+            click.echo(f"overlaying a real chip schedule onto the winning path ({trials} trials)...")
+            from_event = best.steps[0].event if best.steps else _reference_event(conn)
+            squad_by_event = _squad_ids_by_event(squad_ids, best)
+            superset_ids = set(squad_ids)
+            for ids in squad_by_event.values():
+                superset_ids.update(ids)
+            for rebuild_n_gw in (horizon, 1):
+                superset_ids.update(c.player_id for c in _cached_optimise_squad(conn, rebuild_n_gw).squad)
+            ev_cache: dict[tuple, float] = {}
+            for event, ids in squad_by_event.items():
+                for player_out_id in ids:
+                    for candidate in best_transfer_for_player(
+                        conn, player_out_id, list(ids), bank_tenths=0, is_hit=True, n_gw=1, top_n=1,
+                        from_event=event, cache=ev_cache,
+                    ):
+                        superset_ids.add(candidate.player_in_id)
+            scenario_draw = sample_season_scenarios(conn, list(superset_ids), from_event, horizon, n_trials=trials)
+            windows = eligible_chips(conn, event=from_event)
+            my_team_entry_id = get_my_team_entry_id(conn)
+            used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
+            schedule = schedule_chips(conn, squad_ids, best, windows, scenario_draw, used_chip_names=used_chip_names)
+            explanations_by_key = {(e.event, e.chip_name): e for e in schedule.explanations}
+            chip_schedule_detail = {
+                "entries": [
+                    {
+                        "event": e.event, "chip_name": e.chip_name, "expected_marginal_value": e.expected_marginal_value,
+                        "why_now": (
+                            (f"beats next-best GW{explanations_by_key[(e.event, e.chip_name)].best_alternative_event} "
+                             f"(+{explanations_by_key[(e.event, e.chip_name)].best_alternative_value:.1f}) by "
+                             f"{explanations_by_key[(e.event, e.chip_name)].opportunity_cost:.1f}")
+                            if (e.event, e.chip_name) in explanations_by_key and explanations_by_key[(e.event, e.chip_name)].best_alternative_event is not None
+                            else "only real eligible GW in this horizon"
+                        ),
+                    }
+                    for e in schedule.baseline_schedule
+                ],
+                "advisory_hit_recommendations": [
+                    {"event": r.event, "chip_name": r.chip_name, "player_out_name": r.player_out_name, "player_in_name": r.player_in_name, "delta": r.delta}
+                    for r in schedule.advisory_hit_recommendations
+                ],
+            }
+            for entry in chip_schedule_detail["entries"]:
+                click.echo(f"GW{entry['event']}  {entry['chip_name']}  median +{entry['expected_marginal_value']:.1f}  ({entry['why_now']})")
+
         best_summary = (
             f"{plan.horizon_comparison[-1].opening_action if plan.horizon_comparison else 'no path'} "
             f"(strategic {horizon}GW EV={best.total_net_ev if best else None})"
@@ -2778,18 +2855,14 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
                     {"horizon_gw": c.horizon_gw, "opening_action": c.opening_action, "total_net_ev": c.total_net_ev}
                     for c in plan.horizon_comparison
                 ],
-                "best_path": {
-                    "total_net_ev": best.total_net_ev, "final_free_transfers": best.final_free_transfers,
-                    "final_bank_tenths": best.final_bank_tenths,
-                    "steps": [
-                        {
-                            "event": s.event,
-                            "action": "ROLL" if s.player_out_id is None else f"{s.player_out_name} -> {s.player_in_name}",
-                            "uses_hit": s.uses_hit,
-                        }
-                        for s in best.steps
-                    ],
-                } if best is not None else None,
+                "best_path": _path_detail(best) if best is not None else None,
+                # Real "generate all of it" addition (2026-08-27): the FULL top-N
+                # paths, not just the winner - the dashboard's Strategic Plan
+                # section and `fpl strategic-plan` itself both read this same
+                # list, so a real Path 2/3/4/5 comparison never needs a second
+                # search run.
+                "paths": [_path_detail(p) for p in plan.paths],
+                "chip_schedule": chip_schedule_detail,
             },
             confidence="low",
         )

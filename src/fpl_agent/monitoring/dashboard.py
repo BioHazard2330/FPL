@@ -1901,6 +1901,137 @@ def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
     )
 
 
+def _strategic_plan_html(conn: sqlite3.Connection) -> str:
+    """The real dominant STRATEGIC PLAN section (2026-08-27, "generate all of
+    it" dashboard pass) - promotes the multi-GW path search from a one-line
+    footnote inside Next GW Plan (see `_next_gw_plan_html` above, left
+    unchanged for backward compatibility) into its own real, primary section:
+    ROLL/TRANSFER primary call, the 1/3/5/8-GW horizon comparison (why an
+    immediate pick can differ from the strategic one), the real top-N paths
+    (not just the winner), and a chip timeline overlay when `fpl
+    strategic-plan --with-chips` has logged one. Reads the last logged
+    `strategic_plan` decision only - a real ~1-minute beam search stays an
+    opt-in CLI command, never triggered from the dashboard's own regen path,
+    same posture already established for `fpl live-rank`/`fpl season-sim`."""
+    logged = latest_decision_of_type(conn, "strategic_plan")
+    if logged is None:
+        return "<div class='empty-state'>No strategic plan logged yet - run <code>fpl strategic-plan</code> to search real multi-GW paths for your locked squad.</div>"
+
+    sd = logged.detail
+    age = _relative_time(logged.created_at)
+    horizon_gw = sd.get("horizon_gw", "?")
+    paths = sd.get("paths") or []
+    best_path = sd.get("best_path") or (paths[0] if paths else None)
+    differ = bool(sd.get("immediate_vs_strategic_differ"))
+
+    opening = "?"
+    if best_path and best_path.get("steps"):
+        opening = best_path["steps"][0].get("action", "?")
+    primary_verdict = "ROLL" if opening == "ROLL" else "TRANSFER"
+    if not best_path or not best_path.get("steps"):
+        primary_verdict = "REVIEW"
+
+    chip_schedule = sd.get("chip_schedule") or None
+    chip_by_event: dict[int, list[dict]] = {}
+    for entry in (chip_schedule.get("entries") if chip_schedule else []) or []:
+        chip_by_event.setdefault(entry["event"], []).append(entry)
+
+    verdict_cls = {"ROLL": "low", "TRANSFER": "monitor", "REVIEW": "action"}.get(primary_verdict, "action")
+    ev_suffix = ""
+    if best_path is not None:
+        total_ev = best_path.get("total_net_ev")
+        ev_suffix = f" &mdash; expected {total_ev:+.1f} xP over {horizon_gw} GWs" if total_ev is not None else ""
+    primary_html = (
+        f"<div class='strategic-primary'>"
+        f"<span class='risk-severity risk-severity-{verdict_cls} strategic-primary-badge'>{_esc(primary_verdict)}</span>"
+        f"<span class='strategic-primary-body'>{_esc(opening)}{ev_suffix}</span>"
+        f"</div>"
+    )
+
+    horizon_row_parts = []
+    for c in (sd.get("horizon_comparison") or []):
+        row_cls = "strategic-horizon-current" if c["horizon_gw"] == horizon_gw else ""
+        horizon_row_parts.append(
+            f"<tr class='{row_cls}'><td>{c['horizon_gw']}GW</td><td>{_esc(c['opening_action'])}</td>"
+            f"<td>{c['total_net_ev']:+.1f}</td></tr>"
+        )
+    horizon_rows = "".join(horizon_row_parts)
+    note_cls = "strategic-note-differ" if differ else "strategic-note-agree"
+    disagreement_html = f"<div class='strategic-note {note_cls}'>{_esc(sd.get('note', ''))}</div>"
+    horizon_html = (
+        f"<table class='strategic-horizon-table'><thead><tr><th>Horizon</th><th>Opening action</th><th>Net EV</th></tr></thead>"
+        f"<tbody>{horizon_rows}</tbody></table>{disagreement_html}"
+    )
+
+    path_cards = []
+    for i, p in enumerate(paths, 1):
+        marker = " strategic-path-best" if i == 1 else ""
+        steps = p.get("steps") or []
+        step_parts = []
+        for s in steps:
+            has_chip = i == 1 and s["event"] in chip_by_event
+            step_cls = " strategic-path-step-chip" if has_chip else ""
+            hit_suffix = " (HIT)" if s.get("uses_hit") else ""
+            badges = ""
+            if i == 1:
+                badges = "".join(f"<span class='chip-badge'>{_esc(c['chip_name'].upper())}</span>" for c in chip_by_event.get(s["event"], []))
+            step_parts.append(
+                f"<div class='strategic-path-step{step_cls}'>"
+                f"<span class='strategic-path-gw'>GW{s['event']}</span>"
+                f"<span class='strategic-path-action'>{_esc(s['action'])}{hit_suffix}</span>{badges}</div>"
+            )
+        step_html = "".join(step_parts)
+        path_cards.append(
+            f"<div class='strategic-path-card{marker}'>"
+            f"<div class='strategic-path-header'><strong>Path {i}</strong>{' &middot; BEST' if i == 1 else ''} "
+            f"&middot; {p['total_net_ev']:+.1f} xP &middot; final FT {p.get('final_free_transfers', '?')} "
+            f"&middot; bank £{p.get('final_bank_tenths', 0) / 10:.1f}m</div>"
+            f"<div class='strategic-path-timeline'>{step_html}</div>"
+            f"</div>"
+        )
+    # Real path-stability note (real, disclosed - never fabricated
+    # confidence): if the top two paths' total_net_ev are within 5% of each
+    # other, say so plainly rather than presenting Path 1 as uniquely
+    # optimal when it isn't.
+    stability_note = ""
+    if len(paths) >= 2 and paths[0].get("total_net_ev"):
+        top, second = paths[0]["total_net_ev"], paths[1]["total_net_ev"]
+        if top != 0 and abs(top - second) / abs(top) < 0.05:
+            stability_note = (
+                f"<div class='strategic-note strategic-note-differ'>Path 1 and Path 2 are close "
+                f"({top:+.1f} vs {second:+.1f} xP, &lt;5% apart) - not a uniquely optimal pick, "
+                f"treat both as live candidates.</div>"
+            )
+
+    chip_html = ""
+    if chip_schedule is not None:
+        entries = chip_schedule.get("entries") or []
+        if entries:
+            rows = "".join(
+                f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>GW{e['event']}</span>"
+                f"<span class='risk-body'><strong>{_esc(e['chip_name'].upper())}</strong> &middot; "
+                f"median +{e['expected_marginal_value']:.1f} &middot; {_esc(e['why_now'])}</span></div>"
+                for e in entries
+            )
+            chip_html = f"<div class='panel-subtitle' style='margin-top:14px'>Chip timeline (overlaid on the winning path)</div>{rows}"
+        else:
+            chip_html = "<div class='panel-subtitle' style='margin-top:14px'>No chip cleared a real positive value in this horizon - hold.</div>"
+        for rec in chip_schedule.get("advisory_hit_recommendations") or []:
+            chip_html += (
+                f"<div class='risk-row'><span class='risk-severity risk-severity-low'>ADVISORY</span>"
+                f"<span class='risk-body'>hit {_esc(rec['player_out_name'])} &rarr; {_esc(rec['player_in_name'])} "
+                f"before GW{rec['event']} {_esc(rec['chip_name'])} ({rec['delta']:+.1f} over baseline)</span></div>"
+            )
+
+    return (
+        f"<div class='freshness-tag' style='margin-bottom:8px'>Generated {_esc(age)} &middot; {horizon_gw}-GW real beam search</div>"
+        f"{primary_html}{horizon_html}{stability_note}"
+        f"<div class='panel-subtitle' style='margin-top:14px'>Top {len(paths)} real paths</div>"
+        f"<div class='strategic-path-grid'>{''.join(path_cards)}</div>"
+        f"{chip_html}"
+    )
+
+
 _LIFECYCLE_TO_DASH_STATE = {
     "LIVE": "LIVE",
     "GW_FINISHED": "POST_MATCH", "NEXT_GW_ANALYSIS": "POST_MATCH", "READY_FOR_NEXT_DEADLINE": "POST_MATCH",
@@ -2768,6 +2899,17 @@ def generate_dashboard_html(
   <h2>AI Decisions <span class="panel-subtitle">what should you actually do</span></h2>
   {_decision_center_html(conn, report, squad_ids, decision=decision)}
 </section>"""
+    # Strategic Plan (2026-08-27, "generate all of it" dashboard pass) - the
+    # real dominant multi-GW section: WHAT SHOULD I DO THIS GW (AI Decisions,
+    # above) -> WHAT IS MY BEST LONG-TERM PLAN (here) -> WHY (horizon
+    # comparison/note) -> what if I disagree (path-stability note when the
+    # top paths are close). Reads the last logged `fpl strategic-plan`
+    # result only - see `_strategic_plan_html`'s own docstring for why this
+    # never triggers a fresh ~1-minute search from the dashboard regen path.
+    strategic_plan_section_html = f"""<section class="panel panel-strategic-plan" id="strategic-plan" data-cat="decision">
+  <h2>Strategic Plan <span class="panel-subtitle">real multi-GW path search - top paths, chip timeline, immediate vs strategic</span></h2>
+  {_strategic_plan_html(conn)}
+</section>"""
     risks_section_html = f"""<section class="panel panel-risks" id="risks" data-cat="decision">
   <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
   <div class="risk-monitor">
@@ -2819,16 +2961,20 @@ def generate_dashboard_html(
     if dash_state == "LIVE":
         panel_order = [
             live_section_html, match_intelligence_section_html, decisions_section_html,
-            team_outlook_section_html, squad_section_html, risks_section_html, compare_panel,
+            strategic_plan_section_html, team_outlook_section_html, squad_section_html,
+            risks_section_html, compare_panel,
         ]
     elif dash_state == "POST_MATCH":
         panel_order = [
             live_section_html, match_intelligence_section_html, squad_section_html,
-            decisions_section_html, next_gw_plan_section_html, team_outlook_section_html,
-            risks_section_html, compare_panel,
+            decisions_section_html, strategic_plan_section_html, next_gw_plan_section_html,
+            team_outlook_section_html, risks_section_html, compare_panel,
         ]
     else:
-        panel_order = [squad_section_html, decisions_section_html, risks_section_html, compare_panel, live_section_html]
+        panel_order = [
+            squad_section_html, decisions_section_html, strategic_plan_section_html,
+            risks_section_html, compare_panel, live_section_html,
+        ]
     ordered_panels_html = "\n\n".join(p for p in panel_order if p)
     # PRE_DEADLINE never promotes either card into panel_order above (kept
     # byte-for-byte identical to this project's existing contract) - the
@@ -3716,6 +3862,40 @@ _CSS = """
   .risk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; }
   .risk-list li { display: flex; align-items: flex-start; gap: 8px; }
   .risk-list .dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+
+  /* --- Strategic Plan (2026-08-27, "generate all of it" pass) - the real
+     dominant multi-GW section: primary ROLL/TRANSFER/REVIEW call, the
+     1/3/5/8-GW horizon comparison, real top-N paths with a horizontal
+     per-GW timeline, and a chip badge overlay on the winning path. --- */
+  .strategic-primary { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 12px;
+    background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border); }
+  .strategic-primary-badge { font-size: 0.78rem; padding: 6px 14px; }
+  .strategic-primary-body { font-family: "Titillium Web", sans-serif; font-weight: 700; font-size: 1.05rem; color: var(--fg); }
+  .strategic-horizon-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 8px; }
+  .strategic-horizon-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.68rem;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; }
+  .strategic-horizon-table td { padding: 5px 8px; border-top: 1px solid var(--border); }
+  .strategic-horizon-table tr.strategic-horizon-current td { color: var(--accent-2); font-weight: 700; }
+  .strategic-note { font-size: 0.8rem; color: var(--muted); padding: 6px 2px 12px; }
+  .strategic-note-differ { color: #ff9f43; }
+  .strategic-path-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .strategic-path-card { background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border);
+    padding: 10px 12px; font-size: 0.8rem; }
+  .strategic-path-card.strategic-path-best { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2) inset; }
+  .strategic-path-header { font-size: 0.78rem; color: var(--muted); margin-bottom: 8px; }
+  .strategic-path-header strong { color: var(--fg); }
+  .strategic-path-timeline { display: flex; flex-wrap: wrap; gap: 6px; overflow-x: auto; }
+  .strategic-path-step { display: flex; flex-direction: column; gap: 2px; background: var(--surface); border-radius: 8px;
+    padding: 6px 9px; min-width: 92px; }
+  .strategic-path-step.strategic-path-step-chip { outline: 1px solid var(--accent); }
+  .strategic-path-gw { font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .strategic-path-action { font-size: 0.78rem; color: var(--fg); font-weight: 600; }
+  .chip-badge { display: inline-block; margin-top: 3px; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 999px; background: rgba(150,60,255,0.2); color: var(--accent); width: fit-content; }
+  @media (max-width: 640px) {
+    .strategic-path-grid { grid-template-columns: 1fr; }
+    .strategic-path-timeline { flex-wrap: nowrap; }
+  }
   .ok-line .dot { background: var(--ok); }
   .warn-line .dot { background: var(--warn); }
 

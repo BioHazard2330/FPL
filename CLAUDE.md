@@ -6157,3 +6157,61 @@ concrete, previously-disclosed-but-unfixed correctness bugs (E, A), fixed and li
   info-value-driven ROLL narrative fully wired into the path search's own output (rather than the existing
   separate `value_of_information.py` layer on the pairwise decision path) also remain open. Both real,
   scoped follow-ups, not silently dropped.
+
+## Strategic Plan section + chip overlay on the path timeline (2026-08-27, "generate all of it" pass)
+
+Direct follow-up to the prior 26-part-spec pass: "generate all of it and fix dashboard." Scoped to the two
+concrete, previously-disclosed gaps that were actually tractable in one pass - full top-N paths + a real
+chip overlay logged from `fpl strategic-plan`, and a new dominant dashboard section reading them. The full
+K-Z visual redesign (hero restructure, dedicated path-comparison UI, live/post-GW mode transformation,
+6-breakpoint re-verification) remains the same real, disclosed, multi-session scope named in the prior
+entry - not attempted here, stated plainly rather than claimed complete.
+
+- **`fpl strategic-plan`** now logs the FULL top-`beam_width` paths (not just the winner) in its decision
+  detail (`_path_detail()`, shared helper) - a dashboard/consumer can read the complete top-5 without
+  re-running the real ~1-minute beam search. New `--with-chips/--no-chips` (default on) + `--trials`
+  overlay a real chip schedule onto the winning path's own squad trajectory, reusing 100% already-tested
+  machinery: the exact superset-gathering pattern `fpl season-sim` already uses (squad-by-event, both
+  wildcard/free-hit rebuild horizons, every hit-candidate) feeds one `sample_season_scenarios` call, then
+  the same `schedule_chips` DP `season-sim` calls, scoped to this path's trajectory instead of a second
+  search dimension - matches `strategic_planner.py`'s own documented scope boundary ("chips called
+  separately, as an overlay... reusing its own already-tested DP rather than folding a second search
+  dimension into this one"). 2 new CLI tests (`test_cli_strategic_plan.py`) - one fast `--no-chips` wiring
+  test asserting the full paths list is logged, one `--with-chips` test proving the overlay composes.
+- **Dashboard: new dominant "Strategic Plan" section** (`_strategic_plan_html`, `monitoring/dashboard.py`)
+  - real primary ROLL/TRANSFER/REVIEW call, the 1/3/5/8-GW horizon comparison table (why an immediate pick
+  can differ from the strategic one, highlighting the current horizon), the real top-N paths as cards with
+  a horizontal per-GW timeline, a real chip badge on the winning path's own timeline steps where
+  `schedule_chips` placed one, the chip timeline's own why-now/advisory-hit rows, and a real, disclosed
+  path-stability note (never presents Path 1 as uniquely optimal when Path 2 is within 5% of it - a plain
+  arithmetic check on the two real totals, not fabricated confidence). Inserted into all three dash_state
+  panel orders (PRE_DEADLINE/LIVE/POST_MATCH) right after AI Decisions - matches the requested "WHAT SHOULD
+  I DO THIS GW -> WHAT IS MY BEST LONG-TERM PLAN -> WHY -> what if I disagree" ordering without touching any
+  existing panel's own logic. Reads the last logged `strategic_plan` decision only - never triggers a fresh
+  search from the dashboard's own regen path, same posture already established for `fpl live-rank`/`fpl
+  season-sim`. New CSS (`.strategic-*`, `.chip-badge`) reuses only already-defined theme tokens, includes a
+  640px mobile rule matching this file's existing breakpoint convention, and the path timeline carries its
+  own `overflow-x: auto` (this project's own "wide content scrolls in its own container" rule) rather than
+  ever risking page-level horizontal overflow. 3 new dashboard tests (empty state, populated state with chip
+  badges + stability note, no-chip-cleared state).
+- **Real, disclosed confirmation, not new work: league-wide candidate discovery (spec part H) was already
+  structurally satisfied.** Checked `optimization/transfers.py::best_transfer_for_player`'s own candidate
+  query directly - `WHERE et.singular_name_short=? AND p.removed=0`, the full real player pool for that
+  position, never restricted to the current squad, popular targets, or manually-entered players. No new
+  code needed for this part of the spec.
+- **Live-verified against the real production DB and locked squad, not just tests.** Ran `fpl strategic-plan
+  --horizon 8 --beam-width 5 --trials 300` for real: real top-5 paths, all within 0.1% of each other
+  (518.61 vs 518.20 total net EV) - the path-stability note correctly fires. Real chip overlay found GW2
+  wildcard/GW3 freehit/GW7 3xc/GW8 bboost, each the only real eligible GW in this specific horizon, plus 2
+  real advisory hit recommendations. Regenerated `fpl dashboard` for real and confirmed via direct DOM
+  query (served over a real local HTTP origin, not the file-preview sandbox, which reports a static
+  snapshot and blocks genuine viewport emulation) that the section renders correctly: 5 real path cards, 4
+  real chip badges, computed `overflow-x: auto` on the timeline, and the exact real primary-verdict text.
+  Full suite: 917/917 (912 baseline + 5 new: 2 CLI, 3 dashboard).
+- **What this does NOT close, stated plainly**: the full 24-part visual redesign (dedicated interactive
+  path-selection/comparison beyond static side-by-side cards, hero restructure, Football Intelligence
+  section redesign, fixture/market-strategy section restructuring, live-mode/post-GW-mode full
+  transformation, true 6-breakpoint mobile re-verification with real viewport emulation - this session's
+  own mobile check was limited to a real DOM-overflow measurement, not a true forced-width screenshot, a
+  genuine tooling limitation encountered and disclosed rather than silently worked around) remains open,
+  same real, scoped, multi-session follow-up named in the prior entry.

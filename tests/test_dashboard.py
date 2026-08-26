@@ -1436,6 +1436,89 @@ def test_next_gw_plan_panel_shows_real_verdicts_when_logged(db_conn):
     assert "Chip" in result or "CHIP" in result
 
 
+# --- Strategic Plan (2026-08-27, "generate all of it" dashboard pass) ---
+
+def test_strategic_plan_panel_shows_empty_state_when_never_run(db_conn):
+    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _strategic_plan_html(db_conn)
+
+    assert "No strategic plan logged yet" in result
+    assert "fpl strategic-plan" in result
+
+
+def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(
+        db_conn, "strategic_plan", "B.Fernandes -> Tavernier (strategic 8GW EV=12.06)",
+        {
+            "horizon_gw": 8, "note": "IMMEDIATE optimum (GW1 horizon: Tzolis -> Tavernier) differs from the STRATEGIC optimum (GW8 horizon: B.Fernandes -> Tavernier)",
+            "immediate_vs_strategic_differ": True,
+            "horizon_comparison": [
+                {"horizon_gw": 1, "opening_action": "Tzolis -> Tavernier", "total_net_ev": 4.62},
+                {"horizon_gw": 8, "opening_action": "B.Fernandes -> Tavernier", "total_net_ev": 12.06},
+            ],
+            "best_path": {
+                "total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5,
+                "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
+            },
+            "paths": [
+                {
+                    "total_net_ev": 12.06, "final_free_transfers": 1, "final_bank_tenths": 5,
+                    "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
+                },
+                {
+                    "total_net_ev": 11.9, "final_free_transfers": 1, "final_bank_tenths": 3,
+                    "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+                },
+            ],
+            "chip_schedule": {
+                "entries": [{"event": 4, "chip_name": "wildcard", "expected_marginal_value": 20.0, "why_now": "only real eligible GW in this horizon"}],
+                "advisory_hit_recommendations": [],
+            },
+        },
+    )
+    db_conn.commit()
+
+    result = _strategic_plan_html(db_conn)
+
+    assert "TRANSFER" in result
+    assert "B.Fernandes -&gt; Tavernier" in result or "B.Fernandes -> Tavernier" in result
+    assert "IMMEDIATE optimum" in result
+    assert "Path 1" in result and "Path 2" in result
+    assert "WILDCARD" in result  # chip badge, uppercased
+    assert "close" in result  # 12.06 vs 11.9 is well within 5% - path-stability note
+
+
+def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn):
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(
+        db_conn, "strategic_plan", "ROLL (strategic 8GW EV=5.0)",
+        {
+            "horizon_gw": 8, "note": "the real opening move (ROLL) is consistent across every horizon checked",
+            "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": 5.0}],
+            "best_path": {"total_net_ev": 5.0, "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]},
+            "paths": [{"total_net_ev": 5.0, "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}]}],
+            "chip_schedule": {"entries": [], "advisory_hit_recommendations": []},
+        },
+    )
+    db_conn.commit()
+
+    result = _strategic_plan_html(db_conn)
+
+    assert "ROLL" in result
+    assert "No chip cleared a real positive value" in result
+
+
 # --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---
 
 def test_price_predictions_shows_real_forecast_for_squad(db_conn):
