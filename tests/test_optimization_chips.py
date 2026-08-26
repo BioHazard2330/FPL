@@ -367,6 +367,46 @@ def test_wildcard_trial_values_scores_rebuilt_members_outside_the_sampled_squad(
     chips_mod._squad_rebuild_cache.clear()
 
 
+def test_wildcard_trial_values_bounds_the_window_regardless_of_dp_horizon(db_conn, monkeypatch):
+    """Real bug found (flagged, not fixed) 2026-08-27's "audit against real GW2
+    expert reasoning" session, fixed here: _wildcard_trial_values used to sum the
+    rebuilt-vs-current gap over the CALLER's full DP horizon_gw (e.g. 19 for a
+    --horizon 19 season-sim call) - crediting a one-time rebuilt squad with an
+    ever-growing, uncontested advantage against a squad that structurally never
+    receives a single transfer for the whole horizon. Bounded to
+    _WILDCARD_TRIAL_WINDOW_GW (5, matching wildcard_value's own bounded n_gw=5
+    default) regardless of how large horizon_gw is. Two things pinned directly,
+    not just the total: optimise_squad is solved with n_gw=5 (not 19), and events
+    beyond the 5-GW window (e.g. event 12, 10+2) never contribute to the gap even
+    though they're present in scenario_draw with a huge, deliberately-suspicious
+    value that would blow up the total if the (pre-fix) unbounded window were
+    still in effect."""
+    import fpl_agent.optimization.chips as chips_mod
+    from types import SimpleNamespace
+
+    chips_mod._squad_rebuild_cache.clear()
+    n_gw_calls = []
+
+    def recording_optimise(conn, n_gw):
+        n_gw_calls.append(n_gw)
+        return SimpleNamespace(squad=[SimpleNamespace(player_id=3)])
+
+    monkeypatch.setattr(chips_mod, "optimise_squad", recording_optimise)
+
+    scenario_draw = [
+        ScenarioOutcome(trial_index=0, points_by_event_player={
+            (10, 1): 1.0, (10, 3): 5.0,  # within the bounded 5-GW window (events 10-14)
+            (12, 1): 1000.0, (12, 3): 1000.0,  # inside the caller's 19-GW horizon but outside the bounded window
+        }),
+    ]
+
+    values = chips_mod._wildcard_trial_values(db_conn, [1], event=10, horizon_gw=19, scenario_draw=scenario_draw)
+
+    assert n_gw_calls == [5]  # bounded, not the caller's own horizon_gw=19
+    assert list(values) == [4.0]  # (5.0) - (1.0), event 12's huge values never entered the sum
+    chips_mod._squad_rebuild_cache.clear()
+
+
 def test_cached_optimise_squad_solves_once_per_n_gw(db_conn, monkeypatch):
     import fpl_agent.optimization.chips as chips_mod
     from types import SimpleNamespace

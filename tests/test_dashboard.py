@@ -106,6 +106,80 @@ def test_hero_shows_the_last_logged_live_rank(db_conn):
     assert "123,456" in result
 
 
+def test_hero_never_renders_a_degenerate_live_rank_as_a_real_number(db_conn):
+    """Real correctness fix (2026-08-27, direct user directive: "never display
+    the fake ~37 as if it were my actual rank" / "do NOT attempt another
+    approximation that produces a convincing-looking fake number"). A
+    "degenerate" precision (models/live_rank.py's own disclosed threshold -
+    the real FPL standings API returned page-level, not per-entry, rank
+    granularity for nearly the whole sample) must render as an honest
+    "Live rank unavailable" tile, never the fabricated-looking number
+    itself."""
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(
+        db_conn, "live_rank", "estimated live rank ~37 (event 1, 51 pts)",
+        {"event": 1, "estimated_rank": 37, "precision": "degenerate", "sample_size": 300},
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Unavailable" in result
+    assert "~37" not in result and ">37<" not in result
+    assert "no trustworthy live-rank estimate has ever been produced" in result
+
+
+def test_hero_falls_back_to_the_last_trustworthy_live_rank_when_the_latest_is_degenerate(db_conn):
+    """The honest fallback half of the same fix: a degenerate latest sample
+    must not hide a real, genuinely trustworthy PRIOR estimate - it should
+    surface that one by name instead of a bare "nothing available" message.
+    Uses two DIFFERENT events (real fallback logic re-derives precision from
+    each candidate decision's OWN underlying live_rank_sample rows, not from
+    a decision's stored `precision` field, which can be stale - see
+    monitoring/dashboard.py's fallback loop docstring) so the genuinely
+    non-degenerate event's real sample is what makes it trustworthy, not a
+    label alone."""
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    # Event 1: a real, genuinely non-degenerate reference sample (6 distinct
+    # ranks across 6 real entries) - the trustworthy prior estimate.
+    for i in range(6):
+        db_conn.execute(
+            "INSERT INTO live_rank_sample (event, season, entry_id, pre_gw_rank, pre_gw_total, live_points, "
+            "current_total, sampled_at) VALUES (1, '2026-27', ?, ?, 900, 0, ?, 't0')",
+            (2000 + i, 100 + i * 50, 950.0 - i),
+        )
+    # Event 2: the real GW1-shaped degenerate sample (50 entries, 2 distinct
+    # ranks, 4%) - the latest, untrustworthy estimate.
+    for i in range(50):
+        rank = 500 if i < 25 else 900
+        db_conn.execute(
+            "INSERT INTO live_rank_sample (event, season, entry_id, pre_gw_rank, pre_gw_total, live_points, "
+            "current_total, sampled_at) VALUES (2, '2026-27', ?, ?, 900, 0, ?, 't0')",
+            (3000 + i, rank, 950.0 - i),
+        )
+    db_conn.commit()
+    log_decision(
+        db_conn, "live_rank", "estimated live rank ~500,000 (event 1, 20 pts)",
+        {"event": 1, "estimated_rank": 500_000, "precision": "precise", "sample_size": 6},
+    )
+    log_decision(
+        db_conn, "live_rank", "estimated live rank ~37 (event 2, 51 pts)",
+        {"event": 2, "estimated_rank": 37, "precision": "degenerate", "sample_size": 50},
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "Unavailable" in result
+    assert "~37" not in result and ">37<" not in result
+    assert "last trustworthy check" in result
+    assert "500,000" in result
+
+
 def test_generate_dashboard_html_composes_without_crashing(db_conn):
     """Plumbing test, same spirit as test_rate_team.py - real (unmocked)
     expected_points() over a small synthetic pool won't produce meaningful

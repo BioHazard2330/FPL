@@ -1827,6 +1827,20 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
 
     click.echo(f"decision_id={decision_id}")
     click.echo(f"pre-GW total: {pre_gw_total}   live points this GW: {my_live_points:.0f}   current total: {my_current_total:.0f}")
+    if estimate.precision == "degenerate":
+        # Real, honest gate (2026-08-27, direct user directive: "never
+        # display the fake ~37 as if it were my actual rank" / "do NOT
+        # attempt another approximation that produces a convincing-looking
+        # fake number"). The estimate is still logged above (a real record
+        # of what the sample produced, for history/debugging) but never
+        # printed as a rank - see monitoring/dashboard.py's identical gate
+        # for the same reasoning.
+        click.echo(
+            f"Live rank unavailable: the real sample of {estimate.sample_size} managers returned mostly "
+            "identical page-level ranks (not enough real distinct data to estimate honestly) - "
+            f"only {len({r for r, _ in reference})} distinct real rank values were observed"
+        )
+        return
     click.echo(f"estimated live rank: ~{estimate.estimated_rank:,}  (real bracket {estimate.rank_lower_bound:,}-{estimate.rank_upper_bound:,}, {estimate.sample_size} sampled managers)")
     if estimate.precision == "approximate":
         click.echo(
@@ -2872,13 +2886,30 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str | None):
                 click.echo(f"GW{a.event}  {a.kind.upper()}  {a.team_short_name} (affects your squad)")
 
         windows = eligible_chips(conn, event=from_event)
-        max_window_event = max((w.stop_event for w in windows), default=0)
-        if from_event + horizon - 1 > max_window_event:
+        horizon_end = from_event + horizon - 1
+        # Real display bug fixed 2026-08-27 (flagged, not fixed, in the "audit
+        # against real GW2 expert reasoning" session above): eligible_chips
+        # returns EVERY chip window for the season, both halves - a horizon
+        # that ends before the second half's own start_event (e.g. horizon=19
+        # from GW1, second-half windows starting GW20) still had its
+        # max_window_event computed across all of them, so the warning named
+        # "GW38" as the nearest open window even though the DP's own event
+        # range (range(from_event, from_event+horizon)) never includes GW20+
+        # at all - a window the DP genuinely cannot see shouldn't be named as
+        # the reason its output is horizon-limited. Scoped to windows whose
+        # start_event actually falls within the DP's visible range - a window
+        # starting AFTER horizon_end is invisible to the DP, not partially
+        # seen, so it's excluded from this comparison entirely (not warned
+        # about at all - there's nothing incomplete to disclose about a window
+        # the DP was never asked to look at).
+        visible_windows = [w for w in windows if w.start_event <= horizon_end]
+        max_window_event = max((w.stop_event for w in visible_windows), default=0)
+        if horizon_end > max_window_event:
             click.echo(
-                f"WARNING: horizon extends to GW{from_event + horizon - 1}, beyond the last known chip "
+                f"WARNING: horizon extends to GW{horizon_end}, beyond the last known chip "
                 f"window (GW{max_window_event}) - chip scheduling for GWs beyond that is not considered"
             )
-        elif from_event + horizon - 1 < max_window_event:
+        elif horizon_end < max_window_event:
             # Real gap found 2026-08-20 (the user caught this live, not this project's
             # own review): a short horizon starves schedule_chips' DP of visibility
             # into most of a real chip window (e.g. bboost/3xc/wildcard eligible
@@ -2889,7 +2920,7 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str | None):
             # boost/triple captain have value). The chip schedule below should not
             # be treated as trustworthy season-long advice when this fires.
             click.echo(
-                f"WARNING: horizon only covers GW{from_event}-{from_event + horizon - 1}, but the "
+                f"WARNING: horizon only covers GW{from_event}-{horizon_end}, but the "
                 f"nearest chip window stays open through GW{max_window_event} - any chip placement "
                 f"below is only optimal within this short window, not a genuine season-long "
                 f"recommendation (it has no visibility into later fixture swings or double gameweeks, "

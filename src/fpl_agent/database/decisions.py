@@ -72,6 +72,27 @@ def latest_decision_of_type(conn: sqlite3.Connection, decision_type: str) -> Dec
     )
 
 
+def list_decisions_of_type(conn: sqlite3.Connection, decision_type: str, limit: int = 20) -> list[Decision]:
+    """Like latest_decision_of_type but returns up to `limit` real, most-recent
+    rows of one type, not just the single latest - needed when a caller must
+    look BACK past the most recent row (e.g. the dashboard's live-rank tile
+    skipping a real but degenerate/non-discriminating latest sample to find
+    the last genuinely trustworthy one, see monitoring/dashboard.py)."""
+    rows = conn.execute(
+        "SELECT id, decision_type, summary, detail, model_version, confidence, created_at "
+        "FROM decisions WHERE decision_type=? ORDER BY id DESC LIMIT ?",
+        (decision_type, limit),
+    ).fetchall()
+    return [
+        Decision(
+            id=r["id"], decision_type=r["decision_type"], summary=r["summary"],
+            detail=json.loads(r["detail"]), model_version=r["model_version"],
+            confidence=r["confidence"], created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
 def list_decisions(conn: sqlite3.Connection, limit: int = 20) -> list[Decision]:
     rows = conn.execute(
         "SELECT id, decision_type, summary, detail, model_version, confidence, created_at "

@@ -111,6 +111,75 @@ def test_live_rank_end_to_end_with_a_real_reference_sample(monkeypatch, db_conn)
     assert count == 1
 
 
+def test_live_rank_cli_never_prints_a_fake_number_for_a_degenerate_sample(monkeypatch, db_conn):
+    """Real correctness fix (2026-08-27, direct user directive: "never
+    display the fake ~37 as if it were my actual rank"). Pre-seeds a real
+    reference sample shaped like the actual GW1 incident (50 real entries,
+    only 2 real distinct rank values, 4% - well under models/live_rank.py's
+    own degenerate threshold) directly into live_rank_sample so the CLI's
+    non-force path (`if not reference or force`) reuses it rather than
+    resampling - this test is about the CLI's OWN display gate, not the
+    sampling machinery, which is already covered elsewhere."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [1])
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000000', 't0')"
+    )
+    # 20 real reference rows, only 2 real distinct pre_gw_rank values - the
+    # real page-level-granularity shape, at a season the test DB's own
+    # unseeded `current_season()` resolves to (matches this file's other
+    # tests, which don't seed a rules row either).
+    from fpl_agent.models.effective_ownership import sample_season
+
+    season = sample_season(db_conn)
+    for i in range(50):
+        rank = 500 if i < 25 else 900
+        db_conn.execute(
+            "INSERT INTO live_rank_sample (event, season, entry_id, pre_gw_rank, pre_gw_total, live_points, "
+            "current_total, sampled_at) VALUES (1, ?, ?, ?, 900, 0, ?, 't0')",
+            (season, 1000 + i, rank, 950.0 - i),
+        )
+    db_conn.commit()
+    set_my_team_entry_id(db_conn, 12345)
+
+    def fake_fetch_entry_info(self, entry_id):
+        return _fake_raw(f"fpl_api_entry_{entry_id}", {
+            "player_first_name": "Test", "player_last_name": "Manager",
+            "player_region_name": "NL", "favourite_team": 1, "joined_time": "t0", "started_event": 1,
+        })
+
+    def fake_fetch_entry_history(self, entry_id):
+        return _fake_raw(f"fpl_api_entry_history_{entry_id}", {"past": [], "current": []})
+
+    def fake_fetch_entry_picks(self, entry_id, event):
+        return _fake_raw(f"fpl_api_entry_picks_{entry_id}_{event}", {
+            "active_chip": None,
+            "entry_history": {"event": event, "points": 0, "total_points": 1000, "overall_rank": None,
+                               "bank": 0, "value": 1000, "event_transfers": 0, "event_transfers_cost": 0,
+                               "points_on_bench": 0},
+            "picks": [{"element": 1, "position": 1, "multiplier": 2, "is_captain": True, "is_vice_captain": False}],
+        })
+
+    def fake_fetch_event_live(self, event):
+        return _fake_raw(f"fpl_api_event_live_{event}", {"elements": [{"id": 1, "stats": {"total_points": 5}}]})
+
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_info", fake_fetch_entry_info)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_history", fake_fetch_entry_history)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_picks", fake_fetch_entry_picks)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_event_live", fake_fetch_event_live)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["live-rank", "--event", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "Live rank unavailable" in result.output
+    assert "estimated live rank" not in result.output
+    # A real decision is still journaled (the honest record), just never
+    # displayed as a rank.
+    row = db_conn.execute("SELECT decision_type FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["decision_type"] == "live_rank"
+
+
 def _seed_fixture(conn, event_id, started):
     conn.execute(
         "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,team_h_score,team_a_score,"

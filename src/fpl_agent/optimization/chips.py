@@ -162,21 +162,40 @@ def _triple_captain_trial_values(
     return np.array([o.points_by_event_player.get((event, captain_id), 0.0) for o in scenario_draw])
 
 
+# Bound on how many GWs a rebuilt-vs-current gap is credited over, regardless of
+# the caller's own DP horizon_gw. Real bug fixed 2026-08-27 (flagged but not
+# fixed 2026-08-27 in the "audit against real GW2 expert reasoning" session
+# above): _wildcard_trial_values used to sum the gap over range(event,
+# event+horizon_gw) with horizon_gw = the FULL schedule_chips horizon (e.g. 19
+# for a --horizon 19 season-sim call) - crediting the wildcard with the whole
+# rebuilt squad's advantage over a squad that structurally NEVER makes a single
+# real transfer for 18 straight gameweeks. Neither side of that comparison
+# reflects how a real manager plays (a held squad gets real transfers too; a
+# rebuilt squad's advantage decays as fixtures/form/prices move). Matches
+# wildcard_value's own bounded n_gw=5 default (its single-decision-point
+# sibling, chips.py:71) - the same "how long does a wildcard's edge realistically
+# last before further transfers happen anyway" window, applied here too.
+_WILDCARD_TRIAL_WINDOW_GW = 5
+
+
 def _wildcard_trial_values(
     conn: sqlite3.Connection, squad_ids: list[int], event: int, horizon_gw: int, scenario_draw: list[ScenarioOutcome]
 ) -> np.ndarray:
     """The rebuilt squad is a single deterministic ILP solve (same optimise_squad
     call wildcard_value already makes - re-solving per trial would blow the runtime
     budget); only the realized-points GAP between it and the current squad varies
-    per trial, summed over the full horizon window.
+    per trial, summed over a bounded window (see _WILDCARD_TRIAL_WINDOW_GW - never
+    the caller's full DP horizon, which would overcredit a one-time rebuild against
+    a squad frozen for the whole horizon).
 
     Every player scored here must be present in scenario_draw - the rebuilt squad
     comes from the FULL player pool, so it is generally not a subset of squad_ids.
     Callers are responsible for sampling the superset (see cli/main.py's
     season-sim); a missing player silently contributes 0.0 via the .get fallback."""
-    rebuilt = _cached_optimise_squad(conn, horizon_gw)
+    window_gw = min(horizon_gw, _WILDCARD_TRIAL_WINDOW_GW)
+    rebuilt = _cached_optimise_squad(conn, window_gw)
     rebuilt_ids = [c.player_id for c in rebuilt.squad]
-    events = range(event, event + horizon_gw)
+    events = range(event, event + window_gw)
 
     def _total(ids, outcome):
         return sum(outcome.points_by_event_player.get((e, pid), 0.0) for e in events for pid in ids)

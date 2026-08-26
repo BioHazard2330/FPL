@@ -165,3 +165,47 @@ def test_estimate_live_rank_stays_precise_when_ranks_are_genuinely_distinct():
     estimate = estimate_live_rank(reference, my_current_total=51.0, total_players=1_000_000)
 
     assert estimate.precision == "precise"
+
+
+def test_estimate_live_rank_flags_degenerate_for_the_real_gw1_shaped_sample():
+    """Regression guard for the user's own direct instruction (2026-08-27):
+    "do NOT attempt another approximation that produces a convincing-looking
+    fake number" - "if only an approximate sample exists and is demonstrably
+    non-discriminating, do NOT render it as rank." The real GW1 sample had
+    300 real sampled managers but only 9 real distinct rank values (~3%) -
+    reproduced here at the same shape (300 entries, 9 distinct rank groups)
+    rather than a synthetic worst case, so this pins the actual reported
+    real-world condition, not a stronger one invented to make the test easy
+    to pass."""
+    groups = 9
+    reference = [(100 + (i % groups) * 50, 60.0 - i * 0.01) for i in range(300)]
+
+    estimate = estimate_live_rank(reference, my_current_total=50.0, total_players=1_000_000)
+
+    assert estimate.precision == "degenerate"
+    assert estimate.sample_size == 300
+
+
+def test_estimate_live_rank_a_single_shared_rank_is_always_degenerate_at_a_real_sample_size():
+    """Floor-case regression: a real, meaningfully-sized sample (n=50, above
+    _MIN_SAMPLE_FOR_DEGENERATE_CHECK) where every entry shares the exact same
+    rank is the absolute worst case of non-discrimination - must be flagged
+    degenerate regardless of the fraction math working out narrowly."""
+    reference = [(500, 60.0 - i * 0.01) for i in range(50)]  # 50 real entries, 1 real distinct rank value
+
+    estimate = estimate_live_rank(reference, my_current_total=59.5, total_players=1_000_000)
+
+    assert estimate.precision == "degenerate"
+
+
+def test_estimate_live_rank_does_not_flag_degenerate_below_the_minimum_sample_size():
+    """A tiny sample (e.g. a real wiring/smoke-test fixture, or a genuinely
+    small reference pool) must not be flagged degenerate just because a low
+    distinct-rank count is trivially expected at that size - the flag exists
+    to catch the real large-sample page-level-granularity pathology, not
+    ordinary small-sample behavior."""
+    reference = [(500, 60.0)]  # n=1, trivially 1 distinct value
+
+    estimate = estimate_live_rank(reference, my_current_total=60.0, total_players=1_000_000)
+
+    assert estimate.precision != "degenerate"

@@ -29,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from fpl_agent.database.decisions import latest_decision_of_type
+from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.optimization.captaincy import captaincy_report
@@ -37,7 +37,8 @@ from fpl_agent.models.expected_points import _fixture_goals_for
 from fpl_agent.models.fixtures import finished_fixture_ids_fast, live_or_reference_event, team_fixture_ticker
 from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.live_bonus import compute_live_bonus
-from fpl_agent.models.live_rank import estimate_squad_live_points
+from fpl_agent.models.live_rank import classify_precision, estimate_squad_live_points
+from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.team_outlook import squad_team_outlooks
 from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
@@ -2627,31 +2628,88 @@ def generate_dashboard_html(
     live_rank_decision = latest_decision_of_type(conn, "live_rank")
     live_rank_tile_html = ""
     if live_rank_decision is not None:
-        # Real fallback (not just "?"): prefer the structured `estimated_rank`
-        # field, but a decision logged before this field existed (or from
-        # any other real caller shape) still has a real, honest summary
-        # string to fall back to rather than a blank placeholder.
-        rank = live_rank_decision.detail.get("estimated_rank")
-        is_approximate = live_rank_decision.detail.get("precision") == "approximate"
-        rank_str = f"{'≈' if is_approximate else '~'}{rank:,}" if rank is not None else live_rank_decision.summary
-        # Real bug found and fixed (2026-08-27, direct user report: "live
-        # rank is fucked") - this tile unconditionally labeled ANY last-known
-        # estimate "Live rank", even a real GW1 FINAL rank still being shown
-        # days later while GW2 sits in READY_FOR_NEXT_DEADLINE (confirmed
-        # live: the stored decision's own `event` field was 1, `reference_
-        # event` was already 2) - a real, honestly-computed number rendered
-        # under a misleading, non-live label. Now compares the decision's own
-        # real `event` against `reference_event` (already computed above,
-        # same real source `live_or_reference_event` the rest of this
-        # function uses) - only the CURRENT gameweek's estimate is ever
-        # labeled "Live rank"; a stale prior-gameweek estimate is relabeled
-        # "Last rank check (GWx)" so the real number is never hidden, only
-        # never mislabeled as current.
-        rank_event = live_rank_decision.detail.get("event")
-        is_current = rank_event == reference_event
-        rank_label = "Live rank (est.)" if is_current else f"Last rank check (GW{rank_event})"
-        sub_note = " · approximate (page-level data)" if is_approximate else ""
-        live_rank_tile_html = f"""<div class="hero-metric hero-metric-rank">
+        precision = live_rank_decision.detail.get("precision")
+        # Real, honest gate (2026-08-27, direct user directive: "do NOT
+        # attempt another approximation that produces a convincing-looking
+        # fake number" / "never display the fake ~37 as if it were my actual
+        # rank"). A "degenerate" sample (models/live_rank.py's own disclosed
+        # threshold - the real FPL standings API returned page-level, not
+        # per-entry, rank granularity for nearly the whole sample) must never
+        # be rendered as a rank at all, however honestly it's labeled -
+        # falls back to the last real decision of this type that WASN'T
+        # degenerate, if one exists, otherwise an honest "unavailable" state
+        # naming the real reason and the real source status.
+        if precision == "degenerate":
+            # Real fallback correctness fix (2026-08-27, found live against
+            # the real production DB while verifying this feature): a
+            # historical decision's OWN stored `precision` field is frozen
+            # at log time under whatever classification logic existed then -
+            # a decision logged before the "degenerate" tier existed can
+            # read "approximate" even though it is, by TODAY's classification,
+            # the exact same non-discriminating sample. Trusting that stale
+            # label would resurface the very fake-looking number this whole
+            # gate exists to suppress (confirmed live: decision id=77, GW1,
+            # was stored as "approximate" for the real 9-distinct-of-300
+            # sample that IS today's canonical degenerate case). Re-derives
+            # precision from the real underlying live_rank_sample rows for
+            # each candidate event via classify_precision - the pure
+            # function estimate_live_rank itself uses - rather than trusting
+            # the decision's own stored label.
+            trustworthy = None
+            for d in list_decisions_of_type(conn, "live_rank", limit=50):
+                d_event = d.detail.get("event")
+                if d_event is None:
+                    continue
+                d_reference = get_live_rank_reference(conn, d_event)
+                if d_reference and classify_precision(d_reference) != "degenerate":
+                    trustworthy = d
+                    break
+            source_row = next((s for s in get_source_health(conn) if s.source_name == "fpl_live_rank_sample"), None)
+            source_note = "source: healthy" if source_row is not None and source_row.failure_count == 0 else "source: degraded"
+            reason = (
+                f"real sample of {live_rank_decision.detail.get('sample_size', '?')} managers returned mostly "
+                f"identical page-level ranks - not enough real distinct data to estimate honestly"
+            )
+            if trustworthy is not None:
+                t_rank = trustworthy.detail.get("estimated_rank")
+                t_event = trustworthy.detail.get("event")
+                last_trustworthy_note = (
+                    f"last trustworthy check: ~{t_rank:,} (GW{t_event}, {_relative_time(trustworthy.created_at)})"
+                    if t_rank is not None else f"last trustworthy check: {trustworthy.summary}"
+                )
+            else:
+                last_trustworthy_note = "no trustworthy live-rank estimate has ever been produced"
+            live_rank_tile_html = f"""<div class="hero-metric hero-metric-rank">
+      <div class="hero-metric-label">Live rank</div>
+      <div class="hero-metric-value hero-metric-value-muted">Unavailable</div>
+      <div class="hero-metric-sub">{_esc(reason)} · {_esc(source_note)}<br>{_esc(last_trustworthy_note)}</div>
+    </div>"""
+        else:
+            # Real fallback (not just "?"): prefer the structured `estimated_rank`
+            # field, but a decision logged before this field existed (or from
+            # any other real caller shape) still has a real, honest summary
+            # string to fall back to rather than a blank placeholder.
+            rank = live_rank_decision.detail.get("estimated_rank")
+            is_approximate = precision == "approximate"
+            rank_str = f"{'≈' if is_approximate else '~'}{rank:,}" if rank is not None else live_rank_decision.summary
+            # Real bug found and fixed (2026-08-27, direct user report: "live
+            # rank is fucked") - this tile unconditionally labeled ANY last-known
+            # estimate "Live rank", even a real GW1 FINAL rank still being shown
+            # days later while GW2 sits in READY_FOR_NEXT_DEADLINE (confirmed
+            # live: the stored decision's own `event` field was 1, `reference_
+            # event` was already 2) - a real, honestly-computed number rendered
+            # under a misleading, non-live label. Now compares the decision's own
+            # real `event` against `reference_event` (already computed above,
+            # same real source `live_or_reference_event` the rest of this
+            # function uses) - only the CURRENT gameweek's estimate is ever
+            # labeled "Live rank"; a stale prior-gameweek estimate is relabeled
+            # "Last rank check (GWx)" so the real number is never hidden, only
+            # never mislabeled as current.
+            rank_event = live_rank_decision.detail.get("event")
+            is_current = rank_event == reference_event
+            rank_label = "Live rank (est.)" if is_current else f"Last rank check (GW{rank_event})"
+            sub_note = " · approximate (page-level data)" if is_approximate else ""
+            live_rank_tile_html = f"""<div class="hero-metric hero-metric-rank">
       <div class="hero-metric-label">{_esc(rank_label)}</div>
       <div class="hero-metric-value">{_esc(rank_str)}</div>
       <div class="hero-metric-sub">as of {_esc(_relative_time(live_rank_decision.created_at))}{_esc(sub_note)}</div>
@@ -3201,6 +3259,7 @@ _CSS = """
     font-variant-numeric: proportional-nums; }
   .hero-metric-value.accent-green { color: var(--accent-2); }
   .hero-metric-value.accent-pink { color: var(--fpl-pink); }
+  .hero-metric-value-muted { color: var(--muted); font-size: 1.05rem; }
   /* Real Gameweek Command Strip (2026-08-21, third session, section 4) - a
      single inline status band under the tiles, not a 5th/6th/7th rounded
      card. Real, quiet, ticker-style: label:value pairs separated by

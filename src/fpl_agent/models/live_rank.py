@@ -134,7 +134,15 @@ class LiveRankEstimate:
     # estimate of "~37" came directly from 14 real, distinct managers who
     # all shared the identical real API-reported rank 37) - `precision`
     # flags this honestly rather than presenting that number as exact.
-    precision: str = "precise"  # "precise" | "approximate"
+    #
+    # "degenerate" added 2026-08-27 (user directive: never display a fake
+    # rank as if it were the real one). A real GW1 sample had only 9 distinct
+    # rank values across all 300 real sampled managers (~3%) - not merely
+    # imprecise, structurally unable to discriminate a real rank at all.
+    # Below _DEGENERATE_DISTINCT_FRACTION, callers (the dashboard) must not
+    # render estimated_rank as a rank at all - see monitoring/dashboard.py's
+    # live-rank tile for the honest "Live rank unavailable" fallback.
+    precision: str = "precise"  # "precise" | "approximate" | "degenerate"
 
 
 def _enforce_monotonic_ranks(scores_desc: list[float], ranks_desc: list[float]) -> list[float]:
@@ -155,6 +163,47 @@ def _enforce_monotonic_ranks(scores_desc: list[float], ranks_desc: list[float]) 
         running_max = max(running_max, rank)
         corrected.append(running_max)
     return corrected
+
+
+# Real, disclosed heuristic (2026-08-27): below this fraction of distinct real
+# rank values in the sample, the sample is "demonstrably non-discriminating"
+# per the user's own framing - real GW1 case measured 9/300 = 3%, well under
+# this bar - and estimated_rank must never be rendered as a rank at all. A
+# floor of 2 distinct values keeps a tiny/degenerate-by-construction sample
+# (e.g. n=1, trivially 1 distinct value) from ever slipping through a
+# fraction-only check, without disturbing the existing, deliberately-tuned
+# 20-sample/2-distinct "approximate" (not yet degenerate) regression case.
+_DEGENERATE_DISTINCT_FRACTION = 0.05
+# Below this real sample size, a low distinct-rank count is ordinary small-
+# sample noise (or a test/smoke-check fixture), not evidence of the real
+# page-level-granularity pathology this flag targets - never flag degenerate
+# under this floor.
+_MIN_SAMPLE_FOR_DEGENERATE_CHECK = 10
+
+
+def classify_precision(reference: list[tuple[int, float]]) -> str:
+    """Pure function, extracted 2026-08-27 so callers can re-check whether a
+    real reference sample is trustworthy WITHOUT needing my_current_total/
+    total_players (the classification only ever depended on `reference`
+    itself). The real, disclosed reason this matters: a historical decision
+    logged before this "degenerate" tier existed was classified under the
+    OLDER, less strict "precise"/"approximate" split - its stored
+    `precision` field is frozen at log time and can be a stale, now-known-
+    wrong label for what is, by today's stricter classification, actually a
+    degenerate sample. monitoring/dashboard.py's "last trustworthy check"
+    fallback re-derives precision from the real underlying live_rank_sample
+    rows via this function rather than trusting an old decision's stored
+    label, specifically to avoid resurfacing the exact fake-looking number
+    the degenerate check exists to suppress."""
+    n = len(reference)
+    if n == 0:
+        return "degenerate"
+    distinct_raw_ranks = len({rank for rank, _ in reference})
+    if n >= _MIN_SAMPLE_FOR_DEGENERATE_CHECK and distinct_raw_ranks < max(2, n * _DEGENERATE_DISTINCT_FRACTION):
+        return "degenerate"
+    if distinct_raw_ranks >= n * 0.5:
+        return "precise"
+    return "approximate"
 
 
 def estimate_live_rank(
@@ -203,8 +252,7 @@ def estimate_live_rank(
     # than half the sample's real entries having a genuinely distinct rank
     # means the sample is dominated by page-level (not per-entry) API
     # granularity - honestly disclosed, not silently presented as precise.
-    distinct_raw_ranks = len({rank for rank, _ in reference})
-    precision = "precise" if distinct_raw_ranks >= n * 0.5 else "approximate"
+    precision = classify_precision(reference)
 
     if my_current_total >= best_total:
         return LiveRankEstimate(

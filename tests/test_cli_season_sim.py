@@ -114,6 +114,57 @@ def test_season_sim_samples_scenarios_for_the_full_superset_not_just_the_squad(m
     assert 5 in sampled_ids, f"out-of-squad hit candidate missing from the draw: {sampled_ids}"
 
 
+def test_season_sim_short_horizon_warning_does_not_name_a_window_the_dp_never_saw(monkeypatch, db_conn):
+    """Real display bug fixed 2026-08-27 (flagged, not fixed, in the "audit against
+    real GW2 expert reasoning" session): eligible_chips returns every chip window
+    for the whole season, both halves. The "nearest chip window stays open through
+    GWx" warning used to compute max_window_event across ALL of them, so a
+    --horizon 19 call from GW1 (horizon_end=19, exactly the real first-half
+    wildcard/bboost/3xc window's own stop_event) still named the SECOND half's
+    stop_event (GW38) as the nearest open window - a window schedule_chips' own DP
+    (range(from_event, from_event+horizon)) never includes at horizon=19 at all,
+    since it starts at GW20. Seeds both a first-half window that closes exactly at
+    the horizon's own end (so no warning should fire for it - the DP sees it in
+    full) and a second-half window starting after the horizon ends (invisible to
+    the DP, must not be named)."""
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+    _patch_squad_rebuild(monkeypatch, [3, 4])
+    db_conn.execute(
+        "INSERT INTO chip_windows (id,name,number,start_event,stop_event,chip_type,season,updated_at) "
+        "VALUES (1,'wildcard',1,2,19,'transfer','2026-27','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO chip_windows (id,name,number,start_event,stop_event,chip_type,season,updated_at) "
+        "VALUES (2,'wildcard',2,20,38,'transfer','2026-27','t0')"
+    )
+    db_conn.commit()
+
+    import fpl_agent.cli.main as main_mod
+    from fpl_agent.models.scenario_engine import ScenarioOutcome
+
+    def fake_sample(conn, squad_ids, from_event, horizon_gw, n_trials=1000, rng=None):
+        return [
+            ScenarioOutcome(trial_index=i, points_by_event_player={
+                (e, pid): 5.0 for e in range(from_event, from_event + horizon_gw) for pid in squad_ids
+            })
+            for i in range(n_trials)
+        ]
+
+    monkeypatch.setattr(main_mod, "sample_season_scenarios", fake_sample)
+
+    runner = CliRunner()
+    # from_event resolves to 1 (the only seeded event, is_next=1 per _seed_two_team_pool)
+    # so horizon_end = 1 + 19 - 1 = 19, exactly the first-half window's stop_event -
+    # fully visible to the DP, no "short horizon" warning should fire at all, and
+    # the second-half window (start_event=20) must never be named.
+    result = runner.invoke(cli, ["season-sim", "--squad", "1,2", "--trials", "5", "--horizon", "19"])
+
+    assert result.exit_code == 0, result.output
+    assert "GW38" not in result.output
+    assert "nearest chip window" not in result.output
+
+
 def test_season_sim_excludes_already_used_chips(monkeypatch, db_conn):
     _seed_two_team_pool(db_conn)
     _patch_expected_points_window(monkeypatch)
