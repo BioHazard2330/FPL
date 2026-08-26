@@ -104,7 +104,25 @@ _MIN_STARTS_FOR_PER_START_RATE = 5
 # a real, current-squad backup with real recent minutes data showing it -
 # a low number there is a real signal, not a data gap, and must not be
 # inflated just because of unrelated ownership noise).
-_WEAK_EVIDENCE_BASES = {"no_data_available", "stale_prior_season", "cross_league_prior_new_signing"}
+#
+# Real gap found 2026-08-26 (decision-quality audit, Tzolis case): the
+# "blended_current_and_stale_prior" branch above (real current-season
+# evidence blended against a discounted STALE/foreign prior) was never
+# added here despite genuinely qualifying as weak/uncertain evidence about
+# THIS player's role at THIS club right now - the stale prior can still
+# drag the blend down materially even after one real start (confirmed by
+# hand: Tzolis's real 75-minute GW1 start blends to only 54.0 expected
+# minutes because a 5-season-old, 0-start foreign-league row still
+# contributes 30% of the weight). The predicted-lineup-start-percent
+# override below is real, current, per-fixture evidence - strictly
+# stronger for "will he start THIS week" than a season-average blend - and
+# the override is structurally raise-only (never lowers an already-higher
+# estimate), so including this basis here can only correct an
+# under-estimate, never inflate a well-evidenced one.
+_WEAK_EVIDENCE_BASES = {
+    "no_data_available", "stale_prior_season", "cross_league_prior_new_signing",
+    "blended_current_and_stale_prior",
+}
 
 # Real gap found 2026-08-20 (a real, named player checked against a
 # user-shared community squad screenshot - Isak): the most-recent-season-only

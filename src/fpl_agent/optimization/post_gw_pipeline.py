@@ -133,12 +133,19 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
             "threshold_cleared": analysis.threshold_cleared,
             "expected_advantage_3gw": analysis.expected_advantage_3gw,
             "robustness": analysis.robustness,
+            # Real evidence-confidence gate (2026-08-26, decision-quality
+            # audit) - distinct from `robustness` (Monte Carlo stability):
+            # whether real current-season/minutes evidence is sufficient to
+            # act on this candidate with confidence, VERY_LOW..VERY_HIGH.
+            "evidence_confidence": analysis.evidence_confidence,
+            "evidence_reasons": list(analysis.evidence_reasons),
             "qualitative_note": analysis.qualitative_note,
             "roll_horizon_totals": analysis.roll.horizon_totals if analysis.roll else None,
             "candidates": [
                 {
                     "rank": o.rank, "player_out": o.candidate.player_out_name, "player_in": o.candidate.player_in_name,
                     "horizon_advantage": o.horizon_advantage, "rejected_reason": o.rejected_reason,
+                    "player_out_confidence": o.player_out_confidence, "player_in_confidence": o.player_in_confidence,
                 }
                 for o in analysis.candidates
             ],
@@ -159,10 +166,12 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
         captain_analysis_detail = {
             "decision_kind": c_analysis.decision_kind,
             "reason": c_analysis.reason,
+            "evidence_confidence": c_analysis.evidence_confidence,
+            "evidence_reasons": list(c_analysis.evidence_reasons),
             "options": [
                 {
                     "rank": o.rank, "web_name": o.option.web_name, "median": o.option.median,
-                    "rejected_reason": o.rejected_reason,
+                    "rejected_reason": o.rejected_reason, "confidence": o.confidence,
                 }
                 for o in c_analysis.options
             ],

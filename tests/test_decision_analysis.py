@@ -97,6 +97,46 @@ def test_transfer_recommended_when_best_candidate_clears_the_real_threshold(db_c
     assert result.robustness == "ROBUST"
 
 
+def _fake_confidence(player_id, overall, reasons=("fake reason",)):
+    from fpl_agent.models.projection_confidence import ProjectionConfidence
+
+    return ProjectionConfidence(
+        player_id=player_id, data_confidence=overall, minutes_confidence=overall, overall=overall,
+        understat_matches_played=0.0, minutes_basis="no_data_available", rotation_risk=None,
+        prior_row_present=False, prior_is_stale=False, finished_events=1, reasons=tuple(reasons),
+    )
+
+
+def test_transfer_downgraded_to_review_when_evidence_confidence_is_low(db_conn, monkeypatch):
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 5.0, player_out_name="P1", player_in_name="P99")
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(
+        da_mod, "assess_projection_confidence",
+        lambda conn, pid: _fake_confidence(pid, "LOW" if pid == 1 else "HIGH"),
+    )
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.threshold_cleared is True
+    assert result.decision_kind == "review"
+    assert result.chosen is not None  # the real quant lead still surfaces, just gated
+    assert result.evidence_confidence == "LOW"
+    assert len(result.evidence_reasons) == 2
+
+
+def test_transfer_kept_when_evidence_confidence_is_medium_or_better(db_conn, monkeypatch):
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 5.0, player_out_name="P1", player_in_name="P99")
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(da_mod, "assess_projection_confidence", lambda conn, pid: _fake_confidence(pid, "MEDIUM"))
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.decision_kind == "transfer"
+    assert result.evidence_confidence == "MEDIUM"
+
+
 def test_roll_when_best_candidate_does_not_clear_the_threshold(db_conn, monkeypatch):
     locked = _locked(squad_ids=(1, 2, 3))
     weak = _tc(1, 99, 0.3, player_out_name="P1", player_in_name="P99")

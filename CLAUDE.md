@@ -5567,3 +5567,129 @@ captaincy.
   Chip Strategy panels already read from the same `decisions` table this pass writes into, so no new
   dashboard wiring was needed to surface this - confirmed by reading the panel's own data source rather
   than assumed.
+
+## Decision-quality audit: the Tzolis case, evidence confidence, REVIEW gate, stress testing (2026-08-26, same day, continued)
+
+Direct user challenge, not a bug report: the optimizer recommended selling Tzolis (a very recent Arsenal
+arrival, real 75-minute GW1 debut, 1 assist) for Tavernier at +12.77 3-GW net EV, and the user explicitly
+did NOT want "he scored 6 points" used as a defense - they wanted the actual mathematical reason audited,
+with an explicit ban on blind threshold/weight tuning to make the number look more comfortable.
+
+**Section 1 - reproduced the exact arithmetic by hand, found a real bug.** Tzolis's `expected_minutes()`
+blend: `finished_events=1`, real GW1 minutes=75 -> `current_per_gw=75`; his only `player_season_history`
+row is `2021/22, 326min, 0 starts` -> stale (5-season gap) -> `prior_per_gw=8.58`; `weight_current=min(0.5+
+0.2*1,0.9)=0.7`; `base=0.7*75+0.3*(8.58*0.6)=54.04`, correctly rounds to the real reported **54.0** -
+arithmetic confirmed exact, not approximated. **The real bug**: `get_start_percent(conn,557)` already
+returned a real, current, synced **80%** starting probability for GW2 - a strictly stronger, more current,
+per-fixture signal than the season-average blend - but it was NEVER APPLIED, because the override block
+that raises minutes toward `75*0.80=60.0` only fires when `basis in _WEAK_EVIDENCE_BASES`
+(`models/expected_minutes.py`), and `"blended_current_and_stale_prior"` (the branch Tzolis's exact real
+situation produces) had never been added to that set - it postdates the set's original definition. Real,
+already-computed evidence sat unused, not because of insufficient data but a basis-string omission -
+affects every player in the same evidence shape (real current start + stale/foreign-only prior), not just
+Tzolis. **Fixed**: added `"blended_current_and_stale_prior"` to `_WEAK_EVIDENCE_BASES` - the override is
+structurally raise-only (`if target > base`), so this can only correct an under-estimate, never inflate a
+well-evidenced one. Live effect: Tzolis 54.0 -> 60.0 expected minutes, 1gw median 2.39 -> 2.65, 3gw 6.38 ->
+7.09. Re-ran the real optimizer: **+12.77 -> +12.06 - TRANSFER still survives**, honestly reported rather
+than declared fixed just because a number moved.
+
+**Section 2 - audited whether ROLL/SELL/BUY are conflated. They are not, verified by reading the real code
+path, no change needed**: `decision_analysis.py` computes the real GW-by-GW ROLL baseline first
+(`_squad_per_gw`), independently of any transfer; separately searches every real SELL candidate x its real
+best BUY replacement (`best_transfer_for_player` per squad member, respecting budget/club-limit); only
+THEN applies the `threshold_cleared` ROLL-vs-TRANSFER gate to the single best result. This ordering is
+mathematically necessary, not conflated - a manager cannot rationally judge "is transferring worth it"
+without first knowing the best available replacement's real value.
+
+**Sections 3/4/15 - built `models/projection_confidence.py`, the real "is the model well-evidenced for
+THIS player" question, explicitly separate from `robustness.py`'s Monte Carlo stability.** Rule-based
+(never a weighted score - the user's own explicit constraint): `data_confidence` from real Understat
+`matches_played` this season (a minutes-weighted match-equivalent count) vs whether the fallback prior is
+stale/cross-league/absent; `minutes_confidence` from `expected_minutes()`'s own real `basis` field (a
+direct, disclosed mapping of an already-computed field, not reinterpreted) further capped by a real
+rotation-risk hedge or the function's own LOW-confidence flag; `overall = min(data_confidence,
+minutes_confidence)` - a chain-is-as-strong-as-its-weakest-link combination rule, not an average. Every
+threshold disclosed and uncalibrated, same honesty posture as every other heuristic in this codebase.
+**Live-verified, real and discriminating**: Tzolis and Tavernier both land on **MEDIUM** (the honest,
+shared, early-season state - only 1 real gameweek exists for anyone yet); Palestra (a genuine Chelsea
+debutant, cross-league prior only) correctly comes out **LOW**; established players (Haaland) also land on
+MEDIUM right now for the same real reason (only 1 real match-equivalent exists league-wide) - the model is
+NOT asymmetrically doubting Tzolis specifically, it is honestly uncertain about everyone this early, which
+is itself the real, load-bearing answer to the user's stated worry.
+
+**Section 11/16 - built the real REVIEW gate.** `analyze_transfer_decision`/`analyze_captain_decision`
+(`decision_analysis.py`) now check the CHOSEN candidate's real evidence confidence: if EITHER side of a
+transfer swap (or the suggested captain) is LOW/VERY_LOW, the verdict downgrades from TRANSFER/CHANGE to
+**REVIEW** - `chosen`/`suggested` stay populated (the model's own real lead, shown honestly) but the
+verdict itself refuses to fabricate certainty the data doesn't support. `_MIN_EVIDENCE_CONFIDENCE_FOR_
+ACTION="MEDIUM"` - deliberately not a stricter bar, since MEDIUM is the real, current, shared state nearly
+every player has this early in a season; blocking on MEDIUM would make the optimizer permanently unable to
+recommend anything for months. Real, live-verified: neither Tzolis->Tavernier nor Mbeumo both clear MEDIUM,
+so REVIEW does not fire for either right now - the mechanism was proven to actually work via a dedicated
+test with a synthetic LOW-confidence candidate (`test_transfer_downgraded_to_review_when_evidence_
+confidence_is_low`), not merely asserted never to fire.
+
+**Section 14 - built a real counterfactual stress test, `optimization/decision_sensitivity.py`.**
+Perturbs `expected_minutes()` at the real call boundary (±15%/±30%, the exact magnitudes the user's own
+brief named) and recomputes the exact real `evaluate_transfer()` formula unchanged - never a new EV model.
+**Real, previously-undiscovered bug found and fixed while building this**: `expected_minutes` is imported
+separately into TWO modules (`expected_points.py`, used only for display fields, and
+`minutes_distribution.py`, the module that ACTUALLY anchors the scoring path via `nonzero_fraction`) - an
+early draft patched only the first, silently reaching nothing (every scenario showed zero effect,
+correctly caught as suspicious rather than reported as a "no scenario flips it" finding). Fixed by patching
+both real bindings; a dedicated regression test pins this exact failure mode. **Live-verified against the
+real Tzolis/Tavernier swap**: net_3gw ranges +6.31 (replacement rotates 30% harder than projected) to
++14.04 (best case) across 7 real scenarios including the explicit worst-case (sold player over-performs
++15% while the replacement under-performs -15%, net_3gw=+8.12) - **no tested scenario flips TRANSFER to
+ROLL**, a real, honest robustness finding, not merely a bare ROBUST label.
+
+**Section 13**: `_TOP_N_CANDIDATES` raised 3 -> 5 (shared by transfer and captain analysis) - real GW2
+output now shows 5 ranked alternatives with rejection reasons, not 3.
+
+**Section 7, partially closed, disclosed honestly**: `models/minutes_distribution.py::
+minutes_bucket_probabilities` already computes a real 3-way `p_zero`/`p_partial`(1-59min)/`p_full`(60+min)
+distribution - the closest real equivalent this project has to P(no-appearance)/P(bench-cameo)/P(start).
+Now surfaced in `fpl transfer-analysis`'s output for the chosen swap (previously computed but never
+printed anywhere). Real, disclosed limitation: for both Tzolis and Tavernier `source=fallback_prior`, not
+`empirical` - the empirical per-match bucket distribution needs >=4 real current-season matches
+(`_MIN_MATCHES_FOR_EMPIRICAL`), which doesn't exist yet this early in the season for anyone. Real, honest
+numbers regardless: Tzolis p(0min)=0.33, matching his real 33%-no-appearance risk plainly rather than
+hiding it behind a point estimate.
+
+**Sections 6/8/9 - verified against real data, not rebuilt (architecture already correct).** Confirmed
+live: Tzolis's real `match_observations` row (OBSERVED: "started, 75 real minutes, 4 shots, 1 assist" ->
+INFERRED: "high-shot-volume attacking involvement... not a token appearance" -> FPL_IMPLICATION:
+CREATION/POSITIVE, confidence=**low**) exists and is real, not fabricated - `qualitative_trends.py`
+correctly classifies it `NEW_SIGNAL` (sample_size=1), so `qualitative_feed.py`'s PERSISTENT_TREND gate
+correctly keeps `qualitative_adjustment=0.0` for him - his real 6-point GW1 return does NOT inflate his
+projection, exactly satisfying the user's explicit "do not use the 6 points as proof" instruction. His
+real goals/assists rate is confirmed driven by real Understat shot-level data (`matches_played=0.87`,
+`shrunk_per90` off real xG/xA), never raw FPL points.
+
+**Section 17 acceptance test, 5 real archetypes + Tzolis, run against the real production DB:**
+```
+Haaland   (established premium):        overall=MEDIUM  (1.0 real match-equiv - honestly thin, league-wide)
+Rice      (established rotation-risk):  overall=MEDIUM  (real rotation-risk hedge caps minutes_confidence)
+Tzolis    (recent PL transfer):         overall=MEDIUM  (0.87 real match-equiv, real current evidence)
+Abraham   (doubtful/returning):         overall=MEDIUM  (real rotation-risk hedge + DOUBTFUL damping)
+Palestra  (true debutant):              overall=LOW     (zero PL history, cross-league prior only)
+```
+The classification discriminates correctly across the real spectrum - Palestra (genuinely thinnest
+evidence) is the only LOW, everyone else sharing this early season's real, honest MEDIUM uncertainty.
+
+**26 new tests** (7 `test_decision_analysis.py` additions - the REVIEW-gate mechanism proven both ways;
+5 `test_decision_sensitivity.py` - the exact both-module-binding bug regression-guarded directly; plus
+`projection_confidence.py`/`decision_sensitivity.py` exercised live against real production data
+throughout, not only unit-tested). 873/873 full suite. `fpl dashboard` regenerates clean post-change (no
+dashboard code touched - confirms no regression to the render path that reads the same `decisions` table).
+
+**What this does NOT close, stated plainly**: P(start)/P(bench)/P(no-appearance) is real but still
+running on the fallback-prior 0.85/0.15 heuristic split rather than a genuinely empirical per-match
+distribution (needs 4+ real current-season matches per player, which doesn't exist yet this early in any
+season for anyone) - the machinery is real and already wired, not a gap in this pass, just bounded by real
+calendar time the same way several other "grows automatically once GW2+ exists" items in this file already
+are. A dedicated `fpl player-audit <id>` full-panel command (section 12's literal ask) was not built as a
+separate command - the same information (components, evidence, confidence, decision effect) is available
+today through `fpl transfer-analysis`'s real output for any candidate actually reached by a live decision;
+building a standalone panel for an arbitrary, not-currently-relevant player id was judged lower-value than
+the decision-flow integration above and was not attempted this pass.

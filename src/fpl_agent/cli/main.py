@@ -2554,6 +2554,7 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
     Monte Carlo trials), and a qualitative-evidence note when one genuinely
     applies. Defaults to the real locked squad if no --squad is given."""
     from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+    from fpl_agent.optimization.decision_sensitivity import stress_test_transfer
     from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
 
     conn = get_connection()
@@ -2575,13 +2576,30 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
 
         a = analyze_transfer_decision(conn, locked)
         c = analyze_captain_decision(conn, locked)
+        stress_report = None
+        minutes_dist = None
+        if a.chosen is not None:
+            stress_report = stress_test_transfer(
+                conn, a.chosen.candidate.player_out_id, a.chosen.candidate.player_in_id,
+                from_event=a.event, is_hit=a.chosen.candidate.uses_hit,
+            )
+            from fpl_agent.models.minutes_distribution import minutes_bucket_probabilities
+            from fpl_agent.models.rules import current_season
+
+            season = current_season(conn)
+            minutes_dist = {
+                "out": minutes_bucket_probabilities(conn, a.chosen.candidate.player_out_id, season),
+                "in": minutes_bucket_probabilities(conn, a.chosen.candidate.player_in_id, season),
+            }
     finally:
         conn.close()
 
     click.echo(f"DECISION: {a.decision_kind.upper()}")
     click.echo(f"reason: {a.reason}")
     if a.robustness:
-        click.echo(f"robustness: {a.robustness}")
+        click.echo(f"robustness (Monte Carlo stability): {a.robustness}")
+    if a.evidence_confidence:
+        click.echo(f"evidence confidence (real data sufficiency): {a.evidence_confidence}")
     if a.qualitative_note:
         click.echo(f"football intelligence: {a.qualitative_note}")
     click.echo()
@@ -2593,24 +2611,61 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
         marker = " <- CHOSEN" if a.chosen is not None and opt.rank == a.chosen.rank else ""
         click.echo(
             f"#{opt.rank}  {cand.player_out_name} -> {cand.player_in_name}  "
-            f"1gw={opt.horizon_advantage[1]:+.2f}  3gw={opt.horizon_advantage[3]:+.2f}  5gw={opt.horizon_advantage[5]:+.2f}{marker}"
+            f"1gw={opt.horizon_advantage[1]:+.2f}  3gw={opt.horizon_advantage[3]:+.2f}  5gw={opt.horizon_advantage[5]:+.2f}{marker}  "
+            f"[OUT={opt.player_out_confidence} IN={opt.player_in_confidence}]"
         )
         if opt.rejected_reason:
             click.echo(f"     rejected: {opt.rejected_reason}")
+    if a.evidence_reasons:
+        click.echo()
+        click.echo("evidence trail:")
+        for r in a.evidence_reasons:
+            click.echo(f"  - {r}")
     click.echo()
     click.echo(a.future_ft_note)
+
+    if minutes_dist is not None:
+        click.echo()
+        click.echo(f"MINUTES DISTRIBUTION (real, empirical where enough current-season matches exist):")
+        mo, mi = minutes_dist["out"], minutes_dist["in"]
+        click.echo(
+            f"  OUT {a.chosen.candidate.player_out_name:15s} p(0min)={mo.p_zero:.2f}  p(1-59min)={mo.p_partial:.2f}  "
+            f"p(60+min)={mo.p_full:.2f}  source={mo.source}"
+        )
+        click.echo(
+            f"  IN  {a.chosen.candidate.player_in_name:15s} p(0min)={mi.p_zero:.2f}  p(1-59min)={mi.p_partial:.2f}  "
+            f"p(60+min)={mi.p_full:.2f}  source={mi.source}"
+        )
+
+    if stress_report is not None:
+        click.echo()
+        click.echo(f"STRESS TEST ({a.chosen.candidate.player_out_name} -> {a.chosen.candidate.player_in_name}):")
+        click.echo(f"  baseline: net_3gw={stress_report.baseline_net_ev_3gw:+.2f}  decision={stress_report.baseline_decision.upper()}")
+        any_flip = False
+        for s in stress_report.scenarios:
+            flip = s.decision_under_scenario != stress_report.baseline_decision
+            any_flip = any_flip or flip
+            marker = "  <-- FLIPS" if flip else ""
+            click.echo(f"  {s.name:32s} net_3gw={s.net_ev_3gw:+.2f}  {s.decision_under_scenario.upper()}{marker}   ({s.description})")
+        if not any_flip:
+            click.echo("  no tested scenario (+/-15-30% minutes assumptions) flips the decision")
 
     click.echo()
     click.echo(f"CAPTAIN: {c.decision_kind.upper()}")
     click.echo(f"reason: {c.reason}")
     if c.robustness:
-        click.echo(f"robustness: {c.robustness}")
+        click.echo(f"robustness (Monte Carlo stability): {c.robustness}")
+    if c.evidence_confidence:
+        click.echo(f"evidence confidence (real data sufficiency): {c.evidence_confidence}")
     if c.qualitative_note:
         click.echo(f"football intelligence: {c.qualitative_note}")
     for ranked in c.options:
         o = ranked.option
         marker = " <- CURRENT/SUGGESTED" if c.suggested is not None and o.player_id == c.suggested.player_id else ""
-        click.echo(f"#{ranked.rank}  {o.web_name}  median={o.median}  floor={o.floor}  ceiling={o.ceiling}  confidence={o.confidence}{marker}")
+        click.echo(
+            f"#{ranked.rank}  {o.web_name}  median={o.median}  floor={o.floor}  ceiling={o.ceiling}  "
+            f"model_confidence={o.confidence}  evidence_confidence={ranked.confidence}{marker}"
+        )
         if ranked.rejected_reason:
             click.echo(f"     rejected: {ranked.rejected_reason}")
 
