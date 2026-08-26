@@ -112,6 +112,64 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
         f"captain={decision.captain_action.kind} transfer={decision.transfer_action.kind} "
         f"bboost={bb} tc={tc} wildcard={wc} freehit={fh}"
     )
+
+    # Real, structured decision trace (2026-08-26, optimizer-precision +
+    # auditability pass, section 11) - the roll-vs-transfer counterfactual
+    # (real GW-by-GW roll baseline, ranked real alternatives with rejection
+    # reasons, robustness, qualitative note) is computed once here, at the
+    # one real automatic moment a full decision needs recording, and stored
+    # in the SAME decisions.detail JSON this project already uses rather
+    # than a new table - reproducible without a giant unnecessary blob.
+    # Non-fatal: a real failure here must never break the surrounding
+    # pipeline, which still needs to log SOMETHING rather than nothing.
+    transfer_analysis_detail = None
+    try:
+        from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
+
+        analysis = analyze_transfer_decision(conn, locked)
+        transfer_analysis_detail = {
+            "decision_kind": analysis.decision_kind,
+            "reason": analysis.reason,
+            "threshold_cleared": analysis.threshold_cleared,
+            "expected_advantage_3gw": analysis.expected_advantage_3gw,
+            "robustness": analysis.robustness,
+            "qualitative_note": analysis.qualitative_note,
+            "roll_horizon_totals": analysis.roll.horizon_totals if analysis.roll else None,
+            "candidates": [
+                {
+                    "rank": o.rank, "player_out": o.candidate.player_out_name, "player_in": o.candidate.player_in_name,
+                    "horizon_advantage": o.horizon_advantage, "rejected_reason": o.rejected_reason,
+                }
+                for o in analysis.candidates
+            ],
+        }
+    except Exception:
+        pass
+
+    # Same real ranked-alternatives treatment applied to captaincy (section
+    # 14 of the same pass) - the KEEP/CHANGE verdict itself is unchanged
+    # (decision.captain_action, reused below), this only adds the "why not
+    # the others" detail alongside it. Non-fatal for the same reason as the
+    # transfer analysis above.
+    captain_analysis_detail = None
+    try:
+        from fpl_agent.optimization.decision_analysis import analyze_captain_decision
+
+        c_analysis = analyze_captain_decision(conn, locked)
+        captain_analysis_detail = {
+            "decision_kind": c_analysis.decision_kind,
+            "reason": c_analysis.reason,
+            "options": [
+                {
+                    "rank": o.rank, "web_name": o.option.web_name, "median": o.option.median,
+                    "rejected_reason": o.rejected_reason,
+                }
+                for o in c_analysis.options
+            ],
+        }
+    except Exception:
+        pass
+
     detail = {
         "event": event,
         "captain": {
@@ -119,10 +177,16 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
             "current": decision.captain_action.current.web_name if decision.captain_action.current else None,
             "suggested": decision.captain_action.suggested.web_name if decision.captain_action.suggested else None,
             "delta": decision.captain_action.delta,
+            "robustness": decision.captain_action.robustness,
+            "qualitative_note": decision.captain_action.qualitative_note,
+            "analysis": captain_analysis_detail,
         },
         "transfer": {
             "kind": decision.transfer_action.kind,
             "delta": decision.transfer_action.delta,
+            "robustness": decision.transfer_action.robustness,
+            "qualitative_note": decision.transfer_action.qualitative_note,
+            "analysis": transfer_analysis_detail,
         },
         "risks": decision.risks,
         "bench_boost": bb, "triple_captain": tc, "wildcard_5gw": wc, "free_hit": fh,

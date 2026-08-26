@@ -5517,3 +5517,53 @@ explanation narrative were all checked against actual current data, including a 
   itself before trusting a conversion rate - will grow automatically as more real gameweeks are analyzed.
 - The Elite-manager panel has no real historical data to draw from until a real season actually ends and
   gets snapshotted - a genuine, disclosed multi-month wait, not a code gap.
+
+## Optimizer precision + auditability pass (2026-08-26, same day, continued)
+
+Direct follow-up: make every ROLL/TRANSFER/CAPTAIN decision explainable, counterfactual (real best
+alternatives, not just the chosen option), and measurable. Section 2's own framing ("the highest-priority
+feature") was the real ROLL vs TRANSFER counterfactual - built first, then the same treatment extended to
+captaincy.
+
+- **`optimization/decision_analysis.py`** (new) - `analyze_transfer_decision(conn, locked)` and
+  `analyze_captain_decision(conn, locked)`. Both reuse 100% already-tested machinery (`transfers.py`'s
+  `_squad_gw_ev`/`best_transfer_for_player`, `captaincy.py`'s `evaluate_captaincy`, `robustness.py`'s
+  shared-Monte-Carlo comparison, `decision_fusion.py`'s qualitative notes, `decision_engine.py`'s own
+  `_evaluate_captain` for the KEEP/CHANGE verdict itself) - no new projection model, no new candidate
+  search, no new verdict logic. What's new is the real, structured comparison layer: real GW1/3/5 roll
+  totals vs ranked real transfer candidates with rejection reasons (`"real net advantage over 3 GW is
+  X.XX pts lower than <best> (Y vs Z)"`), and the same ranked-alternatives-with-rejection-reasons
+  treatment for captaincy's top-3 real median options. `_FUTURE_FT_NOTE` states the value of an unused
+  free transfer as a disclosed, unquantified consideration per the pass's own explicit "do not invent a
+  fixed point value" instruction - never folded into the expected-advantage numbers.
+- **`fpl transfer-analysis [--squad ids --bank £m]`** - prints both the transfer counterfactual and the
+  captain counterfactual in one real run, defaulting to the real locked squad. Live-verified against the
+  real production DB: `Tzolis -> Tavernier` clears the real 1.0xP 3-GW bar (ROBUST) over the real
+  runner-up (`E.Le Fée -> Tavernier`, 1.32pts lower) and third (`B.Fernandes -> Tavernier`, 3.07pts
+  lower); captain `Mbeumo` (MODERATE) over real alternatives `Szoboszlai`(-0.46) and `Haaland`(-0.88).
+- **`optimization/post_gw_pipeline.py`** - both analyses now compute and log automatically as part of the
+  already-scheduled `run_post_gw_pipeline()` call (each wrapped in try/except, non-fatal), folded into the
+  existing `decisions.detail` JSON under `detail["transfer"]["analysis"]`/`detail["captain"]["analysis"]` -
+  no new table, reproducible without a giant blob. This is what satisfies the reproducible-decision-trace
+  requirement AND the "no manual Claude Code intervention" requirement simultaneously: the existing
+  autonomous post-GW pipeline (already wired into `run_scheduled`/`live-match-poll`) now logs the full rich
+  rationale every time it runs, with zero new manual step. Live-verified: `run_post_gw_pipeline(conn,
+  event=1)` against the real production DB logged `decision_id=72` with the complete real nested structure
+  for both captain and transfer.
+- **10 new tests** (`tests/test_decision_analysis.py`) - transfer analysis (review-state, roll reporting,
+  transfer recommendation, threshold-miss roll, ranked rejection reasons, qualitative-note gating, the
+  future-FT note's permanent presence) plus captain analysis (keep-with-real-gap, change-with-ranked-
+  alternatives-and-robustness, qualitative-note gating). 866/866 full suite.
+- **Threshold audit (section 18), confirmed not GW1-tuned**: `_TRANSFER_DELTA_THRESHOLD=1.0` (3-GW net
+  xP, hit-cost aware) deliberately reuses `decision_engine.py`'s own pre-existing threshold rather than
+  redefining one; `_CAPTAIN_DELTA_THRESHOLD=0.5` and robustness's 0.65/0.50 win-rate bars all predate GW1's
+  real outcomes and are already labeled "disclosed, uncalibrated" in their own code comments - re-checked
+  directly in this pass, not re-derived.
+- **What this does NOT close, stated plainly**: a real decision-level backtest ("what would have happened
+  if I'd followed the optimizer vs rolled vs took the best-rejected alternative", tracking actual points/
+  hits/captain/chips against PREDICTED vs REALIZED) remains unbuilt - genuinely blocked on real executed-
+  and-measured decisions, which don't exist yet (GW1's squad predates this whole decision-fusion
+  infrastructure; GW2 hasn't been played through this system yet). The dashboard's existing "AI Decisions"/
+  Chip Strategy panels already read from the same `decisions` table this pass writes into, so no new
+  dashboard wiring was needed to surface this - confirmed by reading the panel's own data source rather
+  than assumed.

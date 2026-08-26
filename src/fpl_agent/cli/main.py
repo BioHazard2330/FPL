@@ -2543,6 +2543,78 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
         )
 
 
+@cli.command("transfer-analysis")
+@click.option("--squad", default=None, help="comma-separated player ids (default: the real locked squad, if one exists)")
+@click.option("--bank", default=None, type=float, help="bank in £m - required when --squad is given explicitly")
+def transfer_analysis_cmd(squad: str | None, bank: float | None):
+    """Real ROLL vs TRANSFER counterfactual, plus the captaincy equivalent
+    (2026-08-26, optimizer-precision + auditability pass) - real GW1/3/5
+    squad totals for rolling, ranked real alternative candidates with
+    rejection reasons, robustness (ROBUST/MODERATE/FRAGILE from shared
+    Monte Carlo trials), and a qualitative-evidence note when one genuinely
+    applies. Defaults to the real locked squad if no --squad is given."""
+    from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+    from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
+
+    conn = get_connection()
+    try:
+        if squad is not None:
+            if bank is None:
+                click.echo("--bank is required when --squad is given explicitly", err=True)
+                raise SystemExit(1)
+            squad_ids = _parse_squad_option(squad)
+            locked = LockedSquadState(
+                source="manual", event=0, squad_ids=frozenset(squad_ids), xi=None,
+                bank_tenths=round(bank * 10), squad_value_tenths=0, decision_id=None,
+            )
+        else:
+            locked = get_locked_squad(conn)
+            if locked is None:
+                click.echo("no real locked squad found - pass --squad and --bank explicitly", err=True)
+                raise SystemExit(1)
+
+        a = analyze_transfer_decision(conn, locked)
+        c = analyze_captain_decision(conn, locked)
+    finally:
+        conn.close()
+
+    click.echo(f"DECISION: {a.decision_kind.upper()}")
+    click.echo(f"reason: {a.reason}")
+    if a.robustness:
+        click.echo(f"robustness: {a.robustness}")
+    if a.qualitative_note:
+        click.echo(f"football intelligence: {a.qualitative_note}")
+    click.echo()
+    if a.roll is not None:
+        click.echo(f"ROLL  GW{a.event}: {a.roll.per_gw.get(a.event)}  "
+                    f"1gw={a.roll.horizon_totals[1]}  3gw={a.roll.horizon_totals[3]}  5gw={a.roll.horizon_totals[5]}")
+    for opt in a.candidates:
+        cand = opt.candidate
+        marker = " <- CHOSEN" if a.chosen is not None and opt.rank == a.chosen.rank else ""
+        click.echo(
+            f"#{opt.rank}  {cand.player_out_name} -> {cand.player_in_name}  "
+            f"1gw={opt.horizon_advantage[1]:+.2f}  3gw={opt.horizon_advantage[3]:+.2f}  5gw={opt.horizon_advantage[5]:+.2f}{marker}"
+        )
+        if opt.rejected_reason:
+            click.echo(f"     rejected: {opt.rejected_reason}")
+    click.echo()
+    click.echo(a.future_ft_note)
+
+    click.echo()
+    click.echo(f"CAPTAIN: {c.decision_kind.upper()}")
+    click.echo(f"reason: {c.reason}")
+    if c.robustness:
+        click.echo(f"robustness: {c.robustness}")
+    if c.qualitative_note:
+        click.echo(f"football intelligence: {c.qualitative_note}")
+    for ranked in c.options:
+        o = ranked.option
+        marker = " <- CURRENT/SUGGESTED" if c.suggested is not None and o.player_id == c.suggested.player_id else ""
+        click.echo(f"#{ranked.rank}  {o.web_name}  median={o.median}  floor={o.floor}  ceiling={o.ceiling}  confidence={o.confidence}{marker}")
+        if ranked.rejected_reason:
+            click.echo(f"     rejected: {ranked.rejected_reason}")
+
+
 @cli.command("season-sim")
 @click.option("--squad", required=True, help="comma-separated player ids")
 @click.option("--trials", default=1000, type=int, help="number of Monte Carlo scenario trials")
