@@ -578,6 +578,82 @@ def test_thin_debut_override_never_fires_for_a_player_with_real_prior_season_his
     assert result.basis in ("predicted_lineup_confirmed_starting", "blended_current_and_prior_season")
 
 
+def _seed_second_finished_event(conn):
+    conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, average_entry_score, highest_score, updated_at) "
+        "VALUES (2,'Gameweek 0','2026-08-14T17:30:00Z',1,1,1,0,0,NULL,NULL,'t0')"
+    )
+    conn.commit()
+
+
+def test_high_manager_rotation_downgrades_confidence_not_the_estimate(db_conn, monkeypatch):
+    """P1 'manager-intelligence -> expected-minutes integration' (2026-08-26
+    GW1-postmortem audit) - a real, high team-wide starting-XI rotation rate
+    downgrades confidence, never the numeric estimate itself (avoids
+    stacking a second, unvalidated magnitude-changing heuristic on top of
+    this player's own already-real empirical minutes read)."""
+    from types import SimpleNamespace
+    import fpl_agent.models.manager_intelligence as mi_mod
+
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _seed_second_finished_event(db_conn)
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=20 WHERE player_id=1")
+    db_conn.commit()
+    monkeypatch.setattr(
+        mi_mod, "manager_intelligence",
+        lambda conn, team_id: SimpleNamespace(starting_xi_rotation_rate=0.8),
+    )
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.basis == "current_season_only"
+    assert result.expected_minutes == 20.0  # the real number is completely untouched
+    assert result.confidence == "LOW"  # downgraded from the real MEDIUM this scenario would otherwise carry
+
+
+def test_low_manager_rotation_does_not_downgrade_confidence(db_conn, monkeypatch):
+    from types import SimpleNamespace
+    import fpl_agent.models.manager_intelligence as mi_mod
+
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _seed_second_finished_event(db_conn)
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=20 WHERE player_id=1")
+    db_conn.commit()
+    monkeypatch.setattr(
+        mi_mod, "manager_intelligence",
+        lambda conn, team_id: SimpleNamespace(starting_xi_rotation_rate=0.05),
+    )
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.confidence == "MEDIUM"  # unchanged - real low churn, no downgrade earned
+
+
+def test_unknown_manager_rotation_does_not_downgrade_confidence(db_conn, monkeypatch):
+    """A team with <2 real analysed matches (manager_intelligence's own
+    honest None) must never be treated as if it were a real high-rotation
+    signal."""
+    from types import SimpleNamespace
+    import fpl_agent.models.manager_intelligence as mi_mod
+
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    _seed_second_finished_event(db_conn)
+    db_conn.execute("UPDATE player_stats_snapshot SET minutes=20 WHERE player_id=1")
+    db_conn.commit()
+    monkeypatch.setattr(
+        mi_mod, "manager_intelligence",
+        lambda conn, team_id: SimpleNamespace(starting_xi_rotation_rate=None),
+    )
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.confidence == "MEDIUM"
+
+
 def test_doubtful_partially_damps_expected_minutes(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "d"

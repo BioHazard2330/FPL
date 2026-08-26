@@ -76,6 +76,15 @@ class PlayerMatchState:
     touches_box: int | None
     substituted_on_minute: int | None
     substituted_off_minute: int | None
+    # Real, verified-live 2026-08-26 (GW1-postmortem audit P1 "penalty-duty
+    # extraction") - FotMob's real shotmap carries a genuine `situation`
+    # field per shot; `situation == "Penalty"` was confirmed against 2 real
+    # GW1 penalty shots before this was built (never assumed). Deliberately
+    # NOT yet fed into any xP adjustment - see models/penalty_duty.py's own
+    # module docstring for why (real data volume, not code, is the current
+    # constraint).
+    penalty_shots: int | None
+    penalty_goals: int | None
 
 
 @dataclass(frozen=True)
@@ -217,13 +226,18 @@ def _shot_aggregates_by_player(payload: dict) -> dict[str, dict]:
         if pid is None:
             continue
         pid = str(pid)
-        row = agg.setdefault(pid, {"shots": 0, "goals": 0, "xg": 0.0})
+        row = agg.setdefault(pid, {"shots": 0, "goals": 0, "xg": 0.0, "penalty_shots": 0, "penalty_goals": 0})
         row["shots"] += 1
-        if shot.get("eventType") == "Goal":
+        is_goal = shot.get("eventType") == "Goal"
+        if is_goal:
             row["goals"] += 1
         xg = shot.get("expectedGoals")
         if xg is not None:
             row["xg"] += float(xg)
+        if shot.get("situation") == "Penalty":
+            row["penalty_shots"] += 1
+            if is_goal:
+                row["penalty_goals"] += 1
     return agg
 
 
@@ -253,7 +267,9 @@ def parse_player_states(payload: dict) -> list[PlayerMatchState]:
             # live pre-match: an empty list, not an absent key) - a player
             # missing from it has genuinely taken zero shots so far, a real
             # observed fact, not missing data. Default to 0/0.0, not None.
-            agg = shot_aggregates.get(fotmob_id, {"shots": 0, "goals": 0, "xg": 0.0})
+            agg = shot_aggregates.get(
+                fotmob_id, {"shots": 0, "goals": 0, "xg": 0.0, "penalty_shots": 0, "penalty_goals": 0}
+            )
             states.append(
                 PlayerMatchState(
                     fotmob_player_id=fotmob_id,
@@ -272,6 +288,8 @@ def parse_player_states(payload: dict) -> list[PlayerMatchState]:
                     touches_box=None,
                     substituted_on_minute=None,
                     substituted_off_minute=None,
+                    penalty_shots=agg.get("penalty_shots", 0),
+                    penalty_goals=agg.get("penalty_goals", 0),
                 )
             )
     return states

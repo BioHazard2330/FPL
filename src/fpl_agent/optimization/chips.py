@@ -220,6 +220,27 @@ class AdvisoryHitRecommendation:
 
 
 @dataclass(frozen=True)
+class ChipExplanation:
+    """Real "why now / why not later" narrative (2026-08-26, GW1-postmortem
+    audit P1 "chip-strategy explanation") - built entirely from
+    `window_event_median`, the same real per-(window, event) trial-median
+    dict the DP itself already computes to make its choice, not a new
+    heuristic. `best_alternative_event`/`best_alternative_value` name the
+    real runner-up event within this chip's own real eligible window
+    (`None` when there genuinely is no other real eligible event to compare
+    against - an honest absence, not a fabricated one); `opportunity_cost`
+    is the real, non-negative gap the DP's own choice already implies
+    (never re-derived from a different metric)."""
+    event: int
+    chip_name: str
+    expected_value: float
+    best_alternative_event: int | None
+    best_alternative_value: float | None
+    opportunity_cost: float | None
+    confidence: str  # "low" - same honesty posture as every other Monte-Carlo-trial-median output here
+
+
+@dataclass(frozen=True)
 class ChipSchedule:
     baseline_schedule: tuple[ChipScheduleEntry, ...]
     advisory_hit_recommendations: tuple[AdvisoryHitRecommendation, ...]
@@ -227,6 +248,7 @@ class ChipSchedule:
     # the joint median of the summed trials (which would need the DP to carry
     # trial arrays rather than scalars).
     total_expected_value: float
+    explanations: tuple[ChipExplanation, ...] = ()
 
 
 def _squad_ids_by_event(initial_squad_ids: list[int], trajectory) -> dict[int, tuple[int, ...]]:
@@ -312,6 +334,32 @@ def _advisory_hit_recommendations(
     return tuple(recommendations)
 
 
+def _explain_schedule(
+    entries: tuple[ChipScheduleEntry, ...],
+    usable_windows: list["ChipWindow"],
+    window_event_median: dict[tuple[int, int], float],
+) -> tuple[ChipExplanation, ...]:
+    name_to_index = {w.name: wi for wi, w in enumerate(usable_windows)}
+    out = []
+    for entry in entries:
+        wi = name_to_index.get(entry.chip_name)
+        alternatives = [
+            (event, value) for (window_index, event), value in window_event_median.items()
+            if window_index == wi and event != entry.event
+        ]
+        if alternatives:
+            best_alt_event, best_alt_value = max(alternatives, key=lambda pair: pair[1])
+            opportunity_cost = round(entry.expected_marginal_value - best_alt_value, 4)
+        else:
+            best_alt_event, best_alt_value, opportunity_cost = None, None, None
+        out.append(ChipExplanation(
+            event=entry.event, chip_name=entry.chip_name, expected_value=entry.expected_marginal_value,
+            best_alternative_event=best_alt_event, best_alternative_value=best_alt_value,
+            opportunity_cost=opportunity_cost, confidence="low",
+        ))
+    return tuple(out)
+
+
 def schedule_chips(
     conn: sqlite3.Connection,
     initial_squad_ids: list[int],
@@ -370,4 +418,8 @@ def schedule_chips(
     best_mask = max(dp, key=lambda m: dp[m][0])
     best_value, best_entries = dp[best_mask]
     advisory = _advisory_hit_recommendations(conn, initial_squad_ids, squad_trajectory, best_entries, horizon_gw, scenario_draw)
-    return ChipSchedule(baseline_schedule=best_entries, advisory_hit_recommendations=advisory, total_expected_value=best_value)
+    explanations = _explain_schedule(best_entries, usable_windows, window_event_median)
+    return ChipSchedule(
+        baseline_schedule=best_entries, advisory_hit_recommendations=advisory,
+        total_expected_value=best_value, explanations=explanations,
+    )

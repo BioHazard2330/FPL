@@ -382,3 +382,84 @@ def test_search_transfer_sequences_never_recommends_an_illegal_club_count(db_con
         "picked the illegal club-A candidate (13) instead of the legal club-C one (30) "
         "- club A would have 4 members after this swap"
     )
+
+
+def test_search_transfer_sequences_validates_club_limit_across_multiple_real_steps(db_conn, monkeypatch):
+    """P1 item (2026-08-26 GW1-postmortem audit) - "full-sequence club-limit
+    validation". The single-step test above proves one swap respects the
+    ORIGINAL squad's club counts; this proves a SECOND, LATER step respects
+    the squad as it stood AFTER the first step's own swap, not the original
+    squad - the real question the audit asked to verify.
+
+    Squad starts at club A=2 (P1,P2, both real EV 10 - strictly better than
+    every candidate below, so the search has no reason to ever swap them
+    out, ruling out the "swap the incumbent instead" escape that made a
+    first attempt at this test accidentally pass for the wrong reason).
+    club B=2 (P3,P4, weak, the real swap-out targets). Step 1 swaps P3(B)
+    for P6(A, EV 9) - legal (club A: 2->3, at cap but not over). Step 2 must
+    swap P4(B) for something - P5(A, EV 8) would push club A to 4 - illegal
+    given the squad AFTER step 1, even though it would have been legal
+    against the ORIGINAL squad (club A was only 2 there). The search must
+    correctly reject P5 and fall back to the lower-EV, legal P7(C)."""
+    now = "2026-01-01T00:00:00Z"
+    for tid, name in ((1, "Club A"), (2, "Club B"), (3, "Club C")):
+        db_conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES ({tid},{tid},'{name}','{name[:3].upper()}','{now}')")
+    db_conn.execute(
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        f"VALUES (1,'Forward','FWD','Forwards','{now}')"
+    )
+    for pid, team_id in ((1, 1), (2, 1), (3, 2), (4, 2), (5, 1), (6, 1), (7, 3)):
+        db_conn.execute(
+            f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'P{pid}',{team_id},1,'a',0,'{now}')"
+        )
+        db_conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, 50, '{now}', NULL)"
+        )
+    db_conn.execute(
+        f"INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        f"is_current, is_next, updated_at) VALUES (1,'GW1','{now}',0,0,0,1,1,'{now}')"
+    )
+    db_conn.execute(
+        f"INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        f"is_current, is_next, updated_at) VALUES (2,'GW2','{now}',1,0,0,0,0,'{now}')"
+    )
+    db_conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.max_extra_free_transfers','2026-27',1,'2026-08-01','fpl_api_bootstrap','4')"
+    )
+    db_conn.commit()
+
+    # P1/P2 (club A, in squad) - EV 10 each, strictly higher than every real
+    # candidate below, so the search has no reason to ever swap them out -
+    # club A's count from them alone is a fixed 2 for the whole sequence,
+    # ruling out the "just swap the incumbents instead" escape a weaker
+    # design would leave open. P3/P4 (club B, in squad, weak) - the real
+    # swap-out targets across steps 1 and 2. P6 (club A candidate, EV 9) -
+    # picked step 1 via P3, brings club A to 3 (at cap). P5 (club A
+    # candidate, EV 8) - real highest remaining EV for step 2, but illegal
+    # given the post-step-1 squad (club A already at 3). P7 (club C
+    # candidate, EV 7) - legal, correct step-2 pick.
+    ev_by_id = {1: 10.0, 2: 10.0, 3: 1.0, 4: 1.0, 5: 8.0, 6: 9.0, 7: 7.0}
+
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=ev_by_id[player_id])
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=[1, 2, 3, 4], free_transfers=2, bank_tenths=100, horizon_gw=2, beam_width=8,
+    )
+
+    best = sequences[0]
+    swap_steps = [s for s in best.steps if s.player_in_id is not None]
+    incoming_ids = {s.player_in_id for s in swap_steps}
+    assert 5 not in incoming_ids, (
+        "picked the illegal club-A candidate (5) in a later step - club A already has "
+        "3 members (P1, P2, and the earlier step's own club-A swap P6), so a 4th is illegal"
+    )
+    assert 6 in incoming_ids and 7 in incoming_ids, (
+        "expected the search to take the real, legal path: P6(A, highest legal EV) then P7(C), "
+        f"got incoming players {incoming_ids}"
+    )
+

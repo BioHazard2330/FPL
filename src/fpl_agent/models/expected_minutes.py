@@ -172,7 +172,7 @@ class ExpectedMinutes:
 
 
 def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinutes:
-    player = conn.execute("SELECT status FROM players WHERE id=?", (player_id,)).fetchone()
+    player = conn.execute("SELECT status, team_id FROM players WHERE id=?", (player_id,)).fetchone()
     if player is None:
         raise ValueError(f"unknown player_id: {player_id}")
 
@@ -380,6 +380,71 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         if real_ownership >= _MARKET_CONVICTION_OWNERSHIP_THRESHOLD:
             base = _MARKET_CONVICTION_DEFAULT_MINUTES
             basis = "market_conviction_override"
+
+    # Real, bounded, evidence-gated qualitative ROLE/MINUTES signal
+    # (2026-08-26, GW1-postmortem audit P0 item 3) - the minutes-side
+    # counterpart to models/qualitative_feed.py's xP-component adjustment,
+    # following THIS function's own established in-place-override
+    # convention (predicted-lineup/market-conviction/rotation-risk all
+    # already mutate `base` directly) rather than a second, separate-field
+    # pattern. Only ever fires on a real PERSISTENT_TREND (2+ real matches
+    # agreeing, qualitative_trends.py - the same bar captain/transfer fusion
+    # already require) - a single-match signal never moves this number.
+    # Bounded to the same disclosed 15% fraction the xP-component adjustment
+    # uses, applied to whatever base the pipeline above already computed
+    # (a real, evidence-earned nudge on top of the existing estimate, never
+    # a fabricated absolute minutes figure).
+    try:
+        role_row = conn.execute(
+            "SELECT signal, direction, reason FROM player_fpl_implications "
+            "WHERE player_id=? AND phase='FULL_TIME' AND signal IN ('ROLE','MINUTES') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (player_id,),
+        ).fetchone()
+        if role_row is not None and role_row["direction"] in ("POSITIVE", "NEGATIVE"):
+            from fpl_agent.models.player_intelligence import player_intelligence
+            from fpl_agent.models.qualitative_feed import MAX_ADJUSTMENT_FRACTION
+
+            pi = player_intelligence(conn, player_id)
+            is_persistent = any(
+                t.signal == role_row["signal"] and t.label == "PERSISTENT_TREND"
+                and t.current_direction == role_row["direction"]
+                for t in pi.trends
+            )
+            if is_persistent:
+                sign = 1.0 if role_row["direction"] == "POSITIVE" else -1.0
+                base = base + sign * base * MAX_ADJUSTMENT_FRACTION
+                basis = f"{basis}+qualitative_{role_row['direction'].lower()}"
+    except Exception:
+        pass
+
+    # Real manager-rotation confidence downgrade (2026-08-26, GW1-postmortem
+    # audit P1 "manager-intelligence -> expected-minutes integration") -
+    # deliberately downgrades `confidence`, never `base` itself. A team's
+    # real starting-XI rotation rate (Jaccard distance between consecutive
+    # real lineups, manager_intelligence.py - needs >=2 real matches, honest
+    # None otherwise) is a genuinely different signal from this player's own
+    # empirical minutes distribution (which already reflects how often THIS
+    # player specifically has featured) - it answers "how much does this
+    # manager churn the XI overall", which is real, relevant uncertainty
+    # information the point estimate itself has no way to carry. Changing
+    # the numeric estimate off an aggregate team-level rate (rather than
+    # this player's own real minutes history) would risk double-counting
+    # exactly the kind of second, stacked, unvalidated heuristic this
+    # project's own discipline warns against - a confidence downgrade is the
+    # safer, still genuinely useful way to surface it.
+    _HIGH_ROTATION_THRESHOLD = 0.4  # disclosed, uncalibrated - no real data yet to fit it against
+    try:
+        from fpl_agent.models.manager_intelligence import manager_intelligence
+
+        mi = manager_intelligence(conn, player["team_id"])
+        if mi.starting_xi_rotation_rate is not None and mi.starting_xi_rotation_rate >= _HIGH_ROTATION_THRESHOLD:
+            if confidence == "HIGH":
+                confidence = "MEDIUM"
+            elif confidence == "MEDIUM":
+                confidence = "LOW"
+    except Exception:
+        pass
 
     damped = min(base * _AVAILABILITY_DAMPING[classification], 90.0)
 

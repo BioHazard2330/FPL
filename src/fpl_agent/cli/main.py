@@ -255,6 +255,35 @@ def sync_eo(event: int, sample_size: int, force: bool):
     click.echo(f"managers failed  {result['managers_failed']}")
 
 
+@cli.command("sync-elite-panel")
+@click.option("--season", required=True, help="e.g. 2026-27 - the season whose CURRENT standings to snapshot")
+@click.option("--target-size", default=1000, type=int, help="real top-N finishers to capture")
+@click.option("--force", is_flag=True, help="re-snapshot even if this season already has a panel")
+def sync_elite_panel(season: str, target_size: int, force: bool):
+    """Historical, skill-selected Elite-manager panel (2026-08-26,
+    GW1-postmortem audit P1). Real, confirmed constraint: FPL's own
+    standings endpoint is season-scoped to whatever is CURRENTLY live -
+    there is no way to fetch a PAST season's final standings once a new one
+    has started. Only genuinely meaningful as a real skill signal when run
+    near a season's real END (a full season of performance), for use as
+    the FOLLOWING season's panel - running it mid-season captures a
+    live-standings cross-section, not yet a historically-earned one. See
+    ingestion/elite_panel.py's own module docstring for the full account."""
+    from fpl_agent.ingestion.elite_panel import snapshot_elite_panel
+
+    conn = get_connection()
+    try:
+        result = snapshot_elite_panel(conn, season=season, target_size=target_size, force=force)
+    finally:
+        conn.close()
+
+    if result["skipped"]:
+        click.echo(f"season {season} already has a panel - use --force to re-snapshot")
+        return
+    click.echo(f"season       {result['season']}")
+    click.echo(f"panel size   {result['panel_size']}")
+
+
 @cli.command("sync-news")
 @click.option("--limit", default=None, type=int, help="max new items to process this run (omit for all)")
 def sync_news_cmd(limit: int | None):
@@ -980,6 +1009,37 @@ def backtest(season: str, model_version: str | None, differentials: bool, bonus:
                 f"shrunk MAE {bonus_result.shrunk_mae} vs naive MAE {bonus_result.naive_mae}, "
                 f"shrunk wins {bonus_result.shrunk_win_rate * 100:.1f}%"
             )
+
+
+@cli.command("calibration-report")
+@click.option("--season", default=None, help="defaults to the live season")
+@click.option("--min-samples", default=3, type=int, help="omit a cohort with fewer real rows than this")
+def calibration_report(season: str | None, min_samples: int):
+    """Real, automatic segmented accuracy over real in-season
+    prediction_outcomes rows (2026-08-26, GW1-postmortem audit P0 item 4) -
+    distinct from `fpl backtest` (historical, Understat-reconstructed
+    seasons): this measures the live model against real GW-by-GW outcomes as
+    they accumulate. Position/nailed-vs-rotation/new-transfer-cold-start/
+    returning-injury cohorts, each only reported once it has real evidence
+    behind it - never a misleadingly precise number off 1-2 rows."""
+    from fpl_agent.models.calibration import segmented_accuracy
+
+    conn = get_connection()
+    try:
+        rows = segmented_accuracy(conn, season=season, min_samples=min_samples)
+    finally:
+        conn.close()
+
+    if not rows:
+        click.echo(
+            "no cohort has enough real prediction-vs-outcome data yet "
+            f"(need >= {min_samples} rows per cohort) - this is expected until multiple real "
+            "gameweeks have both a captured prediction and a real outcome; see CLAUDE.md"
+        )
+        return
+    click.echo(f"{'cohort':<38} {'n':>5} {'mae':>8}")
+    for r in rows:
+        click.echo(f"{r.cohort:<38} {r.n:>5} {r.mae:>8}")
 
 
 @cli.command("run-scheduled")
@@ -2595,8 +2655,22 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str | None):
             if used_chip_names:
                 click.echo(f"(auto-detected used chips from your real team: {', '.join(sorted(used_chip_names))})")
         schedule = schedule_chips(conn, squad_ids, trajectory, windows, scenario_draw, used_chip_names=used_chip_names)
+        explanations_by_key = {(e.event, e.chip_name): e for e in schedule.explanations}
         for entry in schedule.baseline_schedule:
             click.echo(f"GW{entry.event}  {entry.chip_name}  median +{entry.expected_marginal_value:.1f}")
+            # Real "why now / why not later" narrative (2026-08-26,
+            # GW1-postmortem audit P1) - built from the DP's own real
+            # per-event trial medians, never a new heuristic.
+            exp = explanations_by_key.get((entry.event, entry.chip_name))
+            if exp is not None:
+                if exp.best_alternative_event is not None:
+                    click.echo(
+                        f"  why now: GW{entry.event} (+{exp.expected_value:.1f}) beats the next-best real "
+                        f"eligible GW{exp.best_alternative_event} (+{exp.best_alternative_value:.1f}) by "
+                        f"{exp.opportunity_cost:.1f} - {exp.confidence} confidence"
+                    )
+                else:
+                    click.echo(f"  why now: only real eligible GW for this chip in the sampled horizon - {exp.confidence} confidence")
         for rec in schedule.advisory_hit_recommendations:
             click.echo(
                 f"advisory: hit {rec.player_out_name}->{rec.player_in_name} before GW{rec.event} "
@@ -2613,6 +2687,14 @@ def season_sim(squad: str, trials: int, horizon: int, used_chips: str | None):
             "advisory_hit_recommendations": [
                 {"event": r.event, "chip_name": r.chip_name, "player_out_id": r.player_out_id, "player_in_id": r.player_in_id, "delta": r.delta}
                 for r in schedule.advisory_hit_recommendations
+            ],
+            "chip_explanations": [
+                {
+                    "event": e.event, "chip_name": e.chip_name, "expected_value": e.expected_value,
+                    "best_alternative_event": e.best_alternative_event, "best_alternative_value": e.best_alternative_value,
+                    "opportunity_cost": e.opportunity_cost, "confidence": e.confidence,
+                }
+                for e in schedule.explanations
             ],
         }
         decision_id = log_decision(

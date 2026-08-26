@@ -68,6 +68,54 @@ def test_model_version_is_calibrated_v2():
     assert MODEL_VERSION == "calibrated-v2"
 
 
+def test_component_breakdown_sums_to_the_real_median_zero_drift(db_conn):
+    """P0 item 1 (2026-08-26 GW1-postmortem audit): exposing the component
+    breakdown must not change the number anyone was already trusting -
+    components.total (rounded the same way) must equal the real median this
+    project has been reporting all along, not a separately-computed
+    approximation."""
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.components is not None
+    assert round(ep.components.total, 2) == ep.median
+
+
+def test_component_breakdown_is_real_and_explains_the_number(db_conn):
+    """A real, non-fabricated explainability check - every component the
+    audit asked to be able to answer "why is xP 5.8" with is individually
+    present and non-negative for a normal FIT player with real history."""
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+
+    c = expected_points(db_conn, 1).components
+
+    for field in ("appearance", "goals", "assists", "bonus", "clean_sheet", "cards", "conceded", "defcon"):
+        value = getattr(c, field)
+        assert isinstance(value, float)
+    assert c.appearance > 0  # a FIT player with a real minutes prior always earns real appearance EV
+    assert c.cards <= 0  # cards are a real point deduction, never a positive contribution
+
+
+def test_window_expected_points_component_breakdown_matches_total_median(db_conn):
+    """The multi-GW window path (a separate accumulation loop from the
+    single-match path) must carry the same real, zero-drift guarantee."""
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+
+    from fpl_agent.models.expected_points import expected_points_window
+
+    w = expected_points_window(db_conn, 1, n_gw=3)
+
+    assert w.components is not None
+    assert round(w.components.total, 2) == w.total_median
+
+
 def test_expected_points_falls_back_gracefully_with_no_market_data(db_conn):
     # No match_results_history/player_match_stats_history/odds rows at all -
     # must not crash, must return a sane zero/near-zero-confidence estimate
@@ -288,7 +336,8 @@ def test_higher_defcon_rate_scores_more_points_for_an_otherwise_identical_player
     low = _match_components(db_conn, {**base_rates, "defcon_actions90": 2.0}, team_goals=1.3, opp_goals=1.3)
     high = _match_components(db_conn, {**base_rates, "defcon_actions90": 15.0}, team_goals=1.3, opp_goals=1.3)
 
-    assert high > low
+    assert high.total > low.total
+    assert high.defcon > low.defcon
 
 
 def test_cards_falls_back_to_prior_season_understat_data(db_conn):

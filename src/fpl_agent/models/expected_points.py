@@ -585,11 +585,57 @@ def _player_match_rates(
     }
 
 
+@dataclass(frozen=True)
+class ComponentBreakdown:
+    """The real per-component decomposition `_match_components` always
+    computed internally and, until 2026-08-26 (GW1-postmortem gap audit,
+    P0 item 1), discarded after summing - nothing downstream of it could
+    ever answer "why is this player's xP 5.8". Field order matches
+    `_match_components`'s own original `return` statement exactly, so
+    `.total` sums in the identical order - zero float-rounding drift versus
+    the pre-existing behavior, verified by a regression test asserting
+    byte-identical medians before/after this refactor."""
+    appearance: float
+    goals: float
+    assists: float
+    bonus: float
+    clean_sheet: float
+    cards: float
+    conceded: float
+    defcon: float
+
+    @property
+    def total(self) -> float:
+        return (
+            self.appearance + self.goals + self.assists + self.bonus
+            + self.clean_sheet + self.cards + self.conceded + self.defcon
+        )
+
+
+def _sum_breakdowns(breakdowns: list["ComponentBreakdown"]) -> "ComponentBreakdown":
+    """Elementwise sum across fixtures (a double gameweek, or a multi-GW
+    window) - each field already carries whatever per-fixture damping
+    `_match_components` applied, so this is a plain sum, not a re-weighted
+    one."""
+    return ComponentBreakdown(
+        appearance=sum(b.appearance for b in breakdowns),
+        goals=sum(b.goals for b in breakdowns),
+        assists=sum(b.assists for b in breakdowns),
+        bonus=sum(b.bonus for b in breakdowns),
+        clean_sheet=sum(b.clean_sheet for b in breakdowns),
+        cards=sum(b.cards for b in breakdowns),
+        conceded=sum(b.conceded for b in breakdowns),
+        defcon=sum(b.defcon for b in breakdowns),
+    )
+
+
 def _match_components(
     conn: sqlite3.Connection, rates: dict, team_goals: float, opp_goals: float, damping: float = 1.0
-) -> float:
-    """One fixture's expected points for a player. `damping` is the flat
-    rotation-risk discount applied per extra match in a multi-fixture window."""
+) -> ComponentBreakdown:
+    """One fixture's expected points for a player, as a real component
+    breakdown (not just the summed total) - `damping` is the flat
+    rotation-risk discount applied per extra match in a multi-fixture window.
+    Use `.total` for the plain float every existing caller used to get."""
     probs = rates["minutes_probs"]
     effective_minutes_fraction = (probs.p_partial / 3 + probs.p_full) * damping
 
@@ -614,7 +660,10 @@ def _match_components(
     # plausibly reach, same reasoning already established there.
     defcon = defcon_points_probability(rates["defcon_actions90"], rates["position"]) * rates["defcon_pts_rule"] * p_sixty_plus
 
-    return appearance + goals + assists + bonus + clean_sheet + cards + conceded + defcon
+    return ComponentBreakdown(
+        appearance=appearance, goals=goals, assists=assists, bonus=bonus,
+        clean_sheet=clean_sheet, cards=cards, conceded=conceded, defcon=defcon,
+    )
 
 
 def _fixture_date(fixture_row) -> str:
@@ -700,6 +749,17 @@ class ExpectedPoints:
     confidence: str
     expected_minutes: float
     model_version: str
+    # Real component breakdown (2026-08-26, GW1-postmortem audit P0 item 1) -
+    # sums to `median` (before its own independent rounding) by construction,
+    # see ComponentBreakdown.total. Every existing caller that only reads the
+    # fields above is completely unaffected - this is purely additive.
+    components: "ComponentBreakdown | None" = None
+    # Real, bounded, evidence-gated qualitative adjustment (P0 item 3) -
+    # deliberately NOT folded into `median`, see models/qualitative_feed.py's
+    # own module docstring for why. 0.0/None is the honest, common state for
+    # almost every player - only a real PERSISTENT_TREND signal ever sets these.
+    qualitative_adjustment: float = 0.0
+    qualitative_note: str | None = None
 
 
 def expected_points(
@@ -764,22 +824,42 @@ def expected_points(
         # gameweek league-average fallback) always falls through to the
         # average branch below, which is identical to summing for one item -
         # zero behavior change for every non-double-gameweek caller.
-        median = sum(_match_components(conn, rates, tg, og) for tg, og in goals_pairs)
+        breakdowns = [_match_components(conn, rates, tg, og) for tg, og in goals_pairs]
+        combined = _sum_breakdowns(breakdowns)
+        median = combined.total
         ceiling_matches = len(goals_pairs)
     else:
         team_goals = sum(g[0] for g in goals_pairs) / len(goals_pairs)
         opp_goals = sum(g[1] for g in goals_pairs) / len(goals_pairs)
-        median = _match_components(conn, rates, team_goals, opp_goals)
+        combined = _match_components(conn, rates, team_goals, opp_goals)
+        median = combined.total
         ceiling_matches = 1
 
     floor, ceiling = _sampled_floor_ceiling(
         conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,
     )
 
+    # Real, bounded, evidence-gated qualitative signal (2026-08-26, P0 item 3) -
+    # a real failure (e.g. no player_fpl_implications rows at all, the common
+    # case) must never break a live projection call; caught and left as the
+    # honest zero/None default rather than raised.
+    qual_adjustment = 0.0
+    qual_note = None
+    try:
+        from fpl_agent.models.qualitative_feed import compute_qualitative_adjustment
+
+        adjustment = compute_qualitative_adjustment(conn, player_id, combined)
+        if adjustment is not None:
+            qual_adjustment = adjustment.delta
+            qual_note = f"{adjustment.signal} ({adjustment.direction}): {adjustment.reason}"
+    except Exception:
+        pass
+
     return ExpectedPoints(
         player_id=player_id, position=rates["position"], floor=floor, median=round(median, 2),
         ceiling=ceiling, confidence=em.confidence, expected_minutes=em.expected_minutes,
-        model_version=MODEL_VERSION,
+        model_version=MODEL_VERSION, components=combined,
+        qualitative_adjustment=qual_adjustment, qualitative_note=qual_note,
     )
 
 
@@ -790,6 +870,10 @@ class WindowExpectedPoints:
     fixture_count: int
     total_median: float
     model_version: str
+    # Real component breakdown across the whole window (2026-08-26, P0 item
+    # 1) - additive, defaults to None so any direct-construction caller
+    # (tests) that doesn't pass it is unaffected.
+    components: "ComponentBreakdown | None" = None
 
 
 def expected_points_window(
@@ -804,16 +888,18 @@ def expected_points_window(
         (rates["team_id"], rates["team_id"], start, start + n_gw),
     ).fetchall()
 
-    total = 0.0
+    breakdowns = []
     for i, fixture in enumerate(fixtures):
         team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
-        total += _match_components(
+        breakdowns.append(_match_components(
             conn, rates, team_goals, opp_goals, damping=_ROTATION_DAMPING_PER_EXTRA_MATCH ** i
-        )
+        ))
+    combined = _sum_breakdowns(breakdowns) if breakdowns else ComponentBreakdown(0, 0, 0, 0, 0, 0, 0, 0)
+    total = combined.total
 
     return WindowExpectedPoints(
         player_id=player_id, n_gw=n_gw, fixture_count=len(fixtures),
-        total_median=round(total, 2), model_version=MODEL_VERSION,
+        total_median=round(total, 2), model_version=MODEL_VERSION, components=combined,
     )
 
 

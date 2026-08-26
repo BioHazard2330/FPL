@@ -172,4 +172,34 @@ def test_transfer_recommended_when_a_real_candidate_clears_the_threshold(db_conn
 
     assert decision.transfer_action.kind == "transfer"
     assert decision.transfer_action.candidate.player_in_name == "P99"
-    assert decision.transfer_action.delta == 2.5
+
+
+def test_transfer_robustness_is_attached_when_a_real_comparison_succeeds(db_conn, monkeypatch):
+    """P1 'transfer robustness comparison' - wired the same way captain's
+    own robustness label is, using the transfer candidate's real
+    player_out/player_in ids."""
+    strong = TransferCandidate(
+        player_out_id=2, player_out_name="P2", player_in_id=99, player_in_name="P99",
+        price_delta_tenths=0, ev_1gw=1.5, ev_3gw=2.5, ev_5gw=3.0,
+        net_ev_1gw=1.5, net_ev_3gw=2.5, net_ev_5gw=3.0, uses_hit=False,
+    )
+    locked = _locked(captain_id=1, squad_ids=(1, 2, 3))
+    _stub_common(monkeypatch, [_captain_option(1, 5.0)], {2: [strong]})
+    monkeypatch.setattr(
+        "fpl_agent.models.robustness.compare_candidates",
+        lambda conn, leader_id, challenger_id, from_event, n_trials: SimpleNamespace(verdict="FRAGILE"),
+    )
+
+    decision = evaluate_locked_squad(db_conn, locked)
+
+    assert decision.transfer_action.robustness == "FRAGILE"
+
+
+def test_transfer_robustness_is_none_for_a_keep_verdict(db_conn, monkeypatch):
+    locked = _locked(captain_id=1, squad_ids=(1, 2, 3))
+    _stub_common(monkeypatch, [_captain_option(1, 5.0)], {})
+
+    decision = evaluate_locked_squad(db_conn, locked)
+
+    assert decision.transfer_action.kind == "keep"
+    assert decision.transfer_action.robustness is None

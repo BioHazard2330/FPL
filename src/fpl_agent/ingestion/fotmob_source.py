@@ -284,17 +284,19 @@ def sync_match(
             "INSERT INTO player_match_state "
             "(match_id, player_id, fotmob_player_id, team_id, started, minutes, position, rating, goals, "
             "assists, shots, key_passes, xg, xa, touches_box, substituted_on_minute, substituted_off_minute, "
-            "source, retrieved_at, confidence) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "penalty_shots, penalty_goals, source, retrieved_at, confidence) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(match_id, fotmob_player_id) DO UPDATE SET "
             "player_id=excluded.player_id, team_id=excluded.team_id, started=excluded.started, "
             "minutes=excluded.minutes, goals=excluded.goals, assists=excluded.assists, shots=excluded.shots, "
             "key_passes=excluded.key_passes, xg=excluded.xg, xa=excluded.xa, touches_box=excluded.touches_box, "
             "substituted_on_minute=excluded.substituted_on_minute, substituted_off_minute=excluded.substituted_off_minute, "
+            "penalty_shots=excluded.penalty_shots, penalty_goals=excluded.penalty_goals, "
             "retrieved_at=excluded.retrieved_at",
             (match_id, player_id, ps.fotmob_player_id, fpl_team_id, int(ps.started), ps.minutes, ps.position,
              ps.rating, ps.goals, ps.assists, ps.shots, ps.key_passes, ps.xg, ps.xa, ps.touches_box,
-             ps.substituted_on_minute, ps.substituted_off_minute, _SOURCE_NAME, now, "medium"),
+             ps.substituted_on_minute, ps.substituted_off_minute, ps.penalty_shots, ps.penalty_goals,
+             _SOURCE_NAME, now, "medium"),
         )
 
     for ts in team_states:

@@ -5391,3 +5391,129 @@ observed chain was the qualitative-analysis skill runs from earlier today, exact
 the real production DB (`data/fpl.db`), not only asserted by tests - the backfill re-run, the name-
 resolution improvement, the Palestra recompute, and the real scheduled-cycle log were all checked against
 actual current data.
+
+## P0/P1 implementation from the gap audit (2026-08-26, same day, continued)
+
+Direct follow-up: implement the audit's P0 items in dependency order, then the P1 items that materially
+improve optimizer accuracy. Hard constraint carried through every item: never fabricate, never a global
+weight, reuse existing infrastructure, preserve current numeric behavior unless a measured improvement
+justifies changing it.
+
+**P0-1: expose the real xP component breakdown.** `_match_components()` always computed eight real terms
+(appearance/goals/assists/bonus/clean_sheet/cards/conceded/defcon) and threw them away after summing -
+nothing downstream could ever answer "why is this player's xP 5.8". New `ComponentBreakdown` dataclass
+(`models/expected_points.py`) returned from `_match_components` instead of a bare float, with a `.total`
+property summing in the exact original field order (zero float-rounding drift, regression-tested).
+`ExpectedPoints`/`WindowExpectedPoints` gained an additive `components` field. **Live-verified**: Tzolis/
+Gonzalo/van Ewijk's real components all sum exactly to their reported median.
+
+**P0-2: robustness classification (ROBUST/MODERATE/FRAGILE) using shared Monte Carlo trials.** New
+`models/robustness.py::compare_candidates()` - reuses `scenario_engine.py`'s exact `_draw_fixture_for_team`/
+`sample_player_trial_points` primitives (the same real per-trial point model floor/ceiling already uses),
+draws two named candidates against a shared trial set (correctly correlated when they share a real
+fixture), and labels how often the point-estimate "leader" actually wins per-trial - real, disclosed,
+uncalibrated thresholds (65%/50%). Wired additively into `CaptainAction.robustness` and
+`TransferAction.robustness` (`optimization/decision_engine.py`), never changing the underlying keep/
+change verdict. **Live-verified**: real squad's captain change (Mbeumo over Szoboszlai) is MODERATE, not
+robust - a genuinely useful signal a bare median delta couldn't show. Real transfer (Tzolis->Tavernier)
+also MODERATE.
+
+**P0-3: structured qualitative evidence -> bounded, component-targeted xP/minutes adjustment.** New
+`models/qualitative_feed.py` - only fires on a real PERSISTENT_TREND (2+ real matches agreeing,
+`qualitative_trends.py` - the same bar captain/transfer fusion already require), sized as a bounded 15%
+proportion of the model's own already-computed value for the SPECIFIC component the signal maps to
+(GOAL_THREAT->goals, CREATION->assists, SET_PIECES->goals) - never an invented absolute number.
+Deliberately kept OUT of `median` itself (this project's FACTS/DERIVED/REASONING layering rule, same
+precedent as `decision_fusion.py`'s captain/transfer notes) - exposed as separate
+`qualitative_adjustment`/`qualitative_note` fields instead, zero regression risk to any existing caller
+that only reads `median`. A parallel, smaller mechanism in `expected_minutes.py` handles ROLE/MINUTES
+signals the same way, following that function's own established in-place-override convention instead
+(bounded, same 15%, same PERSISTENT_TREND gate). **Real, honest state**: zero real players currently have
+2+ real observations (GW1 is still the only analyzed gameweek), so this is correctly inert in production
+right now - confirmed live, mechanism proven via 5 tests that seed real synthetic persistent trends.
+
+**P0-4: automatic segmented prediction/outcome measurement.** `prediction_outcomes` (built earlier the
+same day) gained two real, already-computed-at-prediction-time columns (migration `0030`):
+`predicted_minutes_basis` (expected_minutes()'s own `basis`) and `predicted_availability`
+(`availability.classify()`) - both captured going forward so cohorts can be judged honestly by what the
+model believed AT THE TIME, not by current hindsight state. New `models/calibration.py::segmented_accuracy()`
+groups real MAE by position, nailed-vs-rotation (predicted_expected_minutes >= 75), new-transfer/cold-start
+(predicted_minutes_basis matching expected_minutes' own weak-evidence bases), and returning-injury/doubtful
+- a cohort with fewer than `min_samples` (default 3) real rows is silently omitted, never reported with a
+misleadingly precise MAE. New `fpl calibration-report` CLI command. **Real, honest state, confirmed live**:
+`fpl calibration-report` correctly reports "no cohort has enough real data yet" - GW1's own
+`prediction_outcomes` rows have `predicted_median=NULL` (this table didn't exist before GW1's deadline),
+so segmentation is genuinely blocked until GW2+ produces real prediction-and-outcome pairs. This is not a
+code gap - the mechanism is built, tested, and will start reporting real numbers automatically the moment
+real data exists.
+
+**P1 items, in order:**
+
+- **Manager-intelligence -> expected-minutes integration**: a real, high team-wide starting-XI rotation
+  rate (`manager_intelligence.py`, needs >=2 real analyzed matches) downgrades `expected_minutes()`'s
+  `confidence` by one tier (HIGH->MEDIUM->LOW) - deliberately never touches the numeric estimate itself,
+  avoiding a second stacked heuristic on top of this player's own already-real minutes read. **Live-verified
+  honest state**: no real team has 2+ analyzed matches yet (only GW1 exists), so this is correctly inert in
+  production - confirmed via direct query, 3 new tests prove the mechanism with synthetic data.
+- **Verified penalty-duty extraction, only after confirming the field is real.** Fetched all 10 real GW1
+  matches live before writing any code: FotMob's shotmap `situation` field is real and reliable (2 real
+  penalty shots found, Brentford v Spurs and Newcastle v Liverpool). Parsed into new `player_match_state.
+  penalty_shots`/`penalty_goals` columns (migration `0031`, `models/match_intelligence.py`). New
+  `models/penalty_duty.py::league_penalty_evidence()` aggregates the real league-wide total and gates on a
+  real minimum sample (20 shots) before ever calling itself "sufficient for adjustment" - **deliberately does
+  NOT feed anything into expected_points.py**: 2 real observations league-wide is nowhere near enough to fit
+  a defensible conversion/uplift rate, and doing so would be exactly the premature calibration this
+  project's own rules forbid. Confirmed live: `sufficient_for_adjustment=False`, correctly. The real,
+  current WHO of penalty duty was already solved (official `penalties_order`, feeds captaincy's display);
+  this closes the data-capture half of HOW MUCH, honestly reporting insufficient volume rather than
+  fabricating a number.
+- **Full-sequence club-limit validation in transfer search - already correctly implemented, verified
+  rigorously rather than assumed.** The audit's own citation (Plan 1a's original "not validated across
+  steps" note) was stale - a later same-day 2026-08-20 fix already threads the evolving `state.squad_ids`
+  through `best_transfer_for_player` at every beam step. Wrote a genuine multi-step regression test to
+  prove it; the FIRST version of that test was itself wrong (assumed the search would only ever swap out
+  the original weak club-B players, when the real optimal legal path swaps out the weak club-A incumbents
+  directly - a smarter, still-legal solution the search correctly found). Corrected the test (P1/P2 given
+  real EV higher than every candidate, so they're structurally never touched) and it now genuinely proves
+  a later step correctly rejects a candidate that would push a club over-cap given the squad AS IT STOOD
+  after an earlier step's own swap, not the original squad. No production code change needed - the item is
+  closed by verification, not by a fix.
+- **Historical skill-selected Elite-manager panel - real infrastructure built, real data constraint found
+  and disclosed, not glossed over.** Checked live before building anything: FPL's `leagues-classic/314/
+  standings/` endpoint is season-scoped to whatever is CURRENTLY live (confirmed: page 1 returned this
+  season's real GW1 totals, not a past season's final table) - there is no way to retroactively fetch a
+  PAST season's final standings once a new one has started. New `ingestion/elite_panel.py::
+  snapshot_elite_panel()`/`get_elite_panel()` (migration `0032`, `elite_manager_panel` table) + `fpl
+  sync-elite-panel --season` - real, sequential top-N capture (not the rank-stratified sample `eo_sample.py`
+  uses for a different purpose), genuinely reusable, but only becomes a real historically-earned signal when
+  run near a REAL season's end and used the FOLLOWING season. **Honest state**: zero real panels exist yet -
+  this is the first season this project has ever been positioned to capture one for; the real payoff starts
+  next season, not this one.
+- **Transfer robustness comparison** - built alongside P0-2 above (`TransferAction.robustness`), same
+  shared-trial mechanism, no separate work needed.
+- **Chip-strategy explanation (why now / why not later / EV / opportunity cost / confidence).** New
+  `ChipExplanation` dataclass + `_explain_schedule()` (`optimization/chips.py`) - built entirely from
+  `window_event_median`, the same real per-(window, event) trial-median dict the DP already computes to
+  make its own choice, zero new modeling. Names the real runner-up event and the real opportunity-cost gap
+  within the same chip's own real eligible window; honestly reports "only real eligible GW" when no real
+  alternative exists rather than fabricating a comparison. Wired into `fpl season-sim`'s printed output and
+  the logged decision detail. **Live-verified against the real locked squad** (GW2-20 horizon): "GW2
+  wildcard (+474.0) beats the next-best real eligible GW20 (+-6.2) by 480.2 - low confidence", and a correct
+  "only real eligible GW" line for the one chip with no real alternative in the sampled window.
+
+**Full suite: 856/856 passing** (824 baseline + 32 new). Every item live-verified against the real
+production DB and the real locked squad, not only asserted by tests - component breakdowns, robustness
+labels, the calibration report, penalty evidence, the corrected multi-step club-limit test, and the chip
+explanation narrative were all checked against actual current data, including a real season-sim run.
+
+**What remains genuinely blocked by insufficient data, stated plainly rather than glossed over:**
+- P0-3 (qualitative feed) and P0-4 (segmented calibration) are both real, tested, wired, and CORRECTLY
+  INERT in production right now - not because of a bug, but because GW1 is still the only analyzed
+  gameweek (no player has a real persistent trend yet) and GW1's own predictions were never captured before
+  its deadline (no real prediction-outcome pair exists to segment yet). Both will start producing real
+  output automatically once GW2 provides a second real data point - no further code change needed.
+- Manager-rotation confidence downgrades are similarly inert - no real team has 2 analyzed matches yet.
+- League-wide penalty evidence (2 real shots) is far below the real 20-shot bar this project set for
+  itself before trusting a conversion rate - will grow automatically as more real gameweeks are analyzed.
+- The Elite-manager panel has no real historical data to draw from until a real season actually ends and
+  gets snapshotted - a genuine, disclosed multi-month wait, not a code gap.

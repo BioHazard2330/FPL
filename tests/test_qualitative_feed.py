@@ -1,0 +1,123 @@
+from fpl_agent.ingestion.sync import _extract_season, _upsert_many, sync_rules, sync_stats_snapshot
+from fpl_agent.models.expected_points import expected_points
+from fpl_agent.models.qualitative_feed import compute_qualitative_adjustment
+from fpl_agent.normalization.fpl_core import (
+    flatten_rules,
+    normalize_element_types,
+    normalize_events,
+    normalize_player_stats,
+    normalize_players,
+    normalize_teams,
+)
+
+from test_decision_fusion import _seed_implication
+from test_expected_minutes import _insert_season_history
+from test_expected_points import _bootstrap_two_teams_full_scoring as _bootstrap_two_teams
+from test_sync import make_bootstrap
+
+
+def _seed_full(conn, bootstrap, now):
+    _upsert_many(conn, "teams", normalize_teams(bootstrap), now)
+    _upsert_many(conn, "element_types", normalize_element_types(bootstrap), now)
+    _upsert_many(conn, "events", normalize_events(bootstrap), now)
+    _upsert_many(conn, "players", normalize_players(bootstrap), now)
+    sync_stats_snapshot(conn, normalize_player_stats(bootstrap), now)
+    season = _extract_season(bootstrap)
+    sync_rules(conn, flatten_rules(bootstrap), season, "fpl_api_bootstrap", now)
+    conn.commit()
+
+
+def test_no_adjustment_without_any_qualitative_evidence(db_conn):
+    bootstrap = make_bootstrap()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.qualitative_adjustment == 0.0
+    assert ep.qualitative_note is None
+    assert round(ep.components.total, 2) == ep.median  # median genuinely untouched
+
+
+def test_a_single_match_signal_never_adjusts_the_number(db_conn):
+    """Must earn the adjustment through evidence - one real match is a real
+    signal (surfaced elsewhere as a note) but not yet enough to move a
+    number, same bar captain/transfer fusion already require."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored a real goal", created_at="2026-08-22T15:00:00Z")
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.qualitative_adjustment == 0.0
+    assert ep.qualitative_note is None
+
+
+def test_a_real_persistent_trend_produces_a_bounded_targeted_adjustment(db_conn):
+    """Direct unit test of compute_qualitative_adjustment() against a real,
+    non-zero, controlled ComponentBreakdown - proves the bounded, targeted,
+    correctly-signed sizing rule precisely, independent of whether the
+    default GKP test fixture happens to produce a near-zero real goals
+    component (it does - keepers essentially never score, a real, correct
+    reason a full expected_points() integration wouldn't be a reliable way
+    to assert a specific non-zero magnitude here)."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored again", created_at="2026-08-22T15:00:00Z")
+
+    from fpl_agent.models.expected_points import ComponentBreakdown
+
+    real_components = ComponentBreakdown(
+        appearance=1.5, goals=2.0, assists=0.6, bonus=0.3, clean_sheet=0.0, cards=-0.1, conceded=0.0, defcon=0.0,
+    )
+    adjustment = compute_qualitative_adjustment(db_conn, 1, real_components)
+
+    assert adjustment is not None
+    assert adjustment.component == "goals"
+    assert adjustment.direction == "POSITIVE"
+    assert adjustment.delta > 0  # real, positive, evidence-earned
+    # Bounded: never more than 15% of the real goals component it targets.
+    assert adjustment.delta == round(2.0 * 0.15, 4)
+
+
+def test_expected_points_integration_surfaces_the_adjustment_without_touching_median(db_conn):
+    """Full-pipeline integration proof: the real expected_points() call
+    correctly surfaces whatever compute_qualitative_adjustment() finds
+    (here, a real but near-zero GKP goals component - the mechanism fires,
+    the note is real, and the layering rule holds regardless of magnitude)."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored again", created_at="2026-08-22T15:00:00Z")
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.qualitative_note is not None and "GOAL_THREAT" in ep.qualitative_note
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
+    # The layering rule: median itself is completely unaffected by the
+    # adjustment - callers that only read `median` see zero behavior change.
+    assert round(ep.components.total, 2) == ep.median
+
+
+def test_compute_qualitative_adjustment_returns_none_for_an_unmapped_signal(db_conn):
+    """TACTICAL_CHANGE has no honest single-component target - must not be
+    forced into the wrong bucket."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="TACTICAL_CHANGE", direction="POSITIVE",
+                       reason="formation change", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="TACTICAL_CHANGE", direction="POSITIVE",
+                       reason="again", created_at="2026-08-22T15:00:00Z")
+
+    from fpl_agent.models.expected_points import ComponentBreakdown
+
+    components = ComponentBreakdown(1, 1, 1, 1, 1, 1, 1, 1)
+    assert compute_qualitative_adjustment(db_conn, 1, components) is None

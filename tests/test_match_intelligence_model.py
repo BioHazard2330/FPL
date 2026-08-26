@@ -103,6 +103,41 @@ def test_parse_player_states_sums_real_shot_events_per_player():
     assert abs(saka.xg - 0.5) < 1e-9
 
 
+def test_parse_player_states_extracts_real_penalty_shots():
+    """Real gap found 2026-08-26 (GW1-postmortem audit P1) - FotMob's real
+    shotmap carries a genuine `situation` field, verified live before this
+    was built (2 real GW1 penalty shots found). A non-penalty goal must not
+    be counted, and a missed penalty must count as a penalty shot without a
+    penalty goal - both real, distinct cases."""
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["shotmap"] = {
+        "shots": [
+            {"playerId": 111111, "eventType": "Goal", "expectedGoals": 0.79, "situation": "Penalty"},
+            {"playerId": 111111, "eventType": "Miss", "expectedGoals": 0.3, "situation": "RegularPlay"},
+            {"playerId": 222222, "eventType": "Miss", "expectedGoals": 0.76, "situation": "Penalty"},
+        ],
+        "Periods": {"All": []},
+    }
+    states = parse_player_states(payload)
+
+    saka = next(s for s in states if s.fotmob_player_id == "111111")
+    assert saka.penalty_shots == 1
+    assert saka.penalty_goals == 1
+    assert saka.shots == 2  # the real regular-play shot still counts toward the total
+
+    coventry_player = next(s for s in states if s.fotmob_player_id == "222222")
+    assert coventry_player.penalty_shots == 1
+    assert coventry_player.penalty_goals == 0  # a real missed penalty - a shot, not a goal
+
+
+def test_parse_player_states_defaults_penalty_fields_to_zero_pre_kickoff():
+    states = parse_player_states(_PAYLOAD)
+    saka = next(s for s in states if s.name_raw == "Bukayo Saka")
+    assert saka.penalty_shots == 0
+    assert saka.penalty_goals == 0
+
+
 def test_parse_player_states_handles_missing_lineup_entirely():
     payload = {"content": {}}
     assert parse_player_states(payload) == []

@@ -221,6 +221,44 @@ def test_schedule_chips_picks_the_higher_value_window(db_conn, monkeypatch):
     assert schedule.total_expected_value == 10.0
     assert schedule.advisory_hit_recommendations == ()
 
+    # P1 item (2026-08-26 GW1-postmortem audit) - "chip-strategy explanation":
+    # the real chosen GW10 (+10.0) vs the real runner-up GW11 (+2.0), built
+    # from the DP's own already-computed per-event medians.
+    assert len(schedule.explanations) == 1
+    exp = schedule.explanations[0]
+    assert exp.event == 10 and exp.chip_name == "bboost"
+    assert exp.expected_value == 10.0
+    assert exp.best_alternative_event == 11
+    assert exp.best_alternative_value == 2.0
+    assert exp.opportunity_cost == 8.0
+    assert exp.confidence == "low"
+
+
+def test_schedule_chips_explanation_has_no_real_alternative_when_only_one_event_is_eligible(db_conn, monkeypatch):
+    """Honest absence, not a fabricated comparison, when the chip's own real
+    window only ever covers one real eligible event in the sampled horizon."""
+    import fpl_agent.optimization.chips as chips_mod
+
+    trajectory = TransferSequence(
+        steps=(TransferSequenceStep(event=10, player_out_id=None, player_out_name=None, player_in_id=None, player_in_name=None, uses_hit=False),),
+        final_squad_ids=(1, 2, 3), final_free_transfers=1, final_bank_tenths=0,
+        total_net_ev=0.0, tiebreak_adjustment=0.0,
+    )
+    windows = [ChipWindow(name="bboost", number=1, start_event=10, stop_event=10, chip_type="team", eligible_now=True)]
+
+    def fake_bench_boost(conn, squad_ids, event, scenario_draw):
+        import numpy as np
+        return np.array([10.0, 10.0])
+    monkeypatch.setattr(chips_mod, "_bench_boost_trial_values", fake_bench_boost)
+
+    schedule = schedule_chips(db_conn, initial_squad_ids=[1, 2, 3], squad_trajectory=trajectory, chip_windows=windows, scenario_draw=[object(), object()])
+
+    assert len(schedule.explanations) == 1
+    exp = schedule.explanations[0]
+    assert exp.best_alternative_event is None
+    assert exp.best_alternative_value is None
+    assert exp.opportunity_cost is None
+
 
 from fpl_agent.optimization.transfers import TransferCandidate
 
