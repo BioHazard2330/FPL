@@ -1873,9 +1873,30 @@ def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
     risks = detail.get("risks") or []
     risk_note = f"<div class='panel-subtitle'>{len(risks)} squad risk(s) flagged</div>" if risks else ""
 
+    # Real, opt-in multi-GW strategic path note (2026-08-27) - reads the last
+    # `fpl strategic-plan` result the same cheap way the Chip Strategy/Live
+    # Rank tiles read their own last-logged state; never triggers a fresh
+    # search from the dashboard regen path (a real 8-GW beam search takes
+    # well over a minute - `fpl strategic-plan` stays a manually-run,
+    # opt-in command, same posture as `fpl live-rank`/`fpl season-sim`).
+    strategic = latest_decision_of_type(conn, "strategic_plan")
+    strategic_html = ""
+    if strategic is not None:
+        sd = strategic.detail
+        best_path = sd.get("best_path") or {}
+        opening = best_path.get("steps", [{}])[0].get("action", "?") if best_path.get("steps") else "?"
+        differ_note = (
+            f" &mdash; differs from the immediate 1-GW pick" if sd.get("immediate_vs_strategic_differ") else ""
+        )
+        strategic_html = (
+            f"<div class='panel-subtitle' style='margin-top:10px'>Strategic {sd.get('horizon_gw','?')}-GW path "
+            f"({_esc(_relative_time(strategic.created_at))}): GW2 {_esc(opening)}{differ_note}. "
+            f"Run <code>fpl strategic-plan</code> for the full top-5 path comparison.</div>"
+        )
+
     return (
         f"<div class='freshness-tag' style='margin-bottom:8px'>Generated {_esc(age)} for GW{detail.get('event', '?')}</div>"
-        + "\n".join(rows) + risk_note
+        + "\n".join(rows) + risk_note + strategic_html
     )
 
 
@@ -2611,11 +2632,29 @@ def generate_dashboard_html(
         # any other real caller shape) still has a real, honest summary
         # string to fall back to rather than a blank placeholder.
         rank = live_rank_decision.detail.get("estimated_rank")
-        rank_str = f"~{rank:,}" if rank is not None else live_rank_decision.summary
+        is_approximate = live_rank_decision.detail.get("precision") == "approximate"
+        rank_str = f"{'≈' if is_approximate else '~'}{rank:,}" if rank is not None else live_rank_decision.summary
+        # Real bug found and fixed (2026-08-27, direct user report: "live
+        # rank is fucked") - this tile unconditionally labeled ANY last-known
+        # estimate "Live rank", even a real GW1 FINAL rank still being shown
+        # days later while GW2 sits in READY_FOR_NEXT_DEADLINE (confirmed
+        # live: the stored decision's own `event` field was 1, `reference_
+        # event` was already 2) - a real, honestly-computed number rendered
+        # under a misleading, non-live label. Now compares the decision's own
+        # real `event` against `reference_event` (already computed above,
+        # same real source `live_or_reference_event` the rest of this
+        # function uses) - only the CURRENT gameweek's estimate is ever
+        # labeled "Live rank"; a stale prior-gameweek estimate is relabeled
+        # "Last rank check (GWx)" so the real number is never hidden, only
+        # never mislabeled as current.
+        rank_event = live_rank_decision.detail.get("event")
+        is_current = rank_event == reference_event
+        rank_label = "Live rank (est.)" if is_current else f"Last rank check (GW{rank_event})"
+        sub_note = " · approximate (page-level data)" if is_approximate else ""
         live_rank_tile_html = f"""<div class="hero-metric hero-metric-rank">
-      <div class="hero-metric-label">Live rank (est.)</div>
+      <div class="hero-metric-label">{_esc(rank_label)}</div>
       <div class="hero-metric-value">{_esc(rank_str)}</div>
-      <div class="hero-metric-sub">as of {_esc(_relative_time(live_rank_decision.created_at))}</div>
+      <div class="hero-metric-sub">as of {_esc(_relative_time(live_rank_decision.created_at))}{_esc(sub_note)}</div>
     </div>"""
 
     # Dashboard-state architecture (2026-08-21, rewired 2026-08-22 onto the

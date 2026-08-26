@@ -1512,7 +1512,7 @@ def _maybe_refresh_live_rank(conn) -> dict | None:
             "live_points": my_live_points, "current_total": my_current_total,
             "estimated_rank": estimate.estimated_rank, "rank_lower_bound": estimate.rank_lower_bound,
             "rank_upper_bound": estimate.rank_upper_bound, "sample_size": estimate.sample_size,
-            "bracketed": estimate.bracketed,
+            "bracketed": estimate.bracketed, "precision": estimate.precision,
         },
         confidence="low",
     )
@@ -1819,7 +1819,7 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
             "live_points": my_live_points, "current_total": my_current_total,
             "estimated_rank": estimate.estimated_rank, "rank_lower_bound": estimate.rank_lower_bound,
             "rank_upper_bound": estimate.rank_upper_bound, "sample_size": estimate.sample_size,
-            "bracketed": estimate.bracketed,
+            "bracketed": estimate.bracketed, "precision": estimate.precision,
         },
         confidence="low",
     )
@@ -1828,6 +1828,11 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
     click.echo(f"decision_id={decision_id}")
     click.echo(f"pre-GW total: {pre_gw_total}   live points this GW: {my_live_points:.0f}   current total: {my_current_total:.0f}")
     click.echo(f"estimated live rank: ~{estimate.estimated_rank:,}  (real bracket {estimate.rank_lower_bound:,}-{estimate.rank_upper_bound:,}, {estimate.sample_size} sampled managers)")
+    if estimate.precision == "approximate":
+        click.echo(
+            "  NOTE: real FPL standings data for this sample was mostly page-level, not per-entry, rank "
+            "granularity - treat this figure as approximate, not precise"
+        )
     if not estimate.bracketed:
         click.echo("NOTE: your total fell outside the sampled range - this is a much cruder bound, not a precise interpolation.")
     click.echo(
@@ -2709,6 +2714,88 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
         )
         if ranked.rejected_reason:
             click.echo(f"     rejected: {ranked.rejected_reason}")
+
+
+@cli.command("strategic-plan")
+@click.option("--squad", default=None, help="comma-separated player ids (default: the real locked squad)")
+@click.option("--bank", default=None, type=float, help="bank in £m - required when --squad is given explicitly")
+@click.option("--free-transfers", default=1, type=int, help="free transfers available (default 1)")
+@click.option("--horizon", default=8, type=int, help="planning horizon in GWs (default 8)")
+@click.option("--beam-width", default=5, type=int, help="how many top real paths to keep (default 5)")
+def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: int, horizon: int, beam_width: int):
+    """Real multi-gameweek strategic path search (2026-08-27) - composes the
+    existing, already-tested `search_transfer_sequences` beam search into a
+    genuine GW-by-GW plan across the real horizon, plus a real 1/3/5/8-GW
+    opening-action comparison showing whether the immediate-optimum transfer
+    differs from the strategic-optimum one. Reuses 100% existing machinery -
+    no new search algorithm, no hardcoded roll/transfer bias."""
+    from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
+    from fpl_agent.optimization.strategic_planner import build_strategic_plan
+
+    conn = get_connection()
+    try:
+        if squad is not None:
+            if bank is None:
+                click.echo("--bank is required when --squad is given explicitly", err=True)
+                raise SystemExit(1)
+            squad_ids = _parse_squad_option(squad)
+            bank_tenths = round(bank * 10)
+        else:
+            locked = get_locked_squad(conn)
+            if locked is None:
+                click.echo("no real locked squad found - pass --squad and --bank explicitly", err=True)
+                raise SystemExit(1)
+            squad_ids = sorted(locked.squad_ids)
+            bank_tenths = locked.bank_tenths if locked.bank_tenths is not None else 0
+
+        click.echo(f"searching real {horizon}-GW paths (beam width {beam_width}) - this can take under a minute...")
+        plan = build_strategic_plan(conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon, beam_width=beam_width)
+
+        best = plan.best
+        best_summary = (
+            f"{plan.horizon_comparison[-1].opening_action if plan.horizon_comparison else 'no path'} "
+            f"(strategic {horizon}GW EV={best.total_net_ev if best else None})"
+        )
+        log_decision(
+            conn, "strategic_plan", summary=best_summary,
+            detail={
+                "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
+                "horizon_comparison": [
+                    {"horizon_gw": c.horizon_gw, "opening_action": c.opening_action, "total_net_ev": c.total_net_ev}
+                    for c in plan.horizon_comparison
+                ],
+                "best_path": {
+                    "total_net_ev": best.total_net_ev, "final_free_transfers": best.final_free_transfers,
+                    "final_bank_tenths": best.final_bank_tenths,
+                    "steps": [
+                        {
+                            "event": s.event,
+                            "action": "ROLL" if s.player_out_id is None else f"{s.player_out_name} -> {s.player_in_name}",
+                            "uses_hit": s.uses_hit,
+                        }
+                        for s in best.steps
+                    ],
+                } if best is not None else None,
+            },
+            confidence="low",
+        )
+    finally:
+        conn.close()
+
+    click.echo()
+    click.echo(f"HORIZON COMPARISON (immediate vs strategic optimum):")
+    for c in plan.horizon_comparison:
+        click.echo(f"  {c.horizon_gw}GW-horizon opening action: {c.opening_action}  (total_net_ev={c.total_net_ev})")
+    click.echo(f"  {plan.note}")
+
+    click.echo()
+    click.echo(f"TOP {len(plan.paths)} REAL {horizon}-GW PATHS:")
+    for i, p in enumerate(plan.paths, 1):
+        marker = " <- BEST" if i == 1 else ""
+        click.echo(f"Path {i}: total_net_ev={p.total_net_ev}  final_FT={p.final_free_transfers}  final_bank=£{p.final_bank_tenths/10:.1f}m{marker}")
+        for st in p.steps:
+            action = "ROLL" if st.player_out_id is None else f"{st.player_out_name} -> {st.player_in_name}" + (" (HIT)" if st.uses_hit else "")
+            click.echo(f"    GW{st.event}: {action}")
 
 
 @cli.command("season-sim")

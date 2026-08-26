@@ -121,6 +121,20 @@ class LiveRankEstimate:
     my_current_total: float
     sample_size: int
     bracketed: bool  # False when my_current_total fell outside the sampled range entirely
+    # Real, disclosed data-quality flag (2026-08-27, direct user report:
+    # "live rank is fucked") - "approximate" when the real FPL standings
+    # API itself returned page-level, not per-entry, rank granularity for a
+    # large share of this sample (confirmed live: a real fetched deep
+    # standings page returned the IDENTICAL `rank` value for all 50 distinct
+    # real entries on it - a genuine external API limitation, not a bug in
+    # this project's own request/parsing code). When most of the real
+    # sample's ranks collapse to a small number of distinct values, the
+    # PCHIP interpolation can reproduce one of those repeated values
+    # verbatim as a falsely-precise point estimate (confirmed: a real GW1
+    # estimate of "~37" came directly from 14 real, distinct managers who
+    # all shared the identical real API-reported rank 37) - `precision`
+    # flags this honestly rather than presenting that number as exact.
+    precision: str = "precise"  # "precise" | "approximate"
 
 
 def _enforce_monotonic_ranks(scores_desc: list[float], ranks_desc: list[float]) -> list[float]:
@@ -184,17 +198,25 @@ def estimate_live_rank(
     best_total, worst_total = totals_desc[0], totals_desc[-1]
     best_rank, worst_rank = ranks_desc[0], ranks_desc[-1]
 
+    # Real, disclosed data-quality check (2026-08-27) - see LiveRankEstimate.precision's
+    # own docstring for the confirmed-live root cause. A real threshold: fewer
+    # than half the sample's real entries having a genuinely distinct rank
+    # means the sample is dominated by page-level (not per-entry) API
+    # granularity - honestly disclosed, not silently presented as precise.
+    distinct_raw_ranks = len({rank for rank, _ in reference})
+    precision = "precise" if distinct_raw_ranks >= n * 0.5 else "approximate"
+
     if my_current_total >= best_total:
         return LiveRankEstimate(
             estimated_rank=max(1, round(best_rank) // 2), rank_lower_bound=1,
             rank_upper_bound=round(best_rank), my_current_total=my_current_total,
-            sample_size=n, bracketed=False,
+            sample_size=n, bracketed=False, precision=precision,
         )
     if my_current_total <= worst_total:
         return LiveRankEstimate(
             estimated_rank=(round(worst_rank) + total_players) // 2, rank_lower_bound=round(worst_rank),
             rank_upper_bound=total_players, my_current_total=my_current_total,
-            sample_size=n, bracketed=False,
+            sample_size=n, bracketed=False, precision=precision,
         )
 
     corrected_ranks_desc = _enforce_monotonic_ranks(totals_desc, ranks_desc)
@@ -217,7 +239,7 @@ def estimate_live_rank(
     return LiveRankEstimate(
         estimated_rank=max(1, round(interpolated)), rank_lower_bound=round(lower),
         rank_upper_bound=round(upper), my_current_total=my_current_total,
-        sample_size=n, bracketed=True,
+        sample_size=n, bracketed=True, precision=precision,
     )
 
 

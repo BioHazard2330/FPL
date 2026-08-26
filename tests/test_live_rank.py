@@ -140,3 +140,28 @@ def test_estimate_live_rank_exact_at_sample_point_matches_that_anchor_exactly():
     estimate = estimate_live_rank(reference, my_current_total=40.0, total_players=1_000_000)
 
     assert estimate.estimated_rank == 300
+
+
+def test_estimate_live_rank_flags_approximate_when_ranks_are_mostly_page_level(monkeypatch):
+    """Real regression guard for a real bug found live (2026-08-27, direct
+    user report "live rank is fucked"): a real fetched FPL standings page
+    returned the IDENTICAL rank for every one of 50 distinct real entries -
+    a genuine external API granularity limit, not this project's bug. A
+    sample dominated by that kind of duplication must be flagged, not
+    presented as a falsely-precise number."""
+    # 20 distinct real entries, but only 2 truly distinct rank VALUES shared
+    # across all of them (a real page-level-granularity shape) - well below
+    # the 50%-distinct bar.
+    reference = [(100, 60.0 - i * 0.01) for i in range(10)] + [(500, 40.0 - i * 0.01) for i in range(10)]
+
+    estimate = estimate_live_rank(reference, my_current_total=50.0, total_players=1_000_000)
+
+    assert estimate.precision == "approximate"
+
+
+def test_estimate_live_rank_stays_precise_when_ranks_are_genuinely_distinct():
+    reference = [(100, 60.0), (150, 58.0), (200, 55.0), (250, 52.0), (300, 50.0), (350, 48.0)]
+
+    estimate = estimate_live_rank(reference, my_current_total=51.0, total_players=1_000_000)
+
+    assert estimate.precision == "precise"
