@@ -47,6 +47,7 @@ class TransferAction:
     kind: str  # "keep" | "transfer"
     candidate: TransferCandidate | None
     delta: float | None
+    qualitative_note: str | None = None  # set only on a real QUALITATIVE_WINS/UNDECIDED disagreement (decision_fusion.py)
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,9 @@ class SquadDecision:
     captain_action: CaptainAction
     transfer_action: TransferAction
     risks: list[str]
+
+
+_CAPTAIN_FORCE_CHANGE_LINEUP_STATES = ("CONFIRMED_BENCHED", "OUT_UNAVAILABLE")
 
 
 def _evaluate_captain(conn: sqlite3.Connection, locked: LockedSquadState) -> CaptainAction:
@@ -70,6 +74,24 @@ def _evaluate_captain(conn: sqlite3.Connection, locked: LockedSquadState) -> Cap
         # genuinely unresolved player) - report best on its own rather than
         # a fabricated delta against nothing.
         return CaptainAction("change", None, best, None)
+
+    # Real, decisive hard override (2026-08-22, automation-lifecycle pass,
+    # item 1's "decision context must automatically update"): a confirmed-
+    # benched or officially-unavailable captain is never "keep", independent
+    # of median xP - the expected_points model may not yet reflect a
+    # last-minute confirmed exclusion the way this project's own real
+    # lineup_state resolver already does. Falls back to the best OTHER real
+    # option when `best` itself happens to equal the excluded captain (the
+    # model hasn't caught up to the exclusion either).
+    from fpl_agent.models.lineup_state import resolve_lineup_state
+
+    lineup = resolve_lineup_state(conn, current_id, locked.event)
+    if lineup.state in _CAPTAIN_FORCE_CHANGE_LINEUP_STATES:
+        suggested = best if best.player_id != current.player_id else next(
+            (o for o in options if o.player_id != current_id), best
+        )
+        delta = round(suggested.median - current.median, 2) if suggested is not None else None
+        return CaptainAction("change", current, suggested, delta)
 
     delta = round(best.median - current.median, 2)
     if best.player_id == current.player_id or delta < _CAPTAIN_DELTA_THRESHOLD:
@@ -119,6 +141,29 @@ def _attach_qualitative_note(conn: sqlite3.Connection, squad_ids: list[int], cap
     return captain_action
 
 
+def _attach_transfer_qualitative_note(
+    conn: sqlite3.Connection, squad_ids: list[int], bank_tenths: int | None, transfer_action: TransferAction,
+) -> TransferAction:
+    """Same additive-only Decision Fusion wiring as
+    `_attach_qualitative_note` above, extended to transfers (section H's real
+    gap - captain had fusion, transfers didn't). Never changes the
+    keep/transfer verdict itself (stays pure quant EV, unchanged behavior/
+    tests) - only attaches an FYI note when the real comparison finds a
+    genuine disagreement worth surfacing. A no-op when the action is already
+    "keep" (nothing being sold to fuse a view about)."""
+    if transfer_action.kind != "transfer":
+        return transfer_action
+    from fpl_agent.models.decision_fusion import compare_transfer_views
+
+    try:
+        comparison = compare_transfer_views(conn, squad_ids, bank_tenths)
+    except Exception:
+        return transfer_action
+    if comparison.verdict in ("QUALITATIVE_WINS", "UNDECIDED"):
+        return dataclasses.replace(transfer_action, qualitative_note=comparison.explanation)
+    return transfer_action
+
+
 def evaluate_locked_squad(conn: sqlite3.Connection, locked: LockedSquadState) -> SquadDecision:
     """The real, computed-every-regen replacement for a manually-triggered
     `fpl transfers`/`fpl captain` run - the dashboard's AI Decisions panel
@@ -127,6 +172,7 @@ def evaluate_locked_squad(conn: sqlite3.Connection, locked: LockedSquadState) ->
     captain_action = _evaluate_captain(conn, locked)
     captain_action = _attach_qualitative_note(conn, sorted(locked.squad_ids), captain_action)
     transfer_action = _evaluate_transfer(conn, locked)
+    transfer_action = _attach_transfer_qualitative_note(conn, sorted(locked.squad_ids), locked.bank_tenths, transfer_action)
 
     from fpl_agent.models.availability import list_availability
     from fpl_agent.models.team_news_risk import flag_squad_rotation_risk

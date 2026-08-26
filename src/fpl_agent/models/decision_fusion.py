@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from fpl_agent.models.player_intelligence import player_intelligence
 from fpl_agent.optimization.captaincy import CaptainOption, evaluate_captaincy
+from fpl_agent.optimization.transfers import TransferCandidate, best_transfer_for_player
 
 # A qualitative "vote" for captain only counts from these real fpl_signal
 # categories - the ones actually about goal threat/creative involvement,
@@ -140,5 +141,122 @@ def compare_captain_views(conn, squad_ids: list[int]) -> CaptainViewComparison:
         model_pick=model_pick, model_reason=model_reason,
         qualitative_pick_id=qual_id, qualitative_pick_name=qual_name, qualitative_reason=qual_reason,
         user_pick_id=user_id, user_pick_name=user_name, user_reason=user_reason,
+        verdict=verdict, explanation=explanation,
+    )
+
+
+# Real gap this closes (found 2026-08-26, matches this project's own disclosed
+# gap in CLAUDE.md's "Post-match consistency pass" section): captain had real
+# Decision Fusion, transfers did not - "Transfer Watch still recommended
+# 'Tzolis -> Anderson' immediately after Tzolis's own real positive post-match
+# signal... without any fusion between the two." Same rule-based comparison as
+# captain (never a weighted-sum score), applied to the model's own proposed
+# transfer-OUT player specifically - the real question a transfer decision
+# needs fused evidence for is "should we actually sell this player", not "who
+# should we buy" (the model's replacement pick isn't itself in dispute).
+@dataclass(frozen=True)
+class TransferViewComparison:
+    model_candidate: TransferCandidate | None
+    model_reason: str
+    qualitative_direction: str | None
+    qualitative_reason: str | None
+    qualitative_persistent: bool
+    user_sentiment: str | None
+    user_reason: str | None
+    verdict: str
+    explanation: str
+
+
+def _qualitative_signal_for_outgoing_player(conn, player_id: int) -> tuple[str | None, str | None, bool]:
+    """Returns (direction, reason, is_persistent) for the most recent real
+    FULL_TIME qualitative signal about the player the model wants to sell -
+    any direction, not captaincy-scoped signals only (a transfer decision
+    cares about ROLE/MINUTES/FIXTURES signals just as much as GOAL_THREAT).
+    `is_persistent` uses the same qualitative_trends.py PERSISTENT_TREND
+    check captain's own comparison uses - a single match is real evidence,
+    not yet grounds to override the model on its own (spec's own "must earn
+    the override through evidence" line)."""
+    row = conn.execute(
+        "SELECT direction, signal, reason FROM player_fpl_implications "
+        "WHERE player_id=? AND phase='FULL_TIME' ORDER BY created_at DESC LIMIT 1",
+        (player_id,),
+    ).fetchone()
+    if row is None or row["direction"] is None:
+        return None, None, False
+    is_persistent = False
+    pi = player_intelligence(conn, player_id)
+    for t in pi.trends:
+        if t.signal == row["signal"] and t.label == "PERSISTENT_TREND" and t.current_direction == row["direction"]:
+            is_persistent = True
+            break
+    return row["direction"], row["reason"], is_persistent
+
+
+def _user_signal_for_player(conn, player_id: int) -> tuple[str | None, str | None]:
+    row = conn.execute(
+        "SELECT sentiment, note FROM user_observations WHERE subject_type='player' AND subject_id=? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (player_id,),
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row["sentiment"], row["note"]
+
+
+def compare_transfer_views(
+    conn, squad_ids: list[int], bank_tenths: int | None, n_gw: int = 3,
+) -> TransferViewComparison:
+    if bank_tenths is None:
+        return TransferViewComparison(
+            None, "no real bank figure known yet", None, None, False, None, None,
+            "INSUFFICIENT_EVIDENCE", "no real bank figure known yet - a transfer comparison needs a real budget",
+        )
+
+    squad_ids = sorted(squad_ids)
+    best_candidate: TransferCandidate | None = None
+    key = {1: "net_ev_1gw", 3: "net_ev_3gw", 5: "net_ev_5gw"}[n_gw]
+    for player_out_id in squad_ids:
+        for candidate in best_transfer_for_player(conn, player_out_id, squad_ids, bank_tenths, is_hit=False, n_gw=n_gw, top_n=1):
+            if best_candidate is None or getattr(candidate, key) > getattr(best_candidate, key):
+                best_candidate = candidate
+
+    if best_candidate is None:
+        return TransferViewComparison(
+            None, "no real positive-EV transfer found for this squad", None, None, False, None, None,
+            "INSUFFICIENT_EVIDENCE", "no real transfer candidate exists to compare views on",
+        )
+
+    model_reason = f"{best_candidate.player_out_name} -> {best_candidate.player_in_name} (+{getattr(best_candidate, key)} net EV over {n_gw}GW)"
+
+    qual_dir, qual_reason, qual_persistent = _qualitative_signal_for_outgoing_player(conn, best_candidate.player_out_id)
+    user_sentiment, user_reason = _user_signal_for_player(conn, best_candidate.player_out_id)
+
+    if user_sentiment == "positive":
+        verdict = "UNDECIDED"
+        explanation = (
+            f"you've noted a bullish view on {best_candidate.player_out_name} - the model "
+            f"suggests selling ({model_reason}), your call"
+        )
+    elif qual_dir == "POSITIVE" and qual_persistent:
+        verdict = "QUALITATIVE_WINS"
+        explanation = (
+            f"{best_candidate.player_out_name}'s real qualitative trend is a PERSISTENT positive signal "
+            f"({qual_reason}) - real evidence against selling, earns an override of the model's raw suggestion"
+        )
+    elif qual_dir == "POSITIVE" and not qual_persistent:
+        verdict = "MODEL_WINS"
+        explanation = (
+            f"a real positive qualitative signal exists for {best_candidate.player_out_name} ({qual_reason}) but "
+            f"it's only NEW_SIGNAL from one match, not yet a persistent trend - HOLD/REVIEW before acting on "
+            f"{model_reason}, rather than an earned override"
+        )
+    else:
+        verdict = "MODEL_WINS"
+        explanation = f"no real disagreement - {model_reason}"
+
+    return TransferViewComparison(
+        model_candidate=best_candidate, model_reason=model_reason,
+        qualitative_direction=qual_dir, qualitative_reason=qual_reason, qualitative_persistent=qual_persistent,
+        user_sentiment=user_sentiment, user_reason=user_reason,
         verdict=verdict, explanation=explanation,
     )

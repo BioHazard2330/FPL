@@ -93,6 +93,34 @@ def mark_job_status(conn: sqlite3.Connection, job_id: int, status: str, error: s
     conn.commit()
 
 
+def supersede_stale_halftime_jobs(conn: sqlite3.Connection) -> int:
+    """Real gap found 2026-08-26: a pending HALFTIME job for a match that has
+    since reached FULL_TIME (the common case once a session opens hours or
+    days after the actual match, e.g. this project's own GW1 backlog) has no
+    remaining value - the FULL_TIME analysis supersedes it entirely, and
+    spending real reasoning effort producing a "how it looked at halftime"
+    writeup for a match that finished days ago is exactly the wasted-noise
+    class of work section S/analysis-queue's own idempotency design is meant
+    to prevent. Marks such jobs 'skipped' (not 'done' - no analysis was
+    actually written, this must stay distinguishable from real completed
+    work) rather than silently deleting them, so the real automatic-detection
+    event that created them stays auditable. Returns the number superseded."""
+    rows = conn.execute(
+        "SELECT j.id FROM qualitative_analysis_jobs j JOIN match_intelligence mi ON mi.id = j.match_id "
+        "WHERE j.phase='HALFTIME' AND j.status IN ('pending','processing') AND mi.status='FULL_TIME'"
+    ).fetchall()
+    now = datetime.now(timezone.utc).isoformat()
+    for r in rows:
+        conn.execute(
+            "UPDATE qualitative_analysis_jobs SET status='skipped', "
+            "error='superseded by FULL_TIME analysis', processed_at=? WHERE id=?",
+            (now, r["id"]),
+        )
+    if rows:
+        conn.commit()
+    return len(rows)
+
+
 def mark_job_done_for_match_phase(conn: sqlite3.Connection, match_id: int, phase: str) -> None:
     """Called by `fpl match-analyze` right after a successful apply_match_
     analysis - closes the loop without match-analyze needing to know job

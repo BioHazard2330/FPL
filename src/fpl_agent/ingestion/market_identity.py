@@ -53,6 +53,15 @@ COMMON_TEAM_NAME_ALIASES = {
     "coventry": "Coventry City",
     "hull": "Hull City",
     "ipswich": "Ipswich Town",
+    # Real gap found 2026-08-26: FotMob's real GW1 payload names this club
+    # "AFC Bournemouth" - no alias existed, so away_team_id silently stayed
+    # NULL for the entire real Man City v Bournemouth match (match_intelligence
+    # id 1493, fotmob_match_id 5795370), which meant the match was never
+    # auto-registered as analyzable and its qualitative-analysis job was never
+    # created - the captain's (Haaland's) own GW1 match was invisible to the
+    # whole Pillar 4 pipeline as a direct result. Confirmed live against the
+    # real FotMob payload before fixing, not assumed.
+    "afc bournemouth": "Bournemouth",
 }
 
 

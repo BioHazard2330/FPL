@@ -109,6 +109,56 @@ def test_keep_when_no_transfer_clears_the_real_materiality_threshold(db_conn, mo
     assert decision.transfer_action.kind == "keep"
 
 
+# --- Real hard override: confirmed-benched/out captain is never "keep" (2026-08-22) ---
+
+def _stub_lineup_state(monkeypatch, states: dict):
+    import fpl_agent.models.lineup_state as ls_mod
+    from fpl_agent.models.lineup_state import LineupState
+
+    def fake_resolve(conn, player_id, event):
+        state = states.get(player_id, "UNKNOWN")
+        return LineupState(player_id, state, None, "test")
+
+    monkeypatch.setattr(ls_mod, "resolve_lineup_state", fake_resolve)
+
+
+def test_captain_forced_to_change_when_confirmed_benched_even_if_still_the_best_median(db_conn, monkeypatch):
+    """A real, decisive override: the captain's own median might still look
+    best (the projection model hasn't caught up to a last-minute confirmed
+    exclusion), but a confirmed-benched captain is never "keep"."""
+    locked = _locked(captain_id=1)
+    _stub_common(monkeypatch, [_captain_option(1, 5.0), _captain_option(2, 3.0)], {})
+    _stub_lineup_state(monkeypatch, {1: "CONFIRMED_BENCHED"})
+
+    decision = evaluate_locked_squad(db_conn, locked)
+
+    assert decision.captain_action.kind == "change"
+    assert decision.captain_action.suggested.player_id == 2  # the best real alternative, not the excluded captain
+
+
+def test_captain_forced_to_change_when_out_unavailable(db_conn, monkeypatch):
+    locked = _locked(captain_id=1)
+    _stub_common(monkeypatch, [_captain_option(2, 7.0), _captain_option(1, 5.0)], {})
+    _stub_lineup_state(monkeypatch, {1: "OUT_UNAVAILABLE"})
+
+    decision = evaluate_locked_squad(db_conn, locked)
+
+    assert decision.captain_action.kind == "change"
+    assert decision.captain_action.suggested.player_id == 2
+
+
+def test_captain_kept_when_predicted_start_not_confirmed_benched(db_conn, monkeypatch):
+    """The override only fires on a real CONFIRMED_BENCHED/OUT_UNAVAILABLE
+    state - a merely predicted or unconfirmed state must not trigger it."""
+    locked = _locked(captain_id=1)
+    _stub_common(monkeypatch, [_captain_option(1, 5.0), _captain_option(2, 4.9)], {})
+    _stub_lineup_state(monkeypatch, {1: "PREDICTED_START"})
+
+    decision = evaluate_locked_squad(db_conn, locked)
+
+    assert decision.captain_action.kind == "keep"
+
+
 def test_transfer_recommended_when_a_real_candidate_clears_the_threshold(db_conn, monkeypatch):
     strong = TransferCandidate(
         player_out_id=2, player_out_name="P2", player_in_id=99, player_in_name="P99",

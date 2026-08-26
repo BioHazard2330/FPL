@@ -55,7 +55,6 @@ from fpl_agent.ingestion.lineup_probability_source import (
 from fpl_agent.models.team_outlook import squad_team_outlooks
 from fpl_agent.ingestion.fotmob_source import (
     FotMobFetchError,
-    maybe_enqueue_analysis,
     refresh_in_progress_matches,
     sync_match,
 )
@@ -66,7 +65,9 @@ from fpl_agent.ingestion.qualitative_analysis import (
 )
 from fpl_agent.ingestion.analysis_queue import list_pending_jobs, mark_job_done_for_match_phase
 from fpl_agent.models.match_discovery import discover_and_register_matches
+from fpl_agent.optimization.post_gw_pipeline import maybe_run_post_gw_pipeline
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
+from fpl_agent.ingestion.player_odds_source import PlayerOddsFetchError, sync_player_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
@@ -295,6 +296,26 @@ def sync_live_odds_cmd():
     click.echo(f"failed           {result['failed']}")
 
 
+@cli.command("sync-player-odds")
+def sync_player_odds_cmd():
+    """Fetch real per-player anytime-goalscorer odds for the tracked squad's own
+    teams' upcoming fixtures (the-odds-api.com, free tier, requires ODDS_API_KEY).
+    Real, per-fixture throttled (4h freshness gate) - already wired into `fpl
+    run-scheduled` automatically; this command is for manual/debug use."""
+    conn = get_connection()
+    tracked_squad_ids = resolve_tracked_squad_ids(conn)
+    try:
+        result = sync_player_odds(conn, tracked_squad_ids)
+    except PlayerOddsFetchError as e:
+        click.echo(f"sync-player-odds failed: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    click.echo(f"fetched (fresh)  {result['fetched']}")
+    click.echo(f"skipped (fresh)  {result['skipped']}")
+    click.echo(f"failed           {result['failed']}")
+
+
 @cli.command("team-news")
 @click.option("--limit", default=20, type=int, help="max articles to show")
 def team_news_cmd(limit: int):
@@ -491,6 +512,8 @@ def analysis_queue_cmd(pending: bool):
     this project (`.claude/hooks/queue_check.py`) so a pending job is never
     silently missed."""
     conn = get_connection()
+    from fpl_agent.ingestion.analysis_queue import supersede_stale_halftime_jobs
+    supersede_stale_halftime_jobs(conn)
     if pending:
         jobs = list_pending_jobs(conn)
     else:
@@ -525,6 +548,34 @@ def analysis_queue_cmd(pending: bool):
             f"then write the skill's JSON and run: fpl match-analyze {j.fotmob_match_id} "
             f"--phase {j.phase.lower()} --file <path.json>"
         )
+
+
+@cli.command("post-gw-pipeline")
+def post_gw_pipeline_cmd():
+    """Manually trigger the deterministic post-GW pipeline check
+    (automation-lifecycle pass, 2026-08-22) - the exact same
+    `maybe_run_post_gw_pipeline` call `fpl run-scheduled`/`fpl
+    live-match-poll` already fire automatically once a real gameweek
+    finishes (see `models/gw_lifecycle.py` for the real guard against
+    declaring one finished on incomplete/degraded data). No network sync
+    happens here - this is a real, network-free entry point into the
+    pipeline itself, useful for manual/scripted invocation and for testing
+    the pipeline in isolation from the regular sync cycle."""
+    conn = get_connection()
+    try:
+        result = maybe_run_post_gw_pipeline(conn)
+    finally:
+        conn.close()
+    if result is None:
+        click.echo("no-op - the real lifecycle state doesn't currently need the post-GW pipeline")
+        return
+    click.echo(f"ran={result.ran} event={result.event} reason={result.reason} decision_id={result.decision_id}")
+    if result.ran:
+        try:
+            _write_dashboard()
+            click.echo("dashboard regenerated")
+        except Exception as e:
+            click.echo(f"dashboard regen failed: {e}", err=True)
 
 
 @cli.command("match-analyze")
@@ -739,21 +790,23 @@ def manager_intelligence_cmd(team_id: int):
 
 @cli.command("decision-fusion")
 @click.option("--squad", required=True, help="comma-separated player ids (from fpl build-squad)")
-def decision_fusion_cmd(squad: str):
-    """Model vs Football Intelligence vs My View - captain decision only
-    (2026-08-22, spec section 26/27). Rule-based, never an arbitrary score:
-    shows the quant model's pick, the qualitative read's pick (only when a
-    real PERSISTENT trend exists, not a one-match blip), and your own
-    recorded observation (`fpl match-note`), then a verdict - MODEL_WINS /
-    QUALITATIVE_WINS / UNDECIDED / INSUFFICIENT_EVIDENCE - with a real,
-    disclosed reason. Never auto-resolves a genuine disagreement with your
-    own recorded view (recommend only, per this project's standing rule)."""
-    from fpl_agent.models.decision_fusion import compare_captain_views
+@click.option("--bank", default=None, type=int, help="bank in tenths of a million (for transfer fusion; omitted = transfer fusion skipped)")
+def decision_fusion_cmd(squad: str, bank: int | None):
+    """Model vs Football Intelligence vs My View - captain AND transfer
+    decisions (2026-08-22 captain, 2026-08-26 transfer). Rule-based, never
+    an arbitrary score: shows the quant model's pick, the qualitative read's
+    pick (only when a real PERSISTENT trend exists, not a one-match blip),
+    and your own recorded observation (`fpl match-note`), then a verdict -
+    MODEL_WINS / QUALITATIVE_WINS / UNDECIDED / INSUFFICIENT_EVIDENCE - with
+    a real, disclosed reason. Never auto-resolves a genuine disagreement with
+    your own recorded view (recommend only, per this project's standing rule)."""
+    from fpl_agent.models.decision_fusion import compare_captain_views, compare_transfer_views
 
     player_ids = [int(x) for x in squad.split(",")]
     conn = get_connection()
     try:
         comparison = compare_captain_views(conn, player_ids)
+        transfer_comparison = compare_transfer_views(conn, player_ids, bank) if bank is not None else None
     finally:
         conn.close()
 
@@ -768,6 +821,22 @@ def decision_fusion_cmd(squad: str):
                + (f" - {comparison.user_reason}" if comparison.user_reason else ""))
     click.echo(f"  Verdict:     {comparison.verdict}")
     click.echo(f"  Why:         {comparison.explanation}")
+
+    click.echo()
+    click.echo("TRANSFER - Model vs Football Intelligence vs My View")
+    if transfer_comparison is None:
+        click.echo("  (pass --bank <tenths> to evaluate transfer fusion)")
+        return
+    if transfer_comparison.model_candidate:
+        click.echo(f"  Model:       {transfer_comparison.model_reason}")
+    else:
+        click.echo(f"  Model:       (none) - {transfer_comparison.model_reason}")
+    click.echo(f"  Football:    {transfer_comparison.qualitative_direction or '(no qualitative signal)'}"
+               + (f" - {transfer_comparison.qualitative_reason}" if transfer_comparison.qualitative_reason else ""))
+    click.echo(f"  My view:     {transfer_comparison.user_sentiment or '(no recorded observation)'}"
+               + (f" - {transfer_comparison.user_reason}" if transfer_comparison.user_reason else ""))
+    click.echo(f"  Verdict:     {transfer_comparison.verdict}")
+    click.echo(f"  Why:         {transfer_comparison.explanation}")
 
 
 @cli.command("manager-changes")
@@ -1027,18 +1096,56 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled kickoff reminder detection failed - not fatal to the sync itself")
 
+    # Live pre-match odds (dashboard-overhaul pass, 2026-08-22) - was a
+    # standalone/manual-only command (`fpl sync-live-odds`) despite feeding
+    # the real Team Odds panel; wired in here so that panel updates itself
+    # automatically, same "no manual command required" bar every other
+    # source in this project already meets. One bulk call covers every
+    # upcoming fixture (2 real credits per CLAUDE.md's own documented cost)
+    # - cheap enough for the regular ~30min cadence, unlike the per-event
+    # player-odds sync below. Non-fatal (no key configured, or a real
+    # network failure, must never abort the sync).
+    try:
+        odds_result = sync_live_odds(conn)
+        logger.info(
+            "run-scheduled live-odds sync: %d matched, %d unmatched, %d failed",
+            odds_result["matched"], odds_result["unmatched"], odds_result["failed"],
+        )
+    except Exception:
+        logger.exception("run-scheduled live-odds sync failed - not fatal to the sync itself")
+
+    # Real per-event anytime-goalscorer odds (dashboard-overhaul pass,
+    # 2026-08-22) - unlike the bulk match-odds call above, this needs one
+    # real network request PER FIXTURE (live-verified: 1 credit/event) -
+    # syncing every ~30min tick for even a handful of squad-relevant
+    # fixtures would burn a free-tier 500-credit/month budget in about a
+    # day. `sync_player_odds` throttles itself internally (a real
+    # retrieved_at freshness gate per fixture, checked before any network
+    # call), so it's safe to call every tick - most ticks it's a real no-op.
+    try:
+        player_odds_result = sync_player_odds(conn, tracked_squad_ids)
+        if player_odds_result["fetched"]:
+            logger.info(
+                "run-scheduled player-odds sync: %d fetched, %d skipped (fresh), %d failed",
+                player_odds_result["fetched"], player_odds_result["skipped"], player_odds_result["failed"],
+            )
+    except Exception:
+        logger.exception("run-scheduled player-odds sync failed - not fatal to the sync itself")
+
     # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
     # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new
     # "tracked match" registry: re-syncs any not-yet-FULL_TIME match_intelligence
     # row within a bounded recent window, using the team names already
     # stored. Non-fatal on failure, same posture as every other step here.
     try:
-        mi_result = refresh_in_progress_matches(conn)
+        mi_result = refresh_in_progress_matches(conn, tracked_squad_ids)
         if mi_result["refreshed"]:
             logger.info(
                 "run-scheduled match-intelligence refresh: %d refreshed, %d skipped, %d failed",
                 mi_result["refreshed"], mi_result["skipped"], mi_result["failed"],
             )
+        from fpl_agent.ingestion.analysis_queue import supersede_stale_halftime_jobs
+        supersede_stale_halftime_jobs(conn)
     except Exception:
         logger.exception("run-scheduled match-intelligence refresh failed - not fatal to the sync itself")
 
@@ -1059,6 +1166,21 @@ def run_scheduled():
             )
     except Exception:
         logger.exception("run-scheduled match discovery failed - not fatal to the sync itself")
+
+    # Post-GW pipeline (automation-lifecycle pass, 2026-08-22) - a cheap,
+    # idempotent no-op unless the real lifecycle state says a gameweek has
+    # genuinely finished (all real fixtures resolved AND the fixtures source
+    # itself is healthy - see models/gw_lifecycle.py's own guard) and the
+    # pipeline hasn't already completed for it. Never fatal to the sync.
+    try:
+        pipeline_result = maybe_run_post_gw_pipeline(conn)
+        if pipeline_result is not None and pipeline_result.ran:
+            logger.info(
+                "run-scheduled post-GW pipeline: event=%s decision_id=%s",
+                pipeline_result.event, pipeline_result.decision_id,
+            )
+    except Exception:
+        logger.exception("run-scheduled post-GW pipeline failed - not fatal to the sync itself")
 
     conn.close()
 
@@ -1092,6 +1214,55 @@ def run_scheduled():
         conn2.close()
     except Exception:
         logger.exception("run-scheduled my-team sync failed - not fatal to the sync itself")
+
+    # Real gap found 2026-08-26 (section R of a GW1-postmortem ask): no
+    # persistent record of "what did the model predict" existed anywhere -
+    # once a gameweek's real results land, that prediction can never be
+    # honestly reconstructed again. Captures the locked squad's real
+    # expected_points() once, right when the lifecycle genuinely reaches
+    # LOCKED (deadline passed, kickoff not yet) - idempotent per (player,
+    # event), so a real prediction is written exactly once, never
+    # overwritten with a later, hindsight-influenced number. Non-fatal.
+    try:
+        from fpl_agent.models.calibration import record_predictions_for_locked_squad
+        from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state as _gw_state
+        from fpl_agent.optimization.locked_squad import get_locked_squad as _get_locked
+
+        conn6 = get_connection()
+        lifecycle = _gw_state(conn6)
+        if lifecycle is not None and lifecycle.state == "LOCKED":
+            locked_for_pred = _get_locked(conn6)
+            if locked_for_pred is not None:
+                n_written = record_predictions_for_locked_squad(
+                    conn6, lifecycle.event, sorted(locked_for_pred.squad_ids)
+                )
+                if n_written:
+                    logger.info("run-scheduled prediction capture: %d player(s) recorded for event %s",
+                                n_written, lifecycle.event)
+        conn6.close()
+    except Exception:
+        logger.exception("run-scheduled prediction capture failed - not fatal to the sync itself")
+
+    # Real gap found 2026-08-26 (section K of a GW1-postmortem ask): `fpl
+    # live-rank` was opt-in only, so it never refreshed unless a human
+    # remembered to run it by hand - confirmed live, the last real sample
+    # was 4 days stale by the time this was checked. Auto-refreshes here,
+    # but ONLY while a squad fixture is genuinely live-or-just-finished
+    # (the same cheap started=1 gate `_maybe_fetch_live_payload` already
+    # uses - zero network cost the rest of the time, which is most of a
+    # season) AND at most once per _LIVE_RANK_MIN_REFRESH_MINUTES, so a
+    # short scheduler interval can't turn this into the heaviest network
+    # pattern in the project running every single cycle. Non-fatal on
+    # failure, same posture as every other step here.
+    try:
+        conn5 = get_connection()
+        refreshed = _maybe_refresh_live_rank(conn5)
+        if refreshed is not None:
+            logger.info("run-scheduled live-rank refresh: decision_id=%s rank=~%s",
+                        refreshed["decision_id"], refreshed["estimated_rank"])
+        conn5.close()
+    except Exception:
+        logger.exception("run-scheduled live-rank refresh failed - not fatal to the sync itself")
 
     # Delivered last, after every detection step above has had a chance to
     # write a real change_events row this cycle - see this function's own
@@ -1148,6 +1319,107 @@ def _maybe_fetch_live_payload(conn) -> dict | None:
         return None
     update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
     return payload
+
+
+_LIVE_RANK_MIN_REFRESH_MINUTES = 20
+_LIVE_RANK_AUTO_SAMPLE_SIZE = 200  # smaller than the manual CLI default (300) - this path can fire repeatedly across a live day
+
+
+def _maybe_refresh_live_rank(conn) -> dict | None:
+    """The automatic half of `fpl live-rank` (section K's real gap: it was
+    opt-in only, so it never refreshed unless a human ran it by hand - see
+    the call site in run_scheduled for the full real story). Deliberately
+    inlines the CLI command's own core logic rather than importing/calling
+    `live_rank_cmd` directly - that command's error paths are `click.echo`
+    + `SystemExit`, appropriate for an interactive command, wrong for a
+    scheduled background step that must stay non-fatal. Returns None on any
+    real reason not to run (no entry id, not genuinely live, too soon since
+    the last refresh, no real picks/points yet, sample came back empty) -
+    every one of those is a legitimate, expected state, not an error."""
+    entry_id = get_my_team_entry_id(conn)
+    if entry_id is None:
+        return None
+    event_num = live_or_reference_event(conn)
+    if event_num is None:
+        return None
+    started_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
+    ).fetchone()
+    if not started_row or not started_row["n"]:
+        return None
+
+    last = conn.execute(
+        "SELECT created_at FROM decisions WHERE decision_type='live_rank' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if last is not None and last["created_at"]:
+        from datetime import datetime, timezone
+        try:
+            last_ts = datetime.fromisoformat(last["created_at"].replace("Z", "+00:00"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            age_minutes = (datetime.now(timezone.utc) - last_ts).total_seconds() / 60
+            if age_minutes < _LIVE_RANK_MIN_REFRESH_MINUTES:
+                return None
+        except ValueError:
+            pass
+
+    try:
+        sync_my_team(conn, entry_id, event=event_num)
+    except SourceFetchError:
+        return None
+
+    my_picks = [
+        (r["player_id"], r["multiplier"])
+        for r in conn.execute(
+            "SELECT player_id, multiplier FROM my_team_picks WHERE entry_id=? AND event=?",
+            (entry_id, event_num),
+        ).fetchall()
+    ]
+    gw_summary = conn.execute(
+        "SELECT total_points, points FROM my_team_gw_summary WHERE entry_id=? AND event=?",
+        (entry_id, event_num),
+    ).fetchone()
+    if not my_picks or gw_summary is None or gw_summary["total_points"] is None:
+        return None
+
+    try:
+        live_payload = FPLApiAdapter().fetch_event_live(event_num).data
+    except SourceFetchError as e:
+        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        return None
+    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+
+    pre_gw_total = gw_summary["total_points"] - (gw_summary["points"] or 0)
+    my_live_points = estimate_squad_live_points(my_picks, live_payload)
+    my_current_total = pre_gw_total + my_live_points
+
+    try:
+        sample_live_rank_reference(
+            conn, event_num, live_payload, target_sample_size=_LIVE_RANK_AUTO_SAMPLE_SIZE, force=True,
+        )
+    except ValueError:
+        return None
+    reference = get_live_rank_reference(conn, event_num)
+    if not reference:
+        return None
+
+    total_players_row = conn.execute("SELECT value FROM app_meta WHERE key='total_players'").fetchone()
+    total_players = int(total_players_row["value"]) if total_players_row else 11_000_000
+    estimate = estimate_live_rank(reference, my_current_total, total_players)
+
+    decision_id = log_decision(
+        conn, "live_rank",
+        summary=f"estimated live rank ~{estimate.estimated_rank:,} (event {event_num}, {my_current_total:.0f} pts)",
+        detail={
+            "entry_id": entry_id, "event": event_num, "pre_gw_total": pre_gw_total,
+            "live_points": my_live_points, "current_total": my_current_total,
+            "estimated_rank": estimate.estimated_rank, "rank_lower_bound": estimate.rank_lower_bound,
+            "rank_upper_bound": estimate.rank_upper_bound, "sample_size": estimate.sample_size,
+            "bracketed": estimate.bracketed,
+        },
+        confidence="low",
+    )
+    return {"decision_id": decision_id, "estimated_rank": estimate.estimated_rank}
 
 
 def _write_dashboard(
@@ -1627,6 +1899,12 @@ def live_match_poll_cmd(interval: int, max_hours: float):
     - the qualitative Slice A2 analysis itself stays a separate, deliberate
     skill invocation once `fpl match-report` shows FULL_TIME, unchanged)."""
     conn = get_connection()
+    # Resolved once, not re-resolved every tick - matches run_scheduled's own
+    # pattern (2026-08-22, automation-lifecycle pass). Threaded into every
+    # sync_match call below so a real lineup-confirmation transition fires
+    # its change_events row within this loop's own fast cadence, not only on
+    # the slower run-scheduled tick.
+    tracked_squad_ids = resolve_tracked_squad_ids(conn)
     stop_at = time.monotonic() + max_hours * 3600
     consecutive_failures = 0
     pre_kickoff_interval = max(interval * 4, 60)
@@ -1673,7 +1951,7 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                 except ValueError:
                     continue
                 try:
-                    result = sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
+                    result = sync_match(conn, row["home_name"], row["away_name"], kickoff.date(), tracked_squad_ids)
                 except FotMobFetchError as e:
                     any_failure = True
                     last_success_row = conn.execute(
@@ -1685,11 +1963,12 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                         f"({e}) - last known state kept, last real update {last_success or 'unknown'}", err=True,
                     )
                     continue
-                maybe_enqueue_analysis(conn, row["id"], row["prior_status"], row["home_name"], row["away_name"], result)
                 if result["status"] in ("LIVE", "HALFTIME"):
                     any_live = True
                 elif result["status"] == "FULL_TIME" and row["prior_status"] != "FULL_TIME":
                     any_full_time_transition = True
+                    from fpl_agent.ingestion.analysis_queue import supersede_stale_halftime_jobs
+                    supersede_stale_halftime_jobs(conn)
                     click.echo(
                         f"{row['home_name']} v {row['away_name']}: FULL_TIME - final sync done, "
                         "stopping fast polling for this match. Qualitative analysis job queued - "
@@ -1701,6 +1980,24 @@ def live_match_poll_cmd(interval: int, max_hours: float):
             # but the actual `dashboard.html` file the user has open only got
             # regenerated by the separate 30-min `run-scheduled` cadence -
             # the browser's own 60s auto-refresh was reloading the SAME stale
+            # Post-GW pipeline (automation-lifecycle pass, 2026-08-22) - only
+            # worth checking right after a real FULL_TIME transition (the one
+            # moment the real lifecycle state could have just become eligible
+            # for it); a cheap, idempotent no-op otherwise (e.g. this match
+            # finished but others in the same gameweek haven't yet). Runs
+            # BEFORE the dashboard regen below so a completed post-GW plan
+            # shows up in the very same regen, not one tick later.
+            if any_full_time_transition:
+                try:
+                    pipeline_result = maybe_run_post_gw_pipeline(conn)
+                    if pipeline_result is not None and pipeline_result.ran:
+                        click.echo(
+                            f"live-match-poll: post-GW pipeline complete for event {pipeline_result.event} "
+                            f"(decision_id={pipeline_result.decision_id})"
+                        )
+                except Exception as e:
+                    click.echo(f"live-match-poll: post-GW pipeline failed this tick ({e}) - continuing", err=True)
+
             # file most of the time during a live match. Regenerate here too,
             # but only when something actually changed (a match genuinely
             # live, or a real FULL_TIME transition this tick) - never on a

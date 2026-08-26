@@ -89,6 +89,7 @@ from fpl_agent.models.minutes_distribution import (
 )
 from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
 from fpl_agent.models.player_regression import (
+    live_season_shrunk_rate,
     player_share_of_team_xg,
     player_shrunk_rates,
     season_shrunk_rate,
@@ -498,6 +499,32 @@ def _player_match_rates(
             shrunk_goals90 = cross_league["goals_per90"]
             shrunk_xa90 = cross_league["xa_per90"]
             goals_source = "cross_league"
+
+        # Real gap found 2026-08-26 (Tzolis: a real GW1 assist/0.19xG/0.14xA
+        # already sitting in player_stats_snapshot, official Tier 1 data,
+        # never read here - his own real current-season output never fed his
+        # own rate, only a stale prior-season/cross-league guess did). Once a
+        # real current-season snapshot with real minutes exists, it beats
+        # both season_shrunk_rate (an old/foreign-league prior) and
+        # cross_league (a different player pool entirely) - it's the freshest
+        # real evidence about THIS player in THE PL right now. LIVE ONLY:
+        # as_of_date is not None during a walk-forward backtest replay, and
+        # player_stats_snapshot has no historical index to replay against -
+        # same leakage boundary expected_minutes()'s live-only overrides use.
+        if as_of_date is None:
+            live_row = conn.execute(
+                "SELECT minutes FROM player_stats_snapshot WHERE player_id=? "
+                "ORDER BY retrieved_at DESC LIMIT 1",
+                (player_id,),
+            ).fetchone()
+            if live_row is not None and (live_row["minutes"] or 0) > 0:
+                shrunk_goals90 = live_season_shrunk_rate(
+                    conn, player_id, "goals_scored", position, before_season
+                ).shrunk_per90
+                shrunk_xa90 = live_season_shrunk_rate(
+                    conn, player_id, "expected_assists", position, before_season
+                ).shrunk_per90
+                goals_source = "current_season_live_snapshot"
 
         # Cards has no season-grain fallback via season_shrunk_rate: FPL's own
         # season-totals endpoint (player_season_history, history_past) carries

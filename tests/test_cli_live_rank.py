@@ -1,7 +1,7 @@
 from click.testing import CliRunner
 
 import fpl_agent.ingestion.fpl_api as fpl_api_mod
-from fpl_agent.cli.main import cli
+from fpl_agent.cli.main import _maybe_refresh_live_rank, cli
 from fpl_agent.ingestion.fpl_api import RawFetch
 from fpl_agent.ingestion.my_team import set_my_team_entry_id
 
@@ -109,6 +109,121 @@ def test_live_rank_end_to_end_with_a_real_reference_sample(monkeypatch, db_conn)
     # for the reference manager needed.
     count = db_conn.execute("SELECT COUNT(*) AS n FROM live_rank_sample WHERE event=1").fetchone()["n"]
     assert count == 1
+
+
+def _seed_fixture(conn, event_id, started):
+    conn.execute(
+        "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,team_h_score,team_a_score,"
+        "team_h_difficulty,team_a_difficulty,finished,started,updated_at) "
+        "VALUES (1,1,?,'t0',1,1,NULL,NULL,2,2,0,?,'t0')",
+        (event_id, int(started)),
+    )
+    conn.commit()
+
+
+def _wire_live_rank_mocks(monkeypatch):
+    def fake_fetch_entry_info(self, entry_id):
+        return _fake_raw(f"fpl_api_entry_{entry_id}", {
+            "player_first_name": "Test", "player_last_name": "Manager",
+            "player_region_name": "NL", "favourite_team": 1, "joined_time": "t0", "started_event": 1,
+        })
+
+    def fake_fetch_entry_history(self, entry_id):
+        return _fake_raw(f"fpl_api_entry_history_{entry_id}", {"past": [], "current": []})
+
+    def fake_fetch_entry_picks(self, entry_id, event):
+        if entry_id == 12345:
+            return _fake_raw(f"fpl_api_entry_picks_{entry_id}_{event}", {
+                "active_chip": None,
+                "entry_history": {"event": event, "points": 0, "total_points": 1000, "overall_rank": None,
+                                   "bank": 0, "value": 1000, "event_transfers": 0, "event_transfers_cost": 0,
+                                   "points_on_bench": 0},
+                "picks": [{"element": 1, "position": 1, "multiplier": 2, "is_captain": True, "is_vice_captain": False}],
+            })
+        return _fake_raw(f"fpl_api_entry_picks_{entry_id}_{event}", {
+            "active_chip": None,
+            "entry_history": {"event": event, "points": 0, "total_points": 900, "overall_rank": None,
+                               "bank": 0, "value": 1000, "event_transfers": 0, "event_transfers_cost": 0,
+                               "points_on_bench": 0},
+            "picks": [{"element": 1, "position": 1, "multiplier": 1, "is_captain": False, "is_vice_captain": False}],
+        })
+
+    def fake_fetch_league_standings(self, league_id, page):
+        return _fake_raw(f"fpl_api_league_standings_{league_id}_p{page}", {
+            "standings": {"page": page, "results": [{"entry": 999, "rank": 500}]},
+        })
+
+    def fake_fetch_event_live(self, event):
+        return _fake_raw(f"fpl_api_event_live_{event}", {"elements": [{"id": 1, "stats": {"total_points": 5}}]})
+
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_info", fake_fetch_entry_info)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_history", fake_fetch_entry_history)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_picks", fake_fetch_entry_picks)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_league_standings", fake_fetch_league_standings)
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_event_live", fake_fetch_event_live)
+
+
+def test_maybe_refresh_live_rank_runs_automatically_when_genuinely_live(monkeypatch, db_conn):
+    """Section K's real gap: live rank never refreshed unless a human ran
+    `fpl live-rank` by hand. This is the automatic half, wired into
+    run_scheduled - proves it fires for real (mocked network only) the
+    moment a squad fixture is genuinely in progress."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [1])
+    _seed_fixture(db_conn, event_id=1, started=True)
+    db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000000', 't0')")
+    db_conn.commit()
+    set_my_team_entry_id(db_conn, 12345)
+    _wire_live_rank_mocks(monkeypatch)
+
+    result = _maybe_refresh_live_rank(db_conn)
+
+    assert result is not None
+    assert result["decision_id"] is not None
+    row = db_conn.execute("SELECT decision_type FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["decision_type"] == "live_rank"
+
+
+def test_maybe_refresh_live_rank_is_a_real_noop_outside_a_live_window(monkeypatch, db_conn):
+    """Zero network cost outside a live/just-finished window - matches
+    _maybe_fetch_live_payload's own established gate, not a new heuristic."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [1])
+    _seed_fixture(db_conn, event_id=1, started=False)
+    db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000000', 't0')")
+    db_conn.commit()
+    set_my_team_entry_id(db_conn, 12345)
+    _wire_live_rank_mocks(monkeypatch)
+
+    result = _maybe_refresh_live_rank(db_conn)
+
+    assert result is None
+    assert db_conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 0
+
+
+def test_maybe_refresh_live_rank_throttles_within_the_minimum_refresh_window(monkeypatch, db_conn):
+    """A real, recent live_rank decision (within _LIVE_RANK_MIN_REFRESH_MINUTES)
+    must suppress a resample even while genuinely live - the heaviest
+    network call in this project must not fire on every scheduled tick."""
+    from datetime import datetime, timezone
+
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    _seed_players(db_conn, [1])
+    _seed_fixture(db_conn, event_id=1, started=True)
+    db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000000', 't0')")
+    now = datetime.now(timezone.utc).isoformat()
+    db_conn.execute(
+        "INSERT INTO decisions (decision_type, summary, detail, confidence, created_at) "
+        "VALUES ('live_rank', 'prior estimate', '{}', 'low', ?)", (now,),
+    )
+    db_conn.commit()
+    set_my_team_entry_id(db_conn, 12345)
+    _wire_live_rank_mocks(monkeypatch)
+
+    result = _maybe_refresh_live_rank(db_conn)
+
+    assert result is None
+    assert db_conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 1
 
 
 def test_live_rank_fails_cleanly_with_no_entry_id(monkeypatch, db_conn):

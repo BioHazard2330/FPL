@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fpl_agent.ingestion.change_detection import (
+    detect_lineup_confirmations,
     detect_player_lifecycle_changes,
     detect_predicted_lineup_status_changes,
     detect_price_changes,
@@ -370,3 +371,88 @@ def test_kickoff_reminder_does_not_fire_outside_the_window_or_for_other_teams(db
     near_kickoff = now_dt + timedelta(minutes=30)
     _insert_fixture_row(db_conn, 2, 1, 2, near_kickoff.isoformat().replace("+00:00", "Z"))
     assert detect_upcoming_kickoffs(db_conn, set(), now_dt) == 0
+
+
+# --- Real "lineup just confirmed" detection (2026-08-22, automation-lifecycle pass) ---
+
+def _seed_match_intelligence(conn, match_id, fpl_fixture_id, home_team_id, away_team_id, status="PRE_MATCH"):
+    conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, fpl_fixture_id, home_team_id, away_team_id, "
+        "status, retrieved_at) VALUES (?,?,?,?,?,?,'t0')",
+        (match_id, str(match_id), fpl_fixture_id, home_team_id, away_team_id, status),
+    )
+    conn.commit()
+
+
+def _seed_second_player(conn, player_id, team_id):
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        "VALUES (?,?,?,?,1,'a',0,'t0')",
+        (player_id, player_id, f"P{player_id}", team_id),
+    )
+    conn.commit()
+
+
+def test_lineup_confirmed_fires_once_for_a_confirmed_starter(db_conn):
+    bootstrap = make_bootstrap()
+    _seed_two_teams(db_conn, bootstrap, "t0")  # player 1 on team 1
+    _insert_fixture_row(db_conn, 1, 1, 2, "2026-08-22T14:00:00Z")
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2)
+    db_conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, source, "
+        "retrieved_at, confidence) VALUES (1, 1, '1', 1, 1, 'fotmob', 't0', 'medium')"
+    )
+    db_conn.commit()
+
+    fired = detect_lineup_confirmations(db_conn, {1}, match_id=1, now="t1")
+    db_conn.commit()
+    assert fired == 1
+
+    events = _events(db_conn)
+    lineup_events = [e for e in events if e["event_type"] == "lineup_confirmed"]
+    assert len(lineup_events) == 1
+    assert lineup_events[0]["severity"] == "MEDIUM"  # confirmed starting
+
+    # A second poll of the same already-confirmed match must not re-fire.
+    fired_again = detect_lineup_confirmations(db_conn, {1}, match_id=1, now="t2")
+    db_conn.commit()
+    assert fired_again == 0
+
+
+def test_lineup_confirmed_is_high_severity_when_benched(db_conn):
+    bootstrap = make_bootstrap()
+    _seed_two_teams(db_conn, bootstrap, "t0")
+    _seed_second_player(db_conn, 2, team_id=1)  # same team, not in the confirmed XI
+    _insert_fixture_row(db_conn, 1, 1, 2, "2026-08-22T14:00:00Z")
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2)
+    db_conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, source, "
+        "retrieved_at, confidence) VALUES (1, 1, '1', 1, 1, 'fotmob', 't0', 'medium')"
+    )
+    db_conn.commit()
+
+    fired = detect_lineup_confirmations(db_conn, {2}, match_id=1, now="t1")
+    db_conn.commit()
+    assert fired == 1
+
+    events = [e for e in _events(db_conn) if e["event_type"] == "lineup_confirmed"]
+    assert len(events) == 1
+    assert events[0]["severity"] == "HIGH"  # confirmed benched
+
+
+def test_lineup_confirmed_ignores_players_outside_tracked_squad(db_conn):
+    bootstrap = make_bootstrap()
+    _seed_two_teams(db_conn, bootstrap, "t0")
+    _insert_fixture_row(db_conn, 1, 1, 2, "2026-08-22T14:00:00Z")
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2)
+    db_conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, source, "
+        "retrieved_at, confidence) VALUES (1, 1, '1', 1, 1, 'fotmob', 't0', 'medium')"
+    )
+    db_conn.commit()
+
+    fired = detect_lineup_confirmations(db_conn, set(), match_id=1, now="t1")
+    assert fired == 0
+
+    fired_untracked = detect_lineup_confirmations(db_conn, {999}, match_id=1, now="t1")
+    assert fired_untracked == 0

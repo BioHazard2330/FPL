@@ -6,10 +6,13 @@ from fpl_agent.monitoring.dashboard import (
     _format_kickoff,
     _local_time_span,
     _match_intelligence_html,
+    _next_gw_plan_html,
     _news_html,
+    _pitch_html_from_xi,
     _risk_monitor_html,
     generate_dashboard_html,
 )
+from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 from test_optimization_squad import _seed
 
 
@@ -521,8 +524,31 @@ def test_dashboard_fixture_ticker_panel_shows_real_per_gameweek_difficulty(db_co
 # --- Match Intelligence Core panel (Pillar 4 Slice A, 2026-08-21) ---------
 
 
-def test_match_intelligence_panel_empty_state_without_squad(db_conn):
-    assert "No squad" in _match_intelligence_html(db_conn, set())
+def test_match_intelligence_panel_shows_all_matches_even_without_a_squad(db_conn):
+    """Real fix 2026-08-22: this panel used to be squad-scoped only - a user
+    with no squad, or a real fixture involving no squad team, saw nothing.
+    Direct user feedback (asked twice) wanted ALL tracked fixtures shown."""
+    for tid in (9, 10):
+        db_conn.execute(
+            "INSERT INTO teams (id, code, name, short_name, strength_overall_home, strength_overall_away, "
+            "strength_attack_home, strength_attack_away, strength_defence_home, strength_defence_away, "
+            "pulse_id, updated_at) VALUES (?,?,?,?,3,3,0,0,0,0,?,'t0')",
+            (tid, tid, f"Team{tid}", f"T{tid}", tid),
+        )
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',9,10,'FULL_TIME',3,0,"
+        "'fotmob','2026-08-21T21:00:00+00:00','high')"
+    )
+    db_conn.commit()
+
+    result = _match_intelligence_html(db_conn, set())
+
+    assert "Premier League" in result
+    assert "FULL_TIME" in result
+    assert "YOUR SQUAD" not in result
 
 
 def test_match_intelligence_panel_empty_state_with_squad_but_no_synced_match(db_conn):
@@ -1218,3 +1244,229 @@ def test_team_outlook_renders_as_a_real_table(db_conn):
     assert "<th>Tactical signal</th>" in result
     assert "<th>Fixture quality</th>" in result
     assert "<th>FPL signal</th>" in result
+
+
+# --- Real 4-state lineup badge + Next GW Plan panel (2026-08-22, automation-lifecycle pass) ---
+
+def _candidate(pid, web_name, team_id, position="MID"):
+    return PlayerCandidate(
+        player_id=pid, web_name=web_name, position=position, team_id=team_id, team_short=f"T{team_id}",
+        price_tenths=50, xp=4.0, median=4.0, floor=2.0, ceiling=6.0, confidence="MEDIUM", expected_minutes=80.0,
+    )
+
+
+def _seed_confirmed_lineup(conn, event, match_id, home_team, away_team, starting_player_ids):
+    conn.execute(
+        "INSERT OR IGNORE INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (?,?,?,1,0,0,1,0,'t0')",
+        (event, f"GW{event}", "2026-08-22T00:00:00Z"),
+    )
+    conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (?,?,?,?,?,?,0,0,'t0')",
+        (match_id, match_id, event, "2026-08-22T14:00:00Z", home_team, away_team),
+    )
+    conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, fpl_fixture_id, home_team_id, away_team_id, "
+        "status, retrieved_at) VALUES (?,?,?,?,?,'PRE_MATCH','t0')",
+        (match_id, str(match_id), match_id, home_team, away_team),
+    )
+    for pid in starting_player_ids:
+        conn.execute(
+            "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, source, "
+            "retrieved_at, confidence) VALUES (?,?,?,?,1,'fotmob','t0','medium')",
+            (match_id, pid, str(pid), home_team),
+        )
+    conn.commit()
+
+
+def test_pitch_shows_confirmed_starting_badge(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_confirmed_lineup(db_conn, event=1, match_id=1, home_team=1, away_team=2, starting_player_ids=[1])
+    xi = StartingXI(starting=[_candidate(1, "P1", team_id=1, position="GKP")], bench=[], captain=None, vice_captain=None)
+
+    html = _pitch_html_from_xi(db_conn, xi, cap_id=None, vc_id=None, event=1)
+
+    assert "Confirmed" in html
+    assert "lineup-badge-compact" in html
+
+
+def test_pitch_shows_benched_badge_when_confirmed_but_excluded(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    # Player 1 IS in the confirmed lineup; player 10 (same team) is not.
+    _seed_confirmed_lineup(db_conn, event=1, match_id=1, home_team=1, away_team=2, starting_player_ids=[1])
+    xi = StartingXI(
+        starting=[_candidate(10, "P10", team_id=1, position="DEF")], bench=[], captain=None, vice_captain=None,
+    )
+
+    html = _pitch_html_from_xi(db_conn, xi, cap_id=None, vc_id=None, event=1)
+
+    assert "BENCHED" in html
+    assert "lineup-badge-full" in html
+
+
+def test_pitch_shows_predicted_badge_before_confirmation(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, start_percent, fetched_at) "
+        "VALUES (1, 1, 72, 't0')"
+    )
+    db_conn.commit()
+    xi = StartingXI(starting=[_candidate(1, "P1", team_id=1, position="GKP")], bench=[], captain=None, vice_captain=None)
+
+    html = _pitch_html_from_xi(db_conn, xi, cap_id=None, vc_id=None, event=1)
+
+    assert "Predicted" in html
+
+
+def test_risk_monitor_adds_confirmed_benched_locked_squad_member(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_confirmed_lineup(db_conn, event=1, match_id=1, home_team=1, away_team=2, starting_player_ids=[10])
+
+    result = _risk_monitor_html(db_conn, {1, 10}, event=1)
+
+    assert "risk-severity-action" in result
+    assert "confirmed not in the starting lineup" in result
+
+
+def test_next_gw_plan_panel_shows_pending_state_when_never_run(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _next_gw_plan_html(db_conn)
+
+    assert "not generated yet" in result
+
+
+def test_next_gw_plan_panel_shows_real_verdicts_when_logged(db_conn):
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(
+        db_conn, "post_gw_plan", "captain=change transfer=keep",
+        {
+            "event": 2,
+            "captain": {"kind": "change", "current": "Haaland", "suggested": "Salah", "delta": 1.5},
+            "transfer": {"kind": "keep", "delta": 0.3},
+            "risks": [],
+            "bench_boost": 5.0, "triple_captain": 3.0, "wildcard_5gw": 1.0, "free_hit": 0.5,
+            "eligible_chip_windows": ["bboost"],
+        },
+    )
+    db_conn.commit()
+
+    result = _next_gw_plan_html(db_conn)
+
+    assert "CAPTAIN" in result
+    assert "Salah" in result
+    assert "TRANSFER" not in result or "no transfer currently justified" in result
+    assert "Chip" in result or "CHIP" in result
+
+
+# --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---
+
+def test_price_predictions_shows_real_forecast_for_squad(db_conn):
+    from fpl_agent.monitoring.dashboard import _price_predictions_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000', 't0')")
+    db_conn.execute(
+        "INSERT INTO player_transfer_momentum_history (player_id, transfers_in_event, transfers_out_event, "
+        "transfers_in, transfers_out, valid_from, valid_until) VALUES (1, 100, 0, 100, 0, 't0', NULL)"
+    )
+    db_conn.commit()
+
+    result = _price_predictions_html(db_conn, {1, 10})
+
+    assert "Rise likely" in result
+    assert "P1" in result  # _seed's own web_name for player 1
+
+
+def test_price_predictions_empty_state_without_a_squad(db_conn):
+    from fpl_agent.monitoring.dashboard import _price_predictions_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _price_predictions_html(db_conn, set())
+
+    assert "empty-state" in result
+
+
+def test_fixture_projections_shows_real_goals_and_clean_sheet_grids(db_conn):
+    """Replaces the earlier bookmaker-odds "Team Odds" panel (direct user
+    request, 2026-08-22: "i dont want book odds, i want projected goals
+    score + clean sheet %"). Real, unmocked expected_points()/blend.py
+    computation over a small synthetic pool - no meaningful numbers, but
+    both real grids must render for every real team without crashing."""
+    from fpl_agent.monitoring.dashboard import _fixture_projections_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _fixture_projections_html(db_conn, {1, 10})
+
+    assert "Projected goals scored" in result
+    assert "Clean sheet probability" in result
+    assert "proj-row" in result
+    assert "T1" in result  # _seed's own short_name for team 1
+
+
+def test_fixture_projections_highlights_squad_teams(db_conn):
+    from fpl_agent.monitoring.dashboard import _fixture_projections_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _fixture_projections_html(db_conn, {1, 10})  # both on team 1
+
+    assert "proj-row-squad" in result
+
+
+def test_player_odds_shows_real_matched_data(db_conn):
+    from fpl_agent.monitoring.dashboard import _player_odds_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','2026-08-22T00:00:00Z',1,0,0,1,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (700, 700, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 0, 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_odds_live (fixture_id, player_id, player_name_raw, source, bookmaker, "
+        "anytime_scorer_price, implied_probability_raw, retrieved_at) "
+        "VALUES (700, 1, 'P1', 'odds_api_player_props', 'betfair_ex_uk', 2.0, 0.5, 't0')"
+    )
+    db_conn.commit()
+
+    result = _player_odds_html(db_conn, {1, 10})
+
+    assert "P1" in result
+    assert "50%" in result
+    assert "not devigged" in result
+
+
+def test_statistics_shows_real_current_season_totals(db_conn):
+    from fpl_agent.monitoring.dashboard import _statistics_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, retrieved_at, stats_hash, total_points, minutes, "
+        "goals_scored, assists, bonus, expected_goals, expected_assists) "
+        "VALUES (1, 't0', 'h0', 12, 90, 1, 1, 3, 0.5, 0.3)"
+    )
+    db_conn.commit()
+
+    result = _statistics_html(db_conn, {1, 10})
+
+    assert "P1" in result
+    assert "<span>12</span>" in result
+
+
+def test_statistics_honest_empty_state_before_any_snapshot(db_conn):
+    from fpl_agent.monitoring.dashboard import _statistics_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = _statistics_html(db_conn, {1, 10})
+
+    assert "No current-season stats synced yet" in result

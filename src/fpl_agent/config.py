@@ -6,10 +6,15 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
-DATA_DIR = PROJECT_ROOT / "data"
+# Real, additive override (2026-08-22, automation-lifecycle pass) - lets a genuine OS
+# subprocess (e.g. a real `fpl.exe run-scheduled` launched outside this process,
+# against an isolated scratch data dir) exercise the exact same code path as
+# production without touching the real DB. Defaults to today's exact behavior for
+# every existing caller/test - opt-in only, never read unless the env var is set.
+DATA_DIR = Path(os.environ.get("FPL_AGENT_DATA_DIR", str(PROJECT_ROOT / "data")))
 LOGS_DIR = PROJECT_ROOT / "logs"
-CACHE_DIR = PROJECT_ROOT / "data" / "cache"
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
+CACHE_DIR = DATA_DIR / "cache"
+RAW_DIR = DATA_DIR / "raw"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 DB_PATH = DATA_DIR / "fpl.db"
 

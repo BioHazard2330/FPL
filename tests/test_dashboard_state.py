@@ -9,11 +9,18 @@ from test_optimization_locked_squad import _BENCH_4, _STARTING_11, _seed_real_pi
 from test_optimization_squad import _seed
 
 
-def test_dashboard_state_maps_squad_window_state():
-    assert _dashboard_state("live") == "LIVE"
-    assert _dashboard_state("post") == "POST_MATCH"
-    assert _dashboard_state("pre") == "PRE_DEADLINE"
-    assert _dashboard_state("unknown") == "PRE_DEADLINE"
+def test_dashboard_state_maps_lifecycle_state():
+    # Rewired 2026-08-22 (automation-lifecycle pass) onto the real
+    # models.gw_lifecycle state vocabulary, replacing the old squad-window
+    # (`_squad_live_window`)-only 4-value mapping.
+    assert _dashboard_state("LIVE") == "LIVE"
+    assert _dashboard_state("GW_FINISHED") == "POST_MATCH"
+    assert _dashboard_state("NEXT_GW_ANALYSIS") == "POST_MATCH"
+    assert _dashboard_state("READY_FOR_NEXT_DEADLINE") == "POST_MATCH"
+    assert _dashboard_state("PRE_DEADLINE") == "PRE_DEADLINE"
+    assert _dashboard_state("LOCKED") == "PRE_DEADLINE"
+    assert _dashboard_state("UNKNOWN") == "PRE_DEADLINE"
+    assert _dashboard_state(None) == "PRE_DEADLINE"
 
 
 def _seed_fixture_between(conn, event, team_h, team_a, started, finished):
@@ -222,3 +229,95 @@ def test_hero_label_matches_the_live_score_even_when_dash_state_is_pre_deadline(
 
     assert "GW1 &middot; LIVE" in result or "GW1 &middot; FINAL" in result
     assert "GW1 &middot; Projected xP" not in result
+
+
+# --- Dashboard-overhaul pass (2026-08-22): real bug fixes ---
+
+def test_any_in_progress_is_false_once_the_only_started_fixture_finished(db_conn):
+    """Real, confirmed-live bug: `_squad_live_window.state` deliberately
+    stays "live" for the whole gameweek window once any squad fixture has
+    started (correct for hero-xp cumulative scoring) - but a caller that
+    needs "is something happening RIGHT NOW" (the Next Kickoff strip item)
+    needs `any_in_progress` instead, which must go back to False once the
+    one started fixture is confirmed finished, even though `state` itself
+    correctly stays "live"."""
+    from fpl_agent.monitoring.dashboard import _squad_live_window
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    # Real, deliberate two-fixture scenario (matches the real production
+    # case this bug was found against): team1 v team2 already finished (via
+    # the fast match_intelligence override), team3 v team4 not yet
+    # started - the squad's own whole-GW window correctly stays "live"
+    # (some squad fixtures still ahead), but nothing is happening RIGHT NOW.
+    _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
+    _seed_fixture_between(db_conn, event=1, team_h=3, team_a=4, started=0, finished=0)
+    fixture_id = db_conn.execute("SELECT id FROM fixtures WHERE team_h=1 AND team_a=2").fetchone()[0]
+    db_conn.execute(
+        "INSERT INTO match_intelligence (fotmob_match_id, fpl_fixture_id, competition, kickoff_utc, "
+        "home_team_id, away_team_id, status, home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('999', ?, 'Premier League', '2026-08-21T19:00:00Z', 1, 2, 'FULL_TIME', 3, 0, "
+        "'fotmob', 't0', 'high')",
+        (fixture_id,),
+    )
+    db_conn.commit()
+
+    window = _squad_live_window(db_conn, set(_STARTING_11))
+
+    assert window.state == "live"  # whole-GW window correctly still live
+    assert window.any_in_progress is False  # but nothing is happening right now
+
+
+def test_any_in_progress_is_true_while_a_fixture_is_genuinely_live(db_conn):
+    from fpl_agent.monitoring.dashboard import _squad_live_window
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
+
+    window = _squad_live_window(db_conn, set(_STARTING_11))
+
+    assert window.state == "live"
+    assert window.any_in_progress is True
+
+
+def test_player_shirt_has_a_real_onerror_fallback(db_conn):
+    """Real bug fix: a shirt image load failure (ad-blocker, extension, CDN
+    hiccup) must degrade to the existing `.shirt-fallback` styling instead
+    of a blank/broken box - confirmed missing before this fix."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "onerror=" in result
+    assert "shirt-fallback" in result
+
+
+def test_compare_panel_shows_real_actual_points_once_a_match_has_played(db_conn):
+    """Real bug fix: the Optimizer Delta panel's "Real xP" label was a
+    stale-framed pre-match projection once real matches have played - now
+    shows real accrued actual points (GW1 pts) alongside the projection."""
+    from fpl_agent.monitoring.dashboard import _MyLiveScore, _compare_panel_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, captain_id=30, vice_id=20)
+    my_live_score = _MyLiveScore(
+        points=42.0, captain_points=10.0, captain_name="P30", captain_play_state="played",
+        played=5, live=0, yet_to_play=6, bench=4,
+    )
+
+    result = _compare_panel_html(db_conn, 7378572, 50.0, 100.0, 0.0, "P30", set(_STARTING_11), my_live_score)
+
+    assert "GW1 pts" in result
+    assert "Projected xP" in result
+    assert "Real xP" not in result  # the old, now-stale-framed label must be gone
+
+
+def test_compare_panel_falls_back_to_projected_xp_before_any_match_played(db_conn):
+    from fpl_agent.monitoring.dashboard import _compare_panel_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, captain_id=30, vice_id=20)
+
+    result = _compare_panel_html(db_conn, 7378572, 50.0, 100.0, 0.0, "P30", set(_STARTING_11), None)
+
+    assert "Projected xP" in result
+    assert "GW1 pts" not in result

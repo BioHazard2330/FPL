@@ -220,11 +220,33 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
     else:
         prior_per_gw = None
 
-    if current_per_gw is not None and prior_per_gw is not None:
+    if current_per_gw is not None and prior_per_gw is not None and not prior_is_stale:
         weight_current = min(finished_events / 10, 0.8)
         base = weight_current * current_per_gw + (1 - weight_current) * prior_per_gw
         confidence = "MEDIUM" if finished_events < 10 else "HIGH"
         basis = "blended_current_and_prior_season"
+    elif current_per_gw is not None and prior_per_gw is not None and prior_is_stale:
+        # Real gap found 2026-08-26 (Tzolis: real GW1 start, 75 real minutes,
+        # projected forward at 15.2 expected minutes for GW2 - checked by hand
+        # against the actual synced data, not assumed). The branch above
+        # weights a stale, multi-season-old prior at up to 90% even once a
+        # real, current-season appearance exists, because weight_current only
+        # ramps on finished_events (1 early in a season) - it never accounts
+        # for the PRIOR's own reliability, only the current sample's size.
+        # A stale prior carries far less information than a genuinely recent
+        # one (that's the entire reason prior_is_stale exists), so it should
+        # lose the blend fast, not slow, once any real current evidence
+        # exists - one real start is stronger evidence of an established role
+        # than a cameo appearance from years/leagues ago. Ramps current-weight
+        # from 0.5 (one real match) to 0.9 (3+), and keeps discounting the
+        # stale prior itself (_NEW_SIGNING_MINUTES_DISCOUNT) rather than
+        # trusting it at face value even for its shrinking share of the blend.
+        weight_current = min(0.5 + 0.2 * finished_events, 0.9)
+        base = weight_current * current_per_gw + (1 - weight_current) * (
+            prior_per_gw * _NEW_SIGNING_MINUTES_DISCOUNT
+        )
+        confidence = "MEDIUM"
+        basis = "blended_current_and_stale_prior"
     elif current_per_gw is not None:
         base = current_per_gw
         confidence = "MEDIUM" if finished_events < 5 else "HIGH"

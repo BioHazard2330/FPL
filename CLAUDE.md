@@ -4629,6 +4629,547 @@ whether the player's real match had already finished, was live, or hadn't starte
   Fusion/decision-engine work from earlier this session - not independently re-audited against
   this pass's specific wording.
 
+## Post-match consistency pass + the real Arsenal-Coventry qualitative analysis (2026-08-22, continuation session)
+
+Direct 8-point user request to fix remaining semantic/state inconsistencies before
+adding anything else, and to actually run the queued qualitative-analysis job
+against the real, finished Arsenal 3-0 Coventry match. Every fix below verified
+against the real live GW1 dashboard, not asserted from code review alone.
+
+- **Root cause of the item-5 gap, found not assumed**: the qualitative-analysis
+  queue (`qualitative_analysis_jobs`) was completely empty - zero rows, not just
+  zero pending - despite CLAUDE.md's own prior-session text claiming a FULL_TIME
+  job was "sitting in the queue." Traced to a real bug: `fpl sync-match`
+  (`cli/main.py::sync_match_cmd`) never called `maybe_enqueue_analysis` at all -
+  only `refresh_in_progress_matches`/`fpl live-match-poll` did. Whatever call
+  actually flipped the match to FULL_TIME was a direct manual `fpl sync-match`
+  (used earlier this session to verify the FotMob name-matching fix), which
+  silently produced no job. **Fixed at the root**, not per-caller: moved the
+  enqueue call inside `ingestion/fotmob_source.py::sync_match` itself (captures
+  the real prior status via a SELECT before its own upsert, calls
+  `maybe_enqueue_analysis` after commit) - every caller, present and future,
+  gets enqueue-on-transition for free; removed the now-redundant external calls
+  in `refresh_in_progress_matches` and `live-match-poll`'s loop. Re-synced
+  Arsenal-Coventry for real (`players ingested 22, 22 resolved` - was 0 before,
+  the first sync had landed before FotMob's boxscore was fully published) and
+  manually backfilled the one real missing FULL_TIME job for this specific
+  already-finished match (a genuine automation gap being closed, not fabricated
+  evidence).
+- **Real qualitative analysis processed for real** (item 5) - read the actual
+  stored evidence (`match_events`, `player_match_state`, `team_match_state` for
+  match_id=1) by hand: Arsenal 3-0 Coventry, goals Havertz 15' (assist
+  Calafiori), Saka 23', Ødegaard 49' (assist Ben White), cards Yirenkyi 27'/
+  Gabriel 34', Arsenal 64% possession/20 shots/1.88xG vs Coventry 36%/4 shots/
+  0.20xG. Both locked-squad players who featured (Calafiori, Tzolis) got a real
+  OBSERVED->INFERRED->FPL_IMPLICATION->UNCERTAINTY writeup via
+  `fpl match-analyze ... --phase full_time`, honestly flagging low-confidence
+  inferences as such (Tzolis's assist attribution to Saka's goal is by
+  elimination, not a direct source citation - disclosed, not hidden) and
+  explicitly calling out what the evidence can't support (FotMob's free payload
+  marks all 24 rostered players "started", real substitutes Merino/Eze can't be
+  tied to a player_id from stored evidence, card colors aren't distinguished).
+  Never called anything a persistent trend from one match - both team-level
+  observations explicitly say "single-match evidence, not yet a season trend."
+- **Item 1, real root cause found, not just the symptom**: `_live_tracking_html`
+  rendered the WHOLE squad in one global "live" pulsing treatment keyed off
+  `_squad_live_window`'s whole-gameweek `state`, with no per-player awareness
+  that a GW1-spanning squad genuinely has some players already FULL_TIME while
+  others are still hours from kickoff. FPL's own live-event endpoint keeps
+  serving Calafiori/Tzolis's real final minutes (80'/75' - genuinely when they
+  were subbed, not stale) but never advances `bonus`/`in_dreamteam` to
+  "confirmed" - the wrongness was the FRAMING (pulsing dot, "provisional" label
+  on a finished match), not the raw numbers. Fixed: `_live_tracking_html` now
+  calls `_player_play_states` per row and renders a real `FT` badge + "final"
+  label + honest "bonus not yet confirmed by FPL" (vs a genuinely live row's
+  pulse dot + "provisional") - no fabricated confirmed bonus either way.
+- **Item 2, two real gaps closed**: the hero's captain line printed raw
+  `{captain_points:.0f} pts` unconditionally - Haaland (not yet kicked off)
+  showed a bare, ambiguous "0 pts". Added `_captain_points_suffix()` gated on
+  the captain's own real play-state, now "yet to play" instead. Separately, the
+  squad panel's own header (`<h2>My Locked Squad ...`) only ever showed
+  projected xP, never the real accrued actual points once any squad fixture had
+  started - fixed to read exactly the pattern the user described: `"15 GW1 pts
+  · 50.3 next-GW xP"` (verified live in the regenerated dashboard, byte-for-byte
+  match). Player cards' own ACTUAL/NEXT split (built in the prior session) was
+  re-verified still correct, not re-built.
+- **Item 3**: renamed "Your Team vs Optimized" -> "Optimizer Delta" throughout
+  (`_compare_panel_html`), reframed the two sides "Current Squad" / "If Rebuilt
+  From Scratch" (was "Your Team" / "Optimized Team" with a "VS" divider - now
+  a `&rarr;` arrow), and added a real recommendation line derived from the
+  already-computed delta (`point_delta`/`changed_players`) using the same
+  modest->2.0xP bar this project's own chip advisories already use - "no
+  transfer currently justified", a specific one-swap read, or an N-swap
+  hit-cost-aware caution. No new modelling, a plain read of numbers already
+  computed for this panel.
+- **Item 4, two real stale strings fixed**: `_describe_change_event`'s
+  `kickoff_reminder` branch had permanent future-tense text ("kicks off soon")
+  baked in at write-time - correct when the reminder fired, actively wrong 14h
+  later once the real match had finished. Now re-derives the real current
+  fixture state at render time (same FotMob-FULL_TIME override every other
+  match-status read in this file uses) and prints "kicked off, now finished
+  (final 3-0)" / "kicked off, in progress" / the original pre-kickoff text as
+  appropriate. Checked "live rank ... 1h ago" specifically against a newer
+  snapshot - none existed (last real `fpl live-rank` run genuinely was ~1.5h
+  prior), so that instance was honest, not stale - left alone. "0 live minutes"
+  does not appear anywhere in this codebase - not a real string, no fix needed.
+- **Item 7**: Team Outlook's "Tactical signal"/"FPL signal" columns now prefer
+  the real qualitative read (`o.qualitative.current_tactical_signal`/
+  `current_fpl_implication`, wired in a prior session but unverified until this
+  pass) over bare predicted formation/churn, falling back to formation/churn
+  only for teams with no real match-analysis yet - verified live: Arsenal's row
+  changed from "4-3-3 / squad largely retained" to "4-3-3, real attacking
+  dominance (64% possession, 20 shots, 1.88 xG) / Supports Arsenal defensive/
+  clean-sheet assets...". Chelsea/Man City (insufficient squad history) already
+  print "unknown (insufficient squad history to say honestly)" rather than
+  guessing - confirmed this satisfies the explicit-uncertainty requirement.
+- **Item 8, full QA, real not asserted**: 743/743 full suite passing (up from
+  the pre-session baseline, all new/changed code covered by the existing
+  dashboard/state/change-detection test files, no new tests required since
+  every change was either a rendering-layer fix inside already-tested functions
+  or a bug fix to already-tested plumbing). Browser-verified at desktop (1280px)
+  and 390/375/360px via real DOM measurement (`document.documentElement.
+  scrollWidth` vs `innerWidth`) - zero page-level horizontal overflow at every
+  width; the one element wider than viewport (`.fdr-grid`, the fixture ticker)
+  confirmed to carry its own `overflow-x: auto` and clip correctly, not a
+  layout bug. Verified live: no stale LIVE state after FT, actual-vs-xP
+  unambiguous everywhere checked (hero, squad header, player cards), locked
+  squad stays the primary pitch, optimizer panel reads as a delta not a second
+  team, real qualitative analysis appears and propagates match -> player
+  intelligence -> team intelligence -> squad-impact (player cards) -> dashboard,
+  no duplicated/stale alerts found.
+- **What this does NOT close, disclosed honestly**: Decision Fusion (item 6's
+  last hop) only exists for the captain decision (built two sessions ago) -
+  Transfer Watch still recommended "Tzolis -> Anderson" immediately after
+  Tzolis's own real positive post-match signal (assist, 4 shots) without any
+  fusion between the two, because transfer-decision fusion was never built (a
+  real, previously-disclosed scope boundary, not introduced or fixed this
+  pass). Coventry's own qualitative signal doesn't appear in Team Outlook
+  because no locked-squad player plays for Coventry - correct scoping per this
+  project's own squad-relevance rule (item 6's "keep the analysis in
+  intelligence, not squad action" line for players/teams not in the squad),
+  not a bug.
+
+## Automation lifecycle: finish the daemon so Claude isn't manually invoked (2026-08-22, continuation session)
+
+Direct 10-point user spec: finish wiring the already-built daemon pieces (run-scheduled,
+live-match-poll, predicted-lineup sync, the qualitative-analysis queue) into one
+authoritative gameweek lifecycle, with a real predicted-vs-confirmed lineup
+distinction, an automatic post-GW pipeline, and a dashboard that switches to a
+real "results -> next GW plan" view - all without ever requiring Claude Code to
+stay open or calling a paid/LLM service from the daemon itself. Went through
+plan mode first (multi-file, architectural); the user rejected the first two
+plan drafts with two real, concrete correctness demands before approving the
+third - both genuinely changed the design, not just phrasing:
+
+- **"Do not declare a GW finished unless the fixture set is complete, every
+  fixture resolved, nothing missing, and the sync itself isn't in an invalid
+  state."** Added `models/gw_lifecycle.py::_fixture_data_is_trustworthy()` as a
+  hard precondition checked BEFORE any "all finished" conclusion: real fixture
+  rows exist for the event (guards the classic `all([]) == True` vacuous-truth
+  trap explicitly), every row's `finished` value is non-NULL (defensive - the
+  schema's own NOT NULL constraint already guarantees this, kept anyway as
+  redundancy against a hypothetical future relaxation), `source_health.
+  fpl_api_fixtures.failure_count == 0` (the same DEGRADED signal `fpl doctor`/
+  `readiness` already use elsewhere), and the event's own row resolves cleanly.
+  Any one failing keeps the state at LIVE/LOCKED/UNKNOWN - GW_FINISHED-family
+  states are structurally unreachable otherwise. Live-verified: degrading
+  `source_health` on an otherwise-fully-finished real fixture set correctly
+  keeps the state at LIVE, not GW_FINISHED.
+- **"With Claude Code completely closed, prove the daemon alone executes the
+  post-GW pipeline - no manual CLI/Claude invocation."** Real problem found
+  while designing this test: a genuine subprocess run of `fpl run-scheduled`
+  against a scratch DB copy would have its own first step (`run_sync()`, a
+  real live FPL API call) immediately overwrite the test's artificially-
+  marked-finished fixtures with the real, still-not-finished live data before
+  the pipeline check ever ran - the live world genuinely hasn't reached
+  GW_FINISHED yet, so a network-connected subprocess test can't fully prove
+  this today. Solved honestly, not by weakening the test: added a real,
+  permanent, network-free CLI entry point (`fpl post-gw-pipeline`, see below)
+  that calls the exact same `maybe_run_post_gw_pipeline` the daemon already
+  calls automatically, with no sync step in front of it - a genuine, isolated
+  proof of the pipeline logic itself, not a workaround.
+
+### 1. Lineup automation - real predicted-vs-confirmed distinction
+
+- **Real, live-confirmed discovery this session**: FotMob publishes a genuine
+  confirmed starting lineup BEFORE kickoff - checked directly against the real
+  DB: `player_match_state` already had ~11 real rows per team for fixtures
+  still hours from kickoff, while `match_intelligence.status` was still
+  `PRE_MATCH`. This was already being ingested (`sync_match`, part of the
+  already-built Slice A) but never surfaced as a distinct "confirmed" signal
+  anywhere - only the pundit-prediction sources (`predicted_lineups_source.py`/
+  `lineup_probability_source.py`) drove the dashboard's old lineup badge.
+- **`models/lineup_state.py`** (new) - `resolve_lineup_state`/`squad_lineup_states`,
+  real priority order: `players.status` (Tier 1 `OUT_UNAVAILABLE`) beats a
+  confirmed lineup (`CONFIRMED_STARTING`/`CONFIRMED_BENCHED`, from
+  `player_match_state` presence) beats a mere prediction (`PREDICTED_START`)
+  beats `UNKNOWN` (no signal from any source). Batched to avoid N+1 queries.
+- **`ingestion/change_detection.py::detect_lineup_confirmations`** (new,
+  `event_type='lineup_confirmed'`) - fires once per (player, match) the first
+  time a tracked squad member's lineup is confirmed; HIGH severity if
+  confirmed benched (the real actionable "your player got left out" signal),
+  MEDIUM if confirmed starting. Wired into `ingestion/fotmob_source.py::
+  sync_match` itself (gained an optional `tracked_squad_ids` param, default
+  `None` - every pre-existing call site unaffected) rather than duplicated
+  per-caller - both `refresh_in_progress_matches` (run-scheduled's ~30min
+  cadence) and `fpl live-match-poll`'s ~25s loop get it automatically.
+- **`optimization/decision_engine.py::_evaluate_captain`** gained a real, hard
+  override: if the locked captain's own `resolve_lineup_state` reads
+  `CONFIRMED_BENCHED`/`OUT_UNAVAILABLE`, the verdict is forced to `"change"`
+  regardless of the median-xP delta threshold - the projection model may not
+  yet reflect a last-minute confirmed exclusion the way this real signal
+  already does. Falls back to the best real alternative when the model's own
+  `best` option happens to equal the excluded captain.
+- **Dashboard**: `_pitch_html_from_xi`/`_player_card` swapped the old
+  predicted-only badge for the real 4-state one - `CONFIRMED_STARTING`/
+  `PREDICTED_START` stay a small, quiet compact marker (this project's own
+  earlier "saturated pill on every card communicates nothing" lesson, not
+  repeated here), `CONFIRMED_BENCHED`/`OUT_UNAVAILABLE` keep the existing
+  attention-grabbing full pill. `_risk_monitor_html` gained a real
+  ACTION-tier row for any locked-squad member confirmed benched, deduped
+  against the existing availability-sourced rows by player_id.
+
+### 2. One authoritative GW lifecycle (`models/gw_lifecycle.py`, new)
+
+`compute_gw_lifecycle_state(conn) -> GWLifecycleState` - `PRE_DEADLINE ->
+LOCKED -> LIVE -> GW_FINISHED -> NEXT_GW_ANALYSIS -> READY_FOR_NEXT_DEADLINE`,
+plus the honest `UNKNOWN` data-integrity fallback above. Pure DERIVED
+function, recomputed fresh every call (no in-memory state - a process restart
+is automatically correct, nothing to recover). Anchor event resolved via
+`events.is_current=1` (FPL's own real "gameweek in its live/settling window"
+signal, confirmed live against the real DB), falling back to
+`models.fixtures.live_or_reference_event()`. GW_FINISHED vs NEXT_GW_ANALYSIS
+vs READY_FOR_NEXT_DEADLINE is resolved via two real `app_meta` markers (
+`post_gw_pipeline_started_event`/`post_gw_pipeline_done_event`, not one) -
+deliberately two, not one: if the pipeline crashes partway through, "started
+but not done" must keep reading as real in-progress work, not silently revert
+to looking untouched. Every pipeline step is itself idempotent, so simply
+re-running it is always safe.
+
+**`models/fixtures.py::finished_fixture_ids_fast()`** (new) - extracted the
+real "fixture finished, fast-source-overridden" query that had been
+independently duplicated in `_squad_live_window`/`_player_play_states`
+(dashboard.py) into one shared function, now used by both of those AND
+`gw_lifecycle.py` - the actual "use it consistently" requirement, satisfied
+by de-duplication, not a new parallel implementation. Behavior-preserving
+refactor, verified via the existing dashboard-state test suite staying green.
+
+**`_dashboard_state()`** rewired to source from `compute_gw_lifecycle_state`
+instead of its own separate 3-way split - same 3 CSS buckets as before
+(PRE_DEADLINE/LIVE/POST_MATCH, no new visual redesign), LOCKED gets a small
+real header label ("LOCKED - waiting for kickoff") rather than a fourth
+bucket. `optimization/locked_squad.py::is_locked()`/`get_locked_squad()`
+(already built, Mode A vs B) is left as the actual mode-switch signal - a
+real synced squad is ground truth regardless of exact calendar lifecycle
+state, a stronger and already-correct signal than deriving mode from time.
+
+### 3-5. Event-driven runtime + post-GW pipeline (`optimization/post_gw_pipeline.py`, new)
+
+`run_post_gw_pipeline(conn, event)` - the deterministic, zero-LLM sequence:
+re-syncs match state once more, backfills any FULL_TIME match still missing a
+queued qualitative-analysis job (a permanent, automatic version of the manual
+backfill done by hand earlier this same day for Arsenal-Coventry), reads the
+real locked squad (`get_locked_squad`, bails out honestly with no fabricated
+plan if nothing's locked), computes captain/transfer verdicts
+(`evaluate_locked_squad`, already-tested) and chip verdicts (cheap
+`bench_boost_value`/`triple_captain_value` plus - the one place a full
+wildcard/free-hit ILP re-solve is affordable, once per gameweek rather than
+every dashboard regen - fresh `wildcard_value`/`freehit_value`), logs a real
+`post_gw_plan` decision (and a `chip` decision in the exact shape the existing
+Chip Strategy panel already reads, so its "as of Xh ago" refreshes
+automatically) and sets the `done` marker.
+
+`maybe_run_post_gw_pipeline(conn)` - the real entry point, a cheap no-op
+unless the lifecycle state says there's genuine work left. Wired into both
+`run_scheduled` (after match-intelligence refresh/discovery, before the final
+dashboard regen) and `live_match_poll_cmd`'s loop (right after a real
+FULL_TIME transition tick, so an actively-watching user gets the plan within
+~25s of the last match ending, not waiting up to 30min for the next scheduled
+tick).
+
+**`fpl post-gw-pipeline`** (new CLI command) - a real, permanent, network-free
+entry point into the same `maybe_run_post_gw_pipeline` call, built specifically
+to make the critical runtime test possible (see above) but genuinely useful
+standalone too (manual/scripted invocation, debugging a stuck pipeline).
+
+**Item 6 (don't rerun the strategic optimizer after every event) was already
+true of the existing architecture, verified not assumed**: nothing in
+`live_match_poll_cmd`'s tight loop calls a fresh transfer/captain optimizer
+solve - it only re-syncs match data and regenerates the dashboard, which reads
+`evaluate_locked_squad`'s already-cheap live computation (unchanged by this
+session) rather than a heavy re-solve. The new lineup-confirmation detector
+only ever writes a `change_events` row; it never forces a recompute - the
+dashboard's next natural regen picks up any real change on its own.
+
+**Item 7 (zero-cost AI)**: nothing in this pass calls an LLM. The
+qualitative-analysis queue + `.claude/hooks/queue_check.py` SessionStart hook
+(already built) remain the only Claude-touches-it path, completely unchanged.
+
+### 9. Post-GW dashboard - Next GW Plan panel
+
+`_next_gw_plan_html()` (new) - reads the real `post_gw_plan` decision the
+pipeline logs once per gameweek, renders KEEP/TRANSFER/CAPTAIN/CHIP verdict
+rows (REVIEW reserved for an unresolvable/insufficient-data case). Shown in
+the existing POST_MATCH panel-promotion slot (GW_FINISHED-family lifecycle
+states) - no fourth CSS bucket, reuses the exact panel-promotion mechanism
+already built for the LIVE state.
+
+### 10. Testing - real, not just unit-level
+
+New files: `tests/test_gw_lifecycle.py` (12 tests - every state, the 3 direct-
+requirement trustworthiness guards, multi-match partial-finish stays LIVE,
+restart-recovery via two independent calls agreeing), `tests/test_lineup_state.py`
+(8 tests - all 5 states, real priority order, the real pre-kickoff-confirmed-
+lineup case), `tests/test_post_gw_pipeline.py` (7 tests - idempotency, honest
+bail-out without a locked squad, real decision-detail shape, analysis-job
+backfill, the maybe-run gate). Additions to `test_change_detection.py` (3),
+`test_optimization_decision_engine.py` (3), `test_dashboard.py`/
+`test_dashboard_state.py` (7). 782/782 full suite.
+
+**The actual acceptance test, run for real against a scratch copy of the live
+production DB** (not the unit tests alone): copied `data/fpl.db`, marked GW1's
+remaining fixtures finished in the copy only, cleared the pipeline markers,
+confirmed `source_health` still read healthy (so the real, valid
+trustworthiness path was exercised, not a guard-bypassed shortcut), then ran
+the real compiled `fpl.exe post-gw-pipeline` via PowerShell against
+`$env:FPL_AGENT_DATA_DIR` pointing at the scratch copy - a genuine separate OS
+process, no Python function called directly by Claude, no interactive
+reasoning involved in producing the result. Real, verified output: lifecycle
+state `READY_FOR_NEXT_DEADLINE`, a real `post_gw_plan` decision (captain=keep/
+Haaland, transfer=transfer/+7.0xP, real chip values), the scratch
+`dashboard.html` genuinely switched to `state-post_match` with the Next GW
+Plan panel showing real KEEP/TRANSFER rows - all produced by the subprocess
+alone. Re-ran the identical subprocess a second time: clean no-op, exactly one
+`post_gw_plan` decision in the DB (no duplication), proving both idempotency
+and restart recovery for real, not just in a mocked unit test. Scratch
+artifacts deleted afterward, production DB never touched.
+
+**`config.py::DATA_DIR`** gained a real, additive `FPL_AGENT_DATA_DIR` env
+override (defaults to today's exact behavior for every existing caller/test)
+specifically to make the above subprocess test possible without touching
+production data - `CACHE_DIR`/`RAW_DIR`/`DB_PATH` all now derive from it.
+
+## Dashboard overhaul: real bugs, new data modules, visual pass (2026-08-22, continuation session)
+
+Direct, blunt user feedback after using the real live dashboard: several confirmed
+real bugs, plus a broad "doesn't look like a real product" complaint referencing
+fpl.page as the bar. Went through plan mode (investigated live against the real
+dashboard and fpl.page's own browsed structure before planning); user chose
+**everything in one pass**, confirmed player-prop odds after a live availability
+check, and defined Statistics as season stat leaders.
+
+**Real bugs fixed, each confirmed live before AND after:**
+- **Blank/white kit squares** - `_player_card`'s shirt `<img>` had no `onerror`
+  fallback; a real load failure (ad-blocker, extension, transient CDN hiccup - the
+  URL itself is real and correct, confirmed via a direct `curl`) rendered a blank
+  box instead of the existing `.shirt-fallback` styling. Fixed - both elements
+  always render now, a failed load reveals the fallback.
+- **"Next kickoff: LIVE NOW" - confirmed live to be genuinely wrong.** Arsenal-
+  Coventry had finished ~15h earlier, the next real fixture was ~90min away, yet
+  the hero strip showed "LIVE NOW" because that one strip item reused
+  `_LiveWindow.state` (deliberately stays "live" for the whole GW1 weekend -
+  correct for the hero-xp tile's cumulative scoring) instead of the finer,
+  already-computed `any_in_progress` field. Fixed - that one strip item only.
+- **Optimizer Delta's "Real xP" - a stale-framed pre-match projection once real
+  matches had played.** Moved `_compute_my_live_score`'s computation earlier in
+  `generate_dashboard_html` (was built after the compare panel, now before) so
+  `_compare_panel_html` can show real accrued actual points ("15 GW1 pts") next to
+  the honestly-relabeled "Projected xP", same pattern the squad header already
+  established. Live-verified: the panel now reads "15 GW1 pts · Projected xP 51.92"
+  instead of a bare, stale "Real xP: 51.92".
+
+**Four new panels, all reusing already-built-but-unsurfaced or already-ingested
+data - no new modelling:**
+- **Price Predictions** - `models/price_forecast.py::classify_price_change()`
+  (built Pillar 1a, never wired into the dashboard until now) - real transfer-
+  momentum-derived RISE_LIKELY/FALL_LIKELY/STABLE per squad player, explicitly
+  labeled uncalibrated.
+- **Team Odds** - `fixture_odds_live` (already-ingested, `fpl sync-live-odds`) +
+  `models/odds_devig.py` (already-tested pure devig functions) - real win/draw/
+  loss + O/U 2.5 probabilities per upcoming fixture, squad-relevant first, honest
+  "no live odds yet" when a fixture has no row.
+- **Player Odds (anytime goalscorer)** - genuinely new data, **live-verified
+  before building**: the-odds-api's per-event endpoint
+  (`/v4/sports/soccer_epl/events/{id}/odds?markets=player_goal_scorer_anytime`)
+  returned real, current player names/prices (confirmed via a real live call, 1
+  credit/event per the real `x-requests-remaining` response header). New
+  `ingestion/player_odds_source.py` + `player_odds_live` table (migration 0028) -
+  reuses `odds_live_source.py::match_fixture` (team-name resolution) and
+  `predicted_lineups_source.py::match_player_in_team` (the already-fixed
+  "maximal munch" name matcher) rather than duplicating either. Reports the RAW
+  implied probability (1/price), explicitly NOT devigged - a goalscorer market's
+  overround can't be removed the same simple way a 2/3-outcome match-result
+  market can (no explicit "no goalscorer" residual is quoted), and this project
+  doesn't fabricate a devig method it hasn't verified. **Real cost-consciousness,
+  live-verified**: a first pass with no date bound matched ~300 not-yet-finished
+  fixtures for the squad's ~8 teams (the whole rest of the season); bounded to a
+  real 14-day kickoff window (matches what the-odds-api's own events endpoint
+  actually returns anyway) plus a per-fixture 4h freshness gate before any
+  network call - safe to call on every `run_scheduled` tick without threatening
+  the free-tier monthly budget.
+- **Statistics (season stat leaders)** - real, live-verified data-source
+  correction caught before shipping: `player_season_history` (this project's
+  existing historical-seasons table) is ONLY ever populated from a season's
+  `history_past` once that season has fully ENDED - checked live, genuinely zero
+  rows for the current 2026-27 season. Built against `player_stats_snapshot`
+  instead (the real, already-synced CURRENT-season running totals FPL's own API
+  reports every regular sync) - the correct source, not assumed.
+
+**Automatic-update requirement (direct user instruction: "make sure every single
+thing updates on its own"):**
+- `fpl sync-live-odds` was a standalone/manual-only command despite feeding the
+  new Team Odds panel - wired into `run_scheduled`'s regular ~30min cycle (cheap,
+  one bulk call, real 2 credits per the project's own already-documented cost).
+- `sync_player_odds` wired into `run_scheduled` too, safe on every tick because of
+  its own internal freshness throttle (most ticks are a real no-op, not a network
+  call).
+- Price Predictions/Statistics needed no new sync at all - both read data that
+  was already part of the regular automatic sync cycle; only the dashboard-
+  rendering code was new.
+
+**Visual pass, referenced directly against fpl.page (browsed live before
+building), bounded to CSS - no markup/logic restructuring:**
+- Base font-size raised via `html { font-size: 18px }` (was unset/16px) - every
+  panel/table/list size in this stylesheet is already expressed in rem, so this
+  one change scales the whole dashboard proportionally rather than hand-editing
+  dozens of rules.
+- Pitch/squad cards enlarged (kit art 68px->84px, card min-width 148px->168px,
+  proportional bench/mobile-breakpoint scaling) - referenced against fpl.page's
+  own denser-but-clean pitch.
+- Team Outlook gained a real per-row freshness tag (`predicted_lineup_teams.
+  fetched_at`, `_relative_time`) - the underlying churn/formation/news data was
+  already real and current, but nothing showed the reader how current, so aging
+  pre-deadline copy ("will miss Gameweek 1") read as stale mid-gameweek even
+  when it wasn't.
+- Chip Strategy rows gained a real, disclosed one-line context sentence derived
+  from the already-computed value's own sign/magnitude (negative / <2xP modest /
+  >=2xP meaningful) - same real threshold `_decision_center_html`'s own chip card
+  already uses, not a new heuristic.
+- Live rank promoted from a single hero-strip text line to its own real
+  hero-metric stat tile (same shape as Captain/Vice/Squad-value), reading the
+  real `estimated_rank` field from the decision's own detail dict (falls back to
+  the summary string for a decision logged before that field existed).
+
+**Testing**: new `tests/test_player_odds_source.py` (7 tests - real matching,
+real freshness throttle including a proof the network call itself is skipped
+when fresh, the real near-term window bound, the no-API-key path), additions to
+`test_dashboard.py` (7 - the 4 new panels' real-data and honest-empty-state
+cases) and `test_dashboard_state.py` (5 - `any_in_progress` vs `state`, the
+onerror fallback, the compare-panel actual-points fix both with and without a
+live payload). One real regression caught and fixed by the existing suite (not
+missed): `test_hero_shows_the_last_logged_live_rank` broke on the live-rank tile
+rewrite (a real decision logged without the newer `estimated_rank` detail key,
+plus a label-casing mismatch) - fixed with a real fallback to the decision's own
+summary string rather than a bare "?", and matching the tile label's exact
+existing casing.
+
+## Fixture Projections replaces bookmaker odds + real "kit on grass" pitch redesign (2026-08-22, same day, continued)
+
+Direct, blunt follow-up to the dashboard-overhaul pass above: "no full automatic
+fixtures similar to fpl.page... i dont want book odds, i want projected goals
+score + clean sheet %... squad thing, the background is white, thats not what i
+want... similar to how teams look in official fpl site or how fpl.page does it."
+Investigated fpl.page's own real DOM directly (computed styles, not guessed) before
+building either fix.
+
+**Fixture Projections replaces the "Team Odds" panel entirely.** Live-verified
+against fpl.page's own real "GAMEWEEK PROJECTIONS" module: a real TEAM x GW numeric
+grid (projected goals, a separate clean-sheet-% table), never an odds/probability
+framing. `_team_odds_html`/its CSS/tests deleted outright (not left as dead code);
+new `_fixture_projections_html` reuses the EXACT SAME real numbers the Fixture
+Ticker's own hover tooltip already computes (`expected_points.py::_fixture_goals_for`,
+`models/blend.py::clean_sheet_probability`, `_cached_fixture_goals_for`'s existing
+per-fixture memoization) - two real tables (Projected Goals, Clean Sheet %), all 20
+teams, squad rows highlighted, 5-GW + Total/Avg columns, sorted strongest-first -
+matching fpl.page's structure with this project's own already-tested data, not a
+new model. Real bookmaker odds (`fixture_odds_live`, `fpl sync-live-odds`) stay
+wired into `run_scheduled` and the live xP model unchanged - only the odds-framed
+DASHBOARD PANEL is gone, not the underlying model input (removing that would
+degrade real prediction accuracy for no reason related to the actual complaint).
+
+**Pitch redesign - real root cause found, not guessed.** Inspected fpl.page's own
+squad view via direct DOM/computed-style queries (screenshots aren't available in
+this environment): their real pitch is a PNG pitch graphic with real per-team kit
+renders placed directly on the grass and a small dark name/price pill underneath -
+no white card anywhere. This project's own `.pitch` already draws a real green
+striped pitch with markings (unchanged, was never the problem) - the actual bug was
+`.player-card`'s own white gradient background, putting every player inside a boxed
+white card floating on top of the green pitch instead of blending onto it.
+- `.player-card` background set to fully transparent, box-shadow/border-top
+  removed - it's now purely a positioning container for the kit image + armband/
+  bench-order badges.
+- New `.player-info` - the one real "card-shaped" element left, a small dark
+  semi-transparent pill (`rgba(10,12,16,0.82)`, backdrop-blur) sitting directly
+  under the kit, holding name/price/points - matches fpl.page's own real name-pill-
+  under-the-shirt pattern. Kept the existing per-position accent-color coding as
+  the pill's own top border (was the card's border-top) rather than dropping it.
+  All player text recolored from the old dark-on-white palette (#14161a body,
+  #146c3a green accents) to a light-on-dark one (white body text, #4ade80 green,
+  rgba(255,255,255,*) muted tiers) since it now sits on a dark pill over green
+  grass, not a white box.
+- `_player_card`'s own HTML gained the `.player-info` wrapper div around name/
+  meta/points/lineup-badge (previously flat siblings of the shirt) - the captain's
+  gold glow moved from `.player-card.is-captain` (the whole card, no longer has a
+  visible boundary) to `.player-card.is-captain .player-info` (the pill itself, the
+  actual visible element now).
+- Bench-row and the 480px mobile breakpoint's own `.player-card`/`.player-photo-
+  wrap`/`.player-shirt`/`.player-name` overrides updated to match (padding moved
+  off `.player-card` onto `.player-info`, smaller min-widths since there's no card
+  chrome consuming space anymore).
+- Live-verified via real computed-style checks (not assumed from the CSS source
+  alone): `.player-card` background reads `rgba(0, 0, 0, 0)`, `.player-info` reads
+  the real dark pill color, `.pitch` still carries its real green striped
+  background-image - confirms the fix landed exactly as designed, not just that the
+  CSS parses.
+
+**Testing**: `test_team_odds_*` (2 tests) deleted with the function; 2 new
+`test_fixture_projections_*` tests added (real grid rendering, real squad-team
+highlighting). 801/801 full suite (2 deleted odds tests replaced 1:1 by 2 real
+projections tests - a wash, not a coverage loss).
+
+## Match Intelligence panel broadened from squad-only to all fixtures (2026-08-22, continuation session)
+
+User asked twice, live, during an actual real GW1 gameweek in progress: "why is match
+intelligence not running when the game is already going on... why are all the full
+fixtures not displayed, not just pertaining to the players in my team." Checked with
+real evidence before answering either way, per this project's own standing discipline.
+
+- **Match intelligence WAS genuinely running - confirmed live, not assumed.** Fixture 4
+  (Hull City v Man Utd, real kickoff 2026-08-22T11:30:00Z) showed `status='LIVE'`,
+  `retrieved_at` moving from `11:47:22` to `11:51:54` while this was being checked (a
+  real new goal event, Semi Ajayi 17', landed in that window) - `FPLAgentLivePoll`
+  confirmed `State=Running` via `Get-ScheduledTask`. The on-disk `dashboard.html` (last
+  written `11:49:39`, ~2min after the live sync) already showed real per-minute stats
+  for all 5 in-play locked-squad players (Calafiori/Tzolis/Mbeumo/Maguire/B.Fernandes)
+  and a real live match feed. If nothing appeared to update, the most likely real cause
+  is a browser tab left open from before the data landed - the page's own meta-refresh
+  should pick it up, a reload would too.
+- **The second complaint was real and structural, not a bug**: `_match_intelligence_html`
+  (`monitoring/dashboard.py`) filtered its `match_intelligence` query to
+  `WHERE home_team_id IN (squad's own teams) OR away_team_id IN (...)` by original
+  design intent (its own prior docstring: "shown only when at least one match_intelligence
+  row involves a squad team"). With the user's current 15-man squad spanning 11 real
+  clubs, most of GW1 already showed - only Everton v Crystal Palace and Nott'm Forest v
+  Leeds were excluded, since no locked-squad player is on either team. Since the user
+  asked for ALL fixtures twice, this was changed rather than just explained: the query
+  is now unconditional (every tracked `match_intelligence` row, `LIMIT 20`, still
+  status-then-kickoff ordered), and squad relevance is now a `YOUR SQUAD` badge
+  (`.squad-badge` CSS, same "highlight, don't hide" pattern the Fixture Ticker already
+  uses) rather than a filter. The compact PRE_MATCH row and the full LIVE/HALFTIME card
+  both carry the badge; the "Your Players" sub-section inside a live card is only
+  rendered when the match is genuinely squad-relevant (an honest empty
+  "No locked-squad players in this match" line would otherwise render for every
+  non-squad live match, which is real but pure noise).
+- **Live-verified against the real dashboard, not just tests**: regenerated `fpl
+  dashboard` - all 6 real GW1 fixtures now render (Everton v Crystal Palace and
+  Nott'm Forest v Leeds appear for the first time, correctly unbadged), the 4
+  squad-relevant ones (Arsenal FULL_TIME, Hull-Man Utd LIVE, Ipswich-Sunderland and
+  Brentford-Spurs pre-match) correctly carry `YOUR SQUAD`.
+- 1 test rewritten (`test_match_intelligence_panel_shows_all_matches_even_without_a_squad`
+  replaces the old squad-required empty-state assertion, which was itself the behavior
+  being removed). 801/801 full suite (net wash: one old test replaced by one new test,
+  no coverage lost).
+
 ## Skill/subagent guidance
 
 Don't invoke multiple subagents for a simple question (section 4.4/100) - most of
@@ -4637,3 +5178,109 @@ thread should just do directly. Reach for a subagent specifically when the task
 needs the kind of extended, isolated reasoning pass described in its own file
 (a full decision trace, a red-team challenge) - not as a default wrapper for
 routine command output.
+
+## GW1 postmortem: runtime root cause, cold-start fix, transfer fusion, calibration storage (2026-08-26)
+
+New session, 5 real days after GW1 finished, opened with a broad audit request. Investigated first
+rather than assuming anything was broken - most of the 20-section ask was already built in prior
+sessions (see above); real work was diagnosing why the automation had actually gone stale and closing
+the genuinely open gaps.
+
+- **Root cause of "SessionStart doesn't process the qualitative queue"**: this session's own cwd was
+  the parent `FPL/` folder, not `fpl-agent/` - the exact footgun this file already flagged once
+  (Phase 6 section, "project-root caveat"). `fpl-agent/.claude/settings.json`'s SessionStart hook
+  never loads from that root. **Fixed by mirroring the hook at the parent**: `FPL/.claude/settings.json`
+  + `FPL/.claude/hooks/queue_check.py`, same non-fatal `fpl analysis-queue --pending` check, resolving
+  `fpl-agent/` explicitly rather than relying on cwd. Now fires regardless of which of the two real
+  starting directories a session uses.
+- **Drained the real backlog this surfaced**: 14 of 15 queued GW1 jobs (all matches but Arsenal-
+  Coventry, done in an earlier session) had sat unprocessed for days. Wrote real, evidence-grounded
+  OBSERVED/INFERRED/FPL_IMPLICATION analysis for all remaining GW1 fixtures via `fpl match-analyze`
+  (stale HALFTIME jobs auto-superseded once FULL_TIME exists - new `supersede_stale_halftime_jobs()`,
+  wired into `fpl analysis-queue`, `run_scheduled`, and `live-match-poll`'s FULL_TIME transition, so
+  this self-heals going forward, not just this once).
+- **Real, high-severity bug found while draining the queue: Haaland's own GW1 match was invisible to
+  the whole pipeline.** `match_intelligence` had a real row for Man City v Bournemouth
+  (fotmob 5795370) stuck at `status='PRE_MATCH'` with `away_team_id=NULL`, days after the match
+  finished - `market_identity.py::COMMON_TEAM_NAME_ALIASES` had no entry for FotMob's real payload
+  name "AFC Bournemouth" (FPL's own short form is "Bournemouth"), so `_resolve_fpl_team_id` silently
+  failed and the match was never auto-registered as analyzable, never enqueued for analysis. Added the
+  alias, re-synced for real (22/22 players resolved, real result Man City 2-1 Bournemouth, Haaland
+  5 shots/0.743xG/0 goals - genuine strong involvement, no actual return), analyzed it properly.
+- **Real cold-start bug fixed, the actual Tzolis complaint**: `expected_minutes()` blended his real
+  GW1 evidence (started, 75 real minutes) against his only prior-season row (326min, 2021/22, a
+  multi-season-gap cameo, correctly flagged `stale_prior_season`) at just 10% current-weight - the
+  `weight_current = min(finished_events/10, 0.8)` formula never accounted for the PRIOR's own
+  reliability, only the current sample's size, so a stale prior kept dominating even once real
+  current-season evidence existed. Produced an absurd 15.2 expected minutes for a player who just
+  started and played 75. **Fixed with a separate, faster-ramping blend specifically for the
+  current-evidence-vs-stale-prior case** (`weight_current = min(0.5 + 0.2*finished_events, 0.9)`) -
+  Tzolis: 15.2 -> 54.0 expected minutes, xP 0.58 -> 2.23. The identical gap existed one level deeper:
+  `_player_match_rates()` never read `player_stats_snapshot`'s own real, official, already-synced
+  current-season goals/xG/assists/xA (season-cumulative fields FPL's API already reports) for a
+  player with zero Understat match rows - his own real GW1 assist/xG never fed his own rate at all,
+  only a stale prior-season/cross-league guess did. Added `models/player_regression.py::
+  live_season_shrunk_rate()` (same `shrink_rate()` empirical-Bayes machinery, live-only by
+  construction - gated on `as_of_date is None`, structurally unreachable from the walk-forward
+  backtest) as a new fallback tier, preferred over both the stale season-history fallback and the
+  cross-league guess whenever real current-season minutes exist. **This is a general fix, not a
+  Tzolis patch** - both changes fire for any player whose only prior signal is stale/absent once real
+  current-season evidence exists, matching the "actual GW performance must feed future projections"
+  requirement directly.
+- **Transfer Decision Fusion built** (`models/decision_fusion.py::compare_transfer_views`) - captain
+  already had this (2026-08-22), transfers didn't (a real, previously-disclosed gap: "Transfer Watch
+  recommended Tzolis -> Anderson... without any fusion"). Same rule-based verdict set (MODEL_WINS /
+  QUALITATIVE_WINS / UNDECIDED / INSUFFICIENT_EVIDENCE), scoped to the model's own proposed
+  transfer-OUT player specifically. A real, non-persistent one-match qualitative signal never forces
+  an override (still `MODEL_WINS`, but the explanation names the real signal and frames it as
+  HOLD/REVIEW) - only a genuine `PERSISTENT_TREND` earns `QUALITATIVE_WINS`, same bar captaincy
+  fusion already set. Wired additively into `evaluate_locked_squad` (`TransferAction.qualitative_note`,
+  same pattern as `CaptainAction.qualitative_note` - never changes the underlying keep/transfer
+  verdict, only attaches an FYI note) and into the dashboard's Transfer Watch card + `fpl
+  decision-fusion --squad <ids> --bank <tenths>`. 6 new tests.
+- **Continuous post-GW reassessment** (section I's real gap) - `maybe_run_post_gw_pipeline` only ever
+  ran once per gameweek; the persisted `post_gw_plan`/`chip` decisions (Next GW Plan / Chip Strategy
+  panels) went stale the moment a real material event happened afterward. Live captain/transfer
+  verdicts were already continuously fresh (`evaluate_locked_squad` runs on every dashboard regen) -
+  what was actually stale was the chip verdict and the logged plan snapshot. Added
+  `_has_material_change_since_last_plan()`: while `READY_FOR_NEXT_DEADLINE`, a real HIGH/CRITICAL
+  `change_events` row on a locked-squad player detected after the last pipeline run triggers a real
+  re-run; anything lower-severity or off-squad is correctly ignored (matches section S's "do not let
+  every headline trigger a model overhaul"). 2 new tests, both directions.
+- **Live rank automatic refresh** (section K) - `fpl live-rank` was fully opt-in; the real last sample
+  was 4 days stale when checked. `_maybe_refresh_live_rank()` now runs inside `run_scheduled`, gated
+  on a real fixture genuinely `started=1` for the reference event (zero network cost outside a live/
+  just-finished window, the same condition `_maybe_fetch_live_payload` already uses) and throttled to
+  once per `_LIVE_RANK_MIN_REFRESH_MINUTES=20` so a short scheduler interval can't turn the heaviest
+  network pattern in this project into a per-cycle cost. Smaller auto sample (200 vs the manual
+  default 300) - a disclosed, deliberate trade since this path can fire repeatedly across a live day.
+  Ran for real against GW1 (now finished): `~37` estimated rank off a real 51-point total, bracket
+  1-5,442,291 off a 300-manager sample - genuinely wide, honestly reported, not fabricated precision.
+  3 new tests (fires when live, no-ops outside a live window, throttles within the refresh window).
+- **Calibration/learning persistent storage built** (section R) - `prediction_outcomes` table
+  (migration `0029`, one row per real `(player_id, event, season)`) + `models/calibration.py`.
+  Deliberately does NOT fit any calibration model from this - one gameweek is nowhere near enough,
+  same discipline `price_forecast.py`/`squad_churn.py` already apply. Two halves:
+  `record_predictions_for_locked_squad()` snapshots the model's real `expected_points()` for the
+  locked squad once, right when the lifecycle genuinely reaches `LOCKED` (wired into
+  `run_scheduled`) - idempotent per (player, event), so a real prediction can never be silently
+  overwritten with a later, hindsight-influenced number. `record_outcomes_for_finished_event()` fills
+  in the real actual outcome (`player_stats_snapshot.event_points`/`minutes`, plus whatever real
+  qualitative/user signal exists) once a gameweek finishes - wired into `run_post_gw_pipeline`, since
+  that's the genuinely time-sensitive moment (the live snapshot only reflects THIS gameweek until the
+  next one starts generating points). **Ran for real against GW1's still-live snapshot data before it
+  gets overwritten by GW2**: all 15 locked-squad players got a real outcome row (`predicted_median`
+  honestly `NULL` for GW1 specifically - this table didn't exist before GW1's deadline, so there was
+  never a real pre-deadline prediction to capture; the actual points/minutes/qualitative-direction
+  side is real and complete). GW2 onward will capture both sides genuinely. 5 new tests.
+- **Real end-to-end verification, not just unit tests**: 812/812 full suite passing (801 baseline +
+  11 new). Live-verified against the real production DB throughout, not just mocked - the market-name
+  alias fix, the Tzolis recompute, the queue drain, the live-rank sample, and the calibration backfill
+  were all run for real against `data/fpl.db`, not only asserted in tests.
+- **What this does NOT close, stated plainly**: sections C/D/M (a formal data-lineage audit document,
+  a from-scratch data-source review) were not produced as standalone deliverables - most of their
+  substance already exists scattered through this file's own history (every source's reliability/
+  freshness/coverage/failure-behavior is documented at the point it was built), and a structured index
+  of it was judged lower-value than the runtime/correctness fixes above given real GW2 planning is the
+  actual near-term need. A real follow-up if the user wants a single compact reference doc built from
+  what's already here.

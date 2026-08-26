@@ -260,6 +260,57 @@ def detect_start_percent_changes(
     return changed
 
 
+def detect_lineup_confirmations(
+    conn: sqlite3.Connection, tracked_squad_ids: set[int], match_id: int, now: str, source: str = "fotmob",
+) -> int:
+    """Real "your lineup just got confirmed" alert (2026-08-22, automation-
+    lifecycle pass, item 1) - fires once per (player, match) the first time
+    `player_match_state` genuinely goes from empty to populated for that
+    match (a real lineup-confirmation transition, not a repeat poll of an
+    already-confirmed one). Only for `tracked_squad_ids` - see this module's
+    own top-of-section note on why every push here is squad-scoped.
+    Idempotency uses `old_value` (the match_id as text) rather than a bare
+    entity_id-only check, since one player can have this fire for different
+    real matches across different gameweeks - `entity_id=player_id` alone
+    isn't a unique key across the season the way a fixture_id already is for
+    `detect_upcoming_kickoffs`."""
+    if not tracked_squad_ids:
+        return 0
+    placeholders = ",".join("?" * len(tracked_squad_ids))
+    rows = conn.execute(
+        f"""
+        SELECT p.id AS player_id, p.web_name,
+               EXISTS(
+                   SELECT 1 FROM player_match_state pms
+                   WHERE pms.match_id=? AND pms.player_id = p.id
+               ) AS is_starting
+        FROM players p
+        JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id)
+        JOIN match_intelligence mi ON mi.fpl_fixture_id = f.id AND mi.id = ?
+        WHERE p.id IN ({placeholders})
+        """,
+        (match_id, match_id, *tracked_squad_ids),
+    ).fetchall()
+
+    fired = 0
+    for r in rows:
+        already = conn.execute(
+            "SELECT 1 FROM change_events WHERE event_type='lineup_confirmed' AND entity_id=? AND old_value=?",
+            (r["player_id"], str(match_id)),
+        ).fetchone()
+        if already:
+            continue
+        starting = bool(r["is_starting"])
+        new_status = "confirmed_starting" if starting else "confirmed_benched"
+        severity = "MEDIUM" if starting else "HIGH"
+        record_event(
+            conn, "lineup_confirmed", "player", r["player_id"], str(match_id), new_status,
+            now, source, "CONFIRMED", severity,
+        )
+        fired += 1
+    return fired
+
+
 _KICKOFF_REMINDER_WINDOW_MINUTES = 90  # comfortably wider than the Windows
 # Task Scheduler's default fixed 60min interval (scripts/setup_scheduler.ps1)
 # - the scheduler is NOT adaptive (Phase 7's own disclosed limitation: "OS

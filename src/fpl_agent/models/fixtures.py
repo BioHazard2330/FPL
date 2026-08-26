@@ -200,6 +200,30 @@ def live_or_reference_event(conn: sqlite3.Connection) -> int | None:
     return imminent if imminent is not None else _reference_event(conn)
 
 
+def finished_fixture_ids_fast(conn: sqlite3.Connection, event: int) -> set[int]:
+    """Real, shared "is this fixture actually finished" check (extracted
+    2026-08-22, automation-lifecycle pass, from the identical query that had
+    been separately duplicated in `monitoring/dashboard.py::_squad_live_window`
+    and `_player_play_states`, and needed again by `models/gw_lifecycle.py`) -
+    one authoritative source instead of a third/fourth copy. FPL's own
+    `fixtures.finished` flag only updates on the slower scheduled-sync
+    cadence; `match_intelligence` (FotMob, ~25s via `fpl live-match-poll`)
+    confirms FULL_TIME far faster - a fixture reads as finished when EITHER
+    real signal says so, never the reverse (a missing/stale FotMob row can
+    never un-finish a fixture FPL's own API already confirmed)."""
+    fpl_finished = {
+        r["id"] for r in conn.execute(
+            "SELECT id FROM fixtures WHERE event=? AND finished=1", (event,)
+        ).fetchall()
+    }
+    mi_finished = {
+        r["fpl_fixture_id"] for r in conn.execute(
+            "SELECT fpl_fixture_id FROM match_intelligence WHERE status='FULL_TIME' AND fpl_fixture_id IS NOT NULL"
+        ).fetchall()
+    }
+    return fpl_finished | mi_finished
+
+
 @dataclass(frozen=True)
 class FixtureCountAnomaly:
     event: int

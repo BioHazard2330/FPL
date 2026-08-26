@@ -191,6 +191,35 @@ def season_shrunk_rate(
     return shrink_rate(player_total, player_minutes, position_avg)
 
 
+def live_season_shrunk_rate(
+    conn: sqlite3.Connection, player_id: int, column: str, position: str, before_season: str | None = None
+) -> ShrunkRate:
+    """Real gap found 2026-08-26 (Tzolis: a real GW1 assist, 0.19 xG/0.14 xA
+    already sitting in player_stats_snapshot - official, already-synced Tier 1
+    data - never read by any rate-fallback tier, so a player's own real
+    current-season output never fed their own goals/assists projection even
+    once it existed). player_stats_snapshot's goals_scored/expected_assists
+    columns are season-CUMULATIVE (FPL's own API reports them that way, same
+    reason expected_minutes() divides by finished_events for a per-GW rate),
+    so this is directly comparable to season_shrunk_rate's own player_total/
+    minutes shape - same shrink_rate() empirical-Bayes treatment, same
+    positional prior source. LIVE-ONLY BY DESIGN: player_stats_snapshot has no
+    as_of_date-indexed history, only "the newest row" - never call this from a
+    walk-forward backtest path (same leakage-safety boundary
+    expected_minutes()'s predicted-lineup/rotation-risk overrides already
+    established as live-only)."""
+    if column not in _SEASON_FALLBACK_COLUMNS:
+        raise ValueError(f"unsupported live-season fallback column: {column}")
+    row = conn.execute(
+        f"SELECT {column}, minutes FROM player_stats_snapshot WHERE player_id=? ORDER BY retrieved_at DESC LIMIT 1",
+        (player_id,),
+    ).fetchone()
+    player_total = (row[column] if row else 0.0) or 0.0
+    player_minutes = (row["minutes"] if row else 0) or 0
+    position_avg = season_position_average_per90(conn, position, column, before_season)
+    return shrink_rate(player_total, player_minutes, position_avg)
+
+
 def player_share_of_team_xg(
     conn: sqlite3.Connection, player_id: int, market_team_id: int, season: str, as_of_date: str | None = None
 ) -> float:

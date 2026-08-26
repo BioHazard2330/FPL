@@ -236,9 +236,9 @@ def test_refresh_in_progress_matches_refreshes_a_recent_non_final_match(monkeypa
     monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
     real_sync = fotmob_mod.sync_match
 
-    def spy(conn, home, away, day):
+    def spy(conn, home, away, day, tracked_squad_ids=None):
         calls.append((home, away))
-        return real_sync(conn, home, away, day)
+        return real_sync(conn, home, away, day, tracked_squad_ids)
 
     monkeypatch.setattr(fotmob_mod, "sync_match", spy)
 
@@ -268,7 +268,7 @@ def test_refresh_in_progress_matches_counts_failures_without_raising(monkeypatch
     kickoff = datetime.now(timezone.utc) - timedelta(hours=1)
     _seed_match_intelligence_row(db_conn, "LIVE", kickoff)
 
-    def boom(conn, home, away, day):
+    def boom(conn, home, away, day, tracked_squad_ids=None):
         raise FotMobFetchError("simulated failure")
 
     monkeypatch.setattr(fotmob_mod, "sync_match", boom)

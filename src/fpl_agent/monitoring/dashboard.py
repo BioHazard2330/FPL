@@ -34,7 +34,8 @@ from fpl_agent.models.availability import list_availability
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.models.expected_points import _fixture_goals_for
-from fpl_agent.models.fixtures import live_or_reference_event, team_fixture_ticker
+from fpl_agent.models.fixtures import finished_fixture_ids_fast, live_or_reference_event, team_fixture_ticker
+from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.live_bonus import compute_live_bonus
 from fpl_agent.models.live_rank import estimate_squad_live_points
 from fpl_agent.models.rules import current_season, get_rule
@@ -42,7 +43,7 @@ from fpl_agent.models.team_outlook import squad_team_outlooks
 from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
 from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
 from fpl_agent.ingestion.news_source import list_recent_news
-from fpl_agent.ingestion.predicted_lineups_source import get_predicted_lineup_for_squad
+from fpl_agent.models.lineup_state import squad_lineup_states
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.build_team import generate_build_team_report
@@ -91,9 +92,18 @@ _POSITION_ACCENT = {
     "FWD": ("#eda100", "#c98500"),  # slot 4 yellow
 }
 _CONFIDENCE_TIER = {"HIGH": ("STRONG", "strong"), "MEDIUM": ("GOOD", "good"), "LOW": ("WATCH", "watch")}
-_LINEUP_STATUS_LABEL = {
-    "starting": ("starting", "ok"), "bench": ("bench", "warn"),
-    "doubt": ("doubt", "warn"), "out": ("out", "bad"), "banned": ("banned", "bad"),
+# Real 4-state lineup badge (2026-08-22, automation-lifecycle pass, item 1) -
+# replaces the old predicted-lineup-only badge. (label, css class, compact vs
+# full-pill treatment) - CONFIRMED_STARTING/PREDICTED_START stay compact
+# (a common, non-alarming case shouldn't repeat this project's own earlier
+# "saturated green pill on every card communicates nothing" mistake), while
+# CONFIRMED_BENCHED/OUT_UNAVAILABLE get the real, attention-grabbing full pill.
+_LINEUP_STATE_BADGE = {
+    "CONFIRMED_STARTING": ("Confirmed", "ok", "compact"),
+    "PREDICTED_START": ("Predicted", "warn", "compact"),
+    "CONFIRMED_BENCHED": ("BENCHED", "bad", "full"),
+    "OUT_UNAVAILABLE": ("OUT", "bad", "full"),
+    "UNKNOWN": (None, None, None),
 }
 
 
@@ -312,7 +322,7 @@ _AVAILABILITY_SEVERITY = {
 }
 
 
-def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int], event: int | None = None) -> str:
     """Risk monitor (2026-08-21, direct user request, section 15) -
     severity-tiered rows instead of a plain bulleted list. Severity is
     derived from data this project already computes honestly:
@@ -321,16 +331,36 @@ def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     keyword-matched rotation hedges (always MONITOR tier, never ACTION -
     it's a heuristic signal over scraped text, not a confirmed status, and
     this project's own honesty convention never overstates a heuristic's
-    certainty)."""
+    certainty).
+
+    Real "confirmed benched/out" row added (2026-08-22, automation-lifecycle
+    pass, item 1) - a decisive, real fact (`models.lineup_state`), not a
+    heuristic, so it earns the top ACTION tier - deduped against the
+    availability-sourced rows above by player_id so an OUT_UNAVAILABLE player
+    (already surfaced via `list_availability`) never appears twice."""
     rows = []
+    flagged_player_ids: set[int] = set()
     for r in list_availability(conn, unavailable_only=True):
         if r.player_id not in squad_ids:
             continue
+        flagged_player_ids.add(r.player_id)
         cls, label = _AVAILABILITY_SEVERITY.get(r.classification, ("monitor", "Monitor"))
         detail = f"{_esc(r.classification)}{' - ' + _esc(r.news) if r.news else ''} ({_esc(r.team)})"
         rows.append(f"""<div class="risk-row">
   <span class="risk-severity risk-severity-{cls}">{label}</span>
   <span class="risk-body"><strong>{_esc(r.web_name)}</strong> &middot; {detail}</span>
+</div>""")
+
+    if event is not None:
+        lineup = squad_lineup_states(conn, list(squad_ids), event)
+        names = {r["id"]: r["web_name"] for r in conn.execute("SELECT id, web_name FROM players").fetchall()}
+        for pid, ls in lineup.items():
+            if pid in flagged_player_ids or ls.state != "CONFIRMED_BENCHED":
+                continue
+            flagged_player_ids.add(pid)
+            rows.append(f"""<div class="risk-row">
+  <span class="risk-severity risk-severity-action">Action required</span>
+  <span class="risk-body"><strong>{_esc(names.get(pid, f'player #{pid}'))}</strong> &middot; confirmed not in the starting lineup for this match</span>
 </div>""")
 
     # Real qualitative rotation-risk signal (2026-08-21) - see
@@ -351,7 +381,7 @@ def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
 
 
 def _player_card(
-    c, *, is_captain: bool, is_vice: bool, lineup_info: dict | None = None, team_code: int | None = None,
+    c, *, is_captain: bool, is_vice: bool, lineup_state=None, team_code: int | None = None,
     bench_order: int | None = None, next_fixture: tuple[str, bool, int] | None = None,
     play_state: str | None = None, actual_points: float | None = None, live_minutes: int | None = None,
 ) -> str:
@@ -362,19 +392,23 @@ def _player_card(
     elif is_vice:
         armband = "<span class='armband vc' title='Vice-captain'>VC</span>"
 
+    # Real 4-state lineup badge (2026-08-22, automation-lifecycle pass) -
+    # `lineup_state` is a `models.lineup_state.LineupState`, real PREDICTED_START
+    # / CONFIRMED_STARTING / CONFIRMED_BENCHED / OUT_UNAVAILABLE / UNKNOWN,
+    # never the old predicted-lineup-only signal. UNKNOWN renders nothing (no
+    # real signal from any source - not a fabricated placeholder).
     lineup_badge = ""
     lineup_tip_row = ""
-    if lineup_info is not None:
-        label, cls = _LINEUP_STATUS_LABEL.get(lineup_info["status"], ("?", "warn"))
-        doubt = f" {lineup_info['doubt_percent']}%" if lineup_info.get("doubt_percent") is not None else ""
-        # Real visual-noise fix (second polish pass): "starting" is the
-        # overwhelming common case (nearly every card), so a saturated green
-        # pill on every single card communicated nothing - reserved badge
-        # treatment for the real exceptions (bench/doubt/out/banned) only.
-        # "Starting" status is still always in the hover tooltip below.
-        if lineup_info["status"] != "starting":
-            lineup_badge = f"<span class='lineup-badge lineup-{cls}' title='predicted lineup'>{_esc(label)}{doubt}</span>"
-        lineup_tip_row = f"<div class='player-tooltip-row'><span>Predicted</span><strong>{_esc(label)}{doubt}</strong></div>"
+    if lineup_state is not None and lineup_state.state != "UNKNOWN":
+        label, cls, weight = _LINEUP_STATE_BADGE.get(lineup_state.state, (None, None, None))
+        if label is not None:
+            title = "confirmed lineup" if weight == "compact" and lineup_state.state == "CONFIRMED_STARTING" else \
+                "predicted lineup" if weight == "compact" else "lineup status"
+            badge_cls = f"lineup-badge lineup-{cls} lineup-badge-{weight}"
+            lineup_badge = f"<span class='{badge_cls}' title='{_esc(title)}'>{_esc(label)}</span>"
+        tip_label = label or lineup_state.state.replace("_", " ").title()
+        detail = f" &middot; {_esc(lineup_state.detail)}" if lineup_state.detail else ""
+        lineup_tip_row = f"<div class='player-tooltip-row'><span>Lineup</span><strong>{_esc(tip_label)}{detail}</strong></div>"
 
     # Real official FPL kit graphic (2026-08-21) - see _official_shirt_url's
     # own docstring for why this replaced both the hand-drawn SVG jersey and
@@ -383,10 +417,24 @@ def _player_card(
     # so it can never show a stale club after a transfer the way the photo
     # CDN did (confirmed real, live: Madueke's photo was still Chelsea,
     # `Last-Modified: Feb 2025`) - always genuinely current by construction.
+    # Real "blank/white square" bug fix (2026-08-22, dashboard-overhaul pass) -
+    # the img had no onerror handler, so any real load failure (ad-blocker,
+    # extension, transient CDN hiccup - the URL itself is real and correct)
+    # rendered a blank/broken box instead of degrading to the existing
+    # `.shirt-fallback` styling, which was only ever wired for the
+    # `team_code is None` case. Now both elements always render; a failed
+    # image load hides itself and reveals the fallback right next to it -
+    # same real pattern this project already used once for the earlier
+    # photo-CDN experiment, just never carried over when shirts replaced it.
     shirt_html = "<div class='shirt-fallback'></div>"
     if team_code is not None:
         shirt_url = _official_shirt_url(team_code, is_gkp=(c.position == "GKP"))
-        shirt_html = f'<img class="player-shirt" src="{_esc(shirt_url)}" loading="lazy" alt="{_esc(c.team_short)} shirt">'
+        shirt_html = (
+            f'<img class="player-shirt" src="{_esc(shirt_url)}" loading="lazy" '
+            f'alt="{_esc(c.team_short)} shirt" '
+            f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\'">'
+            f"<div class='shirt-fallback' style='display:none'></div>"
+        )
 
     bench_badge = f"<span class='bench-order'>{bench_order}</span>" if bench_order is not None else ""
     cap_class = " is-captain" if is_captain else ""
@@ -451,10 +499,12 @@ def _player_card(
   <div class="player-photo-wrap">
     {shirt_html}
   </div>
-  <div class="player-name">{_esc(c.web_name)}</div>
-  <div class="player-meta">{_esc(c.team_short)} &middot; £{c.price_tenths / 10:.1f}m</div>
-  {points_html}
-  {lineup_badge}
+  <div class="player-info">
+    <div class="player-name">{_esc(c.web_name)}</div>
+    <div class="player-meta">{_esc(c.team_short)} &middot; £{c.price_tenths / 10:.1f}m</div>
+    {points_html}
+    {lineup_badge}
+  </div>
   {tooltip}
 </div>"""
 
@@ -476,7 +526,7 @@ def _pitch_html_from_xi(
     if not xi.starting:
         return "<div class='empty-state'>No squad could be built from the current player pool.</div>"
     squad_ids = [c.player_id for c in xi.starting] + [c.player_id for c in xi.bench]
-    lineup = get_predicted_lineup_for_squad(conn, squad_ids)
+    lineup = squad_lineup_states(conn, squad_ids, event)
     team_codes = {r["id"]: r["code"] for r in conn.execute("SELECT id, code FROM teams").fetchall()}
     play_states = _player_play_states(conn, squad_ids, event)
     stats_by_id = (
@@ -520,7 +570,7 @@ def _pitch_html_from_xi(
             continue
         cards = "\n".join(
             _player_card(c, is_captain=c.player_id == cap_id, is_vice=c.player_id == vc_id,
-                         lineup_info=lineup.get(c.player_id), team_code=team_codes.get(c.team_id),
+                         lineup_state=lineup.get(c.player_id), team_code=team_codes.get(c.team_id),
                          next_fixture=_next_fixture_for(c.team_id), play_state=play_states.get(c.player_id),
                          actual_points=_actual_and_minutes(c.player_id)[0],
                          live_minutes=_actual_and_minutes(c.player_id)[1])
@@ -537,7 +587,7 @@ def _pitch_html_from_xi(
     # bench order (no real squad has one until a manager sets it).
     bench_cards = "\n".join(
         _player_card(c, is_captain=c.player_id == cap_id, is_vice=c.player_id == vc_id,
-                     lineup_info=lineup.get(c.player_id), team_code=team_codes.get(c.team_id), bench_order=i + 1,
+                     lineup_state=lineup.get(c.player_id), team_code=team_codes.get(c.team_id), bench_order=i + 1,
                      next_fixture=_next_fixture_for(c.team_id), play_state=play_states.get(c.player_id),
                      actual_points=_actual_and_minutes(c.player_id)[0],
                      live_minutes=_actual_and_minutes(c.player_id)[1])
@@ -606,18 +656,23 @@ def _real_team_html(conn: sqlite3.Connection, entry_id: int) -> str:
 
 def _compare_panel_html(
     conn: sqlite3.Connection, entry_id: int, opt_xp: float, opt_value_m: float, opt_bank_m: float,
-    opt_captain_name: str, opt_squad_ids: set[int],
+    opt_captain_name: str, opt_squad_ids: set[int], my_live_score=None,
 ) -> str:
-    """"Your Team vs Optimized" (2026-08-21, direct user request, section
-    11) - reorganizes real data that already existed in two separate,
-    disconnected panels (the old standalone "My Real Team" panel and the
-    stat-row's own optimized-squad numbers) into one real side-by-side
-    comparison. Never fabricates a number for the side that isn't
-    available yet - the real synced-squad metrics only appear once
-    `fpl my-team` has real locked picks; until then, the real season-
-    history numbers already available (manager identity, past-season
-    points/rank) fill the "your team" side honestly, same empty-state
-    posture `_real_team_html` already established."""
+    """Optimizer Delta panel (originally "Your Team vs Optimized", reframed
+    2026-08-22 per direct user request, section 3: the locked squad is the
+    primary object everywhere else on this dashboard - the optimizer's own
+    from-scratch rebuild must read as a DELTA/DECISION layer against it,
+    never as a second team presented as though it could just replace the
+    locked one). Reorganizes real data that already existed in two
+    separate, disconnected panels (the old standalone "My Real Team" panel
+    and the stat-row's own optimized-squad numbers) into one real
+    current-squad -> projected-improvement -> recommendation reading.
+    Never fabricates a number for the side that isn't available yet - the
+    real synced-squad metrics only appear once `fpl my-team` has real
+    locked picks; until then, the real season-history numbers already
+    available (manager identity, past-season points/rank) fill the
+    "current squad" side honestly, same empty-state posture
+    `_real_team_html` already established."""
     entry = conn.execute("SELECT manager_name, region_name FROM my_team_entry WHERE entry_id=?", (entry_id,)).fetchone()
     manager_name = entry["manager_name"] if entry else f"Entry {entry_id}"
 
@@ -629,14 +684,32 @@ def _compare_panel_html(
     latest = get_latest_squad(conn, entry_id)
     your_metrics = []
     delta_html = ""
+    recommendation_html = ""
     if latest is not None:
         event, squad_ids = latest
         rating = rate_team(conn, squad_ids)
-        your_metrics = [
-            ("GW", f"{event}"),
-            ("Real xP", f"{rating.gw1_xp}"),
-            ("Efficiency", f"{rating.efficiency_percent}% of best"),
-        ]
+        # Real ACTUAL-vs-PROJECTED fix (2026-08-22, dashboard-overhaul pass):
+        # `rating.gw1_xp` is a pre-match projection - labelling it "Real xP"
+        # was correct before the deadline, actively wrong once real matches
+        # have played (confirmed live: this panel kept the stale label after
+        # Arsenal-Coventry finished). `my_live_score.points` (when populated -
+        # gated on a live payload being fetchable at all this event) is the
+        # real accrued actual total for this exact squad, same source the
+        # squad header's own "X GW1 pts" figure already uses - shown
+        # alongside the projection, never instead of it, same pattern.
+        if my_live_score is not None:
+            your_metrics = [
+                ("GW", f"{event}"),
+                (f"GW{event} pts", f"{my_live_score.points:.0f}"),
+                ("Projected xP", f"{rating.gw1_xp}"),
+                ("Efficiency", f"{rating.efficiency_percent}% of best"),
+            ]
+        else:
+            your_metrics = [
+                ("GW", f"{event}"),
+                ("Projected xP", f"{rating.gw1_xp}"),
+                ("Efficiency", f"{rating.efficiency_percent}% of best"),
+            ]
         # Real duplicate-pitch fix (2026-08-22, visual-redesign pass, live-
         # verified: this panel used to also re-render a full second pitch
         # ("Your real synced squad") directly under the comparison metrics -
@@ -664,6 +737,25 @@ def _compare_panel_html(
         if captain_changed:
             delta_parts.append(f"captain: {_esc(your_cap_name)} &rarr; {_captain_html(opt_captain_name)}")
         delta_html = f"<div class='compare-delta'>{' &middot; '.join(delta_parts)}</div>"
+        # Real recommendation line (2026-08-22, item 3 of the post-match-
+        # consistency pass) - same modest-bar-before-claiming-an-action
+        # threshold this project already uses for chip advisories
+        # (bench_boost_value/triple_captain_value's own >2.0xP bar) rather
+        # than a new heuristic. This is a plain, disclosed read of the
+        # already-computed delta above - never a new model, never
+        # presented as though the rebuilt squad should simply replace the
+        # locked one; the real transfer cost (a hit, or the transfer
+        # itself) isn't priced in here, so this stays a directional
+        # nudge, not a transfer instruction.
+        if point_delta < 2.0:
+            recommendation = "No transfer currently justified - the gap is within normal model noise."
+        elif not changed_players:
+            recommendation = "Optimizer favors your exact squad with a different captain/XI only - review Captain above."
+        elif changed_players == 1:
+            recommendation = "One player swap would close this gap - see Transfer Watch for the specific pick."
+        else:
+            recommendation = f"{changed_players} player changes would close this gap - check real transfer cost (hits) before acting."
+        recommendation_html = f"<div class='compare-recommendation'>{_esc(recommendation)}</div>"
     elif latest_history is not None and latest_history["rank"] is not None:
         your_metrics = [
             (_esc(latest_history["season_name"]), f"{latest_history['total_points']} pts"),
@@ -686,14 +778,14 @@ def _compare_panel_html(
         f"<div class='compare-metric'><span>Bank</span><span class='compare-metric-value'>£{opt_bank_m:.1f}m</span></div>",
     ])
 
-    return f"""{delta_html}<div class="compare-grid">
+    return f"""{delta_html}{recommendation_html}<div class="compare-grid">
   <div class="compare-side">
-    <div class="compare-label">Your Team &middot; {_esc(manager_name)}</div>
+    <div class="compare-label">Current Squad &middot; {_esc(manager_name)}</div>
     {your_side}
   </div>
-  <div class="compare-vs">VS</div>
+  <div class="compare-vs">&rarr;</div>
   <div class="compare-side compare-optimized">
-    <div class="compare-label">Optimized Team</div>
+    <div class="compare-label">If Rebuilt From Scratch</div>
     {optimized_side}
   </div>
 </div>"""
@@ -744,13 +836,9 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
     # row for that exact fixture (via fpl_fixture_id) - never the reverse
     # (a stale/absent FotMob row never un-finishes a fixture FPL's own API
     # already confirmed finished).
-    mi_full_time = {
-        r["fpl_fixture_id"] for r in conn.execute(
-            "SELECT fpl_fixture_id FROM match_intelligence WHERE status='FULL_TIME' AND fpl_fixture_id IS NOT NULL"
-        ).fetchall()
-    }
+    finished_ids = finished_fixture_ids_fast(conn, event)
     fixtures = [
-        {**dict(f), "finished": 1 if (f["finished"] or f["id"] in mi_full_time) else 0}
+        {**dict(f), "finished": 1 if (f["finished"] or f["id"] in finished_ids) else 0}
         for f in fixtures_raw
     ]
 
@@ -848,9 +936,31 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
         squad_rows = [r for r in rows if r.player_id in squad_ids]
         if not squad_rows:
             return "<div class='empty-state'>Match in progress - none of your squad have registered minutes yet.</div>"
+        # Real per-player state split (2026-08-22, post-match-consistency
+        # pass): a GW1-spanning squad genuinely has some players already
+        # FULL_TIME (per match_intelligence's fast FotMob-backed override,
+        # same source `_player_play_states` already uses) while others are
+        # still mid-match at the same moment - a single global "live"
+        # treatment for the whole panel is exactly the stale/misleading
+        # state this pass exists to close. FPL's own live-event endpoint
+        # keeps serving a player's REAL final minutes/BPS/total_points
+        # after full-time (verified live: Calafiori's 80' is his genuine
+        # final minutes, subbed off before the final whistle, not a stale
+        # snapshot) - what's wrong pre-fix is the FRAMING (a pulsing "live"
+        # dot and "provisional" bonus label on a match that's actually
+        # over), not the numbers themselves. `confirmed_bonus` staying None
+        # after full-time is real and honest (FPL hasn't finalized bonus
+        # yet) - labelled as such, never fabricated as confirmed.
+        play_states = _player_play_states(conn, [r.player_id for r in squad_rows], window.event)
         lines = []
         for r in squad_rows:
-            confirmed = f"<span class='bonus-confirmed'>{r.confirmed_bonus} confirmed</span>" if r.confirmed_bonus is not None else "<span class='bonus-provisional'>provisional</span>"
+            finished = play_states.get(r.player_id) == "played"
+            if r.confirmed_bonus is not None:
+                confirmed = f"<span class='bonus-confirmed'>{r.confirmed_bonus} confirmed</span>"
+            elif finished:
+                confirmed = "<span class='bonus-provisional'>bonus not yet confirmed by FPL</span>"
+            else:
+                confirmed = "<span class='bonus-provisional'>provisional</span>"
             # DEFCON progress (2026-08-21, live-gameweek layer item 2/4) -
             # only rendered for a real eligible position (defcon_threshold
             # is None for GKP, and absent/0 for a player this source hasn't
@@ -859,15 +969,24 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
             defcon_html = ""
             if r.defcon_threshold is not None:
                 defcon_cls = "defcon-reached" if r.defcon_reached else "defcon-progress"
-                defcon_label = "DEFCON +2" if r.defcon_reached else "DefCon"
+                if r.defcon_reached:
+                    defcon_label = "DEFCON +2"
+                elif finished:
+                    defcon_label = "DefCon (final)"
+                else:
+                    defcon_label = "DefCon"
                 defcon_html = (
                     f"<span class='live-stat {defcon_cls}'>{_esc(defcon_label)} "
                     f"{r.defensive_contribution}/{r.defcon_threshold}</span>"
                 )
+            status_dot = (
+                "<span class='fx-badge fx-badge-ft' style='margin-right:2px'>FT</span>" if finished
+                else "<span class='pulse-dot small'></span>"
+            )
             lines.append(
-                f"<div class='live-row'><span class='pulse-dot small'></span>"
+                f"<div class='live-row'>{status_dot}"
                 f"<strong>{_esc(r.web_name)}</strong>"
-                f"<span class='live-stat'>{r.minutes}&prime;</span>"
+                f"<span class='live-stat'>{r.minutes}&prime;{' final' if finished else ''}</span>"
                 f"<span class='live-stat'>{r.goals_scored}G {r.assists}A</span>"
                 f"<span class='live-stat'>BPS {r.bps}</span>"
                 f"{defcon_html}"
@@ -934,11 +1053,35 @@ def _describe_change_event(conn: sqlite3.Connection, event_type: str, entity_id:
         return f"<strong>{_esc(name)}</strong> start probability: {_esc(str(old_value))}% &rarr; {_esc(str(new_value))}%"
     if event_type == "kickoff_reminder":
         fixture = conn.execute(
-            "SELECT ht.short_name AS home, at.short_name AS away FROM fixtures f "
+            "SELECT ht.short_name AS home, at.short_name AS away, f.started, f.finished, "
+            "f.team_h_score, f.team_a_score FROM fixtures f "
             "JOIN teams ht ON ht.id = f.team_h JOIN teams at ON at.id = f.team_a WHERE f.id=?",
             (entity_id,),
         ).fetchone()
         matchup = f"{fixture['home']} v {fixture['away']}" if fixture else f"fixture #{entity_id}"
+        # Real staleness fix (post-match-consistency pass, 2026-08-22): this
+        # description was authored once, at detection time, with permanent
+        # future-tense wording ("kicks off soon") baked into the stored
+        # text - correct when written, actively wrong once displayed hours
+        # after the real match has finished. Re-derives the real CURRENT
+        # fixture state at render time instead (same FotMob FULL_TIME
+        # override every other match-status read in this file already
+        # applies, for one authoritative source of truth).
+        mi_full_time_row = conn.execute(
+            "SELECT status, home_score, away_score FROM match_intelligence "
+            "WHERE fpl_fixture_id=? AND status='FULL_TIME'", (entity_id,),
+        ).fetchone()
+        if fixture and (fixture["finished"] or mi_full_time_row):
+            if mi_full_time_row:
+                score = f"{mi_full_time_row['home_score']}-{mi_full_time_row['away_score']}"
+            elif fixture["team_h_score"] is not None:
+                score = f"{fixture['team_h_score']}-{fixture['team_a_score']}"
+            else:
+                score = None
+            suffix = f" (final {score})" if score else " (finished)"
+            return f"<strong>{_esc(matchup)}</strong> kicked off, now finished{suffix}"
+        if fixture and fixture["started"]:
+            return f"<strong>{_esc(matchup)}</strong> kicked off, in progress"
         return f"<strong>{_esc(matchup)}</strong> kicks off soon ({_esc(_format_kickoff(new_value))})"
     return f"<strong>{_esc(name)}</strong> {_esc(event_type)}"
 
@@ -1007,6 +1150,239 @@ def _price_changes_html(conn: sqlite3.Connection, limit: int = 8) -> str:
             f"<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])}</span> "
             f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m"
             f"<span class='change-time'>{_esc(_relative_time(r['changed_at']))}</span></div>"
+        )
+    return "\n".join(lines)
+
+
+def _price_predictions_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Price Predictions (dashboard-overhaul pass, 2026-08-22, direct user
+    request - "fpl.page has updates on price change predictions"). This
+    project already has a real, tested price-forecast heuristic
+    (`models.price_forecast.classify_price_change`, real transfer-momentum
+    ratio from already-synced `player_transfer_momentum_history`) that had
+    never been wired into the dashboard at all - no new modelling here, just
+    surfacing it. Explicitly labeled `confidence="low"`/uncalibrated, same
+    honesty posture the underlying module itself documents - never presented
+    as a confident prediction."""
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to forecast prices for yet.</div>"
+    rows = conn.execute(
+        "SELECT p.id, p.web_name, t.short_name AS team, cur.value_tenths "
+        "FROM players p JOIN teams t ON t.id = p.team_id "
+        "LEFT JOIN player_price_history cur ON cur.player_id = p.id AND cur.valid_until IS NULL "
+        "WHERE p.id IN ({})".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No squad price data synced yet.</div>"
+
+    from fpl_agent.models.price_forecast import classify_price_change
+
+    entries = []
+    for r in rows:
+        forecast = classify_price_change(conn, r["id"])
+        entries.append((r, forecast))
+    # Real movers first (rise/fall likely), stable players after - the whole
+    # point of a forecast panel is surfacing what's actually moving.
+    entries.sort(key=lambda e: (e[1].direction == "STABLE", -abs(e[1].momentum_ratio)))
+
+    _DIR_LABEL = {
+        "RISE_LIKELY": ("Rise likely", "ok", "&#9650;"),
+        "FALL_LIKELY": ("Fall likely", "bad", "&#9660;"),
+        "STABLE": ("Unlikely to change", "warn", "&#8226;"),
+    }
+    lines = []
+    for r, forecast in entries:
+        label, cls, arrow = _DIR_LABEL.get(forecast.direction, ("Unknown", "warn", "&#8226;"))
+        price = f"£{r['value_tenths']/10:.1f}m" if r["value_tenths"] is not None else "£?m"
+        lines.append(f"""<div class="price-predict-row">
+  <span class="price-predict-name"><strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])}</span></span>
+  <span class="price-predict-price">{price}</span>
+  <span class="price-predict-{cls}">{arrow} {_esc(label)}</span>
+</div>""")
+    return (
+        "<div class='panel-subtitle' style='margin-bottom:8px'>Uncalibrated heuristic (real transfer momentum, "
+        "not a confirmed FPL trigger) - directional only</div>" + "\n".join(lines)
+    )
+
+
+_PROJECTION_GWS = 5  # matches fpl.page's own real "GAMEWEEK PROJECTIONS" default window
+
+
+def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Fixture Projections (2026-08-22, direct user request - replaces the
+    earlier bookmaker-odds "Team Odds" panel entirely: "i dont want book
+    odds, i want projected goals score + clean sheet %... scour through
+    fpl.page in detail"). Live-verified against fpl.page's own real DOM
+    before building this: their "GAMEWEEK PROJECTIONS" module is a real
+    TEAM x GW numeric grid (projected goals, a separate clean-sheet-%
+    table), not an odds/probability display. This project already computes
+    exactly those two real numbers per fixture cell for the Fixture
+    Ticker's own hover tooltip (`_fixture_goals_for`/`clean_sheet_
+    probability`, the same Dixon-Coles/odds-blended figures the live xP
+    model itself scores with) - this panel is the same real numbers,
+    surfaced as fpl.page's own dedicated grid instead of buried in a
+    tooltip. Real bookmaker odds (`fixture_odds_live`) stay wired into
+    `run_scheduled` and the xP model - only the ODDS-framed DASHBOARD PANEL
+    is gone, not the underlying model input."""
+    team_rows = conn.execute("SELECT id, short_name, code FROM teams ORDER BY short_name").fetchall()
+    if not team_rows:
+        return "<div class='empty-state'>No team data synced yet.</div>"
+    squad_team_ids = set()
+    if squad_ids:
+        squad_team_ids = {
+            r["team_id"] for r in conn.execute(
+                "SELECT DISTINCT team_id FROM players WHERE id IN ({})".format(",".join("?" * len(squad_ids))),
+                tuple(squad_ids),
+            ).fetchall()
+        }
+
+    goals_cache: dict[int, tuple[float, float]] = {}
+    per_team: list[dict] = []
+    for r in team_rows:
+        entries = team_fixture_ticker(conn, r["id"], n_gw=_PROJECTION_GWS)
+        cells = []
+        for e in entries:
+            fixture_row = conn.execute("SELECT * FROM fixtures WHERE id=?", (e.fixture_id,)).fetchone()
+            goals_for, goals_against = _cached_fixture_goals_for(conn, fixture_row, r["id"], goals_cache)
+            cs_pct = round(clean_sheet_probability(goals_against) * 100)
+            cells.append({
+                "event": e.event, "opponent": e.opponent_short, "is_home": e.is_home,
+                "goals_for": goals_for, "cs_pct": cs_pct,
+            })
+        per_team.append({
+            "team": r, "cells": cells,
+            "total_goals": sum(c["goals_for"] for c in cells),
+            "avg_cs": (sum(c["cs_pct"] for c in cells) / len(cells)) if cells else 0.0,
+            "is_squad": r["id"] in squad_team_ids,
+        })
+
+    def _cell_html(cells: list[dict], key: str, fmt) -> str:
+        out = []
+        for c in cells:
+            event = c["event"]
+            opponent = _esc(c["opponent"])
+            venue = "(H)" if c["is_home"] else "(A)"
+            out.append(f"<td class='proj-cell' title='GW{event} vs {opponent} {venue}'>{fmt(c[key])}</td>")
+        out.append("<td class='proj-cell proj-blank'>-</td>" * (_PROJECTION_GWS - len(cells)))
+        return "".join(out)
+
+    header_cells = "".join(f"<th>GW{i}</th>" for i in range(1, _PROJECTION_GWS + 1))
+
+    goals_sorted = sorted(per_team, key=lambda t: -t["total_goals"])
+    goals_rows = []
+    for t in goals_sorted:
+        row_cls = "proj-row proj-row-squad" if t["is_squad"] else "proj-row"
+        badge_url = _official_badge_url(t["team"]["code"])
+        goals_rows.append(
+            f"<tr class='{row_cls}'><td class='proj-team'><img class='proj-badge' src='{_esc(badge_url)}' "
+            f"loading='lazy' alt=''>{_esc(t['team']['short_name'])}</td>"
+            f"{_cell_html(t['cells'], 'goals_for', lambda v: f'{v:.1f}')}"
+            f"<td class='proj-total'>{t['total_goals']:.1f}</td></tr>"
+        )
+
+    cs_sorted = sorted(per_team, key=lambda t: -t["avg_cs"])
+    cs_rows = []
+    for t in cs_sorted:
+        row_cls = "proj-row proj-row-squad" if t["is_squad"] else "proj-row"
+        badge_url = _official_badge_url(t["team"]["code"])
+        cs_rows.append(
+            f"<tr class='{row_cls}'><td class='proj-team'><img class='proj-badge' src='{_esc(badge_url)}' "
+            f"loading='lazy' alt=''>{_esc(t['team']['short_name'])}</td>"
+            f"{_cell_html(t['cells'], 'cs_pct', lambda v: f'{v:.0f}%')}"
+            f"<td class='proj-total'>{t['avg_cs']:.0f}%</td></tr>"
+        )
+
+    return f"""<div class="proj-subtable">
+  <div class="proj-subtitle">Projected goals scored</div>
+  <div class="proj-table-wrap"><table class="proj-table">
+    <thead><tr><th>Team</th>{header_cells}<th>Total</th></tr></thead>
+    <tbody>{"".join(goals_rows)}</tbody>
+  </table></div>
+</div>
+<div class="proj-subtable">
+  <div class="proj-subtitle">Clean sheet probability</div>
+  <div class="proj-table-wrap"><table class="proj-table">
+    <thead><tr><th>Team</th>{header_cells}<th>Avg</th></tr></thead>
+    <tbody>{"".join(cs_rows)}</tbody>
+  </table></div>
+</div>"""
+
+
+def _player_odds_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Player Odds - real anytime-goalscorer odds (dashboard-overhaul pass,
+    2026-08-22, direct user request). Reads `player_odds_live`
+    (`ingestion.player_odds_source.sync_player_odds`, now wired into
+    `run_scheduled` with its own real per-fixture freshness throttle).
+    `implied_probability_raw` is exactly that - the bookmaker's own
+    overround is NOT removed (see that module's own docstring for why a
+    goalscorer market can't be devigged the same simple way a 2/3-outcome
+    match-result market is) - labeled honestly, never presented as a
+    calibrated probability."""
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to show goalscorer odds for yet.</div>"
+    rows = conn.execute(
+        "SELECT po.player_id, po.player_name_raw, po.anytime_scorer_price, po.implied_probability_raw, "
+        "po.retrieved_at, p.web_name, t.short_name AS team "
+        "FROM player_odds_live po "
+        "LEFT JOIN players p ON p.id = po.player_id "
+        "LEFT JOIN teams t ON t.id = p.team_id "
+        "WHERE po.player_id IN ({}) "
+        "ORDER BY po.implied_probability_raw DESC LIMIT 15".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No live goalscorer odds synced for your squad's upcoming fixtures yet.</div>"
+    lines = []
+    for r in rows:
+        name = r["web_name"] or r["player_name_raw"]
+        lines.append(f"""<div class="player-odds-row">
+  <span class="player-odds-name"><strong>{_esc(name)}</strong> <span class='fx-teams'>{_esc(r['team'] or '')}</span></span>
+  <span class="player-odds-price">{r['anytime_scorer_price']:.2f}</span>
+  <span class="player-odds-prob">{r['implied_probability_raw']*100:.0f}% <span class='panel-subtitle'>raw, not devigged</span></span>
+</div>""")
+    return "\n".join(lines)
+
+
+def _statistics_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Statistics - real CURRENT-SEASON stat leaders (dashboard-overhaul
+    pass, 2026-08-22, direct user request: "season stat leaders"). Reads
+    `player_stats_snapshot` (each player's own latest row - the real,
+    already-synced current-season running totals FPL's own API reports,
+    refreshed every regular sync cycle), NOT `player_season_history` (a
+    real, different table this project already has - only ever populated
+    from a season's `history_past` once that season has fully ENDED, so it
+    is structurally empty for the current, still-in-progress season -
+    checked live before writing this, not assumed). Squad-scoped, sorted by
+    real total points. No projection - actual recorded totals only."""
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to show stats for yet.</div>"
+    rows = conn.execute(
+        "SELECT p.web_name, t.short_name AS team, s.total_points, s.goals_scored, s.assists, "
+        "s.minutes, s.bonus, s.expected_goals, s.expected_assists "
+        "FROM players p JOIN teams t ON t.id = p.team_id "
+        "LEFT JOIN player_stats_snapshot s ON s.id = ("
+        "  SELECT id FROM player_stats_snapshot WHERE player_id = p.id ORDER BY retrieved_at DESC LIMIT 1"
+        ") "
+        "WHERE p.id IN ({}) "
+        "ORDER BY s.total_points DESC".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not rows or all(r["total_points"] is None for r in rows):
+        return "<div class='empty-state'>No current-season stats synced yet for your squad.</div>"
+    header = (
+        "<div class='stats-row stats-header'><span>Player</span><span>Pts</span><span>Mins</span>"
+        "<span>G</span><span>A</span><span>Bonus</span><span>xG</span><span>xA</span></div>"
+    )
+    lines = [header]
+    for r in rows:
+        v = lambda key: r[key] if r[key] is not None else "-"
+        lines.append(
+            f"<div class='stats-row'><span><strong>{_esc(r['web_name'])}</strong> "
+            f"<span class='fx-teams'>{_esc(r['team'])}</span></span>"
+            f"<span>{v('total_points')}</span><span>{v('minutes')}</span>"
+            f"<span>{v('goals_scored')}</span><span>{v('assists')}</span><span>{v('bonus')}</span>"
+            f"<span>{v('expected_goals')}</span><span>{v('expected_assists')}</span></div>"
         )
     return "\n".join(lines)
 
@@ -1134,6 +1510,20 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             else f"<span class='dot dot-{churn_dot_cls}'></span>{_esc(o.churn_label)}"
         )
 
+        # Real per-row freshness tag (2026-08-22, dashboard-overhaul pass,
+        # direct user complaint: "Team Outlook shows outdated info") - the
+        # underlying data (churn/predicted formation/team news) IS real and
+        # regularly re-synced, but the copy itself can read oddly once a
+        # gameweek is under way ("will miss Gameweek 1" pre-deadline, mid-
+        # gameweek). Rather than risk misquoting the real source text to
+        # "fix" the framing, show honestly how current each row actually is.
+        fetch_row = conn.execute(
+            "SELECT fetched_at FROM predicted_lineup_teams WHERE team_id=?", (o.team_id,)
+        ).fetchone()
+        freshness_html = (
+            f"<div class='outlook-freshness freshness-tag'>Updated {_esc(_relative_time(fetch_row['fetched_at']))}</div>"
+            if fetch_row else ""
+        )
         detail_bits = [f"<div><span class='dot dot-{churn_dot_cls}'></span>{_esc(o.churn_label)}</div>"]
         if o.formation:
             detail_bits.append(f"<div>Predicted formation: {_esc(o.formation)}</div>")
@@ -1148,7 +1538,7 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             detail_bits.append(f"<div class='outlook-quote'>{_esc(_truncate(o.lineup_news))}</div>")
 
         rows.append(f"""<tr class="outlook-row">
-  <td class="outlook-td-team"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">{_esc(o.team_name)}</td>
+  <td class="outlook-td-team"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">{_esc(o.team_name)}{freshness_html}</td>
   <td>{tactical_cell}</td>
   <td>{quality_cell}</td>
   <td>{fpl_cell}</td>
@@ -1310,11 +1700,7 @@ def _player_play_states(conn: sqlite3.Connection, player_ids, event: int | None)
     # after the match had genuinely finished). Never the reverse - a
     # stale/absent FotMob row can never un-finish a fixture FPL's own API
     # already confirmed.
-    mi_full_time = {
-        r["fpl_fixture_id"] for r in conn.execute(
-            "SELECT fpl_fixture_id FROM match_intelligence WHERE status='FULL_TIME' AND fpl_fixture_id IS NOT NULL"
-        ).fetchall()
-    }
+    finished_ids = finished_fixture_ids_fast(conn, event)
     rows = conn.execute(
         f"SELECT p.id AS player_id, f.id AS fixture_id, f.started AS started, f.finished AS finished "
         f"FROM players p LEFT JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event=? "
@@ -1323,7 +1709,7 @@ def _player_play_states(conn: sqlite3.Connection, player_ids, event: int | None)
     ).fetchall()
     by_player: dict[int, list[tuple[int, int]]] = {}
     for r in rows:
-        by_player.setdefault(r["player_id"], []).append((r["started"], r["finished"] or (r["fixture_id"] in mi_full_time)))
+        by_player.setdefault(r["player_id"], []).append((r["started"], r["finished"] or (r["fixture_id"] in finished_ids)))
         if r["fixture_id"] is None:
             by_player[r["player_id"]] = []
 
@@ -1358,6 +1744,7 @@ class _MyLiveScore:
     points: float
     captain_points: float | None
     captain_name: str | None
+    captain_play_state: str | None
     played: int
     live: int
     yet_to_play: int
@@ -1406,29 +1793,139 @@ def _compute_my_live_score(conn: sqlite3.Connection, locked, live_payload: dict 
 
     all_ids = [c.player_id for c in locked.xi.starting]
     status = _squad_play_status_counts(conn, all_ids, event)
+    cap_play_state = None
+    if cap is not None:
+        cap_play_state = _player_play_states(conn, [cap.player_id], event).get(cap.player_id)
     return _MyLiveScore(
         points=points, captain_points=cap_points, captain_name=cap.web_name if cap else None,
+        captain_play_state=cap_play_state,
         played=status["played"], live=status["live"], yet_to_play=status["yet_to_play"],
         bench=len(locked.xi.bench),
     )
 
 
-def _dashboard_state(squad_window_state: str) -> str:
+def _captain_points_suffix(my_live_score: "_MyLiveScore | None") -> str:
+    """Real ACTUAL-vs-not-yet-played disambiguation for the hero's captain
+    line (post-match-consistency pass, 2026-08-22): raw `0 pts` is
+    genuinely ambiguous between "played and scored zero" and "hasn't
+    played yet" - the exact gap flagged live (Haaland's own hero line read
+    plain '0 pts' while his own fixture hadn't kicked off). Never printed
+    for a captain whose match is still ahead."""
+    if my_live_score is None or my_live_score.captain_points is None:
+        return ""
+    if my_live_score.captain_play_state == "yet_to_play":
+        return " &middot; yet to play"
+    return f" &middot; {my_live_score.captain_points:.0f} pts"
+
+
+def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
+    """Next GW Plan panel (2026-08-22, automation-lifecycle pass, item 9) -
+    "the main optimizer output should be KEEP/TRANSFER/CAPTAIN/CHIP/REVIEW
+    relative to my current squad." Reads the real `post_gw_plan` decision
+    `optimization.post_gw_pipeline.run_post_gw_pipeline` logs once per
+    gameweek (the daemon's own real, official snapshot - distinct from the
+    always-live-recomputed AI Decisions panel above it) - never fabricates a
+    plan when the pipeline hasn't run yet for this event."""
+    logged = latest_decision_of_type(conn, "post_gw_plan")
+    if logged is None:
+        return "<div class='empty-state'>Next-GW plan not generated yet - the daemon runs this automatically once the gameweek finishes.</div>"
+
+    detail = logged.detail
+    age = _relative_time(logged.created_at)
+
+    def _verdict_row(label: str, kind: str | None, body: str) -> str:
+        verdict = {
+            "keep": "KEEP", "change": "CAPTAIN", "transfer": "TRANSFER",
+        }.get(kind, "REVIEW")
+        cls = {"KEEP": "low", "TRANSFER": "monitor", "CAPTAIN": "monitor", "REVIEW": "action"}.get(verdict, "action")
+        return (
+            f"<div class='risk-row'><span class='risk-severity risk-severity-{cls}'>{_esc(verdict)}</span>"
+            f"<span class='risk-body'><strong>{_esc(label)}</strong> &middot; {body}</span></div>"
+        )
+
+    captain = detail.get("captain", {})
+    transfer = detail.get("transfer", {})
+    rows = [
+        _verdict_row(
+            "Captain", captain.get("kind"),
+            f"{_esc(captain.get('current') or '?')}" + (
+                f" &rarr; {_esc(captain.get('suggested'))} ({captain.get('delta'):+.1f} xP)"
+                if captain.get("kind") == "change" and captain.get("suggested") else " - no change"
+            ),
+        ),
+        _verdict_row(
+            "Transfer", transfer.get("kind"),
+            "no transfer currently justified" if transfer.get("kind") == "keep"
+            else f"real net gain available ({transfer.get('delta'):+.1f} xP)" if transfer.get("delta") is not None
+            else "review manually",
+        ),
+    ]
+    eligible = detail.get("eligible_chip_windows") or []
+    if eligible:
+        chip_value_key = {
+            "bboost": "bench_boost", "3xc": "triple_captain", "wildcard": "wildcard_5gw", "freehit": "free_hit",
+        }
+        chip_bits = ", ".join(
+            f"{name} {detail.get(chip_value_key.get(name, ''), 0):.1f}xP" for name in eligible
+        )
+        rows.append(_verdict_row("Chip", "review", f"eligible this window - {_esc(chip_bits)}"))
+
+    risks = detail.get("risks") or []
+    risk_note = f"<div class='panel-subtitle'>{len(risks)} squad risk(s) flagged</div>" if risks else ""
+
+    return (
+        f"<div class='freshness-tag' style='margin-bottom:8px'>Generated {_esc(age)} for GW{detail.get('event', '?')}</div>"
+        + "\n".join(rows) + risk_note
+    )
+
+
+_LIFECYCLE_TO_DASH_STATE = {
+    "LIVE": "LIVE",
+    "GW_FINISHED": "POST_MATCH", "NEXT_GW_ANALYSIS": "POST_MATCH", "READY_FOR_NEXT_DEADLINE": "POST_MATCH",
+    # PRE_DEADLINE, LOCKED, UNKNOWN, and no-lifecycle-data-at-all all read as
+    # PRE_DEADLINE - the honest default when there's nothing live/finished to
+    # report yet (LOCKED gets its own small header label elsewhere, see
+    # `_lifecycle_stage_label`, without needing a fourth CSS bucket/panel
+    # layout - no new visual redesign for one extra pre-kickoff sub-state).
+}
+
+
+def _dashboard_state(lifecycle_state: str | None) -> str:
     """The one real signal driving the dashboard's three product states
-    (2026-08-21, dashboard-state pass) - reuses `_squad_live_window`'s
-    already-real pre/live/post/unknown classification (no new detection
-    logic, no second source of truth). "unknown" (no fixtures resolvable
-    for the squad's own teams at all) reads as PRE_DEADLINE - the honest
-    default when there's nothing live to report."""
-    return {"live": "LIVE", "post": "POST_MATCH"}.get(squad_window_state, "PRE_DEADLINE")
+    (2026-08-21, dashboard-state pass; rewired 2026-08-22 onto the real,
+    authoritative `models.gw_lifecycle.compute_gw_lifecycle_state` - see
+    that module for the real guard against declaring a gameweek finished on
+    incomplete/degraded data)."""
+    return _LIFECYCLE_TO_DASH_STATE.get(lifecycle_state or "", "PRE_DEADLINE")
+
+
+def _lifecycle_stage_label(lifecycle_state: str | None) -> str | None:
+    """A small, real header label for the one sub-state PRE_DEADLINE's own
+    CSS bucket doesn't otherwise distinguish: LOCKED (deadline passed,
+    nothing kicked off yet) vs a normal upcoming PRE_DEADLINE gameweek.
+    `None` for every other state (the existing hero-gw label already covers
+    LIVE/FINAL)."""
+    if lifecycle_state == "LOCKED":
+        return "LOCKED · waiting for kickoff"
+    if lifecycle_state == "UNKNOWN":
+        return "gameweek state unavailable"
+    return None
 
 
 def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """Match Intelligence Core (Pillar 4 Slice A, 2026-08-21) - additive panel,
-    shown only when at least one `match_intelligence` row involves a squad
-    team. Reads only what's already persisted (`fpl sync-match`/the
-    match-intelligence-analysis skill write these tables) - never computes or
-    fabricates anything itself.
+    """Match Intelligence Core (Pillar 4 Slice A, 2026-08-21) - reads only
+    what's already persisted (`fpl sync-match`/the match-intelligence-analysis
+    skill write these tables) - never computes or fabricates anything itself.
+
+    Real fix (2026-08-22): this panel used to filter to ONLY fixtures
+    involving a squad team ("shown only when at least one match_intelligence
+    row involves a squad team"). Direct user feedback, asked twice: they want
+    ALL currently-tracked real fixtures shown, not just the ones their own
+    15 players happen to be on. Now shows every `match_intelligence` row
+    (i.e. every fixture `discover_and_register_matches` has picked up for the
+    current rolling window - normally a full gameweek's worth), with squad
+    relevance kept as a highlight badge rather than a filter, matching the
+    same "highlight, don't hide" pattern the Fixture Ticker already uses.
 
     Match Centre extension (2026-08-21, live-match-feed pass) - for a LIVE/
     HALFTIME match, the card also shows a real score/minute header, the raw
@@ -1438,14 +1935,12 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
     timestamp - "Live data delayed" replaces the live badge rather than
     silently presenting stale data as current (section 14 of the live-
     match-feed spec)."""
-    if not squad_ids:
-        return "<div class='empty-state'>No squad to scope match intelligence to yet.</div>"
-    team_ids = {r["team_id"] for r in conn.execute(
-        "SELECT DISTINCT team_id FROM players WHERE id IN ({})".format(",".join("?" * len(squad_ids))),
-        list(squad_ids),
-    ).fetchall()}
-    if not team_ids:
-        return "<div class='empty-state'>No squad to scope match intelligence to yet.</div>"
+    team_ids: set[int] = set()
+    if squad_ids:
+        team_ids = {r["team_id"] for r in conn.execute(
+            "SELECT DISTINCT team_id FROM players WHERE id IN ({})".format(",".join("?" * len(squad_ids))),
+            list(squad_ids),
+        ).fetchall()}
 
     # Real ordering fix (2026-08-22, visual-redesign pass): a genuinely
     # LIVE/FULL_TIME match - the one thing actually worth reading - used to
@@ -1453,13 +1948,10 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
     # not-yet-kicked-off PRE_MATCH cards with nothing real to say yet.
     # Status now takes priority; kickoff time only breaks ties within a
     # status.
-    placeholders = ",".join("?" * len(team_ids))
     matches = conn.execute(
-        f"SELECT * FROM match_intelligence WHERE home_team_id IN ({placeholders}) "
-        f"OR away_team_id IN ({placeholders}) "
-        f"ORDER BY CASE status WHEN 'FULL_TIME' THEN 0 WHEN 'HALFTIME' THEN 0 WHEN 'LIVE' THEN 0 "
-        f"ELSE 1 END, kickoff_utc DESC LIMIT 5",
-        list(team_ids) * 2,
+        "SELECT * FROM match_intelligence "
+        "ORDER BY CASE status WHEN 'FULL_TIME' THEN 0 WHEN 'HALFTIME' THEN 0 WHEN 'LIVE' THEN 0 "
+        "ELSE 1 END, kickoff_utc DESC LIMIT 20"
     ).fetchall()
     if not matches:
         return "<div class='empty-state'>No match intelligence synced yet - run `fpl sync-match`.</div>"
@@ -1502,13 +1994,15 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
         # shortcut when there's real content to show (implications,
         # a pending job, or an analysis summary already exist).
         has_real_content = bool(impl_rows) or pending_job is not None or (summary and summary["headline"])
+        is_squad_relevant = m["home_team_id"] in team_ids or m["away_team_id"] in team_ids
+        squad_badge = "<span class='outlook-chip squad-badge'>YOUR SQUAD</span>" if is_squad_relevant else ""
         if m["status"] == "PRE_MATCH" and not has_real_content:
             home_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["home_team_id"],)).fetchone()
             away_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["away_team_id"],)).fetchone()
             cards.append(
                 f"<div class='match-intel-row'>"
                 f"<strong>{_esc(home_name['short_name'] if home_name else '?')} v "
-                f"{_esc(away_name['short_name'] if away_name else '?')}</strong>"
+                f"{_esc(away_name['short_name'] if away_name else '?')}</strong>{squad_badge}"
                 f"<span class='match-intel-row-meta'>{_local_time_span(m['kickoff_utc'])}</span></div>"
             )
             continue
@@ -1545,19 +2039,23 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
                 live_badge = f"<span class='outlook-chip outlook-alert'>Live data delayed &middot; last update {_esc(_relative_time(m['retrieved_at']))}</span>"
             else:
                 live_badge = f"<span class='outlook-chip live-now-tag'>LIVE DATA &middot; {stale_seconds if stale_seconds is not None else '?'}s ago</span>"
+            your_players_html = (
+                f"""
+  <div class="bench-label" style="margin-top:8px">Your Players</div>
+  {_match_your_players_html(conn, m["id"], m["home_team_id"], m["away_team_id"], squad_ids)}"""
+                if is_squad_relevant else ""
+            )
             match_centre_html = f"""
   <div class="outlook-head" style="margin-top:10px">
     <strong>{_esc(home_short)} {m['home_score'] if m['home_score'] is not None else 0} &ndash; {m['away_score'] if m['away_score'] is not None else 0} {_esc(away_short)}</strong>
     <span class="outlook-chip">{minute_label}</span>{live_badge}
   </div>
   <div class="bench-label" style="margin-top:8px">Match Feed</div>
-  {_match_feed_html(conn, m["id"])}
-  <div class="bench-label" style="margin-top:8px">Your Players</div>
-  {_match_your_players_html(conn, m["id"], m["home_team_id"], m["away_team_id"], squad_ids)}"""
+  {_match_feed_html(conn, m["id"])}{your_players_html}"""
 
         cards.append(f"""<div class="outlook-card">
   <div class="outlook-head"><strong>{_esc(m['competition'] or '')}</strong>
-    <span class="outlook-chip">{_esc(m['status'])}</span><span class="outlook-chip">score {_esc(score)}</span></div>
+    <span class="outlook-chip">{_esc(m['status'])}</span><span class="outlook-chip">score {_esc(score)}</span>{squad_badge}</div>
   <div class="outlook-churn">{verdict}</div>
   {impl_html}
   {match_centre_html}
@@ -1748,11 +2246,16 @@ def _decision_center_html(conn: sqlite3.Connection, report, squad_ids: set[int],
 </div>""")
         else:  # "transfer"
             c = ta.candidate
+            transfer_football_view_html = (
+                f"<div class='decision-fusion-note'>Football View: {_esc(ta.qualitative_note)}</div>"
+                if ta.qualitative_note else ""
+            )
             cards.append(f"""<div class="decision-card decision-alert">
   <div class="decision-kicker">Transfer Watch <span class="decision-action">TRANSFER</span></div>
   <div class="decision-headline">{_esc(c.player_out_name)} &rarr; {_esc(c.player_in_name)}</div>
   <div class="decision-detail">Real net gain <span class="decision-metric">+{ta.delta:.1f} xP</span>
     over 3 GW (hit-cost aware)</div>
+  {transfer_football_view_html}
 </div>""")
 
         risks_for_card = decision.risks
@@ -1922,11 +2425,25 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             value_html = f"<span class='chip-value'>{value:.1f} xP</span>{age_suffix}"
         else:
             value_html = "<span class='chip-value chip-value-muted'>run `fpl chips` for value</span>"
+        # Real, disclosed one-line read (2026-08-22, dashboard-overhaul pass,
+        # direct user complaint: "Chip Strategy module shows incredibly
+        # useless info") - a plain, honest interpretation of the already-
+        # computed number's own sign/magnitude, not a new heuristic. The
+        # >2.0xP bar matches the same real "modest bar before claiming an
+        # action" threshold `_decision_center_html`'s own chip card uses.
+        context_line = ""
+        if value is not None:
+            if value < 0:
+                context_line = f"<div class='chip-strategy-context'>Currently a real net negative ({value:.1f}xP) - rebuilding the squad would cost more than it gains right now.</div>"
+            elif value < 2.0:
+                context_line = f"<div class='chip-strategy-context'>Currently a modest {value:.1f}xP - not yet clearly worth using.</div>"
+            else:
+                context_line = f"<div class='chip-strategy-context'>A real, meaningful {value:.1f}xP gain - worth genuine consideration this window.</div>"
         rows.append(f"""<div class="chip-strategy-row">
   <span class="chip-strategy-name">{_esc(w.name)}</span>
   <span class="chip-strategy-window">GW{w.start_event}-{w.stop_event} eligible</span>
   {value_html}
-</div>""")
+</div>{context_line}""")
     if not rows:
         return "<div class='empty-state'>No chips currently eligible.</div>"
     advisory = (
@@ -2029,17 +2546,6 @@ def generate_dashboard_html(
         pitch_heading = "Optimizer Recommendation"
         pitch_html = _pitch_html(conn, report, live_payload, reference_event)
 
-    compare_panel = ""
-    if my_team_entry_id is not None:
-        compare_panel = f"""
-  <section class="panel panel-compare" id="compare" data-cat="data">
-    <h2>Your Team vs Optimized</h2>
-    {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids)}
-  </section>"""
-
-    gw_label = f"GW{reference_event}" if reference_event is not None else "GW?"
-    xp_label = "Projected xP" if gw_window == 1 else f"{gw_window}-GW Projected xP"
-
     # Real Gameweek Command Strip (2026-08-21, third session, section 4) -
     # a single inline status band, not more rounded tiles: risk count
     # (already computed for AI Decisions, reused not recalculated), a
@@ -2047,10 +2553,35 @@ def generate_dashboard_html(
     # this project's Live Tracking panel already computes - one extra cheap
     # call, not a new data source), and an honest "optimizer status" derived
     # straight from whether this run actually produced a squad.
+    # Moved earlier (was below the compare panel) - the Optimizer Delta
+    # panel's own real-actual-points fix (2026-08-22, dashboard-overhaul
+    # pass) needs `my_live_score` computed before it's built, not after.
     live_window = _squad_live_window(conn, squad_ids)
-    if live_window.state == "live":
+    my_live_score = _compute_my_live_score(conn, locked, live_payload, live_window.event)
+
+    compare_panel = ""
+    if my_team_entry_id is not None:
+        compare_panel = f"""
+  <section class="panel panel-compare" id="compare" data-cat="data">
+    <h2>Optimizer Delta <span class="panel-subtitle">vs your locked squad</span></h2>
+    {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids, my_live_score)}
+  </section>"""
+
+    gw_label = f"GW{reference_event}" if reference_event is not None else "GW?"
+    xp_label = "Projected xP" if gw_window == 1 else f"{gw_window}-GW Projected xP"
+    # Real fix (2026-08-22, dashboard-overhaul pass): `live_window.state`
+    # deliberately stays "live" for the WHOLE gameweek window once any squad
+    # fixture has started (correct for the hero-xp tile above, which tracks
+    # cumulative GW scoring) - but reusing that same coarse state for THIS
+    # "Next kickoff" strip item produced a real, confirmed-live bug: it read
+    # "LIVE NOW" for ~14 real hours after the one squad fixture that had
+    # played already finished, with the next real kickoff still ~90 minutes
+    # away. `any_in_progress` (already computed on `_LiveWindow`, finer-
+    # grained - a real fixture happening RIGHT NOW) is the correct signal for
+    # this specific item.
+    if live_window.any_in_progress:
         kickoff_html = "<span class='status-live'><span class='pulse-dot small'></span>LIVE NOW</span>"
-    elif live_window.state == "pre" and live_window.next_kickoff:
+    elif live_window.next_kickoff:
         kickoff_html = f"<span id='hero-kickoff-countdown' data-utc='{_esc(live_window.next_kickoff)}'>&hellip;</span>"
     elif live_window.state == "post":
         kickoff_html = "Finished"
@@ -2066,22 +2597,37 @@ def generate_dashboard_html(
     # this only ever reads the last real result `fpl live-rank` itself
     # already logged to the decision journal. `None` (nothing shown) when
     # it's never been run - never a fabricated placeholder rank.
+    # Real stat-tile treatment (2026-08-22, dashboard-overhaul pass, direct
+    # user complaint: "live rank looks so terrible its just one line") -
+    # same hero-metric tile shape already used for Captain/Vice/Squad-value,
+    # given real visual weight instead of being buried in the strip. Reads
+    # the real `estimated_rank` field the decision's own detail dict already
+    # carries (not parsed out of the summary string) as the primary figure.
     live_rank_decision = latest_decision_of_type(conn, "live_rank")
-    live_rank_html = ""
+    live_rank_tile_html = ""
     if live_rank_decision is not None:
-        live_rank_html = (
-            f'<div class="hero-strip-item"><span class="hero-strip-label">Live rank (est.)</span>'
-            f'<span class="hero-strip-value">{_esc(live_rank_decision.summary)} '
-            f'&middot; {_esc(_relative_time(live_rank_decision.created_at))}</span></div>'
-        )
+        # Real fallback (not just "?"): prefer the structured `estimated_rank`
+        # field, but a decision logged before this field existed (or from
+        # any other real caller shape) still has a real, honest summary
+        # string to fall back to rather than a blank placeholder.
+        rank = live_rank_decision.detail.get("estimated_rank")
+        rank_str = f"~{rank:,}" if rank is not None else live_rank_decision.summary
+        live_rank_tile_html = f"""<div class="hero-metric hero-metric-rank">
+      <div class="hero-metric-label">Live rank (est.)</div>
+      <div class="hero-metric-value">{_esc(rank_str)}</div>
+      <div class="hero-metric-sub">as of {_esc(_relative_time(live_rank_decision.created_at))}</div>
+    </div>"""
 
-    # Dashboard-state architecture (2026-08-21) - one real signal
-    # (_squad_live_window, already computed above) drives which of the
-    # three product states (PRE_DEADLINE/LIVE/POST_MATCH) this render is
-    # in. Same components throughout - state only changes emphasis (a body
-    # CSS class + which hero metrics show), never a second dashboard.
-    dash_state = _dashboard_state(live_window.state)
-    my_live_score = _compute_my_live_score(conn, locked, live_payload, live_window.event)
+    # Dashboard-state architecture (2026-08-21, rewired 2026-08-22 onto the
+    # real, authoritative GW lifecycle - automation-lifecycle pass, item 2:
+    # "use it consistently across scheduler, optimizer and dashboard", the
+    # exact same `models.gw_lifecycle.compute_gw_lifecycle_state` the
+    # scheduler's post-GW pipeline trigger and the decision engine's captain
+    # override both already read). Same components throughout - state only
+    # changes emphasis (a body CSS class + which hero metrics show), never a
+    # second dashboard.
+    lifecycle = compute_gw_lifecycle_state(conn)
+    dash_state = _dashboard_state(lifecycle.state if lifecycle is not None else None)
     # Real consistency fix (2026-08-21, found live): a real squad spans many
     # different kickoff times across a whole gameweek, so `dash_state` can
     # honestly read PRE_DEADLINE (no fixture live right now, not everything
@@ -2094,7 +2640,8 @@ def generate_dashboard_html(
     if my_live_score is not None:
         hero_state_label = "FINAL" if dash_state == "POST_MATCH" else "LIVE"
     else:
-        hero_state_label = xp_label
+        stage_label = _lifecycle_stage_label(lifecycle.state if lifecycle is not None else None)
+        hero_state_label = stage_label if stage_label is not None else xp_label
 
     # Real state-aware panel ordering (dashboard-state pass, 2026-08-21) -
     # these five sections are plain block-level <section> elements (no
@@ -2104,9 +2651,19 @@ def generate_dashboard_html(
     # PRE_DEADLINE reproduces the exact original document order (squad,
     # decisions, risks, compare, live) byte-for-byte - zero risk to every
     # existing test/behavior that predates this pass.
+    # Real ACTUAL-vs-PROJECTED split in the squad header itself (post-match-
+    # consistency pass, 2026-08-22, item 2): the pitch cards below already
+    # separate a player's real actual points from their future xP, but the
+    # panel's own summary line only ever showed the projected number - the
+    # exact ambiguity this pass exists to close ("My Locked Squad: 15 GW1
+    # pts · 50.3 next-GW xP", never bare "50.3 xP" once real points exist).
+    actual_points_label = (
+        f"{my_live_score.points:.0f} {_esc(gw_label)} pts &middot; " if my_live_score is not None else ""
+    )
+    xp_summary_label = "next-GW xP" if my_live_score is not None else "projected xP"
     squad_section_html = f"""<section class="panel panel-team" id="squad" data-cat="data">
   <h2>{_esc(pitch_heading)}
-    <span class="panel-subtitle">{headline_xp:.1f} projected xP &middot; £{squad_value_m:.1f}m &middot;
+    <span class="panel-subtitle">{actual_points_label}{headline_xp:.1f} {xp_summary_label} &middot; £{squad_value_m:.1f}m &middot;
       {_captain_html(captain_name)} captain</span></h2>
   {squad_error_html}{pitch_html}
 </section>"""
@@ -2117,7 +2674,7 @@ def generate_dashboard_html(
     risks_section_html = f"""<section class="panel panel-risks" id="risks" data-cat="decision">
   <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
   <div class="risk-monitor">
-{_risk_monitor_html(conn, squad_ids)}
+{_risk_monitor_html(conn, squad_ids, reference_event)}
   </div>
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
@@ -2152,6 +2709,16 @@ def generate_dashboard_html(
   </div>
 </section>"""
 
+    # Next GW Plan (2026-08-22, automation-lifecycle pass, item 9) - real
+    # KEEP/TRANSFER/CAPTAIN/CHIP/REVIEW verdicts from the daemon's own
+    # once-per-gameweek `post_gw_plan` decision, shown once the gameweek has
+    # genuinely finished (GW_FINISHED-family - the same POST_MATCH CSS
+    # bucket, no fourth bucket needed).
+    next_gw_plan_section_html = f"""<section class="panel panel-next-gw-plan" id="next-gw-plan" data-cat="decision">
+  <h2>Next GW Plan <span class="panel-subtitle">daemon's official post-gameweek recommendation</span></h2>
+  {_next_gw_plan_html(conn)}
+</section>"""
+
     if dash_state == "LIVE":
         panel_order = [
             live_section_html, match_intelligence_section_html, decisions_section_html,
@@ -2160,7 +2727,8 @@ def generate_dashboard_html(
     elif dash_state == "POST_MATCH":
         panel_order = [
             live_section_html, match_intelligence_section_html, squad_section_html,
-            decisions_section_html, team_outlook_section_html, risks_section_html, compare_panel,
+            decisions_section_html, next_gw_plan_section_html, team_outlook_section_html,
+            risks_section_html, compare_panel,
         ]
     else:
         panel_order = [squad_section_html, decisions_section_html, risks_section_html, compare_panel, live_section_html]
@@ -2236,7 +2804,7 @@ def generate_dashboard_html(
   <div class="hero-support">
     <div class="hero-metric">
       <div class="hero-metric-label">Captain</div>
-      <div class="hero-metric-value">{_captain_html(captain_name)}{f" &middot; {my_live_score.captain_points:.0f} pts" if my_live_score is not None and my_live_score.captain_points is not None else ""}</div>
+      <div class="hero-metric-value">{_captain_html(captain_name)}{_captain_points_suffix(my_live_score)}</div>
     </div>
     <div class="hero-metric">
       <div class="hero-metric-label">Vice Captain</div>
@@ -2257,12 +2825,12 @@ def generate_dashboard_html(
       <div class="hero-metric-label">In the Bank</div>
       <div class="hero-metric-value">£{bank_m:.1f}m</div>
     </div>'''}
+    {live_rank_tile_html}
   </div>
   <div class="hero-strip">
     <div class="hero-strip-item"><span class="hero-strip-label">Risks</span><span class="hero-strip-value">{len(risks_list)}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Next kickoff</span><span class="hero-strip-value">{kickoff_html}</span></div>
     <div class="hero-strip-item"><span class="hero-strip-label">Optimizer</span><span class="hero-strip-value {optimizer_status_cls}">{_esc(optimizer_status)}</span></div>
-    {live_rank_html}
   </div>
 </section>
 
@@ -2301,6 +2869,32 @@ def generate_dashboard_html(
     <div class="activity-group-label">Price moves</div>
     <div class="price-list">
 {_price_changes_html(conn)}
+    </div>
+  </section>
+
+  <section class="panel panel-price-predict" data-cat="data">
+    <h2>Price Predictions <span class="panel-subtitle">real transfer momentum, uncalibrated</span></h2>
+    <div class="price-predict-list">
+{_price_predictions_html(conn, squad_ids)}
+    </div>
+  </section>
+
+  <section class="panel panel-fixture-projections" data-cat="data">
+    <h2>Fixture Projections <span class="panel-subtitle">real projected goals + clean sheet %, next {_PROJECTION_GWS} GWs</span></h2>
+{_fixture_projections_html(conn, squad_ids)}
+  </section>
+
+  <section class="panel panel-player-odds" data-cat="data">
+    <h2>Player Odds <span class="panel-subtitle">real anytime-goalscorer, squad-scoped</span></h2>
+    <div class="player-odds-list">
+{_player_odds_html(conn, squad_ids)}
+    </div>
+  </section>
+
+  <section class="panel panel-statistics" data-cat="data">
+    <h2>Statistics <span class="panel-subtitle">real current-season stat leaders</span></h2>
+    <div class="stats-table">
+{_statistics_html(conn, squad_ids)}
     </div>
   </section>
 
@@ -2558,7 +3152,8 @@ _CSS = """
   .hero-xp { font-family: "Titillium Web", sans-serif; font-size: 3.1rem; font-weight: 900; color: #fff;
     line-height: 1.05; font-variant-numeric: proportional-nums; letter-spacing: -0.01em; }
   .hero-xp .unit { font-size: 1.3rem; font-weight: 700; opacity: 0.8; margin-left: 4px; }
-  .hero-support { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .hero-support { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .hero-metric-sub { font-size: 0.68rem; color: var(--faint); margin-top: 2px; }
   .hero-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     padding: 13px 15px; box-shadow: 0 4px 16px -10px rgba(0,0,0,0.5); }
   .hero-metric-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
@@ -2659,44 +3254,63 @@ _CSS = """
   .bench-label::after { content: ""; flex: 1; height: 1px; background: var(--gridline); }
   .bench-row { background: linear-gradient(180deg, var(--surface-2), var(--bg)); border-radius: 14px;
     padding: 14px; border: 1px solid var(--border); }
-  .bench-row .player-card { min-width: 116px; padding: 9px 9px 8px; }
-  .bench-row .player-photo-wrap { width: 52px; height: 52px; }
-  .bench-row .player-shirt { width: 52px; height: 52px; }
-  .bench-row .player-name { font-size: 0.88rem; max-width: 130px; }
+  .bench-row .player-card { min-width: 88px; }
+  .bench-row .player-info { padding: 4px 7px 5px; }
+  .bench-row .player-photo-wrap { width: 62px; height: 62px; }
+  .bench-row .player-shirt { width: 62px; height: 62px; }
+  .bench-row .player-name { font-size: 0.86rem; max-width: 110px; }
   .bench-order { position: absolute; top: -8px; left: -8px; width: 20px; height: 20px; border-radius: 50%;
     background: var(--surface-2); border: 2px solid var(--bg); color: var(--muted); font-size: 0.62rem;
     font-weight: 800; display: flex; align-items: center; justify-content: center; z-index: 2; }
 
-  .player-card { position: relative; background: linear-gradient(180deg, #ffffff, #f4f2f8); color: #14161a;
-    border-radius: 14px; padding: 12px 12px 11px; min-width: 148px; text-align: center;
-    box-shadow: 0 5px 16px -5px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.3);
-    border-top: 4px solid var(--accent-l); transition: transform 0.15s ease, box-shadow 0.15s ease;
-    cursor: default; }
-  .player-card:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 12px 26px -8px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.3);
-    z-index: 5; }
-  .player-card:focus-within { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-  .player-card.is-captain { box-shadow: 0 0 0 2px #e9a400, 0 6px 22px -6px rgba(233,164,0,0.55); }
-  @media (prefers-color-scheme: dark) { .player-card { border-top-color: var(--accent-d); } }
-  .player-photo-wrap { position: relative; width: 68px; height: 68px; margin: 0 auto 4px;
-    display: flex; align-items: center; justify-content: center; }
-  .player-shirt { width: 68px; height: 68px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
-  .shirt-fallback { width: 52px; height: 46px; border-radius: 6px; background: var(--accent-d); opacity: 0.35; }
-  .player-name { font-weight: 800; font-size: 1.01rem; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; max-width: 170px; letter-spacing: -0.01em; }
-  .player-meta { font-size: 0.78rem; color: #5a5964; margin-top: 2px; font-weight: 600; }
-  .player-xp { font-size: 0.94rem; font-weight: 800; color: #146c3a; margin-top: 5px; }
-  .player-xp .unit { font-weight: 600; color: #706f7a; font-size: 0.72rem; }
+  /* Real "kit on grass, not a white card" redesign (2026-08-22, direct user
+     request: "the background is white, thats not what I want... similar to
+     how teams look in official fpl site or how fpl.page does it"). Live-
+     verified against fpl.page's own real DOM before building this: their
+     squad view is a real pitch PNG with real kit renders placed directly
+     on the grass, name/price in a small dark pill underneath - no white
+     card chrome anywhere. This project already draws a real green pitch
+     with markings (`.pitch`, CSS gradients, unchanged) - the fix is
+     removing the white box each player sat in, not the pitch itself. */
+  .player-card { position: relative; background: transparent; color: #fff;
+    border-radius: 0; padding: 0; min-width: 96px; text-align: center;
+    box-shadow: none; border-top: none;
+    transition: transform 0.15s ease; cursor: default; }
+  .player-card:hover { transform: translateY(-4px) scale(1.04); z-index: 5; }
+  .player-card:focus-within { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 8px; }
+  .player-card.is-captain .player-info { box-shadow: 0 0 0 2px #e9a400, 0 4px 14px -4px rgba(233,164,0,0.6); }
+  /* Real pitch/squad-card size pass (2026-08-22, dashboard-overhaul,
+     referenced directly against fpl.page's own pitch - larger kit art,
+     more breathing room, matching that site's denser-but-still-clean feel
+     instead of this project's earlier smaller/tighter cards. */
+  .player-photo-wrap { position: relative; width: 84px; height: 84px; margin: 0 auto -6px;
+    display: flex; align-items: center; justify-content: center; z-index: 1; }
+  .player-shirt { width: 84px; height: 84px; object-fit: contain; filter: drop-shadow(0 3px 6px rgba(0,0,0,0.55)); }
+  .shirt-fallback { width: 64px; height: 56px; border-radius: 6px; background: var(--accent-d); opacity: 0.55; }
+  /* The one real "card-shaped" element left - a small, dark, semi-
+     transparent info pill sitting directly under the kit (matches
+     fpl.page's own real name/price label under each shirt render), never
+     a full-bleed box around the player. accent-colored top border keeps
+     the existing per-position color-coding without a full white card. */
+  .player-info { position: relative; z-index: 2; background: rgba(10,12,16,0.82);
+    border-top: 3px solid var(--accent-l); border-radius: 8px; padding: 5px 8px 6px;
+    backdrop-filter: blur(2px); box-shadow: 0 4px 12px -4px rgba(0,0,0,0.6); }
+  .player-name { font-weight: 800; font-size: 0.98rem; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 150px; letter-spacing: -0.01em; color: #fff; }
+  .player-meta { font-size: 0.74rem; color: rgba(255,255,255,0.65); margin-top: 1px; font-weight: 600; }
+  .player-xp { font-size: 0.92rem; font-weight: 800; color: #4ade80; margin-top: 3px; }
+  .player-xp .unit { font-weight: 600; color: rgba(255,255,255,0.55); font-size: 0.7rem; }
   /* Real ACTUAL vs LIVE vs NEXT distinction (2026-08-22) - a played/live
      player's real points is the dominant number on the card (bigger,
      bolder than a projection ever was); the xP reference for an already-
      played player is deliberately small and muted ("was X.X xP") - a
      backward-looking footnote, never presented at the same weight as the
      real result next to it. */
-  .player-actual { font-size: 1.05rem; font-weight: 900; color: #146c3a; margin-top: 5px; }
-  .player-actual .unit { font-weight: 600; color: #706f7a; font-size: 0.72rem; }
-  .player-actual.player-live { color: #d4145a; display: flex; align-items: center; gap: 4px; }
-  .player-xp-ref { font-size: 0.66rem; color: #8a8894; margin-top: 1px; }
-  .next-tag { font-size: 0.55rem; font-weight: 700; letter-spacing: 0.05em; color: #8a8894;
+  .player-actual { font-size: 0.98rem; font-weight: 900; color: #4ade80; margin-top: 3px; }
+  .player-actual .unit { font-weight: 600; color: rgba(255,255,255,0.55); font-size: 0.66rem; }
+  .player-actual.player-live { color: #ff6b9d; display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .player-xp-ref { font-size: 0.62rem; color: rgba(255,255,255,0.5); margin-top: 1px; }
+  .next-tag { font-size: 0.53rem; font-weight: 700; letter-spacing: 0.05em; color: rgba(255,255,255,0.5);
     margin-left: 4px; vertical-align: middle; }
   .armband { position: absolute; top: -10px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
     font-size: 0.66rem; font-weight: 900; display: flex; align-items: center; justify-content: center;
@@ -2708,6 +3322,14 @@ _CSS = """
   .lineup-ok { background: rgba(0,255,135,0.18); color: #0a7d0a; }
   .lineup-warn { background: rgba(250,178,25,0.2); color: #8a5c00; }
   .lineup-bad { background: rgba(233,0,82,0.16); color: #a0093a; }
+  /* Real PREDICTED vs CONFIRMED visual weight (2026-08-22, automation-
+     lifecycle pass, item 1) - "compact" (CONFIRMED_STARTING/PREDICTED_START,
+     the common, non-alarming cases) stays a small quiet marker so it never
+     repeats this project's own earlier "saturated pill on every card"
+     mistake; "full" (BENCHED/OUT, real exceptions) keeps the existing
+     attention-grabbing pill treatment unchanged. */
+  .lineup-badge-compact { opacity: 0.75; font-weight: 700; padding: 1px 6px; font-size: 0.58rem; }
+  .lineup-badge-full { opacity: 1; }
 
   /* Hover tooltip (2026-08-21) - real data only (floor/median/ceiling,
      confidence, expected minutes) already computed for this card, no new
@@ -2736,6 +3358,7 @@ _CSS = """
      serious analytical tool lets you re-order its own tables. --- */
   .fdr-sort { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
   .freshness-tag { font-size: 0.66rem; color: var(--faint); margin-left: auto; white-space: nowrap; }
+  .outlook-freshness { display: block; margin: 0; font-size: 0.62rem; }
   .fdr-sort-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--faint); margin-right: 2px; }
   .fdr-sort-btn { font-size: 0.72rem; font-weight: 600; color: var(--muted); background: var(--surface-2);
@@ -2817,6 +3440,7 @@ _CSS = """
   .outlook-chip { font-size: 0.65rem; font-weight: 600; color: var(--muted); background: var(--surface);
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
   .outlook-alert { color: var(--bad); border-color: var(--bad); }
+  .squad-badge { color: var(--accent-2); border-color: var(--accent-2); }
   .outlook-churn { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.76rem; }
   .outlook-churn .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .dot-ok { background: var(--ok); }
@@ -2842,6 +3466,7 @@ _CSS = """
   .chip-value-age { color: var(--faint); font-weight: 500; font-size: 0.68rem; margin-left: 4px; }
   .chip-value-muted { color: var(--faint); font-weight: 500; font-size: 0.7rem; }
   .chip-advisory { margin-top: 4px; font-size: 0.76rem; color: var(--muted); font-style: italic; }
+  .chip-strategy-context { font-size: 0.78rem; color: var(--muted); padding: 0 10px 6px; margin-top: -2px; }
 
   /* --- Live tracking (real visual redesign 2026-08-21) --- */
   .live-pending { display: flex; align-items: flex-start; gap: 10px; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
@@ -2896,6 +3521,8 @@ _CSS = """
   .compare-delta-pt { font-weight: 800; font-family: "Titillium Web", sans-serif; }
   .compare-delta-pt.pos { color: var(--ok-text); }
   .compare-delta-pt.neg { color: var(--bad); }
+  .compare-recommendation { font-size: 0.82rem; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; }
   .compare-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; }
   .compare-side { background: var(--surface-2); border-radius: 14px; padding: 16px 18px; border: 1px solid var(--border); }
   .compare-side.compare-optimized { border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border)); }
@@ -3074,6 +3701,50 @@ _CSS = """
   .price-up { color: var(--ok); font-weight: 700; }
   .price-down { color: var(--bad); font-weight: 700; }
 
+  /* --- Price Predictions / Player Odds / Statistics (dashboard-overhaul
+     pass, 2026-08-22) --- */
+  .price-predict-row, .player-odds-row { display: flex; align-items: center;
+    justify-content: space-between; gap: 10px; font-size: 0.85rem; padding: 8px 10px;
+    background: var(--surface-2); border-radius: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .price-predict-name, .player-odds-name { flex: 1 1 auto; min-width: 0; }
+  .price-predict-price, .player-odds-price { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .price-predict-ok { color: var(--ok-text); font-weight: 700; }
+  .price-predict-bad { color: var(--bad); font-weight: 700; }
+  .price-predict-warn { color: var(--faint); }
+  .player-odds-prob { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 700; }
+  .player-odds-prob .panel-subtitle { font-weight: 400; margin-left: 4px; }
+
+  /* --- Fixture Projections (2026-08-22, replaces bookmaker-odds "Team
+     Odds" panel per direct user request - real projected goals + clean
+     sheet %, fpl.page's own real grid style, not an odds/probability
+     framing) --- */
+  .proj-subtable { margin-bottom: 16px; }
+  .proj-subtable:last-child { margin-bottom: 0; }
+  .proj-subtitle { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-bottom: 6px;
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .proj-table-wrap { overflow-x: auto; }
+  .proj-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .proj-table th { text-align: center; font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+    color: var(--faint); padding: 4px 6px; white-space: nowrap; }
+  .proj-table th:first-child { text-align: left; }
+  .proj-row { border-top: 1px solid var(--gridline); }
+  .proj-row-squad { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .proj-team { display: flex; align-items: center; gap: 6px; padding: 5px 6px; white-space: nowrap; font-weight: 700; }
+  .proj-badge { width: 18px; height: 18px; object-fit: contain; }
+  .proj-cell { text-align: center; padding: 5px 6px; font-variant-numeric: tabular-nums;
+    color: var(--muted); white-space: nowrap; }
+  .proj-blank { color: var(--faint); }
+  .proj-total { text-align: center; padding: 5px 6px; font-weight: 800; color: var(--text);
+    font-variant-numeric: tabular-nums; border-left: 1px solid var(--gridline); }
+
+  .stats-table { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+  .stats-row { display: grid; grid-template-columns: 2.2fr 0.7fr 0.7fr 0.6fr 0.6fr 0.7fr 0.6fr 0.6fr;
+    gap: 6px; font-size: 0.82rem; padding: 6px 8px; align-items: center; }
+  .stats-row:not(.stats-header) { background: var(--surface-2); border-radius: 6px; }
+  .stats-header { font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--faint); padding: 4px 8px; }
+  .stats-row span:not(:first-child) { font-variant-numeric: tabular-nums; text-align: right; }
+
   /* --- System health chips --- */
   .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; background: var(--surface-2);
@@ -3120,15 +3791,23 @@ _CSS = """
   @media (max-width: 480px) {
     .pitch { padding: 26px 8px 16px; }
     .pitch-row { gap: 8px; }
-    .player-card { min-width: 112px; padding: 9px 8px 8px; }
-    .player-photo-wrap { width: 52px; height: 52px; }
-    .player-shirt { width: 52px; height: 52px; }
-    .player-name { font-size: 0.85rem; max-width: 108px; }
-    .player-meta { font-size: 0.67rem; }
+    .player-card { min-width: 78px; }
+    .player-info { padding: 4px 6px 5px; }
+    .player-photo-wrap { width: 60px; height: 60px; }
+    .player-shirt { width: 60px; height: 60px; }
+    .player-name { font-size: 0.86rem; max-width: 100px; }
+    .player-meta { font-size: 0.68rem; }
     .player-xp { font-size: 0.82rem; }
-    .player-actual { font-size: 0.9rem; }
+    .player-actual { font-size: 0.82rem; }
   }
-  html { scroll-behavior: smooth; }
+  /* Real text-size fix (2026-08-22, dashboard-overhaul pass, direct user
+     complaint: "text is too small everywhere") - every panel/table/list
+     body size in this stylesheet is already expressed in rem, so raising
+     the root font-size scales the whole dashboard proportionally in one
+     change rather than hand-editing dozens of individual rules. 16px (the
+     unset browser default) -> 18px is roughly the one-step-larger jump
+     referenced against fpl.page's own noticeably larger real tables. */
+  html { scroll-behavior: smooth; font-size: 18px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 999px; border: 2px solid var(--bg); }

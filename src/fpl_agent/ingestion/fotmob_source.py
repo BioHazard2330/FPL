@@ -144,7 +144,7 @@ _REFRESH_LOOKBACK_HOURS = 8
 _REFRESH_LOOKAHEAD_HOURS = 1
 
 
-def refresh_in_progress_matches(conn) -> dict:
+def refresh_in_progress_matches(conn, tracked_squad_ids: set[int] | None = None) -> dict:
     """The automatic PRE_MATCH->LIVE->HALFTIME->FULL_TIME detection hook
     (Slice A2, spec section 4) - re-syncs every match_intelligence row that
     isn't yet FULL_TIME and whose kickoff falls in a bounded recent window,
@@ -152,7 +152,13 @@ def refresh_in_progress_matches(conn) -> dict:
     registry). Wired into `fpl run-scheduled` (already running every 30min) -
     this is the whole "lightest reliable hook", no new daemon. Per-row
     failures are caught and counted, never abort the batch - the same
-    posture every other run-scheduled step already uses."""
+    posture every other run-scheduled step already uses.
+
+    `tracked_squad_ids` (2026-08-22, automation-lifecycle pass) - optional,
+    default `None` (unchanged behavior). Threaded straight through to
+    `sync_match` so a real lineup-confirmation transition fires the
+    corresponding change_events row automatically on this cadence too, not
+    only from `fpl live-match-poll`'s faster loop."""
     now = datetime.now(timezone.utc)
     rows = conn.execute(
         "SELECT mi.id, mi.fotmob_match_id, mi.status AS prior_status, mi.kickoff_utc, "
@@ -178,9 +184,8 @@ def refresh_in_progress_matches(conn) -> dict:
             skipped += 1
             continue
         try:
-            result = sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
+            sync_match(conn, row["home_name"], row["away_name"], kickoff.date(), tracked_squad_ids)
             refreshed += 1
-            maybe_enqueue_analysis(conn, row["id"], row["prior_status"], row["home_name"], row["away_name"], result)
         except FotMobFetchError:
             failed += 1
 
@@ -204,12 +209,24 @@ def maybe_enqueue_analysis(
         enqueue_analysis_job(conn, match_id, "HALFTIME", f"{score} (halftime)")
 
 
-def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) -> dict:
+def sync_match(
+    conn, home_team_name: str, away_team_name: str, day: date_cls,
+    tracked_squad_ids: set[int] | None = None,
+) -> dict:
     """Resolve -> fetch -> normalize -> upsert. Idempotent: re-running (the
     intended way to refresh a LIVE match) overwrites the same rows, never
     appends. On any failure, the pre-existing match_intelligence row (if any)
     is left completely untouched - never overwritten with a blank/degraded
-    state (Data Integrity rule)."""
+    state (Data Integrity rule).
+
+    `tracked_squad_ids` (2026-08-22, automation-lifecycle pass) - optional,
+    default `None` (every pre-existing call site keeps today's exact
+    behavior unchanged). When given, fires the real "lineup just confirmed"
+    change-detection pass (`ingestion.change_detection.detect_lineup_confirmations`)
+    for any tracked squad member on either side of this match - safe to call
+    on every sync regardless of whether the lineup was ALREADY confirmed
+    last time (the detector's own change_events idempotency guard is what
+    prevents a repeat alert, not this flag)."""
     try:
         fotmob_match_id = find_match(day, home_team_name, away_team_name)
         if fotmob_match_id is None:
@@ -222,6 +239,11 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
         raise
 
     raw_path = save_raw(f"{_SOURCE_NAME}_match_{fotmob_match_id}", payload)
+
+    prior_status_row = conn.execute(
+        "SELECT status FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)
+    ).fetchone()
+    prior_status = prior_status_row["status"] if prior_status_row else None
 
     match = parse_match(payload)
     player_states = parse_player_states(payload)
@@ -322,7 +344,7 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
     conn.commit()
     update_source_health(conn, _SOURCE_NAME, success=True, error=None)
 
-    return {
+    result = {
         "match_id": match_id,
         "fotmob_match_id": fotmob_match_id,
         "status": match.status,
@@ -335,3 +357,12 @@ def sync_match(conn, home_team_name: str, away_team_name: str, day: date_cls) ->
         "players_resolved": players_resolved,
         "team_states_ingested": len(team_states),
     }
+
+    maybe_enqueue_analysis(conn, match_id, prior_status, match.home_team_name, match.away_team_name, result)
+
+    if tracked_squad_ids and player_states:
+        from fpl_agent.ingestion.change_detection import detect_lineup_confirmations
+        detect_lineup_confirmations(conn, tracked_squad_ids, match_id, now)
+        conn.commit()
+
+    return result
