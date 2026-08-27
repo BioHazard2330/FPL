@@ -697,7 +697,7 @@ _CSS_WORKSPACE = """
   .home-hero-review .home-hero-action { color: #f0c419; }
   .home-hero-reason { font-size: clamp(0.95rem, 2vw, 1.15rem); margin-top: 8px; max-width: 640px; opacity: 0.92; }
   .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-top: 22px; }
-  .home-metric-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
+  .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }
   .home-metric-value-muted { opacity: 0.55; font-size: 1.05rem; }
   .home-hero-actions { display: flex; gap: 10px; margin-top: 24px; }
@@ -718,7 +718,7 @@ _CSS_WORKSPACE = """
   .path-box.is-active.path-box-tied .path-box-score,
   .path-box.is-active.path-box-tied .path-box-sub { background: var(--surface); border: 2px solid var(--accent-2); color: var(--fg); }
   .path-box.is-active.path-box-tied .path-box-sub { color: var(--accent-2); }
-  .path-box-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 0.72rem; opacity: 0.75; }
+  .path-box-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 0.75rem; opacity: 0.75; }
   .plan-path-grid { margin-top: 16px; }
   .plan-path-card { padding: 14px 0; }
   .plan-path-header { font-size: 0.85rem; color: var(--muted); margin-bottom: 10px; }
@@ -728,7 +728,7 @@ _CSS_WORKSPACE = """
   .timeline-node-decision { padding: 14px 18px; border-width: 2px; border-color: var(--accent-2); font-weight: 700; font-size: 1rem; }
   .timeline-node-roll { padding: 7px 10px; opacity: 0.55; font-size: 0.78rem; }
   .timeline-node.is-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; opacity: 1; }
-  .timeline-node-gw { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
+  .timeline-node-gw { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
   .timeline-node-dot { display: none; }
   .timeline-arrow { width: 18px; height: 2px; background: var(--border); flex-shrink: 0; }
 
@@ -741,14 +741,19 @@ _CSS_WORKSPACE = """
   /* INTELLIGENCE workspace - league-wide team-signal cards. */
   .intel-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-top: 8px; }
   .intel-team-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface-2); }
-  .intel-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .intel-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  /* Real crest size (2026-08-28, direct user complaint: "badges too small
+     I cant read them" - matches fpl.page's own real ~40px crest size in a
+     comparably dense list context, measured live against fpl.page's own
+     price-changes table). */
+  .intel-card-head .outlook-badge { width: 40px; height: 40px; }
   .intel-card-team { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.02em; }
-  .intel-card-squad-tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-2);
+  .intel-card-squad-tag { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-2);
     border: 1px solid var(--accent-2); border-radius: 999px; padding: 1px 6px; margin-left: auto; }
   .intel-card-why { font-weight: 600; font-size: 0.88rem; margin-bottom: 4px; }
   .intel-card-evidence { font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
   .intel-card-impact { font-size: 0.82rem; margin-bottom: 8px; }
-  .intel-card-confidence { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em;
+  .intel-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
   .intel-confidence-high, .intel-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
   .intel-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
@@ -758,9 +763,12 @@ _CSS_WORKSPACE = """
   /* OPPORTUNITY workspace - scouting-board cards, one visible per category by default. */
   .opp-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; align-items: start; }
   .opp-category { display: flex; flex-direction: column; gap: 6px; }
+  .opp-card-shirt { width: 44px; height: 44px; object-fit: contain; display: block; margin-bottom: 4px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+  .opp-card-badge { width: 32px; height: 32px; }
   .opp-card-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
   .opp-card-metric { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
-  .opp-card-confidence { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em;
+  .opp-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-top: 6px; }
   .opp-confidence-high, .opp-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
   .opp-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
@@ -775,4 +783,21 @@ _CSS_WORKSPACE = """
     background: transparent; color: var(--muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; font-family: inherit; }
   .fdr-range-btn.is-active, .fdr-metric-btn.is-active, .fdr-filter-btn.is-active { background: var(--accent-2); color: #06110b; border-color: transparent; }
   .fixture-tool-fallback-note { margin-bottom: 8px; }
+
+  /* Squad projected-GW shirt tiles (2026-08-28, direct user ask: "more
+     football... more crests, player images") - replaces the old plain
+     text-row squad-state rendering with real shirt tiles, grouped by
+     position like a compact pitch. */
+  .projected-pos-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; }
+  .projected-pos-label { flex-shrink: 0; width: 40px; font-size: 0.75rem; font-weight: 800;
+    color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; padding-top: 8px; }
+  .projected-tile-grid { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
+  .projected-tile { position: relative; display: flex; flex-direction: column; align-items: center;
+    width: 84px; padding: 6px 4px; border-radius: 10px; }
+  .projected-tile-shirt { width: 48px; height: 48px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+  .projected-tile-name { margin-top: 4px; font-size: 0.75rem; font-weight: 600; text-align: center;
+    line-height: 1.2; word-break: break-word; max-width: 100%; }
+  .projected-tile-in { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid var(--accent); }
+  .projected-tile-in-badge { position: absolute; top: -2px; right: 2px; background: var(--accent); color: #06110b;
+    font-size: 0.62rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
 """

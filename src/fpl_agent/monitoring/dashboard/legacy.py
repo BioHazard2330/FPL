@@ -2609,8 +2609,8 @@ def _bulk_player_lookup(conn: sqlite3.Connection, player_ids: set[int]) -> dict[
     if not player_ids:
         return {}
     rows = conn.execute(
-        "SELECT p.id, p.web_name, t.short_name AS team_short, et.singular_name_short AS position, "
-        "cur.value_tenths AS price_tenths "
+        "SELECT p.id, p.web_name, t.short_name AS team_short, t.code AS team_code, "
+        "et.singular_name_short AS position, cur.value_tenths AS price_tenths "
         "FROM players p JOIN teams t ON t.id = p.team_id JOIN element_types et ON et.id = p.element_type "
         "LEFT JOIN player_price_history cur ON cur.player_id = p.id AND cur.valid_until IS NULL "
         "WHERE p.id IN ({})".format(",".join("?" * len(player_ids))),
@@ -2618,41 +2618,6 @@ def _bulk_player_lookup(conn: sqlite3.Connection, player_ids: set[int]) -> dict[
     ).fetchall()
     return {r["id"]: dict(r) for r in rows}
 
-
-def _squad_state_block_body_html(lookup: dict[int, dict], squad_ids: set[int], step: dict, chip_by_event: dict[int, list[dict]]) -> str:
-    event = step["event"]
-    out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
-    if out_id is not None and in_id is not None:
-        out_p, in_p = lookup.get(out_id), lookup.get(in_id)
-        out_name = out_p["web_name"] if out_p else step.get("action", "?").split(" -> ")[0]
-        in_name = in_p["web_name"] if in_p else step.get("action", "?").split(" -> ")[-1]
-        hit_bit = " (HIT)" if step.get("uses_hit") else ""
-        transfer_line = (
-            "<div class='squad-state-transfer'><span class='squad-state-out'>OUT " + _esc(out_name) + "</span> "
-            "<span class='squad-state-in'>IN " + _esc(in_name) + "</span>" + hit_bit + "</div>"
-        )
-    else:
-        transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
-    chip_line = "".join("<span class='chip-badge'>" + _esc(c["chip_name"].upper()) + "</span>" for c in chip_by_event.get(event, []))
-
-    by_pos: dict[str, list[dict]] = {}
-    for pid in squad_ids:
-        p = lookup.get(pid)
-        if p is None:
-            continue
-        by_pos.setdefault(p["position"], []).append(p)
-    pos_rows = []
-    for pos in _POSITION_ORDER:
-        players = sorted(by_pos.get(pos, []), key=lambda p: p["web_name"])
-        if not players:
-            continue
-        cards = "".join(
-            "<span class='squad-state-player" + (" squad-state-player-in" if p["id"] == in_id else "") + "'>"
-            + _esc(p["web_name"]) + " <span class='fx-teams'>" + _esc(p["team_short"]) + "</span></span>"
-            for p in players
-        )
-        pos_rows.append("<div class='squad-state-pos-row'><span class='squad-state-pos-label'>" + pos + "</span>" + cards + "</div>")
-    return transfer_line + chip_line + "<div class='squad-state-players'>" + "".join(pos_rows) + "</div>"
 
 
 _LIFECYCLE_TO_DASH_STATE = {
@@ -3256,7 +3221,7 @@ _CSS = """
   h2::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--accent-2); flex-shrink: 0; }
   .panel > h2 { position: relative; padding-bottom: 11px; margin-bottom: 14px; border-bottom: 1px solid var(--gridline); }
   .panel > h2::after { display: none; }
-  .panel-subtitle { font-size: 0.68rem; font-weight: 500; text-transform: none; letter-spacing: normal;
+  .panel-subtitle { font-size: 0.75rem; font-weight: 500; text-transform: none; letter-spacing: normal;
     color: var(--faint); margin-left: 6px; }
   code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
@@ -3269,7 +3234,7 @@ _CSS = """
   .topbar-brand-block::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--accent-2); flex-shrink: 0; }
   .brand { font-family: "Oswald", "Titillium Web", Impact, "Arial Narrow Bold", sans-serif; font-size: 1.35rem;
     font-weight: 800; letter-spacing: 0.01em; text-transform: uppercase; color: #fff; line-height: 1.1; }
-  .brand-sub { font-size: 0.64rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  .brand-sub { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--faint); margin-top: 1px; }
   .topbar-right { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .gw-badge { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.76rem; font-weight: 800;
@@ -3287,7 +3252,7 @@ _CSS = """
   .site-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 2px; overflow-x: auto;
     background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px);
     border: 1px solid var(--border); border-radius: 8px; padding: 4px; margin-bottom: 18px; }
-  .site-nav a { flex-shrink: 0; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  .site-nav a { flex-shrink: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.03em; color: var(--muted); text-decoration: none; padding: 7px 12px; border-radius: 5px;
     transition: background 0.15s ease, color 0.15s ease; }
   .site-nav a:hover { color: var(--fg); background: var(--surface-2); }
@@ -3319,20 +3284,20 @@ _CSS = """
   .hero-primary.hero-verdict-roll { border-left-color: var(--accent-2); }
   .hero-primary.hero-verdict-transfer, .hero-primary.hero-verdict-chip { border-left-color: var(--accent-2); }
   .hero-primary.hero-verdict-review { border-left-color: var(--warn); }
-  .hero-gw { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em;
+  .hero-gw { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--faint); }
   .hero-verdict-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .hero-verdict-word { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 2.7rem; font-weight: 800; color: var(--fg);
     line-height: 1; letter-spacing: -0.01em; text-transform: uppercase; }
   .hero-verdict-roll .hero-verdict-word, .hero-verdict-transfer .hero-verdict-word, .hero-verdict-chip .hero-verdict-word { color: var(--accent-2); }
   .hero-verdict-review .hero-verdict-word { color: var(--warn); }
-  .hero-verdict-confidence { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.68rem; font-weight: 700;
+  .hero-verdict-confidence { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 700;
     letter-spacing: 0.04em; color: var(--muted); background: transparent; border: 1px solid var(--border);
     padding: 3px 9px; border-radius: 5px; white-space: nowrap; }
   .hero-verdict-detail { font-size: 0.92rem; font-weight: 500; color: var(--muted); line-height: 1.45; max-width: 46ch; }
   .hero-verdict-metrics { display: flex; gap: 22px; margin-top: 2px; }
   .hero-verdict-metric { display: flex; flex-direction: column; gap: 1px; }
-  .hero-verdict-metric span { font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
+  .hero-verdict-metric span { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
   .hero-verdict-metric strong { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--fg); }
   /* Real hero navigation (2026-08-27) - genuine anchors into the panels
      that carry this verdict's own evidence/consequence, never a fake
@@ -3340,7 +3305,7 @@ _CSS = """
      buttons, not full pills - matches the reference sites' tag/box
      language instead of the rounded-pill-everywhere look this replaced. */
   .hero-actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
-  .hero-action-btn { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.72rem; font-weight: 700;
+  .hero-action-btn { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 700;
     letter-spacing: 0.01em; color: var(--fg); text-decoration: none; padding: 7px 13px; border-radius: 6px;
     border: 1px solid var(--border); background: transparent;
     transition: border-color 0.15s ease, color 0.15s ease; }
@@ -3349,13 +3314,13 @@ _CSS = """
   .hero-action-primary:hover { color: #06110b; opacity: 0.9; }
   .hero-action-ghost { border-color: var(--border); }
   .hero-watch { margin-top: 8px; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
-  .hero-watch-label { display: block; font-size: 0.63rem; font-weight: 700; text-transform: uppercase;
+  .hero-watch-label { display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.05em; color: var(--faint); margin-bottom: 3px; }
   .hero-support { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-  .hero-metric-sub { font-size: 0.68rem; color: var(--faint); margin-top: 2px; }
+  .hero-metric-sub { font-size: 0.75rem; color: var(--faint); margin-top: 2px; }
   .hero-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; }
-  .hero-metric-label { font-size: 0.66rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em;
+  .hero-metric-label { font-size: 0.75rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em;
     margin-bottom: 5px; font-weight: 700; }
   .hero-metric-value { font-family: "Oswald", "Titillium Web", system-ui, sans-serif; font-size: 1.2rem; font-weight: 800;
     font-variant-numeric: proportional-nums; }
@@ -3371,7 +3336,7 @@ _CSS = """
     border-right: 1px solid var(--gridline); }
   .hero-strip-item:last-child { border-right: none; }
   .hero-strip-item:first-child { padding-left: 0; }
-  .hero-strip-label { color: var(--faint); text-transform: uppercase; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em; }
+  .hero-strip-label { color: var(--faint); text-transform: uppercase; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }
   .hero-strip-value { font-weight: 800; font-variant-numeric: tabular-nums; }
   .hero-strip-value.status-ok { color: var(--ok-text); }
   .hero-strip-value.status-bad { color: var(--bad); }
@@ -3434,7 +3399,7 @@ _CSS = """
   .panel[data-cat]::before, .panel[data-cat]::after {
     position: absolute; top: 14px; width: 20px; height: 20px; border-radius: 5px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.62rem; font-weight: 800; pointer-events: none;
+    font-size: 0.75rem; font-weight: 800; pointer-events: none;
   }
   .panel[data-cat]::before {
     content: "↗"; right: 46px; color: var(--accent-2); background: rgba(0,255,135,0.12);
@@ -3481,10 +3446,10 @@ _CSS = """
       linear-gradient(transparent, transparent) padding-box,
       repeating-linear-gradient(180deg, var(--pitch-1), var(--pitch-1) 46px, var(--pitch-2) 46px, var(--pitch-2) 92px); }
   .pitch-zone { position: relative; z-index: 1; }
-  .zone-label { text-align: center; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.66rem; font-weight: 800;
+  .zone-label { text-align: center; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 8px; }
   .pitch-row { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; position: relative; z-index: 1; }
-  .bench-label { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+  .bench-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
     font-weight: 700; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; }
   .bench-label::after { content: ""; flex: 1; height: 1px; background: var(--gridline); }
   .bench-row { background: linear-gradient(180deg, var(--surface-2), var(--bg)); border-radius: 14px;
@@ -3495,7 +3460,7 @@ _CSS = """
   .bench-row .player-shirt { width: 62px; height: 62px; }
   .bench-row .player-name { font-size: 0.86rem; max-width: 110px; }
   .bench-order { position: absolute; top: -8px; left: -8px; width: 20px; height: 20px; border-radius: 50%;
-    background: var(--surface-2); border: 2px solid var(--bg); color: var(--muted); font-size: 0.62rem;
+    background: var(--surface-2); border: 2px solid var(--bg); color: var(--muted); font-size: 0.75rem;
     font-weight: 800; display: flex; align-items: center; justify-content: center; z-index: 2; }
 
   /* Real "kit on grass, not a white card" redesign (2026-08-22, direct user
@@ -3533,11 +3498,11 @@ _CSS = """
   .player-name { font-weight: 700; font-size: 0.92rem; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 150px; letter-spacing: -0.01em; color: #fff;
     text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 1px 8px rgba(0,0,0,0.5); }
-  .player-meta { font-size: 0.7rem; color: rgba(255,255,255,0.6); margin-top: 0px; font-weight: 500;
+  .player-meta { font-size: 0.75rem; color: rgba(255,255,255,0.6); margin-top: 0px; font-weight: 500;
     text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
   .player-xp { font-size: 0.86rem; font-weight: 700; color: var(--accent-2); margin-top: 2px;
     text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
-  .player-xp .unit { font-weight: 500; color: rgba(255,255,255,0.5); font-size: 0.68rem; }
+  .player-xp .unit { font-weight: 500; color: rgba(255,255,255,0.5); font-size: 0.75rem; }
   /* Real ACTUAL vs LIVE vs NEXT distinction (2026-08-22) - a played/live
      player's real points is the dominant number on the card (bigger,
      bolder than a projection ever was); the xP reference for an already-
@@ -3545,24 +3510,24 @@ _CSS = """
      backward-looking footnote, never presented at the same weight as the
      real result next to it. */
   .player-actual { font-size: 0.98rem; font-weight: 900; color: #4ade80; margin-top: 3px; }
-  .player-actual .unit { font-weight: 600; color: rgba(255,255,255,0.55); font-size: 0.66rem; }
+  .player-actual .unit { font-weight: 600; color: rgba(255,255,255,0.55); font-size: 0.75rem; }
   .player-actual.player-live { color: #ff6b9d; display: flex; align-items: center; justify-content: center; gap: 4px; }
-  .player-xp-ref { font-size: 0.74rem; color: rgba(255,255,255,0.55); margin-top: 1px; }
+  .player-xp-ref { font-size: 0.75rem; color: rgba(255,255,255,0.55); margin-top: 1px; }
   /* Real "GWn pts" reference for the last real, permanently-archived
      finished gameweek (2026-08-27, "final product-level dashboard" pass) -
      shown above the NEXT projection whenever the current reference event
      itself hasn't started yet, so a just-finished GW's real score is never
      silently dropped once the reference event advances past it. */
-  .player-recent-ref { font-size: 0.74rem; font-weight: 700; color: rgba(255,255,255,0.75); margin-top: 2px; }
-  .player-recent-ref .unit { font-weight: 500; color: rgba(255,255,255,0.5); font-size: 0.68rem; }
-  .next-tag { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; color: rgba(255,255,255,0.55);
+  .player-recent-ref { font-size: 0.75rem; font-weight: 700; color: rgba(255,255,255,0.75); margin-top: 2px; }
+  .player-recent-ref .unit { font-weight: 500; color: rgba(255,255,255,0.5); font-size: 0.75rem; }
+  .next-tag { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; color: rgba(255,255,255,0.55);
     margin-left: 4px; vertical-align: middle; }
   .armband { position: absolute; top: -10px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
-    font-size: 0.66rem; font-weight: 900; display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 900; display: flex; align-items: center; justify-content: center;
     border: 2.5px solid #fff; z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
   .armband.cap { background: linear-gradient(135deg, #ffd873, #e9a400); color: #3a2400; }
   .armband.vc { background: linear-gradient(135deg, #ece9de, #c3c2b7); color: #2a2a24; }
-  .lineup-badge { display: inline-block; margin-top: 5px; font-size: 0.62rem; font-weight: 800;
+  .lineup-badge { display: inline-block; margin-top: 5px; font-size: 0.75rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.03em; border-radius: 999px; padding: 2px 8px; }
   .lineup-ok { background: rgba(0,255,135,0.18); color: #0a7d0a; }
   .lineup-warn { background: rgba(250,178,25,0.2); color: #8a5c00; }
@@ -3573,7 +3538,7 @@ _CSS = """
      repeats this project's own earlier "saturated pill on every card"
      mistake; "full" (BENCHED/OUT, real exceptions) keeps the existing
      attention-grabbing pill treatment unchanged. */
-  .lineup-badge-compact { opacity: 0.75; font-weight: 700; padding: 1px 6px; font-size: 0.66rem; }
+  .lineup-badge-compact { opacity: 0.75; font-weight: 700; padding: 1px 6px; font-size: 0.75rem; }
   .lineup-badge-full { opacity: 1; }
 
   /* Hover tooltip (2026-08-21) - real data only (floor/median/ceiling,
@@ -3581,7 +3546,7 @@ _CSS = """
      query. Pure CSS reveal, no JS - keeps every other card's hover cheap. */
   .player-tooltip { position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%) translateY(4px);
     width: 190px; background: #17101f; color: #fff; border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 10px; padding: 10px 12px; font-size: 0.74rem; line-height: 1.5; text-align: left;
+    border-radius: 10px; padding: 10px 12px; font-size: 0.75rem; line-height: 1.5; text-align: left;
     box-shadow: 0 10px 26px -8px rgba(0,0,0,0.7); opacity: 0; pointer-events: none;
     transition: opacity 0.15s ease, transform 0.15s ease; z-index: 10; }
   .player-tooltip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
@@ -3603,10 +3568,10 @@ _CSS = """
      hover-only tooltip as the primary way to inspect a player (hover still
      works - the drawer is additive, see the JS block for the contract). --- */
   .player-flag { position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; z-index: 3;
-    display: flex; align-items: center; justify-content: center; color: var(--fpl-pink); font-size: 0.7rem;
+    display: flex; align-items: center; justify-content: center; color: var(--fpl-pink); font-size: 0.75rem;
     filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
   .player-card-flagged .player-name { color: var(--fpl-pink); }
-  .player-inspector-status { display: inline-block; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.7rem;
+  .player-inspector-status { display: inline-block; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem;
     font-weight: 800; letter-spacing: 0.05em; padding: 3px 10px; border-radius: 5px; margin-bottom: 8px; }
   .player-inspector-status-sell { background: rgba(233,0,82,0.18); color: #ff6b9d; }
   .player-inspector-status-watch { background: rgba(251,191,36,0.18); color: #d9a441; }
@@ -3635,11 +3600,11 @@ _CSS = """
      per-widget sort controls) - real interactivity, not decoration: every
      serious analytical tool lets you re-order its own tables. --- */
   .fdr-sort { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-  .freshness-tag { font-size: 0.66rem; color: var(--faint); margin-left: auto; white-space: nowrap; }
-  .outlook-freshness { display: block; margin: 0; font-size: 0.62rem; }
-  .fdr-sort-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  .freshness-tag { font-size: 0.75rem; color: var(--faint); margin-left: auto; white-space: nowrap; }
+  .outlook-freshness { display: block; margin: 0; font-size: 0.75rem; }
+  .fdr-sort-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--faint); margin-right: 2px; }
-  .fdr-sort-btn { font-size: 0.72rem; font-weight: 600; color: var(--muted); background: var(--surface-2);
+  .fdr-sort-btn { font-size: 0.75rem; font-weight: 600; color: var(--muted); background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
   .fdr-sort-btn:hover { color: var(--fg); }
@@ -3650,7 +3615,7 @@ _CSS = """
   .panel-ticker { grid-column: 1 / -1; }  /* full width - 20 teams x rich cells needs real room */
   .fdr-grid { display: flex; flex-direction: column; gap: 5px; max-height: 480px; overflow-y: auto;
     overflow-x: auto; border-radius: 10px; }
-  .fdr-row { display: flex; align-items: stretch; gap: 8px; min-width: 588px; border-radius: 8px;
+  .fdr-row { display: flex; align-items: stretch; gap: 8px; min-width: 620px; border-radius: 8px;
     transition: background 0.12s ease; }
   .fdr-row:hover { background: var(--surface-2); }
   .fdr-row-squad { background: color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -3660,29 +3625,29 @@ _CSS = """
      scrolled off-screen with the fixtures on a wide 20-team x N-GW grid,
      making it impossible to tell which row you were reading once
      scrolled. Now pinned to the left edge of the scroll container. */
-  .fdr-team { position: sticky; left: 0; z-index: 2; width: 74px; flex-shrink: 0; font-weight: 800;
-    font-size: 0.74rem; display: flex; align-items: center; gap: 6px; background: var(--surface);
+  .fdr-team { position: sticky; left: 0; z-index: 2; width: 96px; flex-shrink: 0; font-weight: 800;
+    font-size: 0.8rem; display: flex; align-items: center; gap: 8px; background: var(--surface);
     padding-left: 4px; border-radius: 8px 0 0 8px; }
   /* Real club crest (2026-08-21, per LiveFPL/fpl.page study) - same official
      PL asset domain family this project already uses for kit shirts, real
      confirmed precedent (fpl.page hotlinks the identical CDN path). The
      single cheapest, highest-leverage "this looks official" signal found -
      replaces a bare 3-letter code with real team identity. */
-  .fdr-badge { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+  .fdr-badge { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
   .fdr-row-squad .fdr-team { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); color: #fff; }
   .fdr-cells { display: flex; gap: 4px; flex: 1; }
-  .fdr-cell { flex: 1; text-align: center; padding: 4px 2px; border-radius: 5px; font-size: 0.68rem;
+  .fdr-cell { flex: 1; text-align: center; padding: 4px 2px; border-radius: 5px; font-size: 0.75rem;
     font-weight: 700; color: #14161a; white-space: nowrap; position: relative; transition: transform 0.12s ease; }
   .fdr-cell:hover { transform: scale(1.06); z-index: 3; }
-  .fdr-opp { font-size: 0.68rem; margin-bottom: 1px; }
-  .fdr-stat { font-weight: 500; font-size: 0.6rem; opacity: 0.85; }
+  .fdr-opp { font-size: 0.75rem; margin-bottom: 1px; }
+  .fdr-stat { font-weight: 500; font-size: 0.75rem; opacity: 0.85; }
   /* Heatmap gradient scale (2026-08-21) instead of flat solid blocks -
      each difficulty tier gets its own gradient so the ticker reads as a
      real intensity heatmap, not five identical color chips. */
   .fdr-ok { background: var(--ok); }
   .fdr-warn { background: var(--warn); }
   .fdr-bad { background: var(--bad); color: #fff; }
-  .fdr-badge { display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 2px 9px; border-radius: 5px;
+  .fdr-badge { display: inline-block; font-size: 0.75rem; font-weight: 800; padding: 2px 9px; border-radius: 5px;
     color: #06110b; }
   .fdr-badge.fdr-bad { color: #fff; }
   .fdr-blank { background: var(--surface-2); color: var(--faint); font-weight: 400; display: flex;
@@ -3711,25 +3676,25 @@ _CSS = """
   .match-intel-row:last-child { border-bottom: none; }
   .match-intel-row-meta { color: var(--muted); font-size: 0.75rem; }
   .outlook-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; }
-  .outlook-badge { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+  .outlook-badge { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
   /* Real Team Outlook table (2026-08-22) - replaces the old card grid.
      CREST|TEAM|TACTICAL SIGNAL|FIXTURE QUALITY|FPL SIGNAL as one real
      scannable row per team; a real <details> row underneath carries the
      rest (churn/formation/manager-change/quoted news) so it's there on
      demand, never forced into the default scan. */
   .outlook-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  .outlook-table th { text-align: left; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+  .outlook-table th { text-align: left; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.04em; color: var(--faint); padding: 6px 10px; border-bottom: 1px solid var(--border); }
   .outlook-row td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .outlook-td-team { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
   .outlook-detail-row td { padding: 0 10px; border-bottom: 1px solid var(--border); }
   .outlook-detail-row details { padding: 6px 0 10px; }
-  .outlook-detail-row summary { cursor: pointer; font-size: 0.72rem; color: var(--muted);
+  .outlook-detail-row summary { cursor: pointer; font-size: 0.75rem; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
   .outlook-detail-row details > div { margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
   .outlook-alert-text { color: var(--fpl-pink); }
   .match-intel-evidence { margin-top: 6px; }
-  .match-intel-evidence summary { cursor: pointer; font-size: 0.72rem; color: var(--muted);
+  .match-intel-evidence summary { cursor: pointer; font-size: 0.75rem; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; list-style: none; }
   .match-intel-evidence summary::-webkit-details-marker { display: none; }
   .match-intel-evidence summary::before { content: '+ '; }
@@ -3741,7 +3706,7 @@ _CSS = """
   }
   .outlook-fixtures { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
   .outlook-fixtures .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .outlook-chip { font-size: 0.65rem; font-weight: 600; color: var(--muted); background: var(--surface);
+  .outlook-chip { font-size: 0.75rem; font-weight: 600; color: var(--muted); background: var(--surface);
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
   .outlook-alert { color: var(--bad); border-color: var(--bad); }
   .squad-badge { color: var(--accent-2); border-color: var(--accent-2); }
@@ -3765,10 +3730,10 @@ _CSS = """
   .chip-strategy-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: 0.82rem; padding: 7px 10px; background: var(--surface-2); border-radius: 8px; }
   .chip-strategy-name { font-weight: 700; text-transform: capitalize; }
-  .chip-strategy-window { color: var(--faint); font-size: 0.72rem; }
+  .chip-strategy-window { color: var(--faint); font-size: 0.75rem; }
   .chip-value { font-weight: 700; color: var(--ok-text); font-size: 0.78rem; }
-  .chip-value-age { color: var(--faint); font-weight: 500; font-size: 0.68rem; margin-left: 4px; }
-  .chip-value-muted { color: var(--faint); font-weight: 500; font-size: 0.7rem; }
+  .chip-value-age { color: var(--faint); font-weight: 500; font-size: 0.75rem; margin-left: 4px; }
+  .chip-value-muted { color: var(--faint); font-weight: 500; font-size: 0.75rem; }
   .chip-advisory { margin-top: 4px; font-size: 0.76rem; color: var(--muted); font-style: italic; }
   .chip-strategy-context { font-size: 0.78rem; color: var(--muted); padding: 0 10px 6px; margin-top: -2px; }
 
@@ -3782,7 +3747,7 @@ _CSS = """
      2026" on a solid cyan banner) - reversed from this project's earlier
      "quiet label + rule" choice on direct instruction to match that
      reference more closely. */
-  .fx-date-divider { display: flex; align-items: center; font-size: 0.66rem; font-weight: 800;
+  .fx-date-divider { display: flex; align-items: center; font-size: 0.75rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.06em; color: #06110b; margin: 10px 0 6px;
     background: var(--accent-2); border-radius: 6px; padding: 6px 10px; }
   .fx-date-divider:first-child { margin-top: 0; }
@@ -3795,24 +3760,24 @@ _CSS = """
   .fx-crest { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
   .fx-code { font-weight: 700; font-size: 0.78rem; }
   .fx-mid { flex-shrink: 0; min-width: 84px; text-align: center; }
-  .fx-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; font-weight: 700;
+  .fx-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 700;
     padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .fx-badge-pre { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
   .fx-badge-live { background: var(--fpl-pink); color: #fff; }
   .fx-badge-ft { background: var(--faint); color: #fff; opacity: 0.7; }
   .live-now-tag { display: inline-flex; align-items: center; gap: 6px; font-family: "Oswald", "Titillium Web", sans-serif;
-    font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2);
+    font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2);
     margin-bottom: 8px; }
   .live-now-tag .pulse-dot { background: var(--accent-2); box-shadow: 0 0 0 0 rgba(0,255,135,0.5); }
   .live-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;
     background: var(--surface-2); border-radius: 6px; margin-bottom: 4px; flex-wrap: wrap; }
   .live-stat { color: var(--muted); }
-  .bonus-badge { background: var(--ok); color: #fff; font-weight: 700; border-radius: 999px; padding: 1px 7px; font-size: 0.72rem; }
-  .bonus-provisional { color: var(--warn); font-size: 0.7rem; }
-  .bonus-confirmed { color: var(--ok-text); font-size: 0.7rem; font-weight: 600; }
-  .defcon-progress { color: var(--muted); font-size: 0.72rem; }
+  .bonus-badge { background: var(--ok); color: #fff; font-weight: 700; border-radius: 999px; padding: 1px 7px; font-size: 0.75rem; }
+  .bonus-provisional { color: var(--warn); font-size: 0.75rem; }
+  .bonus-confirmed { color: var(--ok-text); font-size: 0.75rem; font-weight: 600; }
+  .defcon-progress { color: var(--muted); font-size: 0.75rem; }
   .defcon-reached { background: var(--accent-2); color: #fff; font-weight: 700; border-radius: 999px;
-    padding: 1px 7px; font-size: 0.72rem; }
+    padding: 1px 7px; font-size: 0.75rem; }
   .warn-state { color: var(--warn); font-size: 0.85rem; }
 
   .empty-state { color: var(--faint); font-size: 0.85rem; font-style: italic; }
@@ -3834,7 +3799,7 @@ _CSS = """
   .compare-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; }
   .compare-side { background: var(--surface-2); border-radius: 14px; padding: 16px 18px; border: 1px solid var(--border); }
   .compare-side.compare-optimized { border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border)); }
-  .compare-label { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.7rem; font-weight: 800;
+  .compare-label { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
   .compare-vs { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 900; font-size: 0.85rem;
     color: var(--faint); text-align: center; }
@@ -3875,7 +3840,7 @@ _CSS = """
     border-left: 3px solid var(--accent); }
   .decision-card.decision-alert { border-left-color: var(--fpl-pink); }
   .decision-card.decision-positive { border-left-color: var(--accent-2); }
-  .decision-kicker { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.65rem; font-weight: 800;
+  .decision-kicker { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
     display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .decision-headline { font-weight: 800; font-size: 1rem; margin-bottom: 4px; }
@@ -3885,12 +3850,12 @@ _CSS = """
      are your actions" not "information about decisions") - a quiet text
      tag, never a fake clickable button (this project has no capability to
      act on it - section 83, recommend only). */
-  .decision-action { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; color: var(--faint);
+  .decision-action { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em; color: var(--faint);
     background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
   /* Real confidence-tier badge (2026-08-21, fourth session, section 4) - a
      direct relabeling of the model's own real HIGH/MEDIUM/LOW confidence
      field, never a fabricated score. */
-  .decision-tier { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em; border-radius: 999px;
+  .decision-tier { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; border-radius: 999px;
     padding: 2px 8px; }
   .decision-tier-strong { background: rgba(0,255,135,0.16); color: var(--ok-text); }
   .decision-tier-good { background: rgba(251,191,36,0.16); color: #d4a017; }
@@ -3898,7 +3863,7 @@ _CSS = """
   /* Real explainability bullets (2026-08-21, third session, section 12) -
      compact, quiet, real data only (delta vs next-best captain, penalty
      duty, expected minutes, differential note) - never a new card. */
-  .decision-reasons-label { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  .decision-reasons-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--faint); margin: 10px 0 4px; }
   .decision-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
   .decision-reasons li { font-size: 0.76rem; color: var(--muted); padding-left: 13px; position: relative; }
@@ -3907,7 +3872,7 @@ _CSS = """
      (2026-08-22) - matches the user's own explicit decision-feed example.
      Agreement in quiet muted text (nothing to act on); a real
      disagreement in the accent color (worth reading). */
-  .decision-agree { margin-top: 5px; font-size: 0.72rem; color: var(--faint); text-transform: uppercase;
+  .decision-agree { margin-top: 5px; font-size: 0.75rem; color: var(--faint); text-transform: uppercase;
     letter-spacing: 0.03em; }
   .decision-fusion-note { margin-top: 5px; font-size: 0.78rem; color: var(--accent); }
 
@@ -3916,7 +3881,7 @@ _CSS = """
   .risk-monitor { display: flex; flex-direction: column; gap: 6px; }
   .risk-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; background: var(--surface-2);
     border-radius: 10px; font-size: 0.84rem; }
-  .risk-severity { flex-shrink: 0; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.68rem; font-weight: 800;
+  .risk-severity { flex-shrink: 0; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.03em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
   .risk-severity-low { background: rgba(34,197,94,0.16); color: var(--ok-text); }
   .risk-severity-monitor { background: rgba(251,191,36,0.18); color: #b8860b; }
@@ -3933,18 +3898,18 @@ _CSS = """
      per-GW timeline, and a chip badge overlay on the winning path. --- */
   .strategic-current { font-size: 0.8rem; color: var(--muted); padding: 8px 2px; border-bottom: 1px solid var(--border);
     margin-bottom: 12px; }
-  .strategic-current strong { color: var(--fg); letter-spacing: 0.03em; font-size: 0.72rem; }
+  .strategic-current strong { color: var(--fg); letter-spacing: 0.03em; font-size: 0.75rem; }
   .strategic-primary { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 12px;
     background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border); }
   .strategic-primary-badge { font-size: 0.78rem; padding: 6px 14px; }
   .strategic-primary-body { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.05rem; color: var(--fg); }
   .strategic-twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
   .strategic-col { background: var(--surface); border-radius: 10px; padding: 8px 12px; }
-  .strategic-col-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  .strategic-col-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--muted); margin-bottom: 3px; }
   .strategic-col-value { font-size: 0.9rem; font-weight: 700; color: var(--fg); }
   .strategic-horizon-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-bottom: 8px; }
-  .strategic-horizon-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.68rem;
+  .strategic-horizon-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.75rem;
     text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; }
   .strategic-horizon-table td { padding: 5px 8px; border-top: 1px solid var(--border); }
   .strategic-horizon-table tr.strategic-horizon-current td { color: var(--accent-2); font-weight: 700; }
@@ -3952,7 +3917,7 @@ _CSS = """
   .strategic-note-differ { color: #ff9f43; }
   .strategic-note-agree { color: var(--ok-text); }
   .strategic-subrow { font-size: 0.82rem; color: var(--fg); padding: 6px 2px; }
-  .strategic-subrow strong { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
+  .strategic-subrow strong { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
   .strategic-subrow-muted { font-size: 0.75rem; color: var(--muted); padding: 3px 2px; }
   .strategic-alt-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
   .strategic-alt-list li { font-size: 0.78rem; color: var(--muted); padding: 2px 0; }
@@ -3968,7 +3933,7 @@ _CSS = """
   .strategic-path-card { background: transparent; border: none; padding: 2px 0 0; font-size: 0.8rem; min-width: 0; }
   .strategic-path-card[hidden] { display: none; }
   .strategic-path-header { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
-  .strategic-path-header strong { color: var(--accent-2); text-transform: uppercase; font-size: 0.66rem;
+  .strategic-path-header strong { color: var(--accent-2); text-transform: uppercase; font-size: 0.75rem;
     letter-spacing: 0.05em; font-weight: 800; }
   /* Boxy GW tile strip (2026-08-27, rebuilt against fplcopilot.com's real
      GW-navigator row: a plain line of small bordered squares, no dot/arrow
@@ -3981,9 +3946,9 @@ _CSS = """
     justify-content: center; gap: 2px; background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 6px; padding: 7px 4px; min-width: 66px; flex-shrink: 0; text-align: center; }
   .timeline-node-dot { display: none; }
-  .strategic-path-step.timeline-node .strategic-path-gw { font-size: 0.62rem; color: var(--faint);
+  .strategic-path-step.timeline-node .strategic-path-gw { font-size: 0.75rem; color: var(--faint);
     text-transform: uppercase; letter-spacing: 0.03em; font-weight: 700; }
-  .strategic-path-step.timeline-node .strategic-path-action { font-size: 0.72rem; color: var(--muted);
+  .strategic-path-step.timeline-node .strategic-path-action { font-size: 0.75rem; color: var(--muted);
     font-weight: 600; white-space: nowrap; margin-top: 1px; }
   .timeline-node.timeline-node-live { border-color: var(--border); background: var(--surface); }
   .timeline-node.timeline-node-live .strategic-path-action { color: var(--fg); font-weight: 700; }
@@ -3994,7 +3959,7 @@ _CSS = """
   .timeline-node.is-active .strategic-path-action { color: var(--fg); }
   .strategic-path-step.timeline-node.path-step-btn { cursor: pointer; font-family: inherit; }
   .strategic-path-step.timeline-node.path-step-btn:hover { border-color: var(--accent-2); }
-  .chip-badge { display: block; margin-top: 1px; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.03em;
+  .chip-badge { display: block; margin-top: 1px; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.03em;
     padding: 1px 5px; border-radius: 4px; background: var(--accent-2); color: #06110b;
     width: fit-content; margin-inline: auto; }
   @media (max-width: 640px) {
@@ -4013,13 +3978,13 @@ _CSS = """
   .confidence-pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
   .confidence-pill { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; font-size: 0.76rem; }
-  .confidence-pill span { color: var(--faint); text-transform: uppercase; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em; }
+  .confidence-pill span { color: var(--faint); text-transform: uppercase; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }
   .confidence-pill strong { color: var(--fg); font-weight: 800; }
   .confidence-pill-good strong { color: var(--ok-text); }
   .confidence-pill-mid strong { color: #d9a441; }
   .confidence-pill-bad strong { color: var(--fpl-pink); }
   .decision-market-line { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
-  .decision-market-line strong { color: var(--faint); font-weight: 800; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.04em; margin-right: 4px; }
+  .decision-market-line strong { color: var(--faint); font-weight: 800; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.04em; margin-right: 4px; }
   .decision-evidence { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
   .decision-evidence summary { cursor: pointer; font-size: 0.82rem; font-weight: 700; color: var(--accent-2);
     list-style: none; display: flex; align-items: center; gap: 8px; }
@@ -4038,7 +4003,7 @@ _CSS = """
   .decision-compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
   .decision-compare-table th, .decision-compare-table td { padding: 7px 10px; text-align: center;
     font-variant-numeric: tabular-nums; }
-  .decision-compare-table thead th { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.68rem;
+  .decision-compare-table thead th { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem;
     font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint);
     border-bottom: 1px solid var(--border); }
   .decision-compare-table tbody th { text-align: left; color: var(--muted); font-weight: 700; font-size: 0.78rem; }
@@ -4046,13 +4011,13 @@ _CSS = """
   .decision-compare-table tbody tr:first-child td, .decision-compare-table tbody tr:first-child th { padding-top: 10px; }
   .decision-compare-detail-row td, .decision-compare-detail-row th { border-top: 1px solid var(--border);
     padding-top: 9px; }
-  .decision-compare-label { font-size: 0.72rem; font-weight: 600; color: var(--faint); }
+  .decision-compare-label { font-size: 0.75rem; font-weight: 600; color: var(--faint); }
 
   /* --- Primary Decision: confidence/alternatives (2026-08-27, "personal
      FPL decision terminal" redesign) --- */
   .decision-metric-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
   .decision-metric { background: var(--surface-2); border-radius: 10px; padding: 7px 12px; font-size: 0.76rem; }
-  .decision-metric span { display: block; color: var(--faint); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .decision-metric span { display: block; color: var(--faint); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
   .decision-metric strong { color: var(--fg); font-size: 0.9rem; }
   .alt-list { display: flex; flex-direction: column; gap: 4px; }
   .alt-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78rem; padding: 4px 2px; color: var(--muted); }
@@ -4062,11 +4027,11 @@ _CSS = """
   /* --- Model vs Football View conflict block (2026-08-27, Part 6) --- */
   .conflict-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem; color: var(--fg);
     padding: 6px 2px; flex-wrap: wrap; }
-  .conflict-label { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  .conflict-label { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--muted); flex-shrink: 0; }
-  .conflict-yes { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  .conflict-yes { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--fpl-pink); flex-shrink: 0; }
-  .conflict-no { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  .conflict-no { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--ok-text); flex-shrink: 0; }
 
   /* --- Decision audit (2026-08-27, Adversarial Decision Audit Part 12) -
@@ -4074,7 +4039,7 @@ _CSS = """
   .decision-audit-details { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
   .decision-audit-details summary { cursor: pointer; font-size: 0.8rem; font-weight: 700; color: var(--fg); }
   .decision-audit-body { margin-top: 10px; font-size: 0.8rem; color: var(--muted); }
-  .decision-audit-body strong { display: block; margin: 12px 0 4px; font-size: 0.7rem; text-transform: uppercase;
+  .decision-audit-body strong { display: block; margin: 12px 0 4px; font-size: 0.75rem; text-transform: uppercase;
     letter-spacing: 0.04em; color: var(--faint); }
   .decision-audit-badges { font-size: 0.78rem; color: var(--fg); padding: 6px 0; }
   .decision-audit-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
@@ -4096,10 +4061,10 @@ _CSS = """
      pill; overrides the shared pill layout above with a taller column. */
   .path-box { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
     min-width: 96px; padding: 10px 14px; border-radius: 10px; }
-  .path-box-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  .path-box-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: inherit; opacity: 0.8; }
   .path-box-score { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 1.3rem; font-weight: 800; color: var(--fg); }
-  .path-box-sub { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2); }
+  .path-box-sub { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2); }
   .path-box.is-active, .path-box.is-active .path-box-score, .path-box.is-active .path-box-sub { color: #06110b; }
   .strategic-path-card[hidden] { display: none; }
 
@@ -4108,7 +4073,7 @@ _CSS = """
   .squad-state-heading { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.78rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 8px;
     padding-top: 14px; border-top: 1px solid var(--border); }
-  .squad-state-switcher-label { font-size: 0.66rem; font-weight: 800; text-transform: uppercase;
+  .squad-state-switcher-label { font-size: 0.75rem; font-weight: 800; text-transform: uppercase;
     letter-spacing: 0.05em; color: var(--faint); margin-bottom: 6px; }
   .squad-state-switcher { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .squad-state-switcher .squad-state-pill-btn { padding: 5px 13px; }
@@ -4122,7 +4087,7 @@ _CSS = """
   .squad-state-pos-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 0;
     border-top: 1px solid var(--border); }
   .squad-state-pos-row:first-of-type { border-top: none; }
-  .squad-state-pos-label { flex-shrink: 0; width: 38px; font-size: 0.66rem; font-weight: 800; color: var(--faint);
+  .squad-state-pos-label { flex-shrink: 0; width: 38px; font-size: 0.75rem; font-weight: 800; color: var(--faint);
     text-transform: uppercase; letter-spacing: 0.04em; }
   .squad-state-player { font-size: 0.8rem; color: var(--fg); background: var(--surface); border-radius: 5px;
     padding: 3px 9px; }
@@ -4146,7 +4111,7 @@ _CSS = """
   .opp-card { background: transparent; border: none; border-radius: 0; border-top: 1px solid var(--border);
     padding: 12px 2px; display: grid; grid-template-columns: 88px 1fr; gap: 2px 14px; }
   .opp-card:first-child { border-top: none; padding-top: 0; }
-  .opp-card-kind { grid-column: 1; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.62rem; font-weight: 800;
+  .opp-card-kind { grid-column: 1; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); padding-top: 3px; }
   .opp-card-breakout .opp-card-kind { color: var(--accent-2); }
   .opp-card-trap .opp-card-kind { color: var(--fpl-pink); }
@@ -4154,10 +4119,10 @@ _CSS = """
   .opp-card-fixture-swing .opp-card-kind { color: var(--accent); }
   .opp-card-price .opp-card-kind { color: var(--ok-text); }
   .opp-card-title { grid-column: 2; font-size: 0.96rem; font-weight: 800; color: var(--fg); }
-  .opp-pos { font-size: 0.68rem; font-weight: 700; color: var(--faint); text-transform: uppercase; margin-left: 4px; }
+  .opp-pos { font-size: 0.75rem; font-weight: 700; color: var(--faint); text-transform: uppercase; margin-left: 4px; }
   .opp-card-subtitle { grid-column: 2; font-size: 0.78rem; color: var(--muted); }
   .opp-card-why { grid-column: 2; font-size: 0.78rem; color: var(--faint); line-height: 1.4; }
-  .opp-card-why strong { color: var(--muted); text-transform: uppercase; font-size: 0.64rem; font-weight: 800; letter-spacing: 0.04em; margin-right: 3px; }
+  .opp-card-why strong { color: var(--muted); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em; margin-right: 3px; }
   @media (max-width: 640px) {
     .opp-card { grid-template-columns: 1fr; gap: 2px; }
     .opp-card-kind, .opp-card-title, .opp-card-subtitle, .opp-card-why { grid-column: 1; }
@@ -4192,7 +4157,7 @@ _CSS = """
      weight for every article. Quiet by design: a left accent bar + one
      small tag, not a colored background wash. */
   .news-item-relevant { border-left: 2px solid var(--accent-2); padding-left: 10px; margin-left: -12px; }
-  .news-relevance { font-size: 0.66rem; font-weight: 700; color: var(--accent-2); text-transform: uppercase;
+  .news-relevance { font-size: 0.75rem; font-weight: 700; color: var(--accent-2); text-transform: uppercase;
     letter-spacing: 0.03em; }
   .news-title a { color: var(--fg); text-decoration: none; font-size: 0.88rem; font-weight: 600; }
   .news-title a:hover { color: var(--accent); }
@@ -4201,17 +4166,17 @@ _CSS = """
      same real source tier, so a loud accent-colored badge repeated on every
      row communicated nothing; kept as plain metadata text instead, same
      weight class as change-time/chip-value-age elsewhere on this page. */
-  .source-tag { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--faint);
+  .source-tag { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--faint);
     font-weight: 600; }
-  .news-time { font-size: 0.72rem; color: var(--faint); }
-  .tag { font-size: 0.7rem; background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 1px 8px; }
+  .news-time { font-size: 0.75rem; color: var(--faint); }
+  .tag { font-size: 0.75rem; background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 1px 8px; }
   .tag-team { color: var(--accent); }
 
   /* Squad Changes + Price Moves merged into one Activity panel (2026-08-21
      second pass, spec section 22 "card reduction" - two separate Tier-1
      event-feed cards collapsed into one, real data unchanged, just fewer
      cards competing for attention in the intelligence grid). */
-  .activity-group-label { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
+  .activity-group-label { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--faint); margin: 12px 0 6px; }
   .activity-group-label:first-of-type { margin-top: 0; }
   .change-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
@@ -4227,10 +4192,10 @@ _CSS = """
   .change-dot-neutral { background: var(--faint); }
   /* Real event-category tag (2026-08-21, third session, section 15) - the
      actual change_events.event_type this row already carries, labeled. */
-  .change-category { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  .change-category { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
   .change-desc { color: var(--fg); flex: 1; }
-  .change-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+  .change-time { font-size: 0.75rem; color: var(--faint); flex-shrink: 0; }
 
   /* --- Match Feed (live-match-feed pass, 2026-08-21) - a real
      minute/type/description ticker, never fabricated - compact rows, not
@@ -4240,7 +4205,7 @@ _CSS = """
     padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
   .match-feed-minute { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 0.9rem;
     color: var(--accent); flex-shrink: 0; min-width: 2.6em; }
-  .match-feed-type { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  .match-feed-type { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
   .match-feed-desc { color: var(--fg); flex: 1; }
 
@@ -4286,7 +4251,7 @@ _CSS = """
     text-transform: uppercase; letter-spacing: 0.04em; }
   .proj-table-wrap { overflow-x: auto; }
   .proj-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  .proj-table th { text-align: center; font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  .proj-table th { text-align: center; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     color: var(--faint); padding: 4px 6px; white-space: nowrap; }
   .proj-table th:first-child { text-align: left; }
   .proj-row { border-top: 1px solid var(--gridline); }
@@ -4304,7 +4269,7 @@ _CSS = """
     gap: 6px; font-size: 0.82rem; padding: 6px 8px; align-items: center; }
   .stats-row:not(.stats-header) { border-bottom: 1px solid var(--gridline); }
   .stats-row:not(.stats-header):last-child { border-bottom: none; }
-  .stats-header { font-size: 0.66rem; font-weight: 800; text-transform: uppercase;
+  .stats-header { font-size: 0.75rem; font-weight: 800; text-transform: uppercase;
     letter-spacing: 0.05em; color: var(--faint); padding: 4px 8px 8px; border-bottom: 1px solid var(--border); }
   .stats-row span:not(:first-child) { font-variant-numeric: tabular-nums; text-align: right; }
   .stats-pts { font-weight: 800; color: var(--accent-2); font-size: 0.9rem; }
@@ -4385,7 +4350,7 @@ _CSS = """
     .player-photo-wrap { width: 60px; height: 60px; }
     .player-shirt { width: 60px; height: 60px; }
     .player-name { font-size: 0.86rem; max-width: 100px; }
-    .player-meta { font-size: 0.68rem; }
+    .player-meta { font-size: 0.75rem; }
     .player-xp { font-size: 0.82rem; }
     .player-actual { font-size: 0.82rem; }
   }

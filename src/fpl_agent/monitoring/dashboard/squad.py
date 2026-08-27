@@ -17,12 +17,60 @@ Reuses the exact same `.path-step-btn[data-path][data-event]` click contract
 Plan's own timeline already uses (see `assemble.py`'s script block) - one
 shared handler drives both."""
 from fpl_agent.monitoring.dashboard.legacy import (
+    _POSITION_ORDER,
     _bulk_player_lookup,
     _captain_html,
     _esc,
-    _squad_state_block_body_html,
+    _official_shirt_url,
     _squad_state_by_event,
 )
+
+
+def _projected_shirt_tile(player: dict, *, is_in: bool) -> str:
+    shirt_url = _official_shirt_url(player["team_code"], is_gkp=(player["position"] == "GKP"), size=66)
+    in_marker = "<span class='projected-tile-in-badge' title='Transferred in'>IN</span>" if is_in else ""
+    return f"""<div class="projected-tile{' projected-tile-in' if is_in else ''}">
+  {in_marker}
+  <img class="projected-tile-shirt" src="{_esc(shirt_url)}" loading="lazy" alt="{_esc(player['team_short'])} shirt">
+  <div class="projected-tile-name">{_esc(player['web_name'])}</div>
+</div>"""
+
+
+def _projected_squad_html(lookup: dict[int, dict], squad_ids: set, step: dict, chip_by_event: dict[int, list[dict]]) -> str:
+    """Real shirt-tile grid for a projected future GW (2026-08-28, direct
+    user ask: "more football on the dashboard... more crests, player
+    images" - replaces the plain text-row rendering). Same real data as
+    before (`_squad_state_by_event`'s reconstructed 15, real transfer/chip
+    replay) - only the visual shape changes."""
+    event = step["event"]
+    out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+    if out_id is not None and in_id is not None:
+        out_p, in_p = lookup.get(out_id), lookup.get(in_id)
+        out_name = out_p["web_name"] if out_p else step.get("action", "?").split(" -> ")[0]
+        in_name = in_p["web_name"] if in_p else step.get("action", "?").split(" -> ")[-1]
+        hit_bit = " (HIT)" if step.get("uses_hit") else ""
+        transfer_line = (
+            "<div class='squad-state-transfer'><span class='squad-state-out'>OUT " + _esc(out_name) + "</span> "
+            "<span class='squad-state-in'>IN " + _esc(in_name) + "</span>" + hit_bit + "</div>"
+        )
+    else:
+        transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
+    chip_line = "".join(f"<span class='chip-badge'>{_esc(c['chip_name'].upper())}</span>" for c in chip_by_event.get(event, []))
+
+    by_pos: dict[str, list[dict]] = {}
+    for pid in squad_ids:
+        p = lookup.get(pid)
+        if p is None:
+            continue
+        by_pos.setdefault(p["position"], []).append(p)
+    rows = []
+    for pos in _POSITION_ORDER:
+        players = sorted(by_pos.get(pos, []), key=lambda p: p["web_name"])
+        if not players:
+            continue
+        tiles = "".join(_projected_shirt_tile(p, is_in=(p["id"] == in_id)) for p in players)
+        rows.append(f"<div class='projected-pos-row'><span class='projected-pos-label'>{pos}</span><div class='projected-tile-grid'>{tiles}</div></div>")
+    return transfer_line + chip_line + "".join(rows)
 
 
 def render_squad_workspace(
@@ -57,7 +105,7 @@ def render_squad_workspace(
             for j, step in enumerate(p.get("steps") or []):
                 event = step["event"]
                 squad_here = by_event.get(event, set(locked.squad_ids))
-                body = _squad_state_block_body_html(lookup, squad_here, step, chip_by_event)
+                body = _projected_squad_html(lookup, squad_here, step, chip_by_event)
                 blocks.append(
                     f"<div class='squad-state-block' data-path='{i}' data-event='{event}' hidden>{body}</div>"
                 )

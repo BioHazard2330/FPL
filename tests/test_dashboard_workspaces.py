@@ -4,7 +4,7 @@ new presentation-only functions, separate from the existing end-to-end
 `generate_dashboard_html` coverage in test_dashboard.py/test_dashboard_state.py."""
 from types import SimpleNamespace
 
-from fpl_agent.monitoring.dashboard import data_payload, home, intelligence, plan
+from fpl_agent.monitoring.dashboard import data_payload, home, intelligence, plan, squad
 from test_dashboard import _locked_and_decision, _seed
 from test_optimization_squad import _seed as _seed_squad
 
@@ -258,3 +258,45 @@ def test_team_signal_card_renders_real_fields_and_arrow(db_conn):
 def test_render_what_changed_html_empty_state(db_conn):
     result = intelligence.render_what_changed_html(db_conn, set())
     assert "No real match-analyzed team signals yet" in result
+
+
+# --- squad.py: projected-GW real shirt tiles --------------------------------
+
+def _fake_player(pid, name, team_short="ARS", team_code=3, position="MID"):
+    return {"id": pid, "web_name": name, "team_short": team_short, "team_code": team_code, "position": position, "price_tenths": 55}
+
+
+def test_projected_shirt_tile_marks_the_incoming_player():
+    p = _fake_player(1, "Rice")
+    result = squad._projected_shirt_tile(p, is_in=True)
+    assert "projected-tile-in" in result
+    assert "Rice" in result
+    assert "shirt_3-66.webp" in result
+
+    not_in = squad._projected_shirt_tile(p, is_in=False)
+    assert "projected-tile-in" not in not_in
+
+
+def test_projected_squad_html_shows_transfer_and_grouped_tiles():
+    lookup = {
+        1: _fake_player(1, "Raya", position="GKP"),
+        2: _fake_player(2, "Gabriel", position="DEF"),
+        3: _fake_player(3, "Saka", position="MID"),
+    }
+    step = {"event": 3, "player_out_id": 2, "player_in_id": 3, "action": "Gabriel -> Saka", "uses_hit": False}
+
+    result = squad._projected_squad_html(lookup, {1, 3}, step, {})
+
+    assert "OUT Gabriel" in result and "IN Saka" in result
+    assert "GKP" in result and "MID" in result
+    assert "Raya" in result and "Saka" in result
+    assert result.count("Gabriel") == 1  # sold player named only in the transfer line, not a tile (not in squad_here)
+
+
+def test_projected_squad_html_roll_step_has_no_transfer_line():
+    lookup = {1: _fake_player(1, "Raya", position="GKP")}
+    step = {"event": 3, "player_out_id": None, "player_in_id": None, "action": "ROLL"}
+
+    result = squad._projected_squad_html(lookup, {1}, step, {})
+
+    assert "ROLL - no transfer this GW" in result

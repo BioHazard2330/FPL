@@ -16,7 +16,14 @@ purpose) - no new model."""
 from fpl_agent.models.breakouts import find_breakouts
 from fpl_agent.models.projection_confidence import assess_projection_confidence
 from fpl_agent.models.traps import find_traps
-from fpl_agent.monitoring.dashboard.legacy import _bulk_player_lookup, _esc, _fixture_quality, _relative_time
+from fpl_agent.monitoring.dashboard.legacy import (
+    _bulk_player_lookup,
+    _esc,
+    _fixture_quality,
+    _official_badge_url,
+    _official_shirt_url,
+    _relative_time,
+)
 
 _VISIBLE_PER_CATEGORY = 1
 _MAX_PER_CATEGORY = 3
@@ -30,11 +37,16 @@ def _confidence_label(conn, player_id: int) -> str:
 
 
 def _card(kind: str, name: str, position: str, price_m: float | None, ownership_pct: float | None,
-          key_metric: str, why_now: str, confidence: str) -> str:
+          key_metric: str, why_now: str, confidence: str, team_code: int | None = None) -> str:
     price_bit = f"£{price_m:.1f}m" if price_m is not None else "?"
     own_bit = f"{ownership_pct:.1f}% owned" if ownership_pct is not None else ""
+    shirt_html = (
+        f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' "
+        f"loading='lazy' alt=''>" if team_code is not None else ""
+    )
     return (
         f"<div class='opp-card opp-card-{_esc(kind.lower().replace(' ', '-'))}'>"
+        f"{shirt_html}"
         f"<div class='opp-card-kind'>{_esc(kind)}</div>"
         f"<div class='opp-card-title'>{name} <span class='opp-pos'>{_esc(position)}</span></div>"
         f"<div class='opp-card-meta'>{price_bit}{' &middot; ' + own_bit if own_bit else ''}</div>"
@@ -56,32 +68,20 @@ def _category_block(kind: str, cards: list[str]) -> str:
 def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
     breakout_cards, trap_cards, role_cards, swing_cards, value_cards = [], [], [], [], []
 
+    breakouts = []
+    traps = []
+    role_rows = []
+    value_rows = []
     try:
-        for b in find_breakouts(conn)[:_MAX_PER_CATEGORY]:
-            if b.player_id in squad_ids:
-                continue
-            breakout_cards.append(_card(
-                "Breakout", _esc(b.web_name), b.position, None, b.ownership_percent,
-                f"{b.value_ratio:.2f} xP/£m value ratio",
-                "; ".join(b.reasons) if b.reasons else "rising value at low ownership",
-                _confidence_label(conn, b.player_id),
-            ))
+        breakouts = [b for b in find_breakouts(conn)[:_MAX_PER_CATEGORY] if b.player_id not in squad_ids]
     except Exception:
         pass
-
     try:
-        for t in find_traps(conn)[:_MAX_PER_CATEGORY]:
-            trap_cards.append(_card(
-                "Trap", _esc(t.web_name), t.position, None, t.ownership_percent,
-                f"{t.eo_source} ownership source",
-                "; ".join(t.reasons) if t.reasons else "deteriorating case at high ownership",
-                _confidence_label(conn, t.player_id),
-            ))
+        traps = find_traps(conn)[:_MAX_PER_CATEGORY]
     except Exception:
         pass
-
     try:
-        rows = conn.execute(
+        role_rows = conn.execute(
             "SELECT ce.entity_id, p.web_name, et.singular_name_short AS position, ce.detected_at "
             "FROM change_events ce JOIN players p ON p.id = ce.entity_id "
             "JOIN element_types et ON et.id = p.element_type "
@@ -89,18 +89,66 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             "ORDER BY ce.detected_at DESC LIMIT ?",
             (_MAX_PER_CATEGORY,),
         ).fetchall()
-        for r in rows:
-            role_cards.append(_card(
-                "Role Change", _esc(r["web_name"]), r["position"], None, None,
-                f"set-piece role change {_esc(_relative_time(r['detected_at']))}",
-                "a detected set-piece duty change - a genuine role signal, not a form blip",
-                _confidence_label(conn, r["entity_id"]),
-            ))
+    except Exception:
+        pass
+    try:
+        value_rows = conn.execute(
+            "SELECT old.player_id, old.value_tenths AS old_value, cur.value_tenths AS new_value, "
+            "old.valid_until AS changed_at, p.web_name, et.singular_name_short AS position "
+            "FROM player_price_history old "
+            "JOIN player_price_history cur ON cur.player_id = old.player_id AND cur.valid_until IS NULL "
+            "JOIN players p ON p.id = old.player_id JOIN element_types et ON et.id = p.element_type "
+            "WHERE old.valid_until IS NOT NULL AND cur.value_tenths > old.value_tenths AND p.removed = 0 "
+            "ORDER BY old.valid_until DESC LIMIT ?",
+            (_MAX_PER_CATEGORY,),
+        ).fetchall()
     except Exception:
         pass
 
+    candidate_ids = (
+        {b.player_id for b in breakouts} | {t.player_id for t in traps}
+        | {r["entity_id"] for r in role_rows} | {r["player_id"] for r in value_rows}
+    )
+    team_lookup = _bulk_player_lookup(conn, candidate_ids) if candidate_ids else {}
+
+    for b in breakouts:
+        team_code = team_lookup.get(b.player_id, {}).get("team_code")
+        breakout_cards.append(_card(
+            "Breakout", _esc(b.web_name), b.position, None, b.ownership_percent,
+            f"{b.value_ratio:.2f} xP/£m value ratio",
+            "; ".join(b.reasons) if b.reasons else "rising value at low ownership",
+            _confidence_label(conn, b.player_id), team_code=team_code,
+        ))
+
+    for t in traps:
+        team_code = team_lookup.get(t.player_id, {}).get("team_code")
+        trap_cards.append(_card(
+            "Trap", _esc(t.web_name), t.position, None, t.ownership_percent,
+            f"{t.eo_source} ownership source",
+            "; ".join(t.reasons) if t.reasons else "deteriorating case at high ownership",
+            _confidence_label(conn, t.player_id), team_code=team_code,
+        ))
+
+    for r in role_rows:
+        team_code = team_lookup.get(r["entity_id"], {}).get("team_code")
+        role_cards.append(_card(
+            "Role Change", _esc(r["web_name"]), r["position"], None, None,
+            f"set-piece role change {_esc(_relative_time(r['detected_at']))}",
+            "a detected set-piece duty change - a genuine role signal, not a form blip",
+            _confidence_label(conn, r["entity_id"]), team_code=team_code,
+        ))
+
+    for r in value_rows:
+        team_code = team_lookup.get(r["player_id"], {}).get("team_code")
+        value_cards.append(_card(
+            "Value", _esc(r["web_name"]), r["position"], r["new_value"] / 10, None,
+            f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m",
+            f"price rise {_esc(_relative_time(r['changed_at']))} - real rising demand",
+            _confidence_label(conn, r["player_id"]), team_code=team_code,
+        ))
+
     try:
-        team_rows = conn.execute("SELECT id, short_name FROM teams").fetchall()
+        team_rows = conn.execute("SELECT id, short_name, code FROM teams").fetchall()
         squad_team_ids = {
             r["team_id"] for r in conn.execute(
                 "SELECT team_id FROM players WHERE id IN ({})".format(",".join("?" * len(squad_ids))), list(squad_ids)
@@ -114,36 +162,22 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             if q is not None and q[0] == "ok":
                 swings.append((q[2], t["short_name"], q[1]))
         swings.sort(key=lambda x: x[0])
+        team_codes = {t["id"]: t["code"] for t in team_rows}
         for avg, short_name, label in swings[:_MAX_PER_CATEGORY]:
+            team_id = next((t["id"] for t in team_rows if t["short_name"] == short_name), None)
+            badge_html = (
+                f"<img class='opp-card-shirt opp-card-badge' src='{_esc(_official_badge_url(team_codes[team_id]))}' loading='lazy' alt=''>"
+                if team_id is not None else ""
+            )
             swing_cards.append(
                 f"<div class='opp-card opp-card-fixture-swing'>"
+                f"{badge_html}"
                 f"<div class='opp-card-kind'>Fixture Swing</div>"
                 f"<div class='opp-card-title'>{_esc(short_name)}</div>"
                 f"<div class='opp-card-metric'>5-GW average difficulty {avg:.1f} ({_esc(label)})</div>"
                 f"<div class='opp-card-why'><strong>Why now</strong> a genuinely easy run not currently in your squad</div>"
                 f"</div>"
             )
-    except Exception:
-        pass
-
-    try:
-        rows = conn.execute(
-            "SELECT old.player_id, old.value_tenths AS old_value, cur.value_tenths AS new_value, "
-            "old.valid_until AS changed_at, p.web_name, et.singular_name_short AS position "
-            "FROM player_price_history old "
-            "JOIN player_price_history cur ON cur.player_id = old.player_id AND cur.valid_until IS NULL "
-            "JOIN players p ON p.id = old.player_id JOIN element_types et ON et.id = p.element_type "
-            "WHERE old.valid_until IS NOT NULL AND cur.value_tenths > old.value_tenths AND p.removed = 0 "
-            "ORDER BY old.valid_until DESC LIMIT ?",
-            (_MAX_PER_CATEGORY,),
-        ).fetchall()
-        for r in rows:
-            value_cards.append(_card(
-                "Value", _esc(r["web_name"]), r["position"], r["new_value"] / 10, None,
-                f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m",
-                f"price rise {_esc(_relative_time(r['changed_at']))} - real rising demand",
-                _confidence_label(conn, r["player_id"]),
-            ))
     except Exception:
         pass
 
