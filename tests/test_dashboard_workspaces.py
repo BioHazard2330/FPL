@@ -66,6 +66,51 @@ def test_home_reason_no_squad():
     assert home._action_word(None, None) == ("NO SQUAD", "review")
 
 
+class _FakeFreshness:
+    def __init__(self, is_stale, computed_at="2026-08-29T10:00:00+00:00", decision_id=7,
+                 model_version="calibrated-v2", stale_reason=None, age_relative="3h ago"):
+        self.is_stale = is_stale
+        self.computed_at = computed_at
+        self.decision_id = decision_id
+        self.model_version = model_version
+        self.stale_reason = stale_reason
+        self.age_relative = age_relative
+
+
+def test_freshness_html_none_when_no_decision_yet():
+    assert home._freshness_html(None) == ""
+
+
+def test_freshness_html_shows_age_and_no_banner_when_fresh():
+    result = home._freshness_html(_FakeFreshness(is_stale=False))
+    assert "3h ago" in result
+    assert "decision #7" in result
+    assert "calibrated-v2" in result
+    assert "RECOMPUTING" not in result
+
+
+def test_freshness_html_shows_stale_banner_with_reason():
+    result = home._freshness_html(_FakeFreshness(is_stale=True, stale_reason="Haaland: status_change (a -> i)"))
+    assert "RECOMPUTING" in result
+    assert "Haaland: status_change" in result  # `->` is HTML-escaped by _esc(), checked separately below
+    assert "-&gt; i" in result
+
+
+def test_render_hero_forces_recomputing_word_when_stale():
+    """The real P0-audit fix: a stale cached decision must never render as
+    if it were the current word (ROLL/TRANSFER/PLAY CHIP) - it must visibly
+    say RECOMPUTING, not just add a caption nobody reads."""
+    current_rec = {"verdict": "ACT", "action_kind": "transfer", "label": "A -> B", "path_total": 20.0}
+    result = home.render_hero(
+        gw_label_html="GW3", current_rec=current_rec, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
+        freshness=_FakeFreshness(is_stale=True, stale_reason="Test Player: status_change (a -> i)"),
+    )
+    assert "RECOMPUTING" in result
+    assert "home-hero-review" in result  # reuses the existing amber review styling
+    assert ">TRANSFER<" not in result
+
+
 class _FakePlayer:
     def __init__(self, web_name, median):
         self.web_name = web_name
@@ -172,7 +217,10 @@ def test_workspace_payload_is_minimal_not_a_db_dump(db_conn):
         confidence_fn=plan.path_confidence, descriptor_fn=plan.path_descriptor,
     )
 
-    assert set(result["decision"].keys()) == {"verdict", "action_kind", "label", "path_total", "evidence_confidence"}
+    assert set(result["decision"].keys()) == {
+        "verdict", "action_kind", "label", "path_total", "evidence_confidence",
+        "computed_at", "decision_id", "model_version", "is_stale", "stale_reason",
+    }
     assert set(result["paths"][0].keys()) == {
         "id", "label", "score", "delta_vs_roll", "confidence", "descriptor", "is_leader",
         "final_free_transfers", "final_bank_tenths", "steps",
@@ -266,6 +314,25 @@ def _fake_player(pid, name, team_short="ARS", team_code=3, position="MID"):
     return {"id": pid, "web_name": name, "team_short": team_short, "team_code": team_code, "position": position, "price_tenths": 55}
 
 
+def _fake_candidate(pid, name, position="MID", median=5.0):
+    from fpl_agent.optimization.squad import PlayerCandidate
+    return PlayerCandidate(
+        player_id=pid, web_name=name, position=position, team_id=1, team_short="ARS",
+        price_tenths=55, xp=median, median=median, floor=median * 0.5, ceiling=median * 1.5,
+        confidence="MEDIUM", expected_minutes=90.0,
+    )
+
+
+def _fake_xi(starting, bench=()):
+    from fpl_agent.optimization.squad import StartingXI
+    starting = list(starting)
+    return StartingXI(
+        starting=starting, bench=list(bench),
+        captain=starting[0] if starting else None,
+        vice_captain=starting[1] if len(starting) > 1 else None,
+    )
+
+
 def test_projected_shirt_tile_marks_the_incoming_player():
     p = _fake_player(1, "Rice")
     result = squad._projected_shirt_tile(p, is_in=True)
@@ -284,8 +351,9 @@ def test_projected_squad_html_shows_transfer_and_grouped_tiles():
         3: _fake_player(3, "Saka", position="MID"),
     }
     step = {"event": 3, "player_out_id": 2, "player_in_id": 3, "action": "Gabriel -> Saka", "uses_hit": False}
+    xi = _fake_xi([_fake_candidate(1, "Raya", "GKP"), _fake_candidate(3, "Saka", "MID")])
 
-    result = squad._projected_squad_html(lookup, {1, 3}, step, {})
+    result = squad._projected_squad_html(lookup, xi, step)
 
     assert "OUT Gabriel" in result and "IN Saka" in result
     assert "GKP" in result and "MID" in result
@@ -296,10 +364,36 @@ def test_projected_squad_html_shows_transfer_and_grouped_tiles():
 def test_projected_squad_html_roll_step_has_no_transfer_line():
     lookup = {1: _fake_player(1, "Raya", position="GKP")}
     step = {"event": 3, "player_out_id": None, "player_in_id": None, "action": "ROLL"}
+    xi = _fake_xi([_fake_candidate(1, "Raya", "GKP")])
 
-    result = squad._projected_squad_html(lookup, {1}, step, {})
+    result = squad._projected_squad_html(lookup, xi, step)
 
     assert "ROLL - no transfer this GW" in result
+
+
+def test_projected_squad_html_marks_captain_and_vice_and_shows_bench():
+    """Real regression for the P0 audit fix - captain/vice are resolved PER
+    PROJECTED SQUAD STATE (via `xi`), not the current squad's fixed pick,
+    and the bench renders as its own separate group."""
+    lookup = {
+        1: _fake_player(1, "Raya", position="GKP"),
+        2: _fake_player(2, "Saka", position="MID"),
+        3: _fake_player(3, "Rice", position="MID"),
+        4: _fake_player(4, "Havertz", position="FWD"),
+    }
+    step = {"event": 3, "player_out_id": None, "player_in_id": None, "action": "ROLL"}
+    xi = _fake_xi(
+        [_fake_candidate(2, "Saka", "MID", median=9.0), _fake_candidate(3, "Rice", "MID", median=6.0)],
+        bench=[_fake_candidate(1, "Raya", "GKP", median=3.0), _fake_candidate(4, "Havertz", "FWD", median=2.0)],
+    )
+
+    result = squad._projected_squad_html(lookup, xi, step)
+
+    assert "projected-tile-cap-badge" in result
+    assert "projected-tile-vice-badge" in result
+    assert "projected-bench-row" in result
+    assert "projected-gw-score" in result
+    assert "24.0 projected pts" in result  # (9.0 + 6.0) + captain (Saka) doubled: +9.0
 
 
 # --- injuries.py / player_data.py / market.py's new league-wide panels -----

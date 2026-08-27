@@ -421,3 +421,98 @@ def test_validate_starting_xi_catches_more_than_11_starters():
     problems = validate_starting_xi(xi)
 
     assert any("expected at most 11" in p for p in problems)
+
+
+# --- resolve_projected_xi / build_player_pool_for_ids (2026-08-29, P0 audit:
+# "future squad must actually be a future squad" - real per-GW captain/vice/
+# starting-XI resolution, replacing the old "carries over unchanged" gap) ---
+
+_STARTING_11 = [1, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32]
+_BENCH_4 = [2, 14, 23, 33]
+_PROJECTED_SQUAD = set(_STARTING_11 + _BENCH_4)
+
+
+def _patch_event_dependent_expected_points(monkeypatch):
+    """Two different real per-event projections for the SAME fixed 15-man
+    squad - proves `resolve_projected_xi` actually resolves the captain/XI
+    PER EVENT (`from_event` genuinely changes the answer), not once and
+    carried forward. Event 2 mirrors the plain `_PLAYERS` xp map (player 30,
+    a forward, is the clear best); event 6 flips it so player 20 (a
+    midfielder) is best instead - a real case where a squad's best captain
+    changes GW to GW (form/fixture), which the old "carry captain over
+    unchanged" behavior could never reflect."""
+    base_map = {pid: xp for pid, _et, _team_id, _price, xp in _PLAYERS}
+    event_6_map = dict(base_map)
+    event_6_map[20] = 20.0  # was 6.0 - now the clear best for this specific GW
+    event_6_map[30] = 1.0   # was 6.5 - now clearly NOT the best for this GW
+
+    def fake(conn, player_id, n_gw=1, from_event=None):
+        source = event_6_map if from_event == 6 else base_map
+        median = source[player_id]
+        return SimpleNamespace(
+            median=median, floor=median * 0.5, ceiling=median * 1.8,
+            confidence="MEDIUM", expected_minutes=75.0,
+        )
+
+    monkeypatch.setattr(squad_mod, "expected_points", fake)
+
+
+def test_resolve_projected_xi_uses_the_specific_events_own_projection(db_conn, monkeypatch):
+    from fpl_agent.optimization.squad import resolve_projected_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_event_dependent_expected_points(monkeypatch)
+
+    xi_event2 = resolve_projected_xi(db_conn, _PROJECTED_SQUAD, event=2)
+    xi_event6 = resolve_projected_xi(db_conn, _PROJECTED_SQUAD, event=6)
+
+    # GW2: player 30 (base map's real best) is captain, same as the current
+    # squad's own real captaincy pick would be for a normal-form week.
+    assert xi_event2.captain.player_id == 30
+    # GW6: the SAME 15-man squad's real per-GW projection flips - player 20
+    # is now clearly best. A "carries over unchanged" implementation would
+    # incorrectly still show player 30 here.
+    assert xi_event6.captain.player_id == 20
+    assert xi_event2.captain.player_id != xi_event6.captain.player_id
+
+
+def test_resolve_projected_xi_produces_a_valid_formation(db_conn, monkeypatch):
+    from fpl_agent.optimization.squad import resolve_projected_xi, validate_starting_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_event_dependent_expected_points(monkeypatch)
+
+    xi = resolve_projected_xi(db_conn, _PROJECTED_SQUAD, event=2)
+
+    assert validate_starting_xi(xi) == []
+    assert len(xi.starting) == 11
+    assert len(xi.bench) == 4
+    assert xi.vice_captain is not None and xi.vice_captain.player_id != xi.captain.player_id
+
+
+def test_build_player_pool_for_ids_shares_the_xp_cache_across_calls(db_conn, monkeypatch):
+    """The real perf reason this exists (2026-08-29 audit note: resolving a
+    real XI per path/GW must not silently blow up the dashboard's own
+    ~1-minute regen budget) - a shared cache means the same (player_id,
+    event) pair is only ever computed once, even across many overlapping
+    strategic paths."""
+    from fpl_agent.optimization.squad import build_player_pool_for_ids
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    calls = []
+    base_map = {pid: xp for pid, _et, _team_id, _price, xp in _PLAYERS}
+
+    def counting_fake(conn, player_id, n_gw=1, from_event=None):
+        calls.append((player_id, from_event))
+        median = base_map[player_id]
+        return SimpleNamespace(median=median, floor=median * 0.5, ceiling=median * 1.8, confidence="MEDIUM", expected_minutes=75.0)
+
+    monkeypatch.setattr(squad_mod, "expected_points", counting_fake)
+
+    cache: dict = {}
+    build_player_pool_for_ids(db_conn, _PROJECTED_SQUAD, event=3, xp_cache=cache)
+    n_after_first = len(calls)
+    build_player_pool_for_ids(db_conn, _PROJECTED_SQUAD, event=3, xp_cache=cache)
+
+    assert len(calls) == n_after_first  # second call, same event - zero new real computations
+    assert n_after_first == len(_PROJECTED_SQUAD)

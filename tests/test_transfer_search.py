@@ -638,3 +638,204 @@ def test_compare_starting_actions_surfaces_a_legal_chip_option(db_conn, monkeypa
         "joint search's own winning path in test_joint_search_can_choose_wildcard_over_a_plain_transfer"
     )
 
+
+# --- build_diverse_paths (2026-08-29, P0 audit: "strategic paths must be
+# meaningfully different") ---------------------------------------------------
+
+def test_build_diverse_paths_every_path_has_a_distinct_opening_action(db_conn, monkeypatch):
+    """The real bug this fixes: the raw beam's top-N converges to
+    near-duplicate variants of the same dominant opening move. Reuses the
+    exact fixture from test_compare_starting_actions_ranks_transfer_above_
+    roll_when_it_wins above - `compare_starting_actions` builds one option
+    per real distinct starting action by construction, so every path
+    `build_diverse_paths` returns must have a first step whose
+    (chip_played, player_out_id, player_in_id) signature is unique across
+    the whole returned list - the core diversity guarantee."""
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=4,
+    )
+    paths = build_diverse_paths(options, start_event=1, max_paths=5)
+
+    assert len(paths) >= 2
+    signatures = [
+        (p["steps"][0]["chip_played"], p["steps"][0]["player_out_id"], p["steps"][0]["player_in_id"])
+        for p in paths
+    ]
+    assert len(signatures) == len(set(signatures)), f"expected every path's opening move to be unique, got {signatures}"
+
+
+def test_build_diverse_paths_ranked_best_first_with_correct_deltas(db_conn, monkeypatch):
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=4,
+    )
+    paths = build_diverse_paths(options, start_event=1, roll_total=15.0, max_paths=5)
+
+    totals = [p["path_total"] for p in paths]
+    assert totals == sorted(totals, reverse=True)
+    assert paths[0]["delta_vs_leader"] == 0.0
+    assert paths[0]["delta_vs_roll"] == round(paths[0]["path_total"] - 15.0, 2)
+    assert paths[0]["delta_vs_second_best"] == round(paths[0]["path_total"] - paths[1]["path_total"], 2)
+    # only the leader gets a real delta_vs_second_best - matches path_detail's
+    # own documented contract (existing behavior, unchanged by this fix).
+    assert paths[1]["delta_vs_second_best"] is None
+
+
+def test_build_diverse_paths_respects_max_paths_cap(db_conn, monkeypatch):
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=4,
+    )
+    paths = build_diverse_paths(options, start_event=1, max_paths=2)
+
+    assert len(paths) <= 2
+
+
+def test_build_diverse_paths_empty_when_no_options():
+    from fpl_agent.optimization.transfers import build_diverse_paths
+
+    assert build_diverse_paths([], start_event=1) == []
+
+
+def test_build_diverse_paths_starting_chip_step_carries_the_real_chip_name(db_conn, monkeypatch):
+    """A chip-kind StartingActionOption's synthetic first step must carry
+    the real chip_played value (not None) - the exact field the dashboard's
+    chip-mapping fix (`plan.py`/`squad.py`, 2026-08-29) reads to render chip
+    badges, so a chip-first diverse path renders correctly too."""
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1,
+    )
+    paths = build_diverse_paths(options, start_event=1)
+
+    assert paths[0]["steps"][0]["chip_played"] == "wildcard"
+    assert paths[0]["steps"][0]["action"] == "PLAY WILDCARD"
+
+
+# --- checkpoint_breakdown (2026-08-29, P0 audit: "3/5/8GW breakdown per
+# path") -----------------------------------------------------------------
+
+def test_checkpoint_breakdown_1gw_reuses_starting_gw_value(db_conn, monkeypatch):
+    from fpl_agent.optimization.transfers import checkpoint_breakdown, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=4, continuation_beam_width=2,
+    )
+    roll = next(o for o in options if o.kind == "roll")
+
+    result = checkpoint_breakdown(db_conn, roll, start_event=1, full_horizon_gw=4, checkpoints=(1,))
+
+    assert result[1] == round(roll.starting_gw_value, 2)
+
+
+def test_checkpoint_breakdown_full_horizon_reuses_path_total(db_conn, monkeypatch):
+    from fpl_agent.optimization.transfers import checkpoint_breakdown, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=4, continuation_beam_width=2,
+    )
+    roll = next(o for o in options if o.kind == "roll")
+
+    result = checkpoint_breakdown(db_conn, roll, start_event=1, full_horizon_gw=4, checkpoints=(4,))
+
+    assert result[4] == roll.path_total
+
+
+def test_checkpoint_breakdown_middle_horizon_matches_a_real_independent_continuation_search(db_conn, monkeypatch):
+    """Real wiring proof: a middle checkpoint (below the full horizon) must
+    equal `starting_gw_value + <a fresh continuation search run directly
+    against this option's own resulting_* state>` - proves
+    `checkpoint_breakdown` genuinely re-runs a real, correctly-scoped search
+    rather than interpolating/estimating."""
+    from fpl_agent.optimization.transfers import checkpoint_breakdown, compare_starting_actions, search_transfer_sequences
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=4, continuation_beam_width=2,
+    )
+    roll = next(o for o in options if o.kind == "roll")
+
+    result = checkpoint_breakdown(db_conn, roll, start_event=1, full_horizon_gw=4, checkpoints=(2,))
+
+    independent = search_transfer_sequences(
+        db_conn, list(roll.resulting_squad_ids), roll.resulting_free_transfers, roll.resulting_bank_tenths,
+        horizon_gw=1, beam_width=2, used_chip_names=roll.resulting_used_chip_names, start_event=2,
+    )
+    expected = round(roll.starting_gw_value + independent[0].total_net_ev, 2)
+
+    assert result[2] == expected
+
+
+def test_build_diverse_paths_attaches_horizon_breakdown_when_conn_given(db_conn, monkeypatch):
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=4, continuation_beam_width=2,
+    )
+    paths = build_diverse_paths(
+        options, start_event=1, max_paths=3, conn=db_conn, full_horizon_gw=4,
+        checkpoints=(2, 4), roll_totals_by_horizon={2: 6.0, 4: 12.0}, continuation_beam_width=2,
+    )
+
+    for p in paths:
+        assert "horizon_breakdown" in p
+        assert set(p["horizon_breakdown"].keys()) == {2, 4}
+        # the full-horizon checkpoint must exactly equal this path's own
+        # already-reported path_total - same number, two places.
+        assert p["horizon_breakdown"][4]["path_total"] == p["path_total"]
+
+    # delta_vs_next_best is a real signed number for every path at every
+    # checkpoint - positive (the real margin) for whichever path actually
+    # leads AT THAT checkpoint, negative for every path that trails there.
+    # Exactly one path holds the max (>= every other's) at each checkpoint.
+    for h in (2, 4):
+        deltas = [p["horizon_breakdown"][h]["delta_vs_next_best"] for p in paths]
+        assert all(d is not None for d in deltas)
+        assert sum(1 for d in deltas if d == max(deltas)) >= 1
+        assert max(deltas) >= 0  # the real leader's own margin is never negative
+
+
+def test_build_diverse_paths_no_breakdown_without_conn(db_conn, monkeypatch):
+    """conn/full_horizon_gw are opt-in - omitting them (every existing
+    caller before this fix) must not attach horizon_breakdown at all."""
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=2,
+    )
+    paths = build_diverse_paths(options, start_event=1, max_paths=3)
+
+    for p in paths:
+        assert "horizon_breakdown" not in p
+

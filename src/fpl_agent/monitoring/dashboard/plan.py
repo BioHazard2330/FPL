@@ -69,10 +69,6 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
 
     paths = sd["paths"]
     horizon_gw = sd.get("horizon_gw", "?")
-    chip_schedule = sd.get("chip_schedule")
-    chip_by_event: dict[int, list[dict]] = {}
-    for entry in (chip_schedule.get("entries") if chip_schedule else []) or []:
-        chip_by_event.setdefault(entry["event"], []).append(entry)
 
     leader_total = paths[0].get("path_total")
     tied: list[int] = []
@@ -102,17 +98,20 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
         )
 
         steps = p.get("steps") or []
+        chip_steps_this_path = [s for s in steps if s.get("chip_played")]
         node_parts = []
         for j, s in enumerate(steps):
             event = s["event"]
-            has_chip = i == 1 and event in chip_by_event
+            chip_played = s.get("chip_played")
             action_word = s.get("action", "ROLL")
-            is_decision_week = action_word != "ROLL" or has_chip
+            is_decision_week = action_word != "ROLL"
             step_cls = "path-step-btn timeline-node " + ("timeline-node-decision" if is_decision_week else "timeline-node-roll")
+            if chip_played:
+                step_cls += " timeline-node-chip"
             if is_first and j == 0:
                 step_cls += " is-active"
             hit_suffix = " (HIT)" if s.get("uses_hit") else ""
-            badges = "".join(f"<span class='chip-badge'>{_esc(c['chip_name'].upper())}</span>" for c in chip_by_event.get(event, [])) if has_chip else ""
+            badges = f"<span class='chip-badge'>{_esc(chip_played.upper())}</span>" if chip_played else ""
             node_parts.append(
                 f"<button type='button' class='{step_cls}' data-path='{i}' data-event='{event}'>"
                 f"<span class='timeline-node-gw'>GW{event}</span>"
@@ -122,11 +121,61 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
             if j < len(steps) - 1:
                 node_parts.append("<span class='timeline-arrow' aria-hidden='true'></span>")
 
+        # Real "one object drives everything" fix (2026-08-29, P0 chip-mapping
+        # audit): this path's own "Chip timing" line is built from the exact
+        # same `chip_steps_this_path` (this path's real `chip_played` steps)
+        # that drove the timeline node badges above - never the separate
+        # `schedule_chips` DP cross-check, which can legitimately recommend a
+        # different GW/chip and would silently contradict this path's own
+        # timeline if shown here.
+        if chip_steps_this_path:
+            chip_summary = "".join(
+                f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>GW{cs['event']}</span>"
+                f"<span class='risk-body'><strong>{_esc(cs['chip_played'].upper())}</strong></span></div>"
+                for cs in chip_steps_this_path
+            )
+        else:
+            chip_summary = "<div class='strategic-subrow-muted'>No chip played on this path.</div>"
+
+        # Real per-path 3/5/8GW breakdown (2026-08-29, P0 audit: "every path
+        # must display TOTAL PROJECTED POINTS / DELTA VS ROLL / DELTA VS NEXT
+        # BEST / 3GW / 5GW / 8GW" - never just the single requested-horizon
+        # total). `horizon_breakdown` is only present when the logging CLI
+        # computed it (`build_diverse_paths(conn=..., full_horizon_gw=...)`)
+        # - an older cached decision without it degrades to no breakdown row
+        # rather than fabricating one.
+        breakdown_html = ""
+        hb = p.get("horizon_breakdown")
+        if hb:
+            # JSON object keys are always strings once this has round-tripped
+            # through the decisions journal (json.dumps/loads) - `build_diverse_paths`
+            # itself produces real int keys, but every dashboard reader gets
+            # this dict back from a logged decision, so normalize here rather
+            # than assuming either shape.
+            hb = {int(k): v for k, v in hb.items()}
+            cells = []
+            for h in sorted(hb.keys()):
+                entry = hb[h]
+                roll_bit = f"{entry['delta_vs_roll']:+.1f} vs roll" if entry.get("delta_vs_roll") is not None else ""
+                next_best_bit = (
+                    f"{entry['delta_vs_next_best']:+.1f} vs next best" if entry.get("delta_vs_next_best") is not None
+                    else ""
+                )
+                cells.append(
+                    f"<div class='horizon-breakdown-cell'><span class='horizon-breakdown-gw'>{h}GW</span>"
+                    f"<span class='horizon-breakdown-total'>{entry['path_total']:+.1f}</span>"
+                    f"<span class='horizon-breakdown-sub'>{_esc(roll_bit)}</span>"
+                    f"<span class='horizon-breakdown-sub'>{_esc(next_best_bit)}</span></div>"
+                )
+            breakdown_html = f"<div class='panel-subtitle' style='margin-top:14px'>By horizon</div><div class='horizon-breakdown-row'>{''.join(cells)}</div>"
+
         cards.append(
             f"<div class='plan-path-card' data-path='{i}'{'' if is_first else ' hidden'}>"
             f"<div class='plan-path-header'>final FT {p.get('final_free_transfers', '?')} &middot; "
             f"bank £{p.get('final_bank_tenths', 0) / 10:.1f}m</div>"
             f"<div class='plan-timeline-track'>{''.join(node_parts)}</div>"
+            f"{breakdown_html}"
+            f"<div class='panel-subtitle' style='margin-top:14px'>Chip timing</div>{chip_summary}"
             "</div>"
         )
 
@@ -137,27 +186,9 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
             f"equivalent - too close to call a single winner.</div>"
         )
 
-    chip_html = ""
-    if chip_schedule is not None:
-        entries = chip_schedule.get("entries") or []
-        if entries:
-            rows = "".join(
-                f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>GW{e['event']}</span>"
-                f"<span class='risk-body'><strong>{_esc(e['chip_name'].upper())}</strong> &middot; "
-                f"+{e['expected_marginal_value']:.1f} projected</span></div>"
-                for e in entries
-            )
-            chip_html = f"<div class='panel-subtitle' style='margin-top:14px'>Chip timing</div>{rows}"
-        else:
-            chip_html = (
-                "<div class='panel-subtitle' style='margin-top:14px'>Chip timing</div>"
-                "<div class='strategic-subrow-muted'>No chip earns its keep in this window - hold.</div>"
-            )
-
     return (
         f"<div class='panel-subtitle'>{len(paths)} real strategy option{'s' if len(paths) != 1 else ''} over {horizon_gw} GWs - pick one</div>"
         f"{stability_note}"
         f"<div class='path-tabs plan-path-tabs'>{''.join(tabs)}</div>"
         f"<div class='plan-path-grid'>{''.join(cards)}</div>"
-        f"{chip_html}"
     )

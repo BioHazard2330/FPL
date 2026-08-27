@@ -248,17 +248,33 @@ def resolve_tracked_squad_ids(conn: sqlite3.Connection) -> set[int]:
 def get_latest_squad(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list[int]] | None:
     """Real squad ids for the most recent event this entry has stored picks
     for, plus that event number - `None` if no picks have ever been synced
-    (e.g. still preseason, no event locked yet)."""
-    row = conn.execute(
-        "SELECT MAX(event) AS event FROM my_team_picks WHERE entry_id=?", (entry_id,)
-    ).fetchone()
-    if row is None or row["event"] is None:
+    (e.g. still preseason, no event locked yet).
+
+    Real, confirmed race fixed 2026-08-29 (direct user report: the dashboard
+    "randomly" showed "no squad" with zero exception/warning trace, and
+    refreshing the static HTML didn't help since it's only regenerated
+    periodically). This used to be TWO separate `SELECT`s (`MAX(event)`,
+    then picks `WHERE event=?`) - fine for a single-connection read, but
+    this project runs a real concurrent writer (the Windows Task Scheduler's
+    own `run-scheduled`/`_upsert_picks`, independent of any interactive
+    session) against the same real `data/fpl.db`. `_upsert_picks` does a
+    real `DELETE FROM my_team_picks WHERE entry_id=? AND event=?` followed by
+    re-INSERTs for that same event (a resync) - two un-transacted `SELECT`s
+    on a reader connection have no guarantee of seeing one consistent
+    snapshot across both statements (`MAX(event)` could see event=N before
+    the delete, the second `SELECT ... WHERE event=N` could then land inside
+    the delete-to-reinsert gap and see zero rows) - a real torn read, not
+    a `sqlite3.OperationalError` a `try/except` would ever catch, which is
+    exactly why nothing was ever logged for it. Fixed by making this ONE
+    real atomic statement (a scalar subquery for the max event) - SQLite
+    guarantees a single statement's result reflects one consistent
+    snapshot, so the two parts can never disagree with each other again."""
+    rows = conn.execute(
+        "SELECT event, player_id FROM my_team_picks WHERE entry_id=? "
+        "AND event=(SELECT MAX(event) FROM my_team_picks WHERE entry_id=?) "
+        "ORDER BY squad_slot",
+        (entry_id, entry_id),
+    ).fetchall()
+    if not rows:
         return None
-    event = row["event"]
-    ids = [
-        r["player_id"] for r in conn.execute(
-            "SELECT player_id FROM my_team_picks WHERE entry_id=? AND event=? ORDER BY squad_slot",
-            (entry_id, event),
-        ).fetchall()
-    ]
-    return event, ids
+    return rows[0]["event"], [r["player_id"] for r in rows]

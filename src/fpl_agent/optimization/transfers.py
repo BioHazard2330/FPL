@@ -498,6 +498,17 @@ class StartingActionOption:
     uses_hit: bool
     path_total: float
     best_continuation: TransferSequence | None
+    # Real post-starting-action state (2026-08-29, added for
+    # `checkpoint_breakdown` below - the P0 "3/5/8GW breakdown per path" fix)
+    # - the exact (squad, FT, bank, used-chips) `compare_starting_actions`
+    # itself already derives internally for each branch, exposed here so a
+    # caller can re-run a SHORTER continuation for this SAME starting action
+    # without re-deriving (or duplicating) that per-branch state logic.
+    starting_gw_value: float = 0.0  # this action's own GW value (post-hit-cost, pre-continuation)
+    resulting_squad_ids: tuple[int, ...] = ()
+    resulting_free_transfers: int = 0
+    resulting_bank_tenths: int = 0
+    resulting_used_chip_names: frozenset[str] = frozenset()
 
 
 def compare_starting_actions(
@@ -560,6 +571,9 @@ def compare_starting_actions(
         player_in_id=None, player_in_name=None, chip_name=None, uses_hit=False,
         path_total=round(roll_ev + (roll_cont.total_net_ev if roll_cont else 0.0), 2),
         best_continuation=roll_cont,
+        starting_gw_value=roll_ev, resulting_squad_ids=tuple(squad_ids),
+        resulting_free_transfers=roll_ft, resulting_bank_tenths=bank_tenths,
+        resulting_used_chip_names=used_chip_names,
     ))
 
     # Best single replacement for each current squad player
@@ -584,6 +598,9 @@ def compare_starting_actions(
             uses_hit=is_hit,
             path_total=round(gw_ev - hit_cost + (cont.total_net_ev if cont else 0.0), 2),
             best_continuation=cont,
+            starting_gw_value=gw_ev - hit_cost, resulting_squad_ids=new_squad,
+            resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
+            resulting_used_chip_names=used_chip_names,
         ))
 
     # Each chip that's really eligible right now and not already used
@@ -608,7 +625,249 @@ def compare_starting_actions(
             player_in_id=None, player_in_name=None, chip_name=w.name, uses_hit=False,
             path_total=round(base_gw_ev + chip_result.marginal_value + (cont.total_net_ev if cont else 0.0), 2),
             best_continuation=cont,
+            starting_gw_value=base_gw_ev + chip_result.marginal_value, resulting_squad_ids=new_squad,
+            resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
+            resulting_used_chip_names=used_chip_names | {w.name},
         ))
 
     options.sort(key=lambda o: o.path_total, reverse=True)
     return options
+
+
+def checkpoint_breakdown(
+    conn: sqlite3.Connection, option: StartingActionOption, start_event: int,
+    full_horizon_gw: int, checkpoints: tuple[int, ...] = (3, 5, 8),
+    continuation_beam_width: int = 3, cache: dict[tuple, float] | None = None,
+) -> dict[int, float | None]:
+    """Real path_total for ONE already-computed `StartingActionOption`, AT
+    EACH of several shorter horizons (2026-08-29, P0 audit: "every path must
+    display TOTAL PROJECTED POINTS ... 3GW / 5GW / 8GW", not just the single
+    requested-horizon total). Deliberately a SEPARATE, opt-in, post-selection
+    pass - `compare_starting_actions` itself stays cheap (one continuation
+    per option) so every caller that doesn't need a multi-horizon breakdown
+    (e.g. `fpl transfers`) pays nothing extra; a caller building the
+    dashboard's diverse top-N paths calls this only for the (at most ~5)
+    paths it actually selected, using the option's own `resulting_squad_ids`/
+    `resulting_free_transfers`/`resulting_bank_tenths`/`resulting_used_chip_names`
+    (exactly the state `compare_starting_actions` already derived for this
+    branch - never re-derived here) plus a fresh, narrower continuation
+    search per checkpoint below the full horizon. Checkpoints at or above
+    `full_horizon_gw` reuse `option.path_total` directly (zero extra cost);
+    `checkpoints=(1,)` reuses `option.starting_gw_value` alone (no
+    continuation needed - this action's own GW, nothing beyond it).
+
+    Real, bounded cost: at most `len(checkpoints)` extra narrow
+    (`continuation_beam_width`, default 3) continuation searches PER PATH
+    this is called for - not per raw candidate option, and `cache` (shared
+    with the caller's own `compare_starting_actions` cache when passed)
+    avoids re-deriving the same per-player-per-event EV lookups the original
+    scan already computed."""
+    cache = cache if cache is not None else {}
+    out: dict[int, float | None] = {}
+    for h in checkpoints:
+        if h <= 1:
+            out[h] = round(option.starting_gw_value, 2)
+        elif h >= full_horizon_gw:
+            out[h] = option.path_total
+        else:
+            seqs = search_transfer_sequences(
+                conn, list(option.resulting_squad_ids), option.resulting_free_transfers,
+                option.resulting_bank_tenths, horizon_gw=h - 1, beam_width=continuation_beam_width,
+                used_chip_names=option.resulting_used_chip_names, start_event=start_event + 1, cache=cache,
+            )
+            cont_total = seqs[0].total_net_ev if seqs else 0.0
+            out[h] = round(option.starting_gw_value + cont_total, 2)
+    return out
+
+
+def path_detail(p, *, roll_total: float | None = None, leader_total: float | None = None, second_best_total: float | None = None) -> dict:
+    """Real, serializable snapshot of one TransferSequence - shared between
+    the CLI's decision-log detail and any future consumer (the dashboard's
+    Strategic Plan section reads exactly this shape from the logged
+    decision, so the two never drift apart). Moved here from `cli/main.py`
+    2026-08-29 (P0 "strategic paths must be meaningfully different" fix) so
+    `build_diverse_paths` below - a real optimization-layer function - can
+    share it without a `cli` -> `optimization` import (this project's own
+    layering: `cli` imports `optimization`, never the reverse).
+
+    Real, disclosed labeling fix (2026-08-27, "final product-level
+    dashboard" pass, P0 "strategic path score semantics"): `total_net_ev` is
+    kept as the raw field name (matches TransferSequence's own real
+    contract - the sum of the whole squad's real per-GW EV across the
+    horizon, never a delta), but is never displayed alone anymore -
+    `path_total` names the exact same number under its real, unambiguous
+    meaning, `delta_vs_roll` (None only when no real roll baseline could be
+    computed) is the real, separate "how much better than doing nothing"
+    figure, and `delta_vs_leader` is 0.0 for the winning path and the real,
+    signed gap to it for every other ranked path - never called "net EV" on
+    its own, exactly the ambiguity the audit flagged."""
+    return {
+        "total_net_ev": p.total_net_ev, "path_total": p.total_net_ev,
+        "delta_vs_roll": round(p.total_net_ev - roll_total, 2) if roll_total is not None else None,
+        "delta_vs_leader": round(p.total_net_ev - leader_total, 2) if leader_total is not None else 0.0,
+        # Real "DELTA VS SECOND-BEST" field (2026-08-27, P0 "strategic path
+        # value" fix) - only meaningful for the #1 path (every other path
+        # already carries its own delta_vs_leader); None for a non-winning
+        # path or when there is no real second path to compare against.
+        "delta_vs_second_best": (
+            round(p.total_net_ev - second_best_total, 2) if second_best_total is not None else None
+        ),
+        "final_free_transfers": p.final_free_transfers,
+        "final_bank_tenths": p.final_bank_tenths,
+        "chips_used": list(p.chips_used),
+        "steps": [
+            {
+                "event": s.event,
+                "action": (
+                    f"PLAY {s.chip_played.upper()}" if s.chip_played is not None
+                    else "ROLL" if s.player_out_id is None
+                    else f"{s.player_out_name} -> {s.player_in_name}"
+                ),
+                "uses_hit": s.uses_hit,
+                "chip_played": s.chip_played,
+                # Real ids added (2026-08-27, "personal FPL decision terminal"
+                # redesign) - the dashboard's Squad State Machine needs to
+                # reconstruct each real per-GW squad along this path (which
+                # player is in/out at each step), which the formatted
+                # `action` string alone can't do reliably (names aren't a
+                # safe join key). Additive only - `action`/`event`/`uses_hit`
+                # are untouched, so every existing reader of this dict shape
+                # keeps working unchanged. A decision logged before this
+                # field existed simply has `player_out_id=None` for every
+                # step - the dashboard degrades honestly (no squad-state
+                # reconstruction for that stale decision) rather than
+                # guessing ids back out of names.
+                "player_out_id": s.player_out_id,
+                "player_in_id": s.player_in_id,
+            }
+            for s in p.steps
+        ],
+    }
+
+
+def _synthetic_sequence_from_option(o: StartingActionOption, start_event: int) -> TransferSequence:
+    """One `StartingActionOption` (a real, fixed starting action plus its own
+    best real continuation) reshaped into a full `TransferSequence` - the
+    starting action's own step, prepended to its continuation's real steps.
+    `final_squad_ids`/`final_free_transfers`/`final_bank_tenths` come
+    straight from the continuation (already the correct end-state for the
+    WHOLE combined path, starting action included, since `compare_starting_actions`
+    threads the post-starting-action state into the continuation search) -
+    the `best_continuation is None` case (horizon_gw<=1, no continuation
+    search possible) degrades to a single-step sequence with best-effort
+    empty final state, same honest "unknown, not fabricated" rendering the
+    dashboard's own `p.get('final_free_transfers', '?')` fallback already
+    handles."""
+    starting_step = TransferSequenceStep(
+        event=start_event,
+        player_out_id=o.player_out_id, player_out_name=o.player_out_name,
+        player_in_id=o.player_in_id, player_in_name=o.player_in_name,
+        uses_hit=o.uses_hit, chip_played=o.chip_name,
+    )
+    cont = o.best_continuation
+    steps = (starting_step,) + (cont.steps if cont is not None else ())
+    chips_used = ((o.chip_name,) if o.chip_name else ()) + (cont.chips_used if cont is not None else ())
+    return TransferSequence(
+        steps=steps,
+        final_squad_ids=cont.final_squad_ids if cont is not None else (),
+        final_free_transfers=cont.final_free_transfers if cont is not None else 0,
+        final_bank_tenths=cont.final_bank_tenths if cont is not None else 0,
+        total_net_ev=o.path_total,
+        tiebreak_adjustment=0.0,
+        chips_used=chips_used,
+    )
+
+
+def build_diverse_paths(
+    options: list[StartingActionOption], start_event: int, *,
+    roll_total: float | None = None, max_paths: int = 5,
+    conn: sqlite3.Connection | None = None, full_horizon_gw: int | None = None,
+    checkpoints: tuple[int, ...] = (3, 5, 8), roll_totals_by_horizon: dict[int, float] | None = None,
+    continuation_beam_width: int = 3, cache: dict[tuple, float] | None = None,
+) -> list[dict]:
+    """Real, structurally-diverse top strategic paths (2026-08-29, P0 audit:
+    "strategic paths must be meaningfully different"). Real, confirmed
+    finding this fixes: the raw unconstrained beam's top-N
+    (`search_transfer_sequences`'s own `states[:beam_width]`) naturally
+    converges to near-duplicate variants of the SAME dominant opening move
+    once one option (e.g. a wildcard rebuild) clearly beats every
+    alternative - a genuine, disclosed property of beam search (the beam's
+    surviving states after a dominant early branch differ only in later,
+    immaterial substitutions), not a bug in the beam itself, but a bad
+    choice of WHAT to surface as "5 strategy options" for a user to pick
+    between.
+
+    `compare_starting_actions` already builds exactly ONE `StartingActionOption`
+    per real, distinct, legally-available starting action this GW (ROLL, the
+    best replacement for each individual current squad player, each real
+    eligible chip) - so, unlike the raw beam's survivors, these are
+    structurally different by construction before any ranking happens.
+    Ranking them by their own real `path_total` (starting action's own GW
+    plus its own best real continuation) and taking the top `max_paths` is
+    genuine diversity that emerges from the real search space, never a
+    hard-coded category ("aggressive"/"conservative" etc. are never assigned
+    here - whatever real actions rank highest are shown, however many
+    distinct kinds that turns out to be).
+
+    `conn`+`full_horizon_gw` (2026-08-29, P0 "3/5/8GW breakdown per path"
+    fix, both optional and off by default) additionally attach a real
+    `horizon_breakdown` dict to each returned path: `{3: {"path_total":...,
+    "delta_vs_roll":..., "delta_vs_next_best":...}, 5: {...}, 8: {...}}`.
+    `delta_vs_next_best` at each checkpoint is a real signed number for
+    EVERY path (not just the trailing ones): positive (or zero) for
+    whichever path actually leads at that specific checkpoint - the real
+    margin over the best of the OTHER selected paths there - and negative
+    for every path that trails at that checkpoint. Compares against whichever
+    OTHER selected path is actually best AT THAT SPECIFIC horizon (never
+    assumed to be the same path that leads at the full horizon - a path can
+    genuinely lead at 3GW and trail by 8GW). Bounded, opt-in extra cost: at
+    most `len(checkpoints) * len(top)` narrow continuation searches, only
+    for the paths actually selected above - see `checkpoint_breakdown`'s own
+    docstring."""
+    sequences = [
+        (o, _synthetic_sequence_from_option(o, start_event))
+        for o in options if o.path_total is not None
+    ]
+    sequences.sort(key=lambda pair: pair[1].total_net_ev, reverse=True)
+    top = sequences[:max_paths]
+    if not top:
+        return []
+    leader_total = top[0][1].total_net_ev
+    second_best_total = top[1][1].total_net_ev if len(top) > 1 else None
+    result = [
+        path_detail(
+            seq, roll_total=roll_total, leader_total=leader_total,
+            second_best_total=second_best_total if i == 0 else None,
+        )
+        for i, (_o, seq) in enumerate(top)
+    ]
+
+    if conn is not None and full_horizon_gw is not None:
+        cache = cache if cache is not None else {}
+        raw_breakdowns = [
+            checkpoint_breakdown(
+                conn, o, start_event, full_horizon_gw, checkpoints=checkpoints,
+                continuation_beam_width=continuation_beam_width, cache=cache,
+            )
+            for o, _seq in top
+        ]
+        roll_by_h = roll_totals_by_horizon or {}
+        for i, path_dict in enumerate(result):
+            breakdown = {}
+            for h in checkpoints:
+                value = raw_breakdowns[i].get(h)
+                if value is None:
+                    continue
+                others = [
+                    raw_breakdowns[j].get(h) for j in range(len(top))
+                    if j != i and raw_breakdowns[j].get(h) is not None
+                ]
+                roll_h = roll_by_h.get(h)
+                breakdown[h] = {
+                    "path_total": value,
+                    "delta_vs_roll": round(value - roll_h, 2) if roll_h is not None else None,
+                    "delta_vs_next_best": round(value - max(others), 2) if others else None,
+                }
+            path_dict["horizon_breakdown"] = breakdown
+
+    return result

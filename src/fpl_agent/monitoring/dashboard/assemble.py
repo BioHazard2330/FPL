@@ -253,11 +253,27 @@ def generate_dashboard_html(
     # would double-escape into visible text (the exact bug this project
     # already found once in the pre-redesign hero).
     gw_label_html = _esc(gw_label) + (f" &middot; {_esc(hero_state_label)}" if hero_state_label else "")
+
+    # Real "never show a stale strategic decision as current" fix (2026-08-29,
+    # P0 recommendation-freshness audit): `current_rec` above is read from the
+    # cached `strategic_plan` decision (real, deliberately not re-run live
+    # every regen - see CLAUDE.md's own cost note), so the hero must disclose
+    # its real age and check for a real, already-recorded material change
+    # since it was computed (`change_events`, HIGH severity, squad-scoped)
+    # rather than silently presenting a possibly-outdated verdict as current.
+    freshness = None
+    if current_rec is not None and locked is not None:
+        from fpl_agent.models.decision_freshness import assess_recommendation_freshness
+        freshness = assess_recommendation_freshness(
+            conn, primary_verdict.strategic_decision if primary_verdict is not None else None,
+            set(locked.squad_ids),
+        )
     home_section_html = home.render_hero(
         gw_label_html=gw_label_html,
         current_rec=current_rec, ta=ta, ca=ca, ft_value=ft_tile_value, ft_title=ft_tile_title,
         actual_points=my_live_score.points if my_live_score is not None else None,
         next_xp=headline_xp, bank_m=bank_m, captain_name=captain_name, rank_tile_html=live_rank_tile_html,
+        freshness=freshness,
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
@@ -272,7 +288,7 @@ def generate_dashboard_html(
 
     workspace_payload = build_workspace_payload(
         conn, locked=locked, sd=sd, current_rec=current_rec,
-        confidence_fn=path_confidence, descriptor_fn=path_descriptor,
+        confidence_fn=path_confidence, descriptor_fn=path_descriptor, freshness=freshness,
     )
     payload_script_html = render_payload_script(workspace_payload)
 
@@ -304,9 +320,26 @@ def generate_dashboard_html(
   <h2>Market <span class="panel-subtitle">model vs consensus, price movement, ownership momentum</span></h2>
   {market.render_market_workspace(conn, squad_ids)}
 </section>"""
+    # Real "was this player considered by the strategic optimizer" set
+    # (2026-08-29, direct P1 spec line) - every player_in_id appearing
+    # anywhere across the real diverse top-N paths (`sd['paths']`, each a
+    # genuinely distinct real starting action `compare_starting_actions`
+    # evaluated - see the P0 path-diversity fix) was a real candidate the
+    # optimizer looked at. `None` (not an empty set) when no strategic plan
+    # has been run this session - the Opportunity Board must not silently
+    # claim "not considered" for every card just because the data doesn't
+    # exist yet.
+    optimizer_considered_ids = None
+    if sd is not None and sd.get("paths"):
+        optimizer_considered_ids = {
+            step["player_in_id"]
+            for p in sd["paths"] for step in (p.get("steps") or [])
+            if step.get("player_in_id") is not None
+        }
+
     opportunity_board_section_html = f"""<section class="panel panel-opportunity" id="opportunities" data-cat="intelligence">
   <h2>Opportunity Board <span class="panel-subtitle">a real scouting board - breakout, fixture swing, role change, value, trap</span></h2>
-  {opportunity.render_opportunity_workspace(conn, squad_ids)}
+  {opportunity.render_opportunity_workspace(conn, squad_ids, optimizer_considered_ids)}
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
@@ -723,6 +756,14 @@ _CSS_WORKSPACE = """
   .home-hero-transfer .home-hero-action, .home-hero-chip .home-hero-action { color: #04f5ff; }
   .home-hero-review .home-hero-action { color: #f0c419; }
   .home-hero-reason { font-size: clamp(0.95rem, 2vw, 1.15rem); margin-top: 8px; max-width: 640px; opacity: 0.92; }
+  /* Real decision-freshness disclosure (2026-08-29, P0 audit) - a plain
+     age/version caption always, escalating to an explicit amber banner only
+     when a real material change has been recorded since this decision was
+     computed. Never CSS-only - `home.py::_freshness_html` decides content. */
+  .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
+  .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
+  .home-hero-stale-banner code { background: rgba(0,0,0,0.25); padding: 1px 5px; border-radius: 4px; }
   .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-top: 22px; }
   .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }
@@ -758,6 +799,13 @@ _CSS_WORKSPACE = """
   .timeline-node-gw { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
   .timeline-node-dot { display: none; }
   .timeline-arrow { width: 18px; height: 2px; background: var(--border); flex-shrink: 0; }
+  /* Real per-path 3/5/8GW breakdown (2026-08-29, P0 audit). */
+  .horizon-breakdown-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .horizon-breakdown-cell { display: flex; flex-direction: column; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 8px; min-width: 96px; }
+  .horizon-breakdown-gw { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
+  .horizon-breakdown-total { font-weight: 700; font-size: 1rem; margin-top: 2px; }
+  .horizon-breakdown-sub { font-size: 0.7rem; color: var(--muted); }
 
   /* SQUAD workspace - CURRENT/GW switcher. */
   .squad-switcher { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -800,6 +848,11 @@ _CSS_WORKSPACE = """
   .opp-confidence-high, .opp-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
   .opp-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
   .opp-confidence-low, .opp-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
+  /* Real "considered by optimizer" flag (2026-08-29, P1 opportunity-engine
+     spec line). */
+  .opp-card-considered { font-size: 0.7rem; margin-top: 6px; font-weight: 600; }
+  .opp-card-considered-yes { color: var(--accent); }
+  .opp-card-considered-no { color: var(--faint); }
   .opp-category-more { margin-top: 4px; font-size: 0.76rem; color: var(--muted); cursor: pointer; }
   .opp-category-more[open] summary { margin-bottom: 6px; }
 
@@ -827,6 +880,16 @@ _CSS_WORKSPACE = """
   .projected-tile-in { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid var(--accent); }
   .projected-tile-in-badge { position: absolute; top: -2px; right: 2px; background: var(--accent); color: #06110b;
     font-size: 0.62rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
+  /* Real per-GW captain/vice badges (2026-08-29, P0 audit fix - the
+     projected squad's captain/vice are now actually resolved per GW, not
+     carried over from the current squad, so they need their own real
+     marker here too). */
+  .projected-tile-cap-badge { position: absolute; top: -2px; left: 2px; background: #e9a400; color: #241900;
+    font-size: 0.62rem; font-weight: 800; width: 15px; height: 15px; line-height: 15px; text-align: center;
+    border-radius: 999px; }
+  .projected-tile-vice-badge { background: var(--surface-2); color: var(--muted); border: 1px solid var(--gridline); }
+  .projected-bench-row { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--gridline); opacity: 0.75; }
+  .projected-gw-score { font-size: 0.82rem; font-weight: 700; color: var(--muted); margin-top: 4px; }
 
   /* INJURIES panel + shared xdata-table (Expected Data, Team Odds, Top
      Transfers) - real crests everywhere, per the direct "more football,

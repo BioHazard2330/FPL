@@ -61,6 +61,27 @@ def test_real_synced_squad_is_preferred_source(db_conn):
     assert is_locked(db_conn) is True
 
 
+def test_xi_from_real_picks_logs_a_diagnostic_when_picks_are_unexpectedly_empty(db_conn, caplog):
+    """Real diagnostic added 2026-08-29 alongside get_latest_squad()'s own
+    atomicity fix (direct user report: dashboard "randomly" showed no squad,
+    zero trace to debug from). This simulates the narrow residual race this
+    specific diagnostic covers - `_xi_from_real_picks` called with an event
+    that (from the caller's perspective) should have real picks but the
+    table has none for right now - and proves it's now LOGGED, not silent."""
+    import logging
+
+    from fpl_agent.optimization.locked_squad import _xi_from_real_picks
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, event=1)
+
+    with caplog.at_level(logging.WARNING, logger="fpl_agent.locked_squad"):
+        result = _xi_from_real_picks(db_conn, event=2, entry_id=7378572, squad_ids=_FULL_15)
+
+    assert result is None
+    assert any("my_team_picks now has zero rows" in r.message for r in caplog.records)
+
+
 def test_a_pick_for_an_unresolved_player_is_skipped_not_fabricated(db_conn):
     """A real player id FPL reports that this project hasn't synced facts
     for yet (build_player_pool's own pool doesn't include it) must be

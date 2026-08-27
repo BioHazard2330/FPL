@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import pulp
 
 from fpl_agent.ingestion.lineup_probability_source import get_start_percent
-from fpl_agent.models.expected_points import expected_points, expected_points_window
+from fpl_agent.models.expected_points import ExpectedPoints, expected_points, expected_points_window
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.team_news_risk import rotation_risk_snippet
 
@@ -401,3 +401,70 @@ def pick_starting_xi(
     vice_captain = starting[1] if len(starting) > 1 else None
 
     return StartingXI(starting=starting, bench=bench, captain=captain, vice_captain=vice_captain)
+
+
+def build_player_pool_for_ids(
+    conn: sqlite3.Connection, player_ids: set[int], event: int,
+    xp_cache: dict[tuple[int, int], ExpectedPoints] | None = None,
+) -> list[PlayerCandidate]:
+    """Real per-event xP for a FIXED, already-known set of player ids (a
+    projected future squad state, not a fresh 600-player candidate scan) -
+    the cheap counterpart to `build_player_pool` above. Added 2026-08-29,
+    P0 product audit ("future squad must actually be a future squad" - the
+    dashboard's projected Squad views previously carried captain/vice/XI
+    over unchanged with an explicit disclosed-limitation comment, rather
+    than resolving them for the specific projected GW). Uses
+    `expected_points(..., from_event=event)` - the same real "evaluate a
+    SPECIFIC future gameweek" primitive `chips.py`/`captaincy.py` already
+    rely on - never the default "next n_gw from right now" window, which
+    would silently mis-evaluate a GW several steps into a path.
+
+    `xp_cache` (keyed `(player_id, event)`, shared across every path/step a
+    caller resolves in one dashboard regen) matters here specifically
+    because strategic paths overlap heavily on early GWs/squad membership -
+    without it, 5 paths x 8 GWs would recompute the same real per-player
+    projection dozens of times over."""
+    if not player_ids:
+        return []
+    xp_cache = xp_cache if xp_cache is not None else {}
+    placeholders = ",".join("?" * len(player_ids))
+    rows = conn.execute(
+        f"SELECT p.id, p.web_name, et.singular_name_short AS position, p.team_id, t.short_name AS team_short "
+        f"FROM players p JOIN element_types et ON et.id = p.element_type JOIN teams t ON t.id = p.team_id "
+        f"WHERE p.id IN ({placeholders})",
+        tuple(player_ids),
+    ).fetchall()
+    pool = []
+    for r in rows:
+        price_row = conn.execute(
+            "SELECT value_tenths FROM player_price_history WHERE player_id=? AND valid_until IS NULL",
+            (r["id"],),
+        ).fetchone()
+        key = (r["id"], event)
+        if key not in xp_cache:
+            xp_cache[key] = expected_points(conn, r["id"], n_gw=1, from_event=event)
+        ep = xp_cache[key]
+        pool.append(
+            PlayerCandidate(
+                player_id=r["id"], web_name=r["web_name"], position=r["position"],
+                team_id=r["team_id"], team_short=r["team_short"],
+                price_tenths=price_row["value_tenths"] if price_row is not None else 0,
+                xp=ep.median, median=ep.median, floor=ep.floor, ceiling=ep.ceiling,
+                confidence=ep.confidence, expected_minutes=ep.expected_minutes,
+            )
+        )
+    return pool
+
+
+def resolve_projected_xi(
+    conn: sqlite3.Connection, squad_ids: set[int], event: int,
+    xp_cache: dict[tuple[int, int], ExpectedPoints] | None = None,
+) -> StartingXI:
+    """Real starting XI / bench order / captain / vice for ONE specific
+    projected future squad at ONE specific GW - the direct fix for "captain,
+    vice and starting XI carry over unchanged" (2026-08-29 P0 audit). Same
+    real formation-legal greedy selection `pick_starting_xi` already uses
+    for the CURRENT squad, applied to a reconstructed future squad's real
+    per-event projections instead of assuming today's XI still applies."""
+    pool = build_player_pool_for_ids(conn, squad_ids, event, xp_cache=xp_cache)
+    return pick_starting_xi(conn, pool)

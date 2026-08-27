@@ -71,12 +71,18 @@ def build_paths_payload(conn, sd: dict | None, locked, confidence_fn, descriptor
 
 
 def build_workspace_payload(conn, *, locked, sd: dict | None, current_rec: dict | None,
-                             confidence_fn, descriptor_fn) -> dict:
+                             confidence_fn, descriptor_fn, freshness=None) -> dict:
     """The single JSON object embedded in the page - `decision` (the one
     authoritative current-recommendation snapshot, straight off `current_rec`/
     `sd` - never re-derived), `paths` (real top strategic paths), `players`
     (minimal lookup for every player id referenced anywhere in `paths`, so
-    client-side rendering never needs a second data source)."""
+    client-side rendering never needs a second data source).
+
+    `freshness` (`models.decision_freshness.FreshnessResult` or `None`, added
+    2026-08-29 P0 audit) supplies `decision.computed_at`/`decision_id`/
+    `model_version`/`is_stale` - a client reading this JSON directly (or a
+    future consumer) gets the same honest staleness signal the hero itself
+    shows, never a bare recommendation with no provenance."""
     paths = build_paths_payload(conn, sd, locked, confidence_fn, descriptor_fn)
     all_ids: set[int] = set(locked.squad_ids) if locked is not None else set()
     for p in paths:
@@ -95,6 +101,11 @@ def build_workspace_payload(conn, *, locked, sd: dict | None, current_rec: dict 
             "label": current_rec["label"],
             "path_total": current_rec["path_total"],
             "evidence_confidence": current_rec.get("evidence_confidence"),
+            "computed_at": freshness.computed_at if freshness is not None else None,
+            "decision_id": freshness.decision_id if freshness is not None else None,
+            "model_version": freshness.model_version if freshness is not None else None,
+            "is_stale": freshness.is_stale if freshness is not None else None,
+            "stale_reason": freshness.stale_reason if freshness is not None else None,
         }
 
     return {

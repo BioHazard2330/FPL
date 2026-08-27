@@ -86,6 +86,74 @@ def test_opportunity_board_renders_a_trap_card_with_real_reasons(db_conn, monkey
     assert "&amp;middot;" not in result  # no double-escaped entities (real bug found live in this pass)
 
 
+def test_opportunity_board_omits_considered_flag_when_no_strategic_plan_run(db_conn, monkeypatch):
+    """`considered_ids=None` (no strategic plan run this session) must not
+    render any considered/not-considered claim - honest omission, never a
+    guessed default."""
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1)])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+
+    result = render_opportunity_workspace(db_conn, set())
+
+    assert "opp-card-considered" not in result
+
+
+def test_opportunity_board_marks_a_player_considered_by_the_optimizer(db_conn, monkeypatch):
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1)])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+
+    result = render_opportunity_workspace(db_conn, set(), considered_ids={1, 99})
+
+    assert "Considered by optimizer" in result
+    assert "opp-card-considered-yes" in result
+    assert "Not evaluated by the optimizer" not in result
+
+
+def test_opportunity_board_marks_a_player_not_considered_by_the_optimizer(db_conn, monkeypatch):
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1)])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+
+    result = render_opportunity_workspace(db_conn, set(), considered_ids={99})
+
+    assert "Not evaluated by the optimizer" in result
+    assert "opp-card-considered-no" in result
+    assert "Considered by optimizer" not in result
+
+
+def test_opportunity_board_value_category_excludes_squad_members(db_conn):
+    """Real live-screenshot QA finding (2026-08-29): a squad member showing
+    up in the Value category read as a nonsensical "buy this" suggestion for
+    a player the user already owns - Breakout already excluded squad
+    members, Value didn't. Real, minimal fixture: two price-rise rows, one
+    for a squad member (must be excluded) and one for a non-squad player
+    (must still appear)."""
+    now = "2026-08-01T00:00:00Z"
+    db_conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'T1','T1','{now}')")
+    db_conn.execute(
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, "
+        f"squad_max_play, squad_select, updated_at) VALUES (1,'Defender','DEF','Defenders',3,5,5,'{now}')"
+    )
+    for pid, name in ((1, "SquadPlayer"), (2, "FreeAgent")):
+        db_conn.execute(
+            f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'{name}',1,1,'a',0,'{now}')"
+        )
+        db_conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, 50, '2026-07-01T00:00:00Z', '{now}')"
+        )
+        db_conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, 55, '{now}', NULL)"
+        )
+    db_conn.commit()
+
+    result = render_opportunity_workspace(db_conn, squad_ids={1})
+
+    assert "FreeAgent" in result
+    assert "SquadPlayer" not in result
+
+
 def _ta(decision_kind="roll", chosen=False):
     return SimpleNamespace(decision_kind=decision_kind, chosen=None, reason="no real transfer candidate exists")
 

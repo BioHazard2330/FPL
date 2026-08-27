@@ -106,7 +106,13 @@ from fpl_agent.optimization.chips import (
     wildcard_value,
 )
 from fpl_agent.optimization.squad import build_player_pool, optimise_squad, pick_starting_xi
-from fpl_agent.optimization.transfers import best_transfer_for_player, recommend as recommend_transfer, search_transfer_sequences
+from fpl_agent.optimization.transfers import (
+    best_transfer_for_player,
+    build_diverse_paths,
+    path_detail as _path_detail,
+    recommend as recommend_transfer,
+    search_transfer_sequences,
+)
 from fpl_agent.optimization.rate_team import rate_team
 
 
@@ -2854,65 +2860,11 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
             click.echo(f"     rejected: {ranked.rejected_reason}")
 
 
-def _path_detail(p, *, roll_total: float | None = None, leader_total: float | None = None, second_best_total: float | None = None) -> dict:
-    """Real, serializable snapshot of one TransferSequence - shared between
-    the CLI's decision-log detail and any future consumer (the dashboard's
-    Strategic Plan section reads exactly this shape from the logged
-    decision, so the two never drift apart).
-
-    Real, disclosed labeling fix (2026-08-27, "final product-level
-    dashboard" pass, P0 "strategic path score semantics"): `total_net_ev` is
-    kept as the raw field name (matches TransferSequence's own real
-    contract - the sum of the whole squad's real per-GW EV across the
-    horizon, never a delta), but is never displayed alone anymore -
-    `path_total` names the exact same number under its real, unambiguous
-    meaning, `delta_vs_roll` (None only when no real roll baseline could be
-    computed) is the real, separate "how much better than doing nothing"
-    figure, and `delta_vs_leader` is 0.0 for the winning path and the real,
-    signed gap to it for every other ranked path - never called "net EV" on
-    its own, exactly the ambiguity the audit flagged."""
-    return {
-        "total_net_ev": p.total_net_ev, "path_total": p.total_net_ev,
-        "delta_vs_roll": round(p.total_net_ev - roll_total, 2) if roll_total is not None else None,
-        "delta_vs_leader": round(p.total_net_ev - leader_total, 2) if leader_total is not None else 0.0,
-        # Real "DELTA VS SECOND-BEST" field (2026-08-27, P0 "strategic path
-        # value" fix) - only meaningful for the #1 path (every other path
-        # already carries its own delta_vs_leader); None for a non-winning
-        # path or when there is no real second path to compare against.
-        "delta_vs_second_best": (
-            round(p.total_net_ev - second_best_total, 2) if second_best_total is not None else None
-        ),
-        "final_free_transfers": p.final_free_transfers,
-        "final_bank_tenths": p.final_bank_tenths,
-        "chips_used": list(p.chips_used),
-        "steps": [
-            {
-                "event": s.event,
-                "action": (
-                    f"PLAY {s.chip_played.upper()}" if s.chip_played is not None
-                    else "ROLL" if s.player_out_id is None
-                    else f"{s.player_out_name} -> {s.player_in_name}"
-                ),
-                "uses_hit": s.uses_hit,
-                "chip_played": s.chip_played,
-                # Real ids added (2026-08-27, "personal FPL decision terminal"
-                # redesign) - the dashboard's Squad State Machine needs to
-                # reconstruct each real per-GW squad along this path (which
-                # player is in/out at each step), which the formatted
-                # `action` string alone can't do reliably (names aren't a
-                # safe join key). Additive only - `action`/`event`/`uses_hit`
-                # are untouched, so every existing reader of this dict shape
-                # keeps working unchanged. A decision logged before this
-                # field existed simply has `player_out_id=None` for every
-                # step - the dashboard degrades honestly (no squad-state
-                # reconstruction for that stale decision) rather than
-                # guessing ids back out of names.
-                "player_out_id": s.player_out_id,
-                "player_in_id": s.player_in_id,
-            }
-            for s in p.steps
-        ],
-    }
+# `path_detail` moved to `optimization/transfers.py` 2026-08-29 (P0 "strategic
+# paths must be meaningfully different" fix) so `build_diverse_paths` there -
+# a real optimization-layer function, never `cli` -> `optimization` in reverse
+# - can share it. Imported below as `_path_detail` (unchanged local name, so
+# every existing call site in this file is untouched).
 
 
 @cli.command("strategic-plan")
@@ -3111,7 +3063,19 @@ def strategic_plan_cmd(
                 "path_total": c.total_net_ev, "total_net_ev": c.total_net_ev,
                 "delta_vs_roll": round(c.total_net_ev - checkpoint_roll_total, 2) if checkpoint_roll_total is not None else None,
             })
-        log_decision(
+        # Real per-checkpoint roll baseline (2026-08-29, P0 "3/5/8GW
+        # breakdown per path" fix) - same real formula/cache the
+        # horizon_comparison loop above already uses, just for the fixed
+        # (3,5,8) checkpoints `build_diverse_paths` reports per path, capped
+        # to this run's own real horizon (no 8GW checkpoint on a --horizon 3
+        # run).
+        _CHECKPOINTS = tuple(h for h in (3, 5, 8) if h <= horizon)
+        roll_totals_by_horizon = {
+            h: round(sum(_squad_gw_ev(conn, tuple(squad_ids), e, roll_cache) for e in range(roll_start_event, roll_start_event + h)), 2)
+            for h in _CHECKPOINTS
+        } if roll_start_event is not None else {}
+
+        strategic_decision_id = log_decision(
             conn, "strategic_plan", summary=best_summary,
             detail={
                 "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
@@ -3123,7 +3087,31 @@ def strategic_plan_cmd(
                 # section and `fpl strategic-plan` itself both read this same
                 # list, so a real Path 2/3/4/5 comparison never needs a second
                 # search run.
-                "paths": [_path_detail(p, roll_total=roll_total, leader_total=leader_total) for p in plan.paths],
+                #
+                # Real "strategic paths must be meaningfully different" fix
+                # (2026-08-29, P0 audit): the raw unconstrained beam's own
+                # top-N (`plan.paths`) provably converges to near-duplicate
+                # variants of the SAME dominant opening move once one option
+                # clearly wins (confirmed live: 5 paths, all "Wildcard GW2 +
+                # 5 transfers", differing ~0.02% in total) - a real beam-
+                # search property, not useful as "5 strategy options" to
+                # choose between. When `current_rec` is available (default),
+                # `build_diverse_paths` instead ranks `compare_starting_actions`'
+                # own real per-starting-action options - each already commits
+                # to a DIFFERENT real action by construction - giving genuine
+                # diversity with zero extra search cost. Falls back to the
+                # raw beam's `plan.paths` only when `--no-current-action` was
+                # passed (starting_action_options were never computed).
+                "paths": (
+                    build_diverse_paths(
+                        current_rec.starting_action_options, roll_start_event, roll_total=roll_total,
+                        conn=conn, full_horizon_gw=horizon, checkpoints=_CHECKPOINTS,
+                        roll_totals_by_horizon=roll_totals_by_horizon,
+                        continuation_beam_width=continuation_beam_width, cache=roll_cache,
+                    )
+                    if current_rec is not None
+                    else [_path_detail(p, roll_total=roll_total, leader_total=leader_total) for p in plan.paths]
+                ),
                 "chip_schedule": chip_schedule_detail,
                 "immediate_optimum_label": immediate_optimum_label,
                 "current_recommendation": (
@@ -3140,10 +3128,13 @@ def strategic_plan_cmd(
                     } if current_rec is not None else None
                 ),
             },
+            model_version=MODEL_VERSION,
             confidence="low",
         )
     finally:
         conn.close()
+
+    click.echo(f"model_version={MODEL_VERSION}  decision_id={strategic_decision_id}")
 
     if current_rec is not None:
         click.echo()

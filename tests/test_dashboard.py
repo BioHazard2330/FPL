@@ -1615,13 +1615,13 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
             "best_path": {
                 "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
                 "final_free_transfers": 1, "final_bank_tenths": 5,
-                "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
+                "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
             },
             "paths": [
                 {
                     "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
                     "final_free_transfers": 1, "final_bank_tenths": 5,
-                    "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
+                    "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
                 },
                 {
                     "total_net_ev": 11.9, "path_total": 11.9, "delta_vs_roll": 2.84, "delta_vs_leader": -0.16,
@@ -1629,6 +1629,11 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
                     "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
                 },
             ],
+            # 2026-08-29 P0 chip-mapping fix: this DP cross-check deliberately
+            # names a DIFFERENT GW (4, not this path's real GW2 chip step) -
+            # proves the assertion below reads the path's own real chip state,
+            # not this field (see test_dashboard_chip_consistency.py for the
+            # dedicated disagreement regression test).
             "chip_schedule": {
                 "entries": [{"event": 4, "chip_name": "wildcard", "expected_marginal_value": 20.0, "why_now": "only real eligible GW in this horizon"}],
                 "advisory_hit_recommendations": [],
@@ -1646,7 +1651,89 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
     assert "TOP TIER" in result  # never crown Path 1 "BEST" alone when tied
 
 
-def test_plan_workspace_notes_when_no_chip_cleared_positive_value(db_conn):
+def test_plan_workspace_renders_per_path_horizon_breakdown(db_conn):
+    """Real P0 fix (2026-08-29): every path shows a real 3/5/8GW breakdown,
+    not just its single requested-horizon total - `horizon_breakdown` is
+    produced by `build_diverse_paths(conn=..., full_horizon_gw=...)` and
+    must render as a real per-checkpoint row (total/delta-vs-roll/delta-vs-
+    next-best), each figure traceable to the logged detail, not fabricated
+    in the template."""
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+    log_decision(
+        db_conn, "strategic_plan", "PLAY WILDCARD (strategic 8GW EV=12.06)",
+        {
+            "horizon_gw": 8, "note": "test", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "PLAY WILDCARD", "total_net_ev": 12.06}],
+            "best_path": {
+                "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 1, "final_bank_tenths": 5,
+                "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
+            },
+            "paths": [{
+                "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 1, "final_bank_tenths": 5,
+                "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
+                "horizon_breakdown": {
+                    "3": {"path_total": 5.1, "delta_vs_roll": 1.2, "delta_vs_next_best": None},
+                    "5": {"path_total": 8.4, "delta_vs_roll": 2.0, "delta_vs_next_best": 0.6},
+                    "8": {"path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_next_best": None},
+                },
+            }],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
+
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
+
+    assert "By horizon" in result
+    assert "3GW" in result and "5GW" in result and "8GW" in result
+    assert "+5.1" in result and "+8.4" in result and "+12.1" in result
+    assert "+1.2 vs roll" in result
+    assert "+0.6 vs next best" in result
+
+
+def test_plan_workspace_omits_horizon_breakdown_when_absent(db_conn):
+    """An older cached decision without `horizon_breakdown` must degrade
+    honestly - no breakdown row, never a fabricated one."""
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+    log_decision(
+        db_conn, "strategic_plan", "ROLL (strategic 8GW EV=5.0)",
+        {
+            "horizon_gw": 8, "note": "test", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": 5.0}],
+            "best_path": {
+                "total_net_ev": 5.0, "path_total": 5.0, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            },
+            "paths": [{
+                "total_net_ev": 5.0, "path_total": 5.0, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 2, "final_bank_tenths": 0, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            }],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
+
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
+
+    assert "By horizon" not in result
+    assert "horizon-breakdown-row" not in result
+
+
+def test_plan_workspace_notes_when_path_plays_no_chip(db_conn):
     from fpl_agent.database.decisions import latest_decision_of_type, log_decision
     from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
     from fpl_agent.monitoring.dashboard import plan
@@ -1675,7 +1762,13 @@ def test_plan_workspace_notes_when_no_chip_cleared_positive_value(db_conn):
 
     result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
 
-    assert "No chip earns its keep" in result
+    # 2026-08-29 P0 chip-mapping fix: "Chip timing" is now built per-path
+    # from that path's own `chip_played` steps (here: none), never from the
+    # separate `chip_schedule` DP cross-check field logged above (which is
+    # deliberately left with real, non-empty content ignored here to prove
+    # it no longer drives this line - see test_dashboard_chip_consistency.py
+    # for the full disagreement-must-not-leak regression test).
+    assert "No chip played on this path" in result
 
 
 # --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---

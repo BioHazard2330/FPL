@@ -1,11 +1,29 @@
 # Project State
 
-Last updated: 2026-08-27. Read this before resuming work — it's the current, load-bearing snapshot,
+Last updated: 2026-08-29. Read this before resuming work — it's the current, load-bearing snapshot,
 kept lean on purpose. **Don't add session narrative here** — a new capability/architecture change gets
 one short factual entry; the story of how it was built, bugs found, and live-verification detail goes
 in `docs/history/` (one new dated file per session, indexed in `docs/history/README.md`).
 
-## Where things stand
+## Where things stand (updated 2026-08-29)
+
+Dashboard: chip rendering (Plan timeline, Squad preview) is now single-sourced from each path's
+own `steps[].chip_played` - never the separate `schedule_chips` DP cross-check, which could
+(and did) disagree on GW/chip. Home hero discloses the cached strategic-plan decision's real age
+(`Computed Xh ago · decision #N`) and shows an explicit RECOMPUTING banner when a real HIGH-
+severity `change_events` row postdates it (`models/decision_freshness.py`). Squad workspace's
+projected future-GW squads now resolve a real starting XI/bench order/captain/vice per specific
+GW (`optimization/squad.py::resolve_projected_xi`), not carried over from the current squad.
+Plan's top-N paths are now built from `compare_starting_actions`' real per-starting-action options
+(`optimization/transfers.py::build_diverse_paths`), not the raw beam's own top-N (which provably
+converged to near-duplicate variants of one dominant opening move) - each displayed path now has a
+genuinely different first action, plus a real 3/5/8GW `horizon_breakdown` (total/delta-vs-roll/
+delta-vs-next-best per checkpoint, `checkpoint_breakdown`). Opportunity Board cards show a real
+"considered by optimizer" flag (against the same diverse-paths candidate pool) and Value no longer
+shows a card for a player already in the squad (matches Breakout's existing exclusion). Fixed a
+real intermittent "dashboard shows no squad" bug - a torn read in `ingestion/my_team.py::get_latest_squad`
+racing against the project's own scheduled sync writer (`docs/history/20-...md`).
+
 
 **Season**: 2026-27, GW1 finished (all 10 fixtures analyzed, real qualitative evidence recorded for Arsenal-Coventry and league-wide via the zero-LLM statistical detector), GW2 not yet locked (real fixtures scheduled ~Aug 29-Sep 1). Real locked squad synced (entry 7378572, `fpl my-team`).
 
@@ -31,7 +49,8 @@ Summarized: Dixon-Coles team-strength ridge (`_RIDGE_LAMBDA=2.5`, fixes a real s
 
 ## Next recommended work (real candidates, not started)
 
-1. **Path-diversity clustering** — group near-identical top-N strategic paths into real tiers (roll-heavy/transfer-heavy/fixture-led/chip-led) rather than listing near-duplicates, only where those structures genuinely emerge from the search.
+1. **Path-diversity - done 2026-08-29** (see `docs/history/19-session-2026-08-29-path-diversity-and-p1-audit.md`): `build_diverse_paths` replaces the raw beam's near-duplicate top-N with `compare_starting_actions`' real per-starting-action options - live-verified against a fresh production run (decision #102): 5 genuinely distinct opening moves (PLAY WILDCARD/PLAY FREEHIT/3 different named-player transfers), not the old single dominant-strategy cluster.
+11. **Per-path 3/5/8-GW breakdown - done 2026-08-29**: `checkpoint_breakdown` (bounded to the selected top-N paths only, reuses the shared EV cache) - live-verified real signed `delta_vs_next_best` per checkpoint (positive for whichever path actually leads AT that horizon, not assumed to match the full-horizon leader).
 2. **Value-of-information folded into `compare_starting_actions`' own ranking**, not just the single-swap decision's separate `information_value_note`.
 3. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
 4. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.
@@ -42,6 +61,8 @@ Summarized: Dixon-Coles team-strength ridge (`_RIDGE_LAMBDA=2.5`, fixes a real s
 9. **Data sourcing investigation, done 2026-08-28** (see same history file): elevenify.com and Spreadex - the two sources fpl.page itself credits for its projections - are both confirmed NOT viable as automated backend sources for this project (elevenify: single-person Substack, no API/feed, subscription-gated; Spreadex: licensed spread-betting operator, no stable public market data without an account). This project's own Tier-1/2 pipeline (official FPL API, Understat, the-odds-api, BBC/Sky RSS, FotMob) remains the real, disclosed, automatable one - genuinely different methodology from fpl.page's, not a lesser one.
 10. **Four new league-wide dashboard panels, done 2026-08-28** (direct fpl.page screenshot comparison - see `docs/history/17-session-2026-08-28-new-panels.md`): Injuries (`injuries.py`, reuses `models.availability.list_availability`), Expected Data (`player_data.py`, real current-season xG/xA/xGI from `player_match_stats_history`), Team Odds and Top Transfers In/Out (`market.py`, league-wide rankings from already-real data). Still not built: Price Changes' rich filterable/searchable UI with a per-hour-trend progress bar, and a real historical Odds Tracker line chart - both need real UI/infra work beyond what already-available data supports (the Odds Tracker specifically needs periodic odds snapshotting into a history table, which doesn't exist yet).
 9. **Dashboard visual/typography QA at more breakpoints** (1440/1024/768/360px) — Phase 1+2 verified live at desktop (1280) and mobile (375) with real screenshots via the Claude Browser tool; the remaining widths are real follow-up, not blocked.
+12. **Opportunity Board "considered by optimizer" flag + Value squad-member exclusion - done 2026-08-29** (see `docs/history/19-session-2026-08-29-path-diversity-and-p1-audit.md`): every card now shows a real yes/no against the diverse-paths candidate pool (never rendered when no strategic plan has run); Value no longer shows an already-owned player as a buy opportunity (real live-screenshot QA finding, matches Breakout's existing exclusion).
+13. **P1 product-gap audit, done 2026-08-29**: direct source audit against the full fpl.page/FPL Copilot benchmark list found the dashboard's copy layer (`_HUMANIZE_RULES`, the redesigned Home/Plan/Squad workspaces' structured-fact composition instead of raw backend prose) and visual-component diversity (12+ real distinct CSS component families already in active use - shirt tiles, timeline nodes, opportunity cards, data tables, team-signal cards, horizon-breakdown cells, momentum rows - never a single universal card container) already substantially satisfy those two P1 asks from prior sessions' work; no data-quality bugs found on a real spot-check (max clean-sheet probability across every team's next fixture: 49%, no extreme ceilings). **Genuinely still unbuilt** (each real, scoped, comparable in size to a full prior pillar session, not attempted): fpl.page-style live/context features (Points Changes, Template Team, Top 10K context, article feed), a full unified single-view Market redesign beyond the current section-grouped layout, Fixture Tool interaction-model parity with fpl.page (5/6/8GW+custom, Overall/Attack/Defence, Easiest/Hardest/A-Z, rotation view), Player Inspector click-through redesign (WHY BUY/HOLD/SELL), and decision-outcome calibration (blocked on a season with completed GWs).
 
 ## Verification procedure (run before trusting any change to the decision layer)
 

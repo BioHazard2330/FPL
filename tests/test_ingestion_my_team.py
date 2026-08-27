@@ -111,6 +111,55 @@ def test_sync_my_team_fetches_picks_for_the_latest_locked_event(db_conn, monkeyp
     assert summary["overall_rank"] == 500000
 
 
+def test_get_latest_squad_uses_one_atomic_query(db_conn):
+    """Real regression test for the 2026-08-29 fix (direct user report: the
+    dashboard "randomly" showed no squad with zero exception/warning trace).
+    Root cause: this used to be TWO separate un-transacted SELECTs
+    (MAX(event), then picks WHERE event=?) - a real concurrent writer (this
+    project's own scheduled sync, independent of any interactive session)
+    doing a real DELETE+re-INSERT for that same event could land between
+    them, so the second SELECT could see zero rows even though the first
+    just proved the event exists - a genuine torn read, never a raised
+    exception, which is exactly why nothing was ever logged for it. Proves
+    the fix structurally: exactly ONE `execute()` call reaches the real
+    my_team_picks table, so there is no gap left for a concurrent write to
+    land in between."""
+    now = "2026-01-01T00:00:00Z"
+    db_conn.execute(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (7378572,1,1,1,1,0,0,NULL,?)", (now,),
+    )
+    db_conn.commit()
+
+    calls = []
+    db_conn.set_trace_callback(lambda sql: calls.append(sql) if "my_team_picks" in sql else None)
+    try:
+        result = get_latest_squad(db_conn, 7378572)
+    finally:
+        db_conn.set_trace_callback(None)
+
+    assert result == (1, [1])
+    assert len(calls) == 1, f"expected exactly one query against my_team_picks, got {len(calls)}: {calls}"
+
+
+def test_get_latest_squad_returns_the_max_events_own_picks_only(db_conn):
+    """Real correctness check for the atomic rewrite: with picks stored for
+    two different events, the single query must resolve to the MAX event's
+    own picks - never mix rows from an older event in in the same result."""
+    now = "2026-01-01T00:00:00Z"
+    for event, pid in ((1, 10), (2, 20), (2, 21)):
+        db_conn.execute(
+            "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+            "is_vice_captain, active_chip, retrieved_at) VALUES (7378572,?,?,1,1,0,0,NULL,?)",
+            (event, pid, now),
+        )
+    db_conn.commit()
+
+    result = get_latest_squad(db_conn, 7378572)
+
+    assert result == (2, [20, 21])
+
+
 def test_sync_my_team_picks_idempotent_without_force(db_conn, monkeypatch):
     monkeypatch.setattr(my_team.FPLApiAdapter, "fetch_entry_info", lambda self, entry_id: _fake_raw("x", _fake_info()))
     monkeypatch.setattr(my_team.FPLApiAdapter, "fetch_entry_history", lambda self, entry_id: _fake_raw("x", _fake_history()))

@@ -84,10 +84,38 @@ def _captain_verdict_html(ca) -> str:
     return ""
 
 
+def _freshness_html(freshness) -> str:
+    """Real, disclosed decision age + staleness banner (2026-08-29, P0
+    recommendation-freshness audit: "the dashboard must NEVER show a stale
+    strategic decision as current"). `freshness` is a
+    `models.decision_freshness.FreshnessResult` or `None` (no cached
+    `strategic_plan` decision yet - the hero already falls back to the
+    always-live `ta`/`ca` result in that case, nothing to disclose here).
+    A real material change recorded since this decision was computed
+    (`is_stale`) gets its own explicit banner, never silently absorbed into
+    the reason line above it."""
+    if freshness is None or freshness.computed_at is None:
+        return ""
+    age_bit = f"<div class='home-hero-computed-at'>Computed {_esc(freshness.age_relative)}"
+    if freshness.decision_id is not None:
+        age_bit += f" &middot; decision #{freshness.decision_id}"
+    if freshness.model_version:
+        age_bit += f" &middot; {_esc(freshness.model_version)}"
+    age_bit += "</div>"
+    if not freshness.is_stale:
+        return age_bit
+    stale_bit = (
+        "<div class='home-hero-stale-banner'>RECOMPUTING &mdash; a real change since this was computed "
+        f"({_esc(freshness.stale_reason or 'input changed')}) may affect this recommendation. "
+        "Run <code>fpl strategic-plan</code> again.</div>"
+    )
+    return age_bit + stale_bit
+
+
 def render_hero(
     *, gw_label_html: str, current_rec: dict | None, ta, ca, ft_value: str, ft_title: str,
     actual_points: float | None, next_xp: float, bank_m: float, captain_name: str,
-    rank_tile_html: str,
+    rank_tile_html: str, freshness=None,
 ) -> str:
     """The whole first viewport. Six metrics only (direct spec): Actual GW
     points, Next-GW xP, Bank, FT, Captain, Rank - nothing else renders here.
@@ -100,6 +128,10 @@ def render_hero(
     word, cls = _action_word(current_rec, ta)
     reason = _action_reason(current_rec, ta)
     captain_verdict = _captain_verdict_html(ca)
+    freshness_html = _freshness_html(freshness)
+    if freshness is not None and freshness.is_stale:
+        word = "RECOMPUTING"
+        cls = "review"
 
     actual_tile = (
         f"""<div class="home-metric"><div class="home-metric-label">Actual GW points</div>
@@ -113,6 +145,7 @@ def render_hero(
   <div class="home-hero-gw">{gw_label_html}</div>
   <div class="home-hero-action">{_esc(word)}</div>
   <div class="home-hero-reason">{_esc(reason)}</div>
+  {freshness_html}
   {captain_verdict_html}
   <div class="home-hero-metrics">
     {actual_tile}

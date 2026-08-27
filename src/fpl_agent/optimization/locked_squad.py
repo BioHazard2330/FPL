@@ -73,6 +73,22 @@ def _xi_from_real_picks(
         (entry_id, event),
     ).fetchall()
     if not picks:
+        # Real diagnostic added 2026-08-29 (same "dashboard randomly shows no
+        # squad" investigation as get_latest_squad()'s own fix) - this path
+        # was previously silent (no exception, no log), which is exactly why
+        # a prior real incident left no trace to debug. `event`/`squad_ids`
+        # just came from a real, now-atomic get_latest_squad() read, so a
+        # genuinely empty result here means a concurrent writer (this
+        # project's own scheduled `run-scheduled`/`_upsert_picks`, real and
+        # independent of any interactive session) deleted this event's real
+        # rows between that read and this one - a real, narrow residual race
+        # get_latest_squad()'s own fix doesn't fully close, now at least
+        # loud instead of silent.
+        _logger.warning(
+            "get_latest_squad() reported entry_id=%s event=%s but my_team_picks now has zero rows for it "
+            "- likely a concurrent resync landed between the two reads; get_locked_squad will report this "
+            "as 'no locked squad' this cycle even though real picks exist", entry_id, event,
+        )
         return None
 
     starting: list[PlayerCandidate] = []

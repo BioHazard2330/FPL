@@ -6,12 +6,12 @@ floor/ceiling/confidence/live points, because it's the only one a real
 optimizer/live-data pass has actually been run against. Selecting a future
 GW shows the real reconstructed 15-man squad for that point in the plan
 (`_squad_state_by_event`, unchanged - real transfer/chip replay, no
-fabrication) grouped by position - honestly NOT re-solving a hypothetical
-future XI/bench split or a per-GW point projection for it (that would need a
-real optimizer run per projected GW per path on every dashboard regen, which
-this project's own performance budget doesn't support - disclosed as a
-known limitation, not silently faked). Captain/vice/XI arrangement carry
-over unchanged from the current squad, same as before this redesign.
+fabrication), now WITH a real per-GW starting XI/bench/captain/vice
+resolution (`optimization.squad.resolve_projected_xi`, added 2026-08-29 P0
+audit: "future squad must actually be a future squad" - this used to
+carry the CURRENT squad's captain/vice/XI over unchanged, a real, disclosed
+gap this closes) and a real projected GW score for that specific squad
+state.
 
 Reuses the exact same `.path-step-btn[data-path][data-event]` click contract
 Plan's own timeline already uses (see `assemble.py`'s script block) - one
@@ -24,26 +24,47 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _official_shirt_url,
     _squad_state_by_event,
 )
+from fpl_agent.optimization.squad import resolve_projected_xi
 
 
-def _projected_shirt_tile(player: dict, *, is_in: bool) -> str:
+def _projected_shirt_tile(player: dict, *, is_in: bool, is_captain: bool = False, is_vice: bool = False) -> str:
     shirt_url = _official_shirt_url(player["team_code"], is_gkp=(player["position"] == "GKP"), size=66)
     in_marker = "<span class='projected-tile-in-badge' title='Transferred in'>IN</span>" if is_in else ""
+    cap_marker = (
+        "<span class='projected-tile-cap-badge' title='Captain'>C</span>" if is_captain
+        else "<span class='projected-tile-cap-badge projected-tile-vice-badge' title='Vice-captain'>V</span>" if is_vice
+        else ""
+    )
     return f"""<div class="projected-tile{' projected-tile-in' if is_in else ''}">
-  {in_marker}
+  {in_marker}{cap_marker}
   <img class="projected-tile-shirt" src="{_esc(shirt_url)}" loading="lazy" alt="{_esc(player['team_short'])} shirt">
   <div class="projected-tile-name">{_esc(player['web_name'])}</div>
 </div>"""
 
 
-def _projected_squad_html(lookup: dict[int, dict], squad_ids: set, step: dict, chip_by_event: dict[int, list[dict]]) -> str:
+def _projected_squad_html(lookup: dict[int, dict], xi, step: dict) -> str:
     """Real shirt-tile grid for a projected future GW (2026-08-28, direct
     user ask: "more football on the dashboard... more crests, player
-    images" - replaces the plain text-row rendering). Same real data as
-    before (`_squad_state_by_event`'s reconstructed 15, real transfer/chip
-    replay) - only the visual shape changes."""
-    event = step["event"]
-    out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+    images"), now grouped by real STARTING XI vs BENCH with real
+    captain/vice badges and a real projected GW score
+    (2026-08-29 P0 audit fix) - `xi` is a real
+    `optimization.squad.StartingXI`, resolved for THIS specific projected
+    squad state at THIS specific GW (`resolve_projected_xi`), never the
+    current squad's XI carried forward.
+
+    Chip badge reads `step['chip_played']` directly - this path's OWN chip
+    choice from the real beam-searched `TransferSequence` (`_path_detail` in
+    `cli/main.py`), never the separate `schedule_chips` DP cross-check
+    (`chip_schedule`). Real bug fixed 2026-08-29 (P0 chip-mapping audit):
+    this previously took a global `chip_by_event` built from `chip_schedule`
+    and applied it uniformly to every path's projected squad, regardless of
+    whether that path (or that GW) actually played that chip - the DP's own
+    independent GW/chip choice could silently disagree with the path being
+    shown. One object (this path's own `steps`) now drives the timeline
+    node badge (`plan.py`), this squad preview, and the path descriptor -
+    see `test_dashboard_chip_consistency.py`."""
+    in_id = step.get("player_in_id")
+    out_id = step.get("player_out_id")
     if out_id is not None and in_id is not None:
         out_p, in_p = lookup.get(out_id), lookup.get(in_id)
         out_name = out_p["web_name"] if out_p else step.get("action", "?").split(" -> ")[0]
@@ -55,22 +76,47 @@ def _projected_squad_html(lookup: dict[int, dict], squad_ids: set, step: dict, c
         )
     else:
         transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
-    chip_line = "".join(f"<span class='chip-badge'>{_esc(c['chip_name'].upper())}</span>" for c in chip_by_event.get(event, []))
+    chip_played = step.get("chip_played")
+    chip_line = f"<span class='chip-badge'>{_esc(chip_played.upper())}</span>" if chip_played else ""
 
-    by_pos: dict[str, list[dict]] = {}
-    for pid in squad_ids:
-        p = lookup.get(pid)
+    captain_id = xi.captain.player_id if xi.captain is not None else None
+    vice_id = xi.vice_captain.player_id if xi.vice_captain is not None else None
+
+    def _tile_for(candidate) -> str:
+        p = lookup.get(candidate.player_id)
         if p is None:
-            continue
-        by_pos.setdefault(p["position"], []).append(p)
+            return ""
+        return _projected_shirt_tile(
+            p, is_in=(candidate.player_id == in_id),
+            is_captain=(candidate.player_id == captain_id), is_vice=(candidate.player_id == vice_id),
+        )
+
+    by_pos: dict[str, list] = {}
+    for c in xi.starting:
+        by_pos.setdefault(c.position, []).append(c)
     rows = []
     for pos in _POSITION_ORDER:
-        players = sorted(by_pos.get(pos, []), key=lambda p: p["web_name"])
+        players = sorted(by_pos.get(pos, []), key=lambda c: c.web_name)
         if not players:
             continue
-        tiles = "".join(_projected_shirt_tile(p, is_in=(p["id"] == in_id)) for p in players)
+        tiles = "".join(_tile_for(c) for c in players)
         rows.append(f"<div class='projected-pos-row'><span class='projected-pos-label'>{pos}</span><div class='projected-tile-grid'>{tiles}</div></div>")
-    return transfer_line + chip_line + "".join(rows)
+
+    bench_html = ""
+    if xi.bench:
+        bench_tiles = "".join(_tile_for(c) for c in xi.bench)
+        bench_html = (
+            "<div class='projected-pos-row projected-bench-row'>"
+            "<span class='projected-pos-label'>BENCH</span>"
+            f"<div class='projected-tile-grid'>{bench_tiles}</div></div>"
+        )
+
+    score_html = ""
+    if xi.starting and xi.captain is not None:
+        projected_score = sum(c.median for c in xi.starting) + xi.captain.median
+        score_html = f"<div class='projected-gw-score'>{projected_score:.1f} projected pts (captain doubled)</div>"
+
+    return transfer_line + chip_line + score_html + "".join(rows) + bench_html
 
 
 def render_squad_workspace(
@@ -86,10 +132,6 @@ def render_squad_workspace(
     projected_view = ""
     if locked is not None and sd is not None and sd.get("paths"):
         paths = sd["paths"]
-        chip_schedule = sd.get("chip_schedule")
-        chip_by_event: dict[int, list[dict]] = {}
-        for entry in (chip_schedule.get("entries") if chip_schedule else []) or []:
-            chip_by_event.setdefault(entry["event"], []).append(entry)
 
         all_ids: set[int] = set(locked.squad_ids)
         per_path_squads = []
@@ -100,12 +142,19 @@ def render_squad_workspace(
                 all_ids |= ids
         lookup = _bulk_player_lookup(conn, all_ids)
 
+        # Real shared xP cache across every path/GW this regen resolves - see
+        # `resolve_projected_xi`'s own docstring on why this matters (paths
+        # overlap heavily on early GWs/squad membership, so this avoids
+        # recomputing the same real per-player-per-event projection dozens
+        # of times over within one dashboard regen).
+        xp_cache: dict = {}
         blocks = []
         for i, (p, by_event) in enumerate(zip(paths, per_path_squads), start=1):
             for j, step in enumerate(p.get("steps") or []):
                 event = step["event"]
                 squad_here = by_event.get(event, set(locked.squad_ids))
-                body = _projected_squad_html(lookup, squad_here, step, chip_by_event)
+                xi = resolve_projected_xi(conn, squad_here, event, xp_cache=xp_cache)
+                body = _projected_squad_html(lookup, xi, step)
                 blocks.append(
                     f"<div class='squad-state-block' data-path='{i}' data-event='{event}' hidden>{body}</div>"
                 )
@@ -121,8 +170,8 @@ def render_squad_workspace(
                 "<button type='button' class='squad-switcher-btn is-active' data-squad-view='current'>CURRENT</button>"
                 f"{pills}</div>"
                 "<div class='squad-state-hint'>Projected squads show your real reconstructed 15 for that "
-                "gameweek (real transfers/chips replayed) - captain, vice and starting XI carry over unchanged "
-                "from your current squad; per-GW points aren't re-solved for a hypothetical future squad.</div>"
+                "gameweek (real transfers/chips replayed) with a real starting XI, bench order, captain and "
+                "vice resolved for that specific GW's own projection - not carried over from today's squad.</div>"
             )
             projected_view = f"""<div class="squad-projected-view" data-squad-panel="projected" hidden>
   <div class="squad-state-preview">{''.join(blocks)}</div>

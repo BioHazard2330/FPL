@@ -37,13 +37,25 @@ def _confidence_label(conn, player_id: int) -> str:
 
 
 def _card(kind: str, name: str, position: str, price_m: float | None, ownership_pct: float | None,
-          key_metric: str, why_now: str, confidence: str, team_code: int | None = None) -> str:
+          key_metric: str, why_now: str, confidence: str, team_code: int | None = None,
+          considered_by_optimizer: bool | None = None) -> str:
     price_bit = f"£{price_m:.1f}m" if price_m is not None else "?"
     own_bit = f"{ownership_pct:.1f}% owned" if ownership_pct is not None else ""
     shirt_html = (
         f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' "
         f"loading='lazy' alt=''>" if team_code is not None else ""
     )
+    # Real "was this player considered by the strategic optimizer" flag
+    # (2026-08-29, direct P1 spec line: "Also show whether the player was
+    # considered by the strategic optimizer") - `considered_by_optimizer` is
+    # `None` when no strategic plan has been run this session (honest
+    # omission, not a guess), else a real True/False against the real diverse
+    # top-N paths' own candidate pool (`assemble.py`'s `_optimizer_considered_ids`).
+    considered_html = ""
+    if considered_by_optimizer is not None:
+        cls = "opp-card-considered-yes" if considered_by_optimizer else "opp-card-considered-no"
+        label = "Considered by optimizer" if considered_by_optimizer else "Not evaluated by the optimizer"
+        considered_html = f"<div class='opp-card-considered {cls}'>{_esc(label)}</div>"
     return (
         f"<div class='opp-card opp-card-{_esc(kind.lower().replace(' ', '-'))}'>"
         f"{shirt_html}"
@@ -53,6 +65,7 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
         f"<div class='opp-card-metric'>{_esc(key_metric)}</div>"
         f"<div class='opp-card-why'><strong>Why now</strong> {_esc(why_now)}</div>"
         f"<div class='opp-card-confidence opp-confidence-{_esc(confidence.lower())}'>{_esc(confidence)}</div>"
+        f"{considered_html}"
         f"</div>"
     )
 
@@ -65,7 +78,7 @@ def _category_block(kind: str, cards: list[str]) -> str:
     return f"<div class='opp-category'>{''.join(visible)}{rest_html}</div>"
 
 
-def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
+def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[int] | None = None) -> str:
     breakout_cards, trap_cards, role_cards, swing_cards, value_cards = [], [], [], [], []
 
     breakouts = []
@@ -92,16 +105,28 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
     except Exception:
         pass
     try:
-        value_rows = conn.execute(
-            "SELECT old.player_id, old.value_tenths AS old_value, cur.value_tenths AS new_value, "
-            "old.valid_until AS changed_at, p.web_name, et.singular_name_short AS position "
-            "FROM player_price_history old "
-            "JOIN player_price_history cur ON cur.player_id = old.player_id AND cur.valid_until IS NULL "
-            "JOIN players p ON p.id = old.player_id JOIN element_types et ON et.id = p.element_type "
-            "WHERE old.valid_until IS NOT NULL AND cur.value_tenths > old.value_tenths AND p.removed = 0 "
-            "ORDER BY old.valid_until DESC LIMIT ?",
-            (_MAX_PER_CATEGORY,),
-        ).fetchall()
+        # Real "never show my own squad player as a buy opportunity" fix
+        # (2026-08-29, direct live screenshot QA finding: Calafiori, an
+        # actual squad member, showed up in Value while Breakout already
+        # excludes squad members - the SAME "is this genuinely something to
+        # go BUY" framing both categories share). Same accepted trade-off
+        # `breakouts` already has (filters after the SQL LIMIT, so a squad
+        # member occupying a top slot can mean fewer than _MAX_PER_CATEGORY
+        # cards even when more real candidates exist just past the limit) -
+        # consistent with existing precedent, not a new gap.
+        value_rows = [
+            r for r in conn.execute(
+                "SELECT old.player_id, old.value_tenths AS old_value, cur.value_tenths AS new_value, "
+                "old.valid_until AS changed_at, p.web_name, et.singular_name_short AS position "
+                "FROM player_price_history old "
+                "JOIN player_price_history cur ON cur.player_id = old.player_id AND cur.valid_until IS NULL "
+                "JOIN players p ON p.id = old.player_id JOIN element_types et ON et.id = p.element_type "
+                "WHERE old.valid_until IS NOT NULL AND cur.value_tenths > old.value_tenths AND p.removed = 0 "
+                "ORDER BY old.valid_until DESC LIMIT ?",
+                (_MAX_PER_CATEGORY,),
+            ).fetchall()
+            if r["player_id"] not in squad_ids
+        ]
     except Exception:
         pass
 
@@ -111,6 +136,9 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
     )
     team_lookup = _bulk_player_lookup(conn, candidate_ids) if candidate_ids else {}
 
+    def _considered(pid: int) -> bool | None:
+        return None if considered_ids is None else pid in considered_ids
+
     for b in breakouts:
         team_code = team_lookup.get(b.player_id, {}).get("team_code")
         breakout_cards.append(_card(
@@ -118,6 +146,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             f"{b.value_ratio:.2f} xP/£m value ratio",
             "; ".join(b.reasons) if b.reasons else "rising value at low ownership",
             _confidence_label(conn, b.player_id), team_code=team_code,
+            considered_by_optimizer=_considered(b.player_id),
         ))
 
     for t in traps:
@@ -127,6 +156,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             f"{t.eo_source} ownership source",
             "; ".join(t.reasons) if t.reasons else "deteriorating case at high ownership",
             _confidence_label(conn, t.player_id), team_code=team_code,
+            considered_by_optimizer=_considered(t.player_id),
         ))
 
     for r in role_rows:
@@ -136,6 +166,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             f"set-piece role change {_esc(_relative_time(r['detected_at']))}",
             "a detected set-piece duty change - a genuine role signal, not a form blip",
             _confidence_label(conn, r["entity_id"]), team_code=team_code,
+            considered_by_optimizer=_considered(r["entity_id"]),
         ))
 
     for r in value_rows:
@@ -145,6 +176,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int]) -> str:
             f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m",
             f"price rise {_esc(_relative_time(r['changed_at']))} - real rising demand",
             _confidence_label(conn, r["player_id"]), team_code=team_code,
+            considered_by_optimizer=_considered(r["player_id"]),
         ))
 
     try:
