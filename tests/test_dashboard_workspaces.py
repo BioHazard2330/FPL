@@ -4,7 +4,7 @@ new presentation-only functions, separate from the existing end-to-end
 `generate_dashboard_html` coverage in test_dashboard.py/test_dashboard_state.py."""
 from types import SimpleNamespace
 
-from fpl_agent.monitoring.dashboard import data_payload, home, intelligence, plan, squad
+from fpl_agent.monitoring.dashboard import data_payload, home, injuries, intelligence, market, plan, player_data, squad
 from test_dashboard import _locked_and_decision, _seed
 from test_optimization_squad import _seed as _seed_squad
 
@@ -300,3 +300,42 @@ def test_projected_squad_html_roll_step_has_no_transfer_line():
     result = squad._projected_squad_html(lookup, {1}, step, {})
 
     assert "ROLL - no transfer this GW" in result
+
+
+# --- injuries.py / player_data.py / market.py's new league-wide panels -----
+# (2026-08-28, direct fpl.page screenshot comparison - "the screenshots
+# should show everything... whats missing")
+
+def test_injuries_panel_honest_empty_state(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = injuries.render_injuries_html(db_conn)
+    assert "No real injury" in result
+
+
+def test_injuries_panel_shows_a_real_flagged_player(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute("UPDATE players SET status='i', news='Hamstring injury - 6 weeks' WHERE id=1")
+    db_conn.commit()
+
+    result = injuries.render_injuries_html(db_conn)
+
+    assert "P1" in result  # _seed's own web_name for player 1
+    assert "Hamstring injury" in result
+
+
+def test_expected_data_panel_honest_empty_state_before_any_backfill(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = player_data.render_expected_data_html(db_conn)
+    assert "No real current-season Understat data synced yet" in result
+
+
+def test_team_odds_panel_honest_empty_state_with_no_fixtures(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = market.render_team_odds_html(db_conn)
+    assert "No real upcoming fixtures" in result
+
+
+def test_top_transfers_panel_honest_empty_state(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = market.render_top_transfers_html(db_conn, "in")
+    assert "No real transfer-momentum data synced yet" in result

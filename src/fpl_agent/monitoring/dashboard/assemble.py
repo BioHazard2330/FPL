@@ -16,7 +16,7 @@ from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
-from fpl_agent.monitoring.dashboard import fixtures, home, intelligence, market, opportunity, plan, squad
+from fpl_agent.monitoring.dashboard import fixtures, home, injuries, intelligence, market, opportunity, plan, player_data, squad
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
@@ -424,6 +424,16 @@ def generate_dashboard_html(
 {_news_html(conn, squad_ids)}
     </div>
   </section>
+
+  <section class="panel panel-injuries" data-cat="data">
+    <h2>Injuries <span class="panel-subtitle">league-wide, real status/chance of playing/news</span></h2>
+{injuries.render_injuries_html(conn)}
+  </section>
+
+  <section class="panel panel-expected-data" data-cat="data">
+    <h2>Expected Data <span class="panel-subtitle">real current-season xG/xA/xGI, total and per-90</span></h2>
+{player_data.render_expected_data_html(conn)}
+  </section>
 </div>
 
 <section class="panel panel-advanced-hub" id="advanced" data-cat="data">
@@ -817,4 +827,22 @@ _CSS_WORKSPACE = """
   .projected-tile-in { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid var(--accent); }
   .projected-tile-in-badge { position: absolute; top: -2px; right: 2px; background: var(--accent); color: #06110b;
     font-size: 0.62rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
+
+  /* INJURIES panel + shared xdata-table (Expected Data, Team Odds, Top
+     Transfers) - real crests everywhere, per the direct "more football,
+     more crests" ask (2026-08-28). */
+  .injury-badge { width: 28px; height: 28px; object-fit: contain; flex-shrink: 0; }
+  .injury-list { display: flex; flex-direction: column; gap: 6px; }
+  .injury-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--gridline); }
+  .injury-body { flex: 1; min-width: 0; }
+  .injury-name { font-weight: 700; font-size: 0.85rem; }
+  .injury-team { font-weight: 500; color: var(--faint); font-size: 0.75rem; }
+  .injury-news { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .injury-updated { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; white-space: nowrap; }
+  .xdata-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .xdata-table th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--faint); padding: 4px 8px; border-bottom: 1px solid var(--gridline); }
+  .xdata-table td { padding: 6px 8px; border-bottom: 1px solid var(--gridline); }
+  .xdata-player { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
+  .momentum-name { display: inline-flex; align-items: center; gap: 6px; }
 """
