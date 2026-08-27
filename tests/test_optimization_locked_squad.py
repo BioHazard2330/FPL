@@ -89,6 +89,40 @@ def test_a_pick_for_an_unresolved_player_is_skipped_not_fabricated(db_conn):
     assert 99999 not in {c.player_id for c in locked.xi.starting + locked.xi.bench}
 
 
+def test_null_squad_slot_defaults_to_bench_instead_of_crashing(db_conn):
+    """Real regression test (2026-08-28, diagnosing an intermittent 'dashboard
+    shows no squad' report): a genuinely malformed my_team_picks row with
+    squad_slot=NULL used to crash _xi_from_real_picks on `None <= 11`, which
+    propagated uncaught all the way through get_locked_squad() - one bad row
+    silently taking down the whole locked-squad read. Must degrade to
+    treating that one player as bench (logged, not fabricated as starting),
+    never crash the read for the other 14 real picks."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO my_team_gw_summary (entry_id, event, points, total_points, overall_rank, "
+        "bank_tenths, team_value_tenths, event_transfers, event_transfers_cost, points_on_bench, retrieved_at) "
+        "VALUES (7378572,1,0,0,NULL,10,1000,0,0,0,'t0')"
+    )
+    rows = [(7378572, 1, pid, slot, 1, 0, 0) for slot, pid in enumerate(_STARTING_11[:-1], start=1)]
+    rows += [(7378572, 1, _STARTING_11[-1], None, 1, 0, 0)]  # real malformed row: squad_slot=NULL
+    rows += [(7378572, 1, pid, slot, 0, 0, 0) for slot, pid in enumerate(_BENCH_4, start=12)]
+    conn.executemany(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (?,?,?,?,?,?,?,NULL,'t0')",
+        rows,
+    )
+    conn.commit()
+
+    locked = get_locked_squad(db_conn)  # must not raise
+
+    assert locked is not None
+    assert len(locked.xi.starting) == 10  # the NULL-slot player didn't make the starting XI...
+    assert _STARTING_11[-1] in {c.player_id for c in locked.xi.bench}  # ...it landed on the bench instead
+    assert set(locked.squad_ids) == set(_FULL_15)  # every real pick still accounted for
+
+
 def test_falls_back_to_locked_decision_when_no_real_sync_exists(db_conn, monkeypatch):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _patch_expected_points(monkeypatch)

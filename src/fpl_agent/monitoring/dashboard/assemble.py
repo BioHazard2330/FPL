@@ -6,6 +6,7 @@ detail, chip strategy, player odds, optimizer delta). All real setup logic
 (locked squad, `ta`/`ca`, primary verdict, live window, live-rank tile) is
 carried over unchanged from the pre-redesign `generate_dashboard_html` -
 only the HTML composed from it changes shape."""
+import logging
 import sqlite3
 from datetime import datetime, timezone
 
@@ -74,7 +75,23 @@ def generate_dashboard_html(
     default_call = (
         gw_window == 1 and must_include_ids is None and must_start_ids is None and exclude_ids is None
     )
-    locked = get_locked_squad(conn) if default_call else None
+    locked = None
+    if default_call:
+        try:
+            locked = get_locked_squad(conn)
+        except Exception:
+            # Real defensive fix (2026-08-28, diagnosing an intermittent
+            # "dashboard shows no squad" report) - get_locked_squad() had no
+            # exception guard anywhere in its call chain, so a genuinely
+            # malformed row (see locked_squad.py's own new logging) could
+            # crash the WHOLE dashboard regen instead of degrading to the
+            # honest "no squad locked" empty state every panel already
+            # handles. Logged, not silently swallowed - the real fix is
+            # whatever locked_squad.py's new warnings surface, not this.
+            logging.getLogger("fpl_agent.dashboard").exception(
+                "get_locked_squad() raised during dashboard regen - degrading to 'no squad locked' rather than failing the whole regen"
+            )
+            locked = None
     ta = ca = None
     if locked is not None:
         try:

@@ -120,6 +120,7 @@ Full suite (~950+ tests) takes 6-8 minutes. Run targeted files first when iterat
 
 ## Current known blockers (check before trusting related output)
 
+- **Dixon-Coles team-strength ridge (`team_strength_dc.py::_RIDGE_LAMBDA=2.5`) is a disclosed, not-yet-backtest-tuned value** — added 2026-08-28 to fix a real confirmed bug (a newly-promoted team's single-match shock result running attack/defence to the optimizer's own bound, e.g. Hull's real GW1 2-0 win over Man Utd producing an 84% clean-sheet projection three GWs later). Verified live (Hull's CS range moved to a plausible 25-50%, real team differentiation preserved) and against a real historical backtest (identical MAE with/without the fix on 2025-26, since a completed season rarely has sparse-sample teams) - but the value itself hasn't been tuned against a real in-season small-sample case yet, since 2026-27 is still too early to backtest against. Re-tune once enough of the season has real results.
 - **Bonus/BPS is season-grain, not match-grain** — no source carries per-match BPS, so bonus regression is a season-level empirical-Bayes shrink, not the walk-forward match-level treatment the rest of `calibrated-v2` gets.
 - **Predicted lineups: single real source** (fantasyfootballscout.co.uk) — every other free option checked is paywalled/403/a crowd-guessing game. A single-source gap, not a code bug.
 - **Sampled effective ownership carries real margin of error** (~750-of-~10,000-manager sample) that is derived but not yet surfaced in any CLI/dashboard output.

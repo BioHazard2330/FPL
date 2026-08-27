@@ -51,7 +51,10 @@ def _tau(x: int, y: int, lam: float, mu: float, rho: float) -> float:
     return 1.0
 
 
-def _neg_log_likelihood(params, team_ids, matches, decay_k):
+_RIDGE_LAMBDA = 2.5  # real, disclosed shrinkage strength - see fit_dixon_coles's own docstring for why
+
+
+def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda):
     n = len(team_ids)
     attack = dict(zip(team_ids[:-1], params[: n - 1]))
     defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)]))
@@ -60,10 +63,12 @@ def _neg_log_likelihood(params, team_ids, matches, decay_k):
     gamma, rho = params[-2], params[-1]
 
     total = 0.0
+    weight_sum = 0.0
     for m in matches:
         lam = math.exp(attack[m.home_team_id] + defence[m.away_team_id] + gamma)
         mu = math.exp(attack[m.away_team_id] + defence[m.home_team_id])
         weight = math.exp(-decay_k * m.days_since)
+        weight_sum += weight
         log_p = (
             -lam + m.home_goals * math.log(lam) - math.lgamma(m.home_goals + 1)
             - mu + m.away_goals * math.log(mu) - math.lgamma(m.away_goals + 1)
@@ -77,10 +82,45 @@ def _neg_log_likelihood(params, team_ids, matches, decay_k):
         # catch-all `return 1.0` branch above is precisely there to exclude.
         tau = max(_tau(m.home_goals, m.away_goals, lam, mu, rho), 1e-10)
         total -= weight * (log_p + math.log(tau))
+    # Real L2 (ridge) prior pulling every team's attack/defence toward 0 =
+    # league-average (2026-08-28, direct fix for a confirmed real bug: a
+    # newly-promoted team with a single real PL match - e.g. Hull's shock
+    # 2-0 win over Man Utd in GW1 2026-27 - had an UNREGULARIZED MLE fit run
+    # to the edge of the +-3 bound on that one match alone, producing a real
+    # 83% clean-sheet projection for Hull three gameweeks later against an
+    # unrelated opponent - not plausible for any team, let alone a newly
+    # promoted one. A team with many real matches has enough likelihood
+    # signal to overcome this fixed penalty and settle near its true rating
+    # (same effect a Bayesian MAP prior has); a team with one or two matches
+    # does not, and gets pulled back toward average - the same empirical-
+    # Bayes shrinkage philosophy this project already applies to every
+    # player-level rate (player_regression.py), just missing at the team
+    # level until now. `_RIDGE_LAMBDA=2.5` is a disclosed, not-yet-backtest-
+    # tuned starting value (this project's own backtest harness scores
+    # match-level MAE/RMSE - `fpl backtest` - and should be used to tune
+    # this properly once enough of the season has real results to backtest
+    # against; picking it by "does Hull's number become plausible again" is
+    # a real sanity check, not a substitute for that).
+    #
+    # Scaled by the MEAN per-match decay weight (not a flat constant) so
+    # `_dc_fit_as_of_date`'s own coarsening proof still holds exactly: a
+    # uniform shift of every match's `days_since` (fitting the same real
+    # historical matches at a different genuinely-future as_of_date)
+    # rescales every weight - and therefore this mean - by the identical
+    # positive constant `c` the likelihood sum itself is rescaled by, so
+    # the WHOLE objective scales by `c` and the argmax is unchanged (a flat,
+    # unscaled ridge term would NOT have this property - confirmed by a real
+    # test failure during development, `test_dc_fit_coarsening_produces_
+    # mathematically_identical_model_params`, which pinned exactly this).
+    mean_weight = weight_sum / len(matches)
+    total += 0.5 * ridge_lambda * mean_weight * sum(a * a for a in attack.values())
+    total += 0.5 * ridge_lambda * mean_weight * sum(d * d for d in defence.values())
     return total
 
 
-def fit_dixon_coles(matches: list[Match], team_ids: list[int], half_life_days: float = 365.0) -> DixonColesModel:
+def fit_dixon_coles(
+    matches: list[Match], team_ids: list[int], half_life_days: float = 365.0, ridge_lambda: float = _RIDGE_LAMBDA,
+) -> DixonColesModel:
     if len(team_ids) < 2:
         raise ValueError("need at least 2 teams to fit Dixon-Coles")
     if not matches:
@@ -92,7 +132,7 @@ def fit_dixon_coles(matches: list[Match], team_ids: list[int], half_life_days: f
     x0[-2] = 0.2  # home-advantage starting guess
 
     result = minimize(
-        _neg_log_likelihood, x0, args=(team_ids, matches, decay_k), method="L-BFGS-B",
+        _neg_log_likelihood, x0, args=(team_ids, matches, decay_k, ridge_lambda), method="L-BFGS-B",
         bounds=[(-3, 3)] * (2 * (n - 1)) + [(-1, 1), (-0.2, 0.2)],
     )
     if not result.success:

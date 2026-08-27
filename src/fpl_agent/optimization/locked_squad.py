@@ -25,10 +25,13 @@ locked yet" state (pure Mode A team-building, see this module's own
 `is_locked()` helper).
 """
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
+
+_logger = logging.getLogger("fpl_agent.locked_squad")
 from fpl_agent.models.free_transfers import compute_real_free_transfers
 from fpl_agent.optimization.build_team import (
     LockedDecisionIncomplete,
@@ -76,11 +79,27 @@ def _xi_from_real_picks(
     bench: list[PlayerCandidate] = []
     captain: PlayerCandidate | None = None
     vice_captain: PlayerCandidate | None = None
+    skipped_ids: list[int] = []
     for row in picks:
         candidate = by_id.get(row["player_id"])
         if candidate is None:
+            skipped_ids.append(row["player_id"])
             continue  # a real pick FPL reports but this project hasn't synced player facts for yet - skip, never fabricate
-        if row["squad_slot"] <= 11:
+        # Real defensive fix (2026-08-28, diagnosing an intermittent "shows no
+        # squad" report) - `squad_slot` is FPL's own real field and should
+        # always be 1-15, but a `None` here (a genuinely malformed/partial
+        # sync row) previously crashed this whole function on `None <= 11`,
+        # which propagates uncaught through get_locked_squad() into the
+        # dashboard - one bad row silently reporting "no squad" is worse than
+        # one player defaulting to the bench with a logged warning.
+        slot = row["squad_slot"]
+        if slot is None:
+            _logger.warning(
+                "player_id=%s has a real my_team_picks row with squad_slot=NULL for entry_id=%s event=%s "
+                "- treating as bench rather than crashing", row["player_id"], entry_id, event,
+            )
+            bench.append(candidate)
+        elif slot <= 11:
             starting.append(candidate)
         else:
             bench.append(candidate)
@@ -88,6 +107,18 @@ def _xi_from_real_picks(
             captain = candidate
         if row["is_vice_captain"]:
             vice_captain = candidate
+    if skipped_ids:
+        _logger.warning(
+            "%d real pick(s) for entry_id=%s event=%s had no matching build_player_pool entry "
+            "(player_id(s)=%s) - likely removed=1 or a missing current price_history row",
+            len(skipped_ids), entry_id, event, skipped_ids,
+        )
+    if picks and not starting:
+        _logger.warning(
+            "entry_id=%s event=%s has %d real my_team_picks row(s) but zero ended up in the starting XI "
+            "(skipped=%d) - get_locked_squad will report this as 'no locked squad' even though real picks exist",
+            entry_id, event, len(picks), len(skipped_ids),
+        )
     return StartingXI(starting=starting, bench=bench, captain=captain, vice_captain=vice_captain)
 
 

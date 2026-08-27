@@ -24,6 +24,42 @@ def test_fit_dixon_coles_ranks_dominant_team_higher():
     assert lam > mu  # team 1 expected to outscore team 2 even accounting for home/away
 
 
+def test_ridge_shrinks_a_one_match_shock_result_toward_average():
+    """Real regression test for a confirmed live bug (2026-08-28): a
+    newly-promoted team's real GW1 shock win (Hull 2-0 Man Utd, 2026-27)
+    fit with zero regularization ran attack/defence to the edge of the
+    optimizer's own +-3 bound off that single match, producing an
+    implausible 83% clean-sheet projection three gameweeks later against an
+    unrelated opponent. Team 4 here plays exactly one match (a big away win,
+    the same real shape as Hull's shock result) while teams 1-3 have many -
+    with the default ridge, team 4's defence must land far short of the
+    bound a real shock result alone would otherwise drive it to."""
+    many_matches = [
+        Match(home_team_id=1, away_team_id=2, home_goals=1, away_goals=1, days_since=d)
+        for d in range(10, 200, 10)
+    ] + [
+        Match(home_team_id=2, away_team_id=3, home_goals=1, away_goals=1, days_since=d)
+        for d in range(15, 200, 10)
+    ] + [
+        Match(home_team_id=3, away_team_id=1, home_goals=1, away_goals=1, days_since=d)
+        for d in range(20, 200, 10)
+    ]
+    shock_match = [Match(home_team_id=4, away_team_id=1, home_goals=2, away_goals=0, days_since=5)]
+    matches = many_matches + shock_match
+    team_ids = [4, 1, 2, 3]  # team 4 (the sparse one) must NOT be team_ids[-1] - that slot is the fixed attack=defence=0 reference
+
+    regularized = fit_dixon_coles(matches, team_ids, half_life_days=365.0)
+    unregularized = fit_dixon_coles(matches, team_ids, half_life_days=365.0, ridge_lambda=0.0)
+
+    # The unregularized fit really does run to (near) the bound on one shock
+    # match alone - confirms this test would have caught the real bug.
+    assert unregularized.teams[4].defence <= -2.0
+
+    # The default-ridge fit pulls the same team's defence much closer to 0
+    # (league-average) - the real fix, not just a tighter optimizer bound.
+    assert regularized.teams[4].defence > -1.0
+
+
 def test_fit_dixon_coles_requires_matches_and_teams():
     with pytest.raises(ValueError):
         fit_dixon_coles([], team_ids=[1, 2])
@@ -60,8 +96,8 @@ def test_neg_log_likelihood_ignores_rho_for_non_special_scorelines():
     params_a = np.array([0.1, -0.1, 0.2, -0.15])
     params_b = np.array([0.1, -0.1, 0.2, 0.15])
 
-    nll_a = team_strength_dc._neg_log_likelihood(params_a, team_ids, matches, decay_k=0.0)
-    nll_b = team_strength_dc._neg_log_likelihood(params_b, team_ids, matches, decay_k=0.0)
+    nll_a = team_strength_dc._neg_log_likelihood(params_a, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
+    nll_b = team_strength_dc._neg_log_likelihood(params_b, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
 
     assert nll_a == pytest.approx(nll_b)
 
