@@ -18,19 +18,35 @@ able to discover on its own - genuinely discovered by running the existing
 search at a longer horizon, not hard-coded or reasoned about in the
 abstract.
 
-Deliberately does NOT (this pass): jointly optimize chip placement inside
-the beam search itself (a real, much larger undertaking - `chips.py::
-schedule_chips` is called separately, as an overlay, against the winning
-path's own squad trajectory, reusing its own already-tested DP rather than
-folding a second search dimension into this one). Does not model in-season
+Updated 2026-08-27 ("final high-value pass", P0 joint transfer+chip
+optimization): `search_transfer_sequences` itself is now chip-aware - at
+every horizon step the beam branches on playing an eligible, not-yet-used
+chip (wildcard/freehit/bboost/3xc) alongside ROLL and every transfer
+candidate, all three competing on the exact same ranking key (see that
+function's own docstring for the mechanism). `chips.py::schedule_chips`'s
+Monte-Carlo DP is still available for its own richer risk-band/opportunity-
+cost narrative, but is no longer the mechanism that decides the chosen path.
+`compare_starting_actions` (transfers.py) and `synthesize_current_
+recommendation` below close the other real P0 gap this pass targeted: a
+real side-by-side comparison of every meaningful starting action's own best
+future, and a single authoritative CURRENT-recommended action rather than
+leaving the immediate-vs-strategic synthesis to the user.
+
+Still does NOT (disclosed scope boundary, not an oversight): model in-season
 price changes affecting `bank_tenths` beyond the tie-break nudge
-`search_transfer_sequences` already applies. Both are real, disclosed scope
-boundaries, not oversights.
+`search_transfer_sequences` already applies.
 """
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.optimization.transfers import TransferSequence, search_transfer_sequences
+from fpl_agent.models.projection_confidence import _LEVEL_RANK, _LEVELS, assess_projection_confidence
+from fpl_agent.optimization.decision_analysis import _MIN_EVIDENCE_CONFIDENCE_FOR_ACTION
+from fpl_agent.optimization.transfers import (
+    StartingActionOption,
+    TransferSequence,
+    compare_starting_actions,
+    search_transfer_sequences,
+)
 
 _HORIZON_CHECKPOINTS = (1, 3, 5, 8)
 
@@ -56,6 +72,8 @@ def _opening_action_label(seq: TransferSequence) -> str:
     if not seq.steps:
         return "ROLL"
     first = seq.steps[0]
+    if first.chip_played is not None:
+        return f"PLAY {first.chip_played.upper()}"
     if first.player_out_id is None:
         return "ROLL"
     hit = " (HIT)" if first.uses_hit else ""
@@ -65,6 +83,7 @@ def _opening_action_label(seq: TransferSequence) -> str:
 def build_strategic_plan(
     conn: sqlite3.Connection, squad_ids: list[int], free_transfers: int, bank_tenths: int,
     horizon_gw: int = 8, beam_width: int = 5, comparison_beam_width: int = 3,
+    used_chip_names: frozenset[str] = frozenset(),
 ) -> StrategicPlan:
     """Real top-`beam_width` paths at the real requested horizon (the main
     deliverable), plus a real, separately-computed opening-action comparison
@@ -75,9 +94,12 @@ def build_strategic_plan(
     question being asked. `comparison_beam_width` is kept smaller than the
     main `beam_width` to bound the real added compute cost of the extra
     calls - only the single best path at each checkpoint horizon is needed
-    for the comparison, not a full top-5 at every horizon."""
+    for the comparison, not a full top-5 at every horizon. `used_chip_names`
+    passes through to every `search_transfer_sequences` call so a chip the
+    user has already burned this season is never offered at any checkpoint."""
     paths = search_transfer_sequences(
         conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon_gw, beam_width=beam_width,
+        used_chip_names=used_chip_names,
     )
     best = paths[0] if paths else None
 
@@ -91,6 +113,7 @@ def build_strategic_plan(
             continue
         h_paths = search_transfer_sequences(
             conn, squad_ids, free_transfers, bank_tenths, horizon_gw=h, beam_width=comparison_beam_width,
+            used_chip_names=used_chip_names,
         )
         if h_paths:
             comparisons.append(HorizonComparison(horizon_gw=h, opening_action=_opening_action_label(h_paths[0]), total_net_ev=h_paths[0].total_net_ev))
@@ -115,4 +138,143 @@ def build_strategic_plan(
     return StrategicPlan(
         horizon_gw=horizon_gw, paths=tuple(paths), best=best,
         horizon_comparison=tuple(comparisons), immediate_vs_strategic_differ=differ, note=note,
+    )
+
+
+def _safe_confidence(conn: sqlite3.Connection, player_id: int):
+    try:
+        return assess_projection_confidence(conn, player_id)
+    except Exception:
+        return None
+
+
+@dataclass(frozen=True)
+class CurrentRecommendation:
+    """The single authoritative "what should I do right now" answer (2026-08-27,
+    "final high-value pass" P0 decision hierarchy) - never left for the user
+    to reconcile between an IMMEDIATE 1-GW pick and a STRATEGIC multi-GW pick.
+    `verdict` is "ACT" or "REVIEW" (same real evidence-confidence gate
+    `decision_analysis.py` already applies to its own single-swap
+    recommendation, applied here to whichever starting action actually wins
+    the full-horizon comparison) - never a silently invented confident answer
+    when the evidence doesn't support one."""
+    verdict: str  # "ACT" | "REVIEW"
+    action_kind: str  # "roll" | "transfer" | "chip"
+    label: str
+    path_total: float
+    immediate_optimum_label: str | None
+    strategic_optimum_label: str
+    immediate_vs_strategic_differ: bool
+    evidence_confidence: str | None
+    reason: str
+    starting_action_options: tuple[StartingActionOption, ...]
+
+
+def synthesize_current_recommendation(
+    conn: sqlite3.Connection,
+    squad_ids: list[int],
+    free_transfers: int,
+    bank_tenths: int,
+    horizon_gw: int = 8,
+    continuation_beam_width: int = 3,
+    used_chip_names: frozenset[str] = frozenset(),
+    immediate_optimum_label: str | None = None,
+    known_paths: tuple[TransferSequence, ...] = (),
+) -> CurrentRecommendation:
+    """Real synthesis this task's P0 "fix the decision hierarchy" item asked
+    for: runs `compare_starting_actions` (every meaningful starting action
+    against its own real best future) and picks the winner by real
+    full-horizon `path_total` - which, by construction, already includes
+    this GW's own contribution, so it never needs a separate tie-break
+    against a shorter-horizon "immediate" number; a genuine IMMEDIATE-vs-
+    STRATEGIC disagreement (`immediate_optimum_label`, e.g. from
+    `decision_analysis.analyze_transfer_decision`, passed in by the caller
+    rather than re-derived here to avoid a second competing scan) is
+    surfaced as a fact about WHY the strategic pick can differ from a
+    short-sighted one, not as a competing recommendation to reconcile.
+
+    The only thing that can downgrade the winning action from ACT to REVIEW
+    is real evidence confidence on the chosen transfer's player pair (same
+    `_MIN_EVIDENCE_CONFIDENCE_FOR_ACTION` bar `decision_analysis.py` uses,
+    imported rather than redefined) - never a hard-coded player/action
+    exception, and ROLL/chip actions are never evidence-gated (there is no
+    specific player pair whose projection could be under-evidenced)."""
+    options = compare_starting_actions(
+        conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon_gw,
+        continuation_beam_width=continuation_beam_width, used_chip_names=used_chip_names,
+    )
+
+    # `known_paths` (2026-08-27) - the caller's own already-computed, WIDER
+    # main beam search (`build_strategic_plan`'s `plan.paths`, typically
+    # beam_width=5) often already searched the exact starting action that
+    # matters most (whichever one it judged best) far more thoroughly than
+    # this function's own narrower `continuation_beam_width` sub-searches
+    # can afford to. Both are the same real search under different beam
+    # widths - a beam search only ever UNDERESTIMATES the true optimum
+    # (pruning can lose a path, never invent a better one), so taking the
+    # MAX of the two real estimates for any option whose opening action
+    # matches one of `known_paths` is a strictly more accurate lower bound
+    # than either alone, never a fabricated number.
+    if known_paths:
+        import dataclasses
+
+        best_known: dict[str, float] = {}
+        for seq in known_paths:
+            label = _opening_action_label(seq)
+            if label not in best_known or seq.total_net_ev > best_known[label]:
+                best_known[label] = seq.total_net_ev
+        options = [
+            dataclasses.replace(o, path_total=max(o.path_total, best_known[o.label])) if o.label in best_known else o
+            for o in options
+        ]
+        options.sort(key=lambda o: o.path_total, reverse=True)
+
+    if not options:
+        return CurrentRecommendation(
+            verdict="REVIEW", action_kind="roll", label="ROLL", path_total=0.0,
+            immediate_optimum_label=immediate_optimum_label, strategic_optimum_label="ROLL",
+            immediate_vs_strategic_differ=False, evidence_confidence=None,
+            reason="no real legal starting action found for this squad/budget",
+            starting_action_options=(),
+        )
+
+    top = options[0]
+    differ = immediate_optimum_label is not None and immediate_optimum_label != top.label
+
+    evidence_confidence = None
+    if top.kind == "transfer":
+        out_pc = _safe_confidence(conn, top.player_out_id)
+        in_pc = _safe_confidence(conn, top.player_in_id)
+        if out_pc is not None and in_pc is not None:
+            evidence_confidence = _LEVELS[min(_LEVEL_RANK[out_pc.overall], _LEVEL_RANK[in_pc.overall])]
+
+    evidence_ok = (
+        evidence_confidence is None
+        or _LEVEL_RANK[evidence_confidence] >= _LEVEL_RANK[_MIN_EVIDENCE_CONFIDENCE_FOR_ACTION]
+    )
+
+    differ_note = (
+        f" - this differs from the immediate 1-GW pick ({immediate_optimum_label}), but the real strategic "
+        "path_total already accounts for this GW too, so it takes priority" if differ else ""
+    )
+
+    if evidence_ok:
+        verdict = "ACT"
+        reason = (
+            f"{top.label} has the best real full-horizon future among every starting action considered "
+            f"(path_total={top.path_total})" + differ_note
+        )
+    else:
+        verdict = "REVIEW"
+        reason = (
+            f"{top.label} has the best real full-horizon future (path_total={top.path_total}) but real "
+            f"evidence confidence is only {evidence_confidence} - see the underlying player evidence before "
+            "acting on this" + differ_note
+        )
+
+    return CurrentRecommendation(
+        verdict=verdict, action_kind=top.kind, label=top.label, path_total=top.path_total,
+        immediate_optimum_label=immediate_optimum_label, strategic_optimum_label=top.label,
+        immediate_vs_strategic_differ=differ, evidence_confidence=evidence_confidence, reason=reason,
+        starting_action_options=tuple(options),
     )

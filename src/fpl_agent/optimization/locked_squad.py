@@ -29,6 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
+from fpl_agent.models.free_transfers import compute_real_free_transfers
 from fpl_agent.optimization.build_team import (
     LockedDecisionIncomplete,
     generate_build_team_report,
@@ -46,6 +47,12 @@ class LockedSquadState:
     bank_tenths: int | None  # None when not knowable (locked_decision source, pre-sync)
     squad_value_tenths: int
     decision_id: int | None  # the build_team decision id, when source == "locked_decision"
+    # Real FT state (2026-08-27, Part 3 - "FT not tracked" is not an
+    # acceptable permanent production state). None whenever it genuinely
+    # can't be derived (locked_decision source - no real entry synced yet;
+    # or synced_real with a gap in real gw_summary history) - never a
+    # fabricated 1. See models/free_transfers.py for the real derivation.
+    free_transfers: int | None = None
 
 
 def _xi_from_real_picks(
@@ -107,9 +114,11 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
                 value_tenths = summary["team_value_tenths"] if summary else sum(
                     c.price_tenths for c in xi.starting + xi.bench
                 )
+                free_transfers = compute_real_free_transfers(conn, entry_id, upto_event=event)
                 return LockedSquadState(
                     source="synced_real", event=event, squad_ids=frozenset(squad_ids),
                     xi=xi, bank_tenths=bank_tenths, squad_value_tenths=value_tenths, decision_id=None,
+                    free_transfers=free_transfers,
                 )
 
     try:

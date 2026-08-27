@@ -55,7 +55,7 @@ def _stub_common(monkeypatch, transfer_map, robustness_verdict=None, qualitative
         monkeypatch.setattr(robustness_mod, "compare_candidates", lambda *a, **k: None)
     monkeypatch.setattr(
         fusion_mod, "compare_transfer_views",
-        lambda conn, squad_ids, bank_tenths: SimpleNamespace(verdict=qualitative_verdict, explanation="real qualitative reason"),
+        lambda conn, squad_ids, bank_tenths, **kwargs: SimpleNamespace(verdict=qualitative_verdict, explanation="real qualitative reason"),
     )
 
 
@@ -206,7 +206,7 @@ def _stub_captain_common(monkeypatch, options, qualitative_verdict="MODEL_WINS",
 
     monkeypatch.setattr(
         fusion_mod, "compare_captain_views",
-        lambda conn, squad_ids: SimpleNamespace(verdict=qualitative_verdict, explanation="real qualitative reason"),
+        lambda conn, squad_ids, **kwargs: SimpleNamespace(verdict=qualitative_verdict, explanation="real qualitative reason"),
     )
     if robustness_verdict is not None:
         monkeypatch.setattr(

@@ -92,8 +92,13 @@ def _user_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None, str | 
     return row["subject_id"], row["note"]
 
 
-def compare_captain_views(conn, squad_ids: list[int]) -> CaptainViewComparison:
-    options = evaluate_captaincy(conn, sorted(squad_ids))
+def compare_captain_views(conn, squad_ids: list[int], options: list | None = None) -> CaptainViewComparison:
+    """`options` (2026-08-27, Part 25 perf pass) - an optional, already-
+    computed real `evaluate_captaincy` ranking to skip this function's own
+    internal scan. See `compare_transfer_views`'s own docstring for the
+    identical real-duplicate-work finding this mirrors."""
+    if options is None:
+        options = evaluate_captaincy(conn, sorted(squad_ids))
     model_pick = options[0] if options else None
     model_reason = (
         f"highest median projection ({model_pick.median} pts)" if model_pick else "no real captaincy data for this squad"
@@ -205,7 +210,20 @@ def _user_signal_for_player(conn, player_id: int) -> tuple[str | None, str | Non
 
 def compare_transfer_views(
     conn, squad_ids: list[int], bank_tenths: int | None, n_gw: int = 3,
+    best_candidate: TransferCandidate | None = None, is_hit: bool = False,
 ) -> TransferViewComparison:
+    """`best_candidate` (2026-08-27, Part 25 perf pass) - an optional,
+    already-computed top-ranked `TransferCandidate` a caller can pass in to
+    skip this function's own internal full-squad scan entirely. Real,
+    measured duplicate work found live: `analyze_transfer_decision` already
+    ranks every squad member's best replacement before ever calling this
+    function (for its own `qualitative_note`), so its own top candidate is
+    the identical answer this function would otherwise re-derive from
+    scratch with a second full `best_transfer_for_player` scan per squad
+    member. `is_hit` only applies to the internal scan (ignored when
+    `best_candidate` is supplied - the caller's own candidate already
+    reflects the real FT state it was computed with). Every existing caller
+    that doesn't pass `best_candidate` keeps its exact prior behavior."""
     if bank_tenths is None:
         return TransferViewComparison(
             None, "no real bank figure known yet", None, None, False, None, None,
@@ -213,12 +231,12 @@ def compare_transfer_views(
         )
 
     squad_ids = sorted(squad_ids)
-    best_candidate: TransferCandidate | None = None
     key = {1: "net_ev_1gw", 3: "net_ev_3gw", 5: "net_ev_5gw"}[n_gw]
-    for player_out_id in squad_ids:
-        for candidate in best_transfer_for_player(conn, player_out_id, squad_ids, bank_tenths, is_hit=False, n_gw=n_gw, top_n=1):
-            if best_candidate is None or getattr(candidate, key) > getattr(best_candidate, key):
-                best_candidate = candidate
+    if best_candidate is None:
+        for player_out_id in squad_ids:
+            for candidate in best_transfer_for_player(conn, player_out_id, squad_ids, bank_tenths, is_hit=is_hit, n_gw=n_gw, top_n=1):
+                if best_candidate is None or getattr(candidate, key) > getattr(best_candidate, key):
+                    best_candidate = candidate
 
     if best_candidate is None:
         return TransferViewComparison(

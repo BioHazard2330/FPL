@@ -154,6 +154,14 @@ class TransferDecisionAnalysis:
     # on top of the evidence_confidence one above (the user's own explicit
     # "do not hard-code a hold" constraint). See models/value_of_information.py.
     information_value_note: str | None = None
+    # Real FT state used to price this decision's hit cost (2026-08-27,
+    # Part 3) - None/False only when genuinely undeterminable (see
+    # models.free_transfers.compute_real_free_transfers's own docstring),
+    # never a fabricated default. `free_transfers_known=False` means the
+    # historical "assume a free transfer" behavior was used as an honest
+    # fallback, not that a real 0/1/2+ was actually observed.
+    free_transfers: int | None = None
+    free_transfers_known: bool = False
 
 
 def _real_horizon_events(conn: sqlite3.Connection, n_gw: int = _MAX_HORIZON) -> list[int]:
@@ -213,11 +221,23 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         )
     roll = RollOption(per_gw=per_gw, horizon_totals=_horizon_totals(per_gw, events))
 
+    # Real FT-aware hit cost (2026-08-27, Part 3 - the strategic planner and
+    # this transfer comparison must both use the actual free-transfer state,
+    # not silently assume a free transfer is always available).
+    # `locked.free_transfers` is a real replay of official FPL history
+    # (`models.free_transfers.compute_real_free_transfers`) when the squad
+    # source is a real synced entry; `None` when genuinely undeterminable
+    # (locked_decision source, or a gap in synced history) - the historical
+    # "assume free" behavior is kept ONLY as the honest fallback for that
+    # case, never silently for a squad where the real state IS known.
+    real_free_transfers = getattr(locked, "free_transfers", None)
+    is_hit = real_free_transfers is not None and real_free_transfers < 1
+
     all_candidates: list[TransferCandidate] = []
     for player_out_id in squad_ids:
         all_candidates.extend(
             best_transfer_for_player(
-                conn, player_out_id, list(squad_ids), locked.bank_tenths, is_hit=False,
+                conn, player_out_id, list(squad_ids), locked.bank_tenths, is_hit=is_hit,
                 n_gw=3, top_n=1, from_event=event, cache=cache,
             )
         )
@@ -281,7 +301,15 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
     try:
         from fpl_agent.models.decision_fusion import compare_transfer_views
 
-        fusion = compare_transfer_views(conn, list(squad_ids), locked.bank_tenths)
+        # Real perf fix (2026-08-27, Part 25) - `best.candidate` here is the
+        # exact same top-ranked real candidate `all_candidates`/`top` above
+        # already computed (both rank by net_ev_3gw, this function's own
+        # default n_gw) - passing it in skips a second, redundant full-squad
+        # `best_transfer_for_player` scan this call used to always trigger.
+        fusion = compare_transfer_views(
+            conn, list(squad_ids), locked.bank_tenths,
+            best_candidate=best.candidate if best is not None else None,
+        )
         if fusion.verdict in ("QUALITATIVE_WINS", "UNDECIDED"):
             qualitative_note = fusion.explanation
     except Exception:
@@ -351,6 +379,7 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         data_confidence=evidence_confidence, model_confidence=robustness_label,
         decision_confidence=decision_confidence, margin_ratio=margin_ratio,
         information_value_note=information_value_note,
+        free_transfers=real_free_transfers, free_transfers_known=real_free_transfers is not None,
     )
 
 
@@ -385,6 +414,13 @@ class CaptainDecisionAnalysis:
     reason: str
     evidence_confidence: str | None = None
     evidence_reasons: tuple[str, ...] = ()
+    # Real, FULL (untruncated) real captaincy ranking - `options` above is
+    # capped at `_TOP_N_CANDIDATES` for display; a caller needing to find a
+    # SPECIFIC player (e.g. evaluate_locked_squad looking up the current
+    # captain, who may rank below the top N) needs the complete list, not
+    # the display-truncated one. Same real evaluate_captaincy() call, no
+    # extra computation - just not discarded.
+    all_options: tuple[CaptainOption, ...] = ()
 
 
 def analyze_captain_decision(conn: sqlite3.Connection, locked: LockedSquadState) -> CaptainDecisionAnalysis:
@@ -398,8 +434,8 @@ def analyze_captain_decision(conn: sqlite3.Connection, locked: LockedSquadState)
     except Exception:
         options = []
 
-    action = _evaluate_captain(conn, locked)
-    action = _attach_qualitative_note(conn, sorted(locked.squad_ids), action)
+    action = _evaluate_captain(conn, locked, options=options or None)
+    action = _attach_qualitative_note(conn, sorted(locked.squad_ids), action, options=options or None)
     action = _attach_captain_robustness(conn, action, options, locked.event)
 
     ranked: list[CaptainOptionRanked] = []
@@ -449,4 +485,5 @@ def analyze_captain_decision(conn: sqlite3.Connection, locked: LockedSquadState)
         current=action.current, suggested=action.suggested, delta=action.delta,
         robustness=action.robustness, qualitative_note=action.qualitative_note, reason=reason,
         evidence_confidence=evidence_confidence, evidence_reasons=evidence_reasons,
+        all_options=tuple(options),
     )

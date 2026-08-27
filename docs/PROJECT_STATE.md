@@ -1,0 +1,63 @@
+# Project State
+
+Last updated: 2026-08-27. Read this before resuming work — it's the current, load-bearing snapshot,
+kept lean on purpose. **Don't add session narrative here** — a new capability/architecture change gets
+one short factual entry; the story of how it was built, bugs found, and live-verification detail goes
+in `docs/history/` (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand
+
+**Season**: 2026-27, GW1 finished (all 10 fixtures analyzed, real qualitative evidence recorded for Arsenal-Coventry and league-wide via the zero-LLM statistical detector), GW2 not yet locked (real fixtures scheduled ~Aug 29-Sep 1). Real locked squad synced (entry 7378572, `fpl my-team`).
+
+**System capability**: full pipeline from raw data → calibrated projections → multi-GW strategic planning → dashboard, running autonomously via the Windows Task Scheduler. Real free-transfer state, real chip-usage detection, real qualitative evidence (LLM + zero-LLM), real confidence/robustness/uncertainty reporting, real 1/3/5/8-GW path search with joint chip+transfer optimization (chips compete inside the beam, not a post-hoc overlay), a real full-squad starting-action comparison producing one authoritative CURRENT RECOMMENDED ACTION, real Squad State Machine (per-path/per-GW squad reconstruction), real Model-vs-Football-vs-User-view fusion.
+
+## Strategic planner status
+
+`optimization/strategic_planner.py` + `optimization/transfers.py::search_transfer_sequences` — real beam search (default beam width 5, horizon 8 GW), scores full-squad EV summed across the horizon, jointly chip-aware (wildcard/freehit/bboost/3xc compete against ROLL/TRANSFER on the same ranking key at every step, `optimization/chips.py::chip_gw_marginal_value`). `chips.py::schedule_chips`'s Monte Carlo DP (`--with-chips`) is an independent cross-check/opportunity-cost narrative, not the path-selection mechanism. `search_transfer_sequences`/`best_transfer_for_player` price hit cost using the real FT state (`models/free_transfers.py`).
+
+`optimization/transfers.py::compare_starting_actions` + `optimization/strategic_planner.py::synthesize_current_recommendation` compare every real starting action (ROLL, each squad player's best replacement, each legal chip) against its own best full-horizon future and produce one authoritative `CurrentRecommendation` (ACT/REVIEW, same evidence-confidence gate `decision_analysis.py` uses). Surfaced via `fpl strategic-plan --current-action` (default on) and the dashboard's Primary Decision panel. Real production run (locked squad, 8GW horizon): ROLL wins over the immediate 1-GW pick and over PLAY WILDCARD/FREEHIT, consistent with the main search's own top path.
+
+## Decision-object architecture
+
+`optimization.decision_analysis.analyze_transfer_decision`/`analyze_captain_decision` are the single real source of truth for "what should I do." `optimization.decision_engine.evaluate_locked_squad` is a thin KEEP/CHANGE wrapper that derives its answer from an already-computed `ta`/`ca` rather than re-scanning. The dashboard's Primary Decision panel (`#decision`) and Strategy Explorer (`#explore`) are the only two places a recommendation renders; every other panel either reads from these or is explicitly labeled as answering a different question (Optimizer Delta = from-scratch rebuild comparison, collapsed under Advanced).
+
+## Free-transfer tracking
+
+`models/free_transfers.py::compute_real_free_transfers` replays the real, public FPL accrual rule over already-ingested `my_team_gw_summary.event_transfers` + `my_team_picks.active_chip` history. Returns `None` (never a guess) on a genuine gap in synced history. Wired into `LockedSquadState.free_transfers`, consumed by `analyze_transfer_decision`/`_evaluate_transfer`.
+
+## Known gaps (see CLAUDE.md's "Current known blockers" for the full, current list)
+
+Summarized: bonus/BPS season-grain only; single predicted-lineups source; sampled-EO margin of error computed but not surfaced; cross-league coverage partial (~5 leagues); manager-change signal not wired into prior-shrink speed; team-level qualitative signal deliberately not fed into Dixon-Coles (leakage-safety); Elite-manager panel needs a season to end; penalty-duty adjustment gated on sample size (2 of 20 needed); dashboard regen ~1 minute; `fpl strategic-plan --current-action` (default on) adds real extra cost on top of that (~2-10+ min depending on horizon/beam-width) — a manual command's cost, never re-run live by the dashboard.
+
+## Next recommended work (real candidates, not started)
+
+1. **Model-vs-football-vs-decision adversarial trace CLI** for an arbitrary named player (RAW MATCH EVIDENCE → STRUCTURED SIGNAL → MODEL COMPONENT → PROJECTION → CANDIDATE → PATH → DECISION) — `decision_fusion.py::compare_transfer_views`/`compare_captain_views` already give the MODEL/FOOTBALL/USER-view comparison, but only for whichever player is already the top candidate.
+2. **Path-diversity clustering** — group near-identical top-N strategic paths into real tiers (roll-heavy/transfer-heavy/fixture-led/chip-led) rather than listing near-duplicates, only where those structures genuinely emerge from the search.
+3. **Value-of-information folded into `compare_starting_actions`' own ranking**, not just the single-swap decision's separate `information_value_note`.
+4. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
+5. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.
+6. **Surface sampled-EO margin of error** in the dashboard/CLI (currently derived, never printed).
+7. **Decision-outcome calibration** — capture recommended-action-taken vs rejected-alternative's real outcome per completed GW (`models/calibration.py`/`prediction_outcomes` exist for projected-vs-actual already); needs a season with completed GWs to have real observations.
+8. **Dashboard visual/typography pass + real screenshot QA** (1440/1024/768/390/375/360px) — blocked in the 2026-08-27 session by the Browser tool's compositor being unavailable in that environment (a client-side panel-visibility issue, not a dashboard bug); needs a session where the Browser pane actually renders.
+
+## Verification procedure (run before trusting any change to the decision layer)
+
+```bash
+# 1. Full test suite - must be green
+./.venv/Scripts/python.exe -m pytest tests/ -q
+
+# 2. Real strategic plan against the real production DB
+./.venv/Scripts/fpl.exe strategic-plan
+
+# 3. Real dashboard regen - confirm it completes and note the wall-clock time
+./.venv/Scripts/fpl.exe dashboard
+
+# 4. Serve it over localhost (NOT file://) and inspect visually in a real browser
+python -m http.server 8899 --directory data
+# open http://localhost:8899/dashboard.html, screenshot at 1440/1024/768/390/375/360px
+
+# 5. Real production acceptance check: does `fpl transfer-analysis` / the
+#    dashboard's Primary Decision panel agree, and can you answer "what
+#    should I do for GW2, and why" within 5 seconds of opening the page?
+./.venv/Scripts/fpl.exe transfer-analysis
+```

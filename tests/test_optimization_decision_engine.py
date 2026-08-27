@@ -203,3 +203,44 @@ def test_transfer_robustness_is_none_for_a_keep_verdict(db_conn, monkeypatch):
 
     assert decision.transfer_action.kind == "keep"
     assert decision.transfer_action.robustness is None
+
+
+def test_passing_ta_and_ca_skips_the_redundant_real_scans(db_conn, monkeypatch):
+    """Real perf fix (2026-08-27, Part 25) - a dashboard regen used to run
+    `evaluate_captaincy` up to 3 times and a full-squad `best_transfer_for_
+    player` scan twice INSIDE evaluate_locked_squad alone, then the
+    dashboard's own separate `analyze_transfer_decision`/`analyze_captain_
+    decision` repeated the identical scans again. Proves the fix by making
+    both real scan functions raise if called at all when `ta`/`ca` are
+    supplied - the real answer must come entirely from the already-computed
+    analysis objects."""
+    locked = _locked(captain_id=1, squad_ids=(1, 2, 3))
+
+    def _boom(*a, **k):
+        raise AssertionError("real scan re-run despite ta/ca being supplied")
+
+    monkeypatch.setattr(de_mod, "evaluate_captaincy", _boom)
+    monkeypatch.setattr(de_mod, "best_transfer_for_player", _boom)
+    monkeypatch.setattr("fpl_agent.models.decision_fusion.evaluate_captaincy", _boom)
+    monkeypatch.setattr("fpl_agent.models.decision_fusion.best_transfer_for_player", _boom)
+    monkeypatch.setattr("fpl_agent.models.robustness.compare_candidates", lambda *a, **k: None)
+    monkeypatch.setattr("fpl_agent.models.availability.list_availability", lambda conn, unavailable_only=True: [])
+    monkeypatch.setattr("fpl_agent.models.team_news_risk.flag_squad_rotation_risk", lambda conn, squad_ids: [])
+
+    best_option = _captain_option(2, 5.0, "Best")
+    current_option = _captain_option(1, 4.0, "Cur")
+    ca = SimpleNamespace(
+        options=[SimpleNamespace(option=best_option), SimpleNamespace(option=current_option)],
+        all_options=(best_option, current_option),
+    )
+    best_candidate = TransferCandidate(
+        player_out_id=1, player_out_name="Cur", player_in_id=99, player_in_name="New",
+        price_delta_tenths=0, ev_1gw=2.0, ev_3gw=6.0, ev_5gw=10.0,
+        net_ev_1gw=2.0, net_ev_3gw=6.0, net_ev_5gw=10.0, uses_hit=False,
+    )
+    ta = SimpleNamespace(candidates=[SimpleNamespace(candidate=best_candidate)])
+
+    decision = evaluate_locked_squad(db_conn, locked, ta=ta, ca=ca)
+
+    assert decision.captain_action.suggested.web_name == "Best"
+    assert decision.transfer_action.candidate.player_in_name == "New"

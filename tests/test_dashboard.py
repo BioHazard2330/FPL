@@ -1051,7 +1051,7 @@ def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squa
         xi=xi, bank_tenths=10, squad_value_tenths=900, decision_id=None,
     )
     monkeypatch.setattr(dash_mod, "get_locked_squad", lambda conn: broken)
-    monkeypatch.setattr(dash_mod, "evaluate_locked_squad", lambda conn, locked: None)
+    monkeypatch.setattr(dash_mod, "evaluate_locked_squad", lambda conn, locked, **kwargs: None)
 
     result = generate_dashboard_html(db_conn)
 
@@ -1562,10 +1562,13 @@ def test_strategic_plan_panel_handles_an_older_decision_missing_path_total(db_co
     )
     db_conn.commit()
 
+    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+
     result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
 
     assert "12.1 pts" in result or "12.06" in result or "12.1" in result
-    assert "Path 1" in result
+    assert "Path 1" in explorer_result
 
 
 def test_strategic_plan_panel_shows_empty_state_when_no_locked_squad(db_conn):
@@ -1631,15 +1634,19 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
     )
     db_conn.commit()
 
+    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+
     result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
 
     assert "TRANSFER" in result
     assert "B.Fernandes -&gt; Tavernier" in result or "B.Fernandes -> Tavernier" in result
-    assert "IMMEDIATE OPTIMUM" in result and "STRATEGIC OPTIMUM" in result
-    assert "Path 1" in result and "Path 2" in result
-    assert "WILDCARD" in result  # chip badge, uppercased
-    assert "statistically indistinguishable" in result  # 12.06 vs 11.9 is well within 5%
     assert "CURRENT LOCKED STATE" in result
+    assert "IMMEDIATE OPTIMUM" in explorer_result and "STRATEGIC OPTIMUM" in explorer_result
+    assert "Path 1" in explorer_result and "Path 2" in explorer_result
+    assert "WILDCARD" in explorer_result  # chip badge, uppercased
+    assert "statistically equivalent" in explorer_result  # 12.06 vs 11.9 is well within 5%
+    assert "TOP TIER" in explorer_result  # Part 12: never crown Path 1 "BEST" alone when tied
 
 
 def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn):
@@ -1667,10 +1674,13 @@ def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn)
     )
     db_conn.commit()
 
+    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+
     result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
 
     assert "ROLL" in result
-    assert "No chip cleared a real positive value" in result
+    assert "No chip cleared a real positive value" in explorer_result
 
 
 # --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---

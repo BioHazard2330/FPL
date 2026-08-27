@@ -96,8 +96,18 @@ def _attach_captain_robustness(
     return dataclasses.replace(captain_action, robustness=comparison.verdict)
 
 
-def _evaluate_captain(conn: sqlite3.Connection, locked: LockedSquadState) -> CaptainAction:
-    options = evaluate_captaincy(conn, sorted(locked.squad_ids))
+def _evaluate_captain(conn: sqlite3.Connection, locked: LockedSquadState, options: list[CaptainOption] | None = None) -> CaptainAction:
+    """`options` (2026-08-27, Part 25 perf pass) - an optional, already-
+    computed real captaincy ranking a caller can pass in to skip this
+    function's own `evaluate_captaincy` scan. Real, measured redundancy
+    found live: `evaluate_locked_squad` used to call `evaluate_captaincy`
+    up to 3 times for one squad decision (here, in `_attach_qualitative_
+    note`'s `compare_captain_views`, and again explicitly for
+    `_attach_captain_robustness`) - all three now share one real
+    computation. Every existing caller that doesn't pass `options` keeps
+    its exact prior behavior."""
+    if options is None:
+        options = evaluate_captaincy(conn, sorted(locked.squad_ids))
     if not options:
         return CaptainAction("unavailable", None, None, None)
 
@@ -135,7 +145,17 @@ def _evaluate_captain(conn: sqlite3.Connection, locked: LockedSquadState) -> Cap
     return CaptainAction("change", current, best, delta)
 
 
-def _evaluate_transfer(conn: sqlite3.Connection, locked: LockedSquadState) -> TransferAction:
+def _evaluate_transfer(
+    conn: sqlite3.Connection, locked: LockedSquadState, best_candidate: TransferCandidate | None = None,
+) -> TransferAction:
+    """`best_candidate` (2026-08-27, Part 25 perf pass) - an optional,
+    already-computed real top transfer candidate a caller can pass in to
+    skip this function's own full-squad `best_transfer_for_player` scan.
+    `analyze_transfer_decision`'s own top-ranked candidate (rank 1) is
+    mathematically the identical answer this scan would produce (same real
+    candidate pool, same real net_ev_3gw sort key) - `evaluate_locked_squad`
+    reuses it directly rather than re-deriving it. Every existing caller
+    that doesn't pass `best_candidate` keeps its exact prior behavior."""
     if locked.bank_tenths is None:
         # No real bank figure known yet (locked_decision source, pre-sync) -
         # a transfer-cost evaluation needs a real budget to respect, and
@@ -144,21 +164,28 @@ def _evaluate_transfer(conn: sqlite3.Connection, locked: LockedSquadState) -> Tr
         # than a plausible-looking but ungrounded suggestion.
         return TransferAction("keep", None, None)
 
-    squad_ids = sorted(locked.squad_ids)
-    best_candidate: TransferCandidate | None = None
-    for player_out_id in squad_ids:
-        for candidate in best_transfer_for_player(
-            conn, player_out_id, squad_ids, locked.bank_tenths, is_hit=False, n_gw=3, top_n=1,
-        ):
-            if best_candidate is None or candidate.net_ev_3gw > best_candidate.net_ev_3gw:
-                best_candidate = candidate
+    if best_candidate is None:
+        # Real FT-aware hit cost (2026-08-27, Part 3) - `locked.free_transfers`
+        # is a real replay of official history when available; falls back to
+        # the historical "assume free" behavior only when genuinely unknown.
+        is_hit = locked.free_transfers is not None and locked.free_transfers < 1
+        squad_ids = sorted(locked.squad_ids)
+        for player_out_id in squad_ids:
+            for candidate in best_transfer_for_player(
+                conn, player_out_id, squad_ids, locked.bank_tenths, is_hit=is_hit, n_gw=3, top_n=1,
+            ):
+                if best_candidate is None or candidate.net_ev_3gw > best_candidate.net_ev_3gw:
+                    best_candidate = candidate
 
     if best_candidate is None or best_candidate.net_ev_3gw < _TRANSFER_DELTA_THRESHOLD:
         return TransferAction("keep", None, 0.0 if best_candidate is None else best_candidate.net_ev_3gw)
     return TransferAction("transfer", best_candidate, best_candidate.net_ev_3gw)
 
 
-def _attach_qualitative_note(conn: sqlite3.Connection, squad_ids: list[int], captain_action: CaptainAction) -> CaptainAction:
+def _attach_qualitative_note(
+    conn: sqlite3.Connection, squad_ids: list[int], captain_action: CaptainAction,
+    options: list[CaptainOption] | None = None,
+) -> CaptainAction:
     """Additive-only Decision Fusion wiring (2026-08-22, spec section 27) -
     never changes the KEEP/CHANGE verdict itself (that stays pure quant
     delta, unchanged behavior/tests), only attaches an FYI note when the
@@ -169,7 +196,7 @@ def _attach_qualitative_note(conn: sqlite3.Connection, squad_ids: list[int], cap
     from fpl_agent.models.decision_fusion import compare_captain_views
 
     try:
-        comparison = compare_captain_views(conn, squad_ids)
+        comparison = compare_captain_views(conn, squad_ids, options=options)
     except Exception:
         return captain_action
     if comparison.verdict in ("QUALITATIVE_WINS", "UNDECIDED"):
@@ -192,7 +219,7 @@ def _attach_transfer_qualitative_note(
     from fpl_agent.models.decision_fusion import compare_transfer_views
 
     try:
-        comparison = compare_transfer_views(conn, squad_ids, bank_tenths)
+        comparison = compare_transfer_views(conn, squad_ids, bank_tenths, best_candidate=transfer_action.candidate)
     except Exception:
         return transfer_action
     if comparison.verdict in ("QUALITATIVE_WINS", "UNDECIDED"):
@@ -220,19 +247,45 @@ def _attach_transfer_robustness(conn: sqlite3.Connection, transfer_action: Trans
     return dataclasses.replace(transfer_action, robustness=comparison.verdict)
 
 
-def evaluate_locked_squad(conn: sqlite3.Connection, locked: LockedSquadState) -> SquadDecision:
+def evaluate_locked_squad(conn: sqlite3.Connection, locked: LockedSquadState, ta=None, ca=None) -> SquadDecision:
     """The real, computed-every-regen replacement for a manually-triggered
     `fpl transfers`/`fpl captain` run - the dashboard's AI Decisions panel
     now shows this live instead of only reflecting the last decision the
-    user happened to log by hand."""
-    captain_action = _evaluate_captain(conn, locked)
-    captain_action = _attach_qualitative_note(conn, sorted(locked.squad_ids), captain_action)
-    try:
-        captain_options = evaluate_captaincy(conn, sorted(locked.squad_ids))
-    except Exception:
-        captain_options = []
+    user happened to log by hand.
+
+    `ta`/`ca` (2026-08-27, Part 25 perf pass) - optional, already-computed
+    `optimization.decision_analysis.TransferDecisionAnalysis`/
+    `CaptainDecisionAnalysis`. Real, measured redundancy found live: a
+    single dashboard regen used to run `evaluate_captaincy` up to 3 times
+    and a full-squad `best_transfer_for_player` scan twice INSIDE this one
+    function, then `analyze_transfer_decision`/`analyze_captain_decision`
+    (computed separately by the dashboard for the Primary Decision panel)
+    repeated the identical real scans again from scratch - the single
+    biggest contributor to a ~4-minute dashboard regen. `ta.candidates[0]`/
+    `ca.options[0]` are mathematically the same real top answer this
+    function's own scans would produce (identical candidate pool, identical
+    real net_ev_3gw/median sort key) - reused directly instead of re-derived,
+    collapsing every one of those redundant scans into the single real
+    computation `analyze_transfer_decision`/`analyze_captain_decision`
+    already did. Every existing caller that doesn't pass `ta`/`ca` keeps its
+    exact prior behavior (its own real scans, unchanged)."""
+    # Real correctness note: uses `ca.all_options` (the FULL real ranking),
+    # never the display-truncated `ca.options` (top-N only) - the locked
+    # squad's current captain may genuinely rank below the top N, and
+    # `_evaluate_captain` needs to find them specifically, not assume
+    # they're always near the top.
+    captain_options = list(ca.all_options) if ca is not None and ca.all_options else None
+    captain_action = _evaluate_captain(conn, locked, options=captain_options)
+    if captain_options is None:
+        try:
+            captain_options = evaluate_captaincy(conn, sorted(locked.squad_ids))
+        except Exception:
+            captain_options = []
+    captain_action = _attach_qualitative_note(conn, sorted(locked.squad_ids), captain_action, options=captain_options)
     captain_action = _attach_captain_robustness(conn, captain_action, captain_options, locked.event)
-    transfer_action = _evaluate_transfer(conn, locked)
+
+    best_candidate = ta.candidates[0].candidate if ta is not None and ta.candidates else None
+    transfer_action = _evaluate_transfer(conn, locked, best_candidate=best_candidate)
     transfer_action = _attach_transfer_qualitative_note(conn, sorted(locked.squad_ids), locked.bank_tenths, transfer_action)
     transfer_action = _attach_transfer_robustness(conn, transfer_action, locked.event)
 

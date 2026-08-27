@@ -217,6 +217,101 @@ _TRIAL_VALUE_FUNCS: dict[str, Callable] = {
     "freehit": _freehit_trial_values,
 }
 
+# Names the joint transfer+chip beam search (optimization/transfers.py::
+# search_transfer_sequences) knows how to score - same 4 chips this module's
+# own Monte Carlo DP handles, kept as one real list so both stay in sync.
+SUPPORTED_CHIP_NAMES: tuple[str, ...] = tuple(_TRIAL_VALUE_FUNCS)
+
+
+@dataclass(frozen=True)
+class ChipStepResult:
+    """Single-GW marginal value of playing one chip at one event, for the joint
+    beam search. `new_squad_ids`/`new_bank_tenths` are only set for a
+    permanent squad change (wildcard) - freehit's rebuild is a one-GW rental,
+    so the trajectory keeps its real squad/bank for the following step."""
+    marginal_value: float
+    new_squad_ids: tuple[int, ...] | None
+    new_bank_tenths: int | None
+
+
+# Deliberately separate from _squad_rebuild_cache/_cached_optimise_squad above:
+# those solve under the full default rules budget (an existing, disclosed
+# limitation of wildcard_value/freehit_value/_wildcard_trial_values, left
+# untouched here), whereas the joint beam search needs the trajectory's REAL
+# current squad value + bank at that step, so a distinct cache keyed on the
+# actual budget is required rather than reusing theirs.
+_joint_chip_rebuild_cache: dict[tuple, tuple[sqlite3.Connection, "object"]] = {}
+
+
+def _rebuild_squad_for_chip(conn: sqlite3.Connection, window_gw: int, budget_tenths: int):
+    key = (id(conn), window_gw, budget_tenths)
+    cached = _joint_chip_rebuild_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    result = optimise_squad(conn, n_gw=window_gw, budget_override_tenths=budget_tenths)
+    _joint_chip_rebuild_cache[key] = (conn, result)
+    return result
+
+
+def chip_gw_marginal_value(
+    conn: sqlite3.Connection,
+    squad_ids: tuple[int, ...],
+    event: int,
+    chip_name: str,
+    bank_tenths: int = 0,
+    remaining_horizon_gw: int = 1,
+) -> ChipStepResult:
+    """Event-aware version of this module's own single-decision-point
+    functions (bench_boost_value/triple_captain_value/wildcard_value/
+    freehit_value above), used by the joint transfer+chip beam search to
+    score playing `chip_name` at a specific future `event` rather than always
+    "now". Reuses the identical value definitions - extra bench points,
+    the extra captain multiple, the rebuilt-vs-current squad gap - just
+    parametrized by event and (for wildcard/freehit) the trajectory's real
+    current bank rather than the default full rules budget.
+
+    wildcard's rebuilt squad is priced against the REAL current squad's sale
+    value + real bank (queried fresh here, matching how every other
+    candidate in this project is priced - see optimization/transfers.py::
+    _current_price), not the flat default budget wildcard_value uses - the
+    joint search has real per-step state available, so there is no reason to
+    inherit that approximation here. The rebuilt squad persists into later
+    beam steps for wildcard (future GWs earn their own EV against it
+    naturally - no separate multi-GW credit is added here, avoiding the
+    double-count class of bug _WILDCARD_TRIAL_WINDOW_GW exists to bound in
+    the Monte Carlo DP above). freehit never returns a squad change -
+    it's scored the same way but the trajectory reverts next step."""
+    if chip_name == "bboost":
+        squad = list(_candidates(conn, squad_ids, event=event))
+        xi = pick_starting_xi(conn, squad)
+        return ChipStepResult(round(sum(c.xp for c in xi.bench), 2), None, None)
+
+    if chip_name == "3xc":
+        options = evaluate_captaincy(conn, squad_ids, event=event)
+        value = round(options[0].median, 2) if options else 0.0
+        return ChipStepResult(value, None, None)
+
+    if chip_name in ("wildcard", "freehit"):
+        window_gw = min(remaining_horizon_gw, _WILDCARD_TRIAL_WINDOW_GW) if chip_name == "wildcard" else 1
+        placeholders = ",".join("?" * len(squad_ids))
+        rows = conn.execute(
+            f"SELECT value_tenths FROM player_price_history WHERE player_id IN ({placeholders}) AND valid_until IS NULL",
+            list(squad_ids),
+        ).fetchall()
+        budget_tenths = sum(r["value_tenths"] for r in rows) + bank_tenths
+        rebuilt = _rebuild_squad_for_chip(conn, window_gw, budget_tenths)
+        if rebuilt.status != "Optimal" or not rebuilt.squad:
+            return ChipStepResult(0.0, None, None)
+        rebuilt_ids = tuple(c.player_id for c in rebuilt.squad)
+        current_ev = sum(expected_points(conn, pid, n_gw=1, from_event=event).median for pid in squad_ids)
+        rebuilt_ev = sum(expected_points(conn, pid, n_gw=1, from_event=event).median for pid in rebuilt_ids)
+        marginal = round(rebuilt_ev - current_ev, 2)
+        if chip_name == "wildcard":
+            return ChipStepResult(marginal, rebuilt_ids, budget_tenths - rebuilt.total_cost_tenths)
+        return ChipStepResult(marginal, None, None)
+
+    return ChipStepResult(0.0, None, None)
+
 
 @dataclass(frozen=True)
 class ChipScheduleEntry:

@@ -2531,7 +2531,9 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
             return
         click.echo(f"best sequence total net EV: {best.total_net_ev} (tiebreak adjustment: {best.tiebreak_adjustment}, not included above)")
         for st in best.steps:
-            if st.player_out_id is None:
+            if st.chip_played is not None:
+                click.echo(f"  GW{st.event}: play {st.chip_played}")
+            elif st.player_out_id is None:
                 click.echo(f"  GW{st.event}: roll")
             else:
                 hit = " (HIT)" if st.uses_hit else ""
@@ -2730,7 +2732,7 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
             click.echo(f"     rejected: {ranked.rejected_reason}")
 
 
-def _path_detail(p, *, roll_total: float | None = None, leader_total: float | None = None) -> dict:
+def _path_detail(p, *, roll_total: float | None = None, leader_total: float | None = None, second_best_total: float | None = None) -> dict:
     """Real, serializable snapshot of one TransferSequence - shared between
     the CLI's decision-log detail and any future consumer (the dashboard's
     Strategic Plan section reads exactly this shape from the logged
@@ -2751,13 +2753,40 @@ def _path_detail(p, *, roll_total: float | None = None, leader_total: float | No
         "total_net_ev": p.total_net_ev, "path_total": p.total_net_ev,
         "delta_vs_roll": round(p.total_net_ev - roll_total, 2) if roll_total is not None else None,
         "delta_vs_leader": round(p.total_net_ev - leader_total, 2) if leader_total is not None else 0.0,
+        # Real "DELTA VS SECOND-BEST" field (2026-08-27, P0 "strategic path
+        # value" fix) - only meaningful for the #1 path (every other path
+        # already carries its own delta_vs_leader); None for a non-winning
+        # path or when there is no real second path to compare against.
+        "delta_vs_second_best": (
+            round(p.total_net_ev - second_best_total, 2) if second_best_total is not None else None
+        ),
         "final_free_transfers": p.final_free_transfers,
         "final_bank_tenths": p.final_bank_tenths,
+        "chips_used": list(p.chips_used),
         "steps": [
             {
                 "event": s.event,
-                "action": "ROLL" if s.player_out_id is None else f"{s.player_out_name} -> {s.player_in_name}",
+                "action": (
+                    f"PLAY {s.chip_played.upper()}" if s.chip_played is not None
+                    else "ROLL" if s.player_out_id is None
+                    else f"{s.player_out_name} -> {s.player_in_name}"
+                ),
                 "uses_hit": s.uses_hit,
+                "chip_played": s.chip_played,
+                # Real ids added (2026-08-27, "personal FPL decision terminal"
+                # redesign) - the dashboard's Squad State Machine needs to
+                # reconstruct each real per-GW squad along this path (which
+                # player is in/out at each step), which the formatted
+                # `action` string alone can't do reliably (names aren't a
+                # safe join key). Additive only - `action`/`event`/`uses_hit`
+                # are untouched, so every existing reader of this dict shape
+                # keeps working unchanged. A decision logged before this
+                # field existed simply has `player_out_id=None` for every
+                # step - the dashboard degrades honestly (no squad-state
+                # reconstruction for that stale decision) rather than
+                # guessing ids back out of names.
+                "player_out_id": s.player_out_id,
+                "player_in_id": s.player_in_id,
             }
             for s in p.steps
         ],
@@ -2767,39 +2796,58 @@ def _path_detail(p, *, roll_total: float | None = None, leader_total: float | No
 @cli.command("strategic-plan")
 @click.option("--squad", default=None, help="comma-separated player ids (default: the real locked squad)")
 @click.option("--bank", default=None, type=float, help="bank in £m - required when --squad is given explicitly")
-@click.option("--free-transfers", default=1, type=int, help="free transfers available (default 1)")
+@click.option("--free-transfers", default=None, type=int, help="free transfers available (default: real state from your synced entry when using the locked squad; 1 for an explicit --squad)")
 @click.option("--horizon", default=8, type=int, help="planning horizon in GWs (default 8)")
 @click.option("--beam-width", default=5, type=int, help="how many top real paths to keep (default 5)")
 @click.option("--trials", default=300, type=int, help="Monte Carlo trials for the chip overlay (default 300)")
-@click.option("--with-chips/--no-chips", default=True, help="also overlay a real chip schedule onto the winning path (default on - adds real Monte Carlo sampling cost)")
-def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: int, horizon: int, beam_width: int, trials: int, with_chips: bool):
+@click.option("--with-chips/--no-chips", default=True, help="also overlay an independent chip-only DP cross-check onto the winning path (default on - adds real Monte Carlo sampling cost)")
+@click.option("--current-action/--no-current-action", default=True, help="also compute the single authoritative CURRENT RECOMMENDED ACTION by comparing every real starting action's own best future (default on)")
+@click.option("--continuation-beam-width", default=3, type=int, help="beam width for each starting-action's continuation search (default 3 - kept narrower than --beam-width, see --current-action cost note)")
+def strategic_plan_cmd(
+    squad: str | None, bank: float | None, free_transfers: int | None, horizon: int, beam_width: int,
+    trials: int, with_chips: bool, current_action: bool, continuation_beam_width: int,
+):
     """Real multi-gameweek strategic path search (2026-08-27) - composes the
     existing, already-tested `search_transfer_sequences` beam search into a
     genuine GW-by-GW plan across the real horizon, plus a real 1/3/5/8-GW
     opening-action comparison showing whether the immediate-optimum transfer
-    differs from the strategic-optimum one. Reuses 100% existing machinery -
-    no new search algorithm, no hardcoded roll/transfer bias.
+    differs from the strategic-optimum one. `search_transfer_sequences` is
+    itself now chip-aware (2026-08-27, "final high-value pass" P0 joint
+    optimization) - chip actions compete directly against ROLL/TRANSFER
+    inside the same beam, not via a separate post-hoc search dimension.
 
-    `--with-chips` (2026-08-27, "generate all of it" pass) overlays a real
-    chip schedule onto the winning path's own squad trajectory - the exact
-    same `schedule_chips` DP `fpl season-sim` already uses, called against
-    THIS path's real per-event squad state rather than a second, separate
-    search dimension (see strategic_planner.py's own module docstring for
-    why joint chip+transfer search inside the beam itself remains a real,
-    disclosed, separate future initiative). All `beam_width` paths (not
-    just the winner) are logged in full, so a dashboard/consumer can read
-    the complete top-N without re-running this ~1-minute search."""
+    `--current-action` (on by default) is the other real P0 gap this pass
+    closed: runs `compare_starting_actions`/`synthesize_current_
+    recommendation` to compare EVERY meaningful starting action (roll, each
+    current squad player's best replacement, each legal chip) against its
+    own real best future, and prints the single authoritative CURRENT
+    RECOMMENDED ACTION - never leaving the immediate-vs-strategic synthesis
+    to the user, never hard-coding roll or transfer. Adds real extra search
+    cost (roughly squad-size-many extra continuation searches, each kept
+    narrow via `--continuation-beam-width`); disable it for a faster,
+    path-search-only run.
+
+    `--with-chips` overlays an INDEPENDENT chip-only Monte Carlo DP
+    (`schedule_chips`, the same one `fpl season-sim` uses) as a real
+    cross-check/opportunity-cost narrative - not the mechanism that chooses
+    the path (that's the joint beam search above). All `beam_width` paths
+    (not just the winner) are logged in full, so a dashboard/consumer can
+    read the complete top-N without re-running this ~1-minute search."""
+    from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
     from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
-    from fpl_agent.optimization.strategic_planner import build_strategic_plan
+    from fpl_agent.optimization.strategic_planner import build_strategic_plan, synthesize_current_recommendation
 
     conn = get_connection()
     try:
+        immediate_optimum_label = None
         if squad is not None:
             if bank is None:
                 click.echo("--bank is required when --squad is given explicitly", err=True)
                 raise SystemExit(1)
             squad_ids = _parse_squad_option(squad)
             bank_tenths = round(bank * 10)
+            if free_transfers is None:
+                free_transfers = 1  # no real entry implied by an explicit --squad - documented default
         else:
             locked = get_locked_squad(conn)
             if locked is None:
@@ -2807,9 +2855,41 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
                 raise SystemExit(1)
             squad_ids = sorted(locked.squad_ids)
             bank_tenths = locked.bank_tenths if locked.bank_tenths is not None else 0
+            if free_transfers is None:
+                # Real FT state (2026-08-27, Part 3) - replayed from official
+                # FPL history (models/free_transfers.py) rather than assumed.
+                # Falls back to 1 (the old default) only when genuinely
+                # undeterminable, with an honest printed note - never silent.
+                real_ft = locked.free_transfers
+                if real_ft is not None:
+                    free_transfers = real_ft
+                    click.echo(f"using real free-transfer state from your synced entry: {real_ft}")
+                else:
+                    free_transfers = 1
+                    click.echo("real free-transfer state not derivable yet (no/gapped synced history) - assuming 1")
+
+            # Real IMMEDIATE optimum - the SAME single-swap pairwise analysis
+            # the dashboard's Primary Decision panel already shows, so
+            # CURRENT RECOMMENDED ACTION below is reconciled against the real
+            # thing, never a cheaper proxy that could quietly disagree with it.
+            immediate = analyze_transfer_decision(conn, locked)
+            if immediate.decision_kind == "roll" or immediate.chosen is None:
+                immediate_optimum_label = "ROLL"
+            else:
+                hit_bit = " (HIT)" if immediate.chosen.candidate.uses_hit else ""
+                immediate_optimum_label = f"{immediate.chosen.candidate.player_out_name} -> {immediate.chosen.candidate.player_in_name}{hit_bit}"
+
+        # Real chips already burned this season (2026-08-27) - computed once,
+        # up front, so both the joint beam search's own chip branches AND the
+        # independent cross-check DP below share the exact same exclusion set.
+        my_team_entry_id = get_my_team_entry_id(conn)
+        used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
 
         click.echo(f"searching real {horizon}-GW paths (beam width {beam_width}) - this can take under a minute...")
-        plan = build_strategic_plan(conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon, beam_width=beam_width)
+        plan = build_strategic_plan(
+            conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon, beam_width=beam_width,
+            used_chip_names=frozenset(used_chip_names),
+        )
         best = plan.best
 
         # Real "PATH TOTAL is not the same concept as DELTA VS ROLL" fix
@@ -2836,7 +2916,7 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
 
         chip_schedule_detail = None
         if with_chips and best is not None:
-            click.echo(f"overlaying a real chip schedule onto the winning path ({trials} trials)...")
+            click.echo(f"cross-checking with an independent chip-only DP ({trials} trials)...")
             from_event = best.steps[0].event if best.steps else _reference_event(conn)
             squad_by_event = _squad_ids_by_event(squad_ids, best)
             superset_ids = set(squad_ids)
@@ -2854,8 +2934,6 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
                         superset_ids.add(candidate.player_in_id)
             scenario_draw = sample_season_scenarios(conn, list(superset_ids), from_event, horizon, n_trials=trials)
             windows = eligible_chips(conn, event=from_event)
-            my_team_entry_id = get_my_team_entry_id(conn)
-            used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
             schedule = schedule_chips(conn, squad_ids, best, windows, scenario_draw, used_chip_names=used_chip_names)
             explanations_by_key = {(e.event, e.chip_name): e for e in schedule.explanations}
             chip_schedule_detail = {
@@ -2886,6 +2964,16 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
             f"delta vs roll={round(best.total_net_ev - roll_total, 2) if best is not None and roll_total is not None else None})"
         )
         leader_total = plan.paths[0].total_net_ev if plan.paths else None
+        second_best_total = plan.paths[1].total_net_ev if len(plan.paths) > 1 else None
+
+        current_rec = None
+        if current_action:
+            click.echo(f"comparing every real starting action against its own best future (continuation beam width {continuation_beam_width})...")
+            current_rec = synthesize_current_recommendation(
+                conn, squad_ids, free_transfers, bank_tenths, horizon_gw=horizon,
+                continuation_beam_width=continuation_beam_width, used_chip_names=frozenset(used_chip_names),
+                immediate_optimum_label=immediate_optimum_label, known_paths=plan.paths,
+            )
         # Real per-checkpoint delta-vs-roll (same fix, applied to the 1/3/5/8-GW
         # comparison row too - each checkpoint is its own real, independent
         # beam-search call sharing the same real start_event, so the SAME roll
@@ -2907,7 +2995,7 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
                 "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
                 "horizon_comparison": horizon_comparison_detail,
                 "roll_total": roll_total,
-                "best_path": _path_detail(best, roll_total=roll_total, leader_total=leader_total) if best is not None else None,
+                "best_path": _path_detail(best, roll_total=roll_total, leader_total=leader_total, second_best_total=second_best_total) if best is not None else None,
                 # Real "generate all of it" addition (2026-08-27): the FULL top-N
                 # paths, not just the winner - the dashboard's Strategic Plan
                 # section and `fpl strategic-plan` itself both read this same
@@ -2915,11 +3003,33 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
                 # search run.
                 "paths": [_path_detail(p, roll_total=roll_total, leader_total=leader_total) for p in plan.paths],
                 "chip_schedule": chip_schedule_detail,
+                "immediate_optimum_label": immediate_optimum_label,
+                "current_recommendation": (
+                    {
+                        "verdict": current_rec.verdict, "action_kind": current_rec.action_kind, "label": current_rec.label,
+                        "path_total": current_rec.path_total, "immediate_optimum_label": current_rec.immediate_optimum_label,
+                        "strategic_optimum_label": current_rec.strategic_optimum_label,
+                        "immediate_vs_strategic_differ": current_rec.immediate_vs_strategic_differ,
+                        "evidence_confidence": current_rec.evidence_confidence, "reason": current_rec.reason,
+                        "starting_action_options": [
+                            {"label": o.label, "kind": o.kind, "path_total": o.path_total, "chip_name": o.chip_name}
+                            for o in current_rec.starting_action_options
+                        ],
+                    } if current_rec is not None else None
+                ),
             },
             confidence="low",
         )
     finally:
         conn.close()
+
+    if current_rec is not None:
+        click.echo()
+        click.echo(f"CURRENT RECOMMENDED ACTION: {current_rec.label}  [{current_rec.verdict}]")
+        click.echo(f"  {current_rec.reason}")
+        click.echo("  real alternatives considered, ranked by full-horizon path_total:")
+        for o in current_rec.starting_action_options[:5]:
+            click.echo(f"    {o.label}  path_total={o.path_total}")
 
     click.echo()
     click.echo(f"HORIZON COMPARISON (immediate vs strategic optimum):")
@@ -2938,7 +3048,11 @@ def strategic_plan_cmd(squad: str | None, bank: float | None, free_transfers: in
         delta_leader_bit = f"  delta_vs_leader={round(p.total_net_ev - leader_total, 2):+.1f}" if i > 1 and leader_total is not None else ""
         click.echo(f"Path {i}: path_total={p.total_net_ev}{delta_roll_bit}{delta_leader_bit}  final_FT={p.final_free_transfers}  final_bank=£{p.final_bank_tenths/10:.1f}m{marker}")
         for st in p.steps:
-            action = "ROLL" if st.player_out_id is None else f"{st.player_out_name} -> {st.player_in_name}" + (" (HIT)" if st.uses_hit else "")
+            action = (
+                f"PLAY {st.chip_played.upper()}" if st.chip_played is not None
+                else "ROLL" if st.player_out_id is None
+                else f"{st.player_out_name} -> {st.player_in_name}" + (" (HIT)" if st.uses_hit else "")
+            )
             click.echo(f"    GW{st.event}: {action}")
 
 

@@ -1407,6 +1407,198 @@ def _statistics_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     return "\n".join(lines)
 
 
+# --- Intelligence (2026-08-27, "personal FPL decision terminal" redesign,
+# section 4 of the new product hierarchy) - converts already-ingested raw
+# signals into WHAT CHANGED / WHO BENEFITS / WHO IS AT RISK / WHAT SHOULD I
+# DO DIFFERENTLY, rather than exposing each source as its own disconnected
+# panel. No new ingestion - every function below reads a table this project
+# already populates. ---------------------------------------------------
+
+def _who_benefits_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """WHO BENEFITS - real positive match evidence for squad players
+    (`player_fpl_implications`, written by both the LLM qualitative-analysis
+    skill and the zero-LLM `statistical_evidence.py` detector - see
+    CLAUDE.md's "redesign the missing layer" pass). Most recent
+    POSITIVE-direction row per player; an empty result honestly means no
+    positive signal has been recorded yet, never fabricated."""
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to check for positive signals yet.</div>"
+    rows = conn.execute(
+        "SELECT i.player_id, i.signal, i.reason, i.confidence, p.web_name, t.short_name AS team, "
+        "MAX(i.created_at) AS latest "
+        "FROM player_fpl_implications i JOIN players p ON p.id = i.player_id JOIN teams t ON t.id = p.team_id "
+        "WHERE i.player_id IN ({}) AND i.direction='POSITIVE' "
+        "GROUP BY i.player_id ORDER BY latest DESC LIMIT 8".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not rows:
+        return "<div class='empty-state'>No real positive match signals recorded for your squad yet.</div>"
+    return "\n".join(
+        f"<div class='risk-row'><span class='risk-severity risk-severity-low'>{_esc(r['signal'])}</span>"
+        f"<span class='risk-body'><strong>{_esc(r['web_name'])}</strong> &middot; {_esc(r['team'])} &middot; "
+        f"{_esc(r['reason'] or '')} <span class='panel-subtitle'>({_esc(r['confidence'])} confidence)</span></span></div>"
+        for r in rows
+    )
+
+
+def _do_differently_html(ta, ca) -> str:
+    """WHAT SHOULD I DO DIFFERENTLY - real, disclosed open questions against
+    the Primary Decision above (`ta`/`ca` from `optimization.decision_
+    analysis`), never a second, competing recommendation - just what could
+    change the one already given."""
+    bits = []
+    if ta.decision_kind == "review":
+        bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>Review</span><span class='risk-body'>{_esc(ta.reason)}</span></div>")
+    if ta.information_value_note:
+        bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-low'>Worth waiting?</span><span class='risk-body'>{_esc(ta.information_value_note)}</span></div>")
+    if ca.decision_kind == "review":
+        bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>Review</span><span class='risk-body'>Captain: {_esc(ca.reason)}</span></div>")
+    if not bits:
+        bits.append(
+            "<div class='risk-row'><span class='risk-severity risk-severity-low'>Steady</span>"
+            "<span class='risk-body'>No open questions right now - the primary decision above is well-evidenced.</span></div>"
+        )
+    return "\n".join(bits)
+
+
+def _intelligence_summary_html(conn: sqlite3.Connection, squad_ids: set[int], event: int | None, ta=None, ca=None) -> str:
+    what_changed = (
+        "<div class='activity-group-label'>Squad changes</div><div class='change-list'>" + _squad_changes_html(conn) + "</div>"
+        "<div class='activity-group-label'>Price moves</div><div class='price-list'>" + _price_changes_html(conn) + "</div>"
+    )
+    who_benefits = _who_benefits_html(conn, squad_ids)
+    who_at_risk = _risk_monitor_html(conn, squad_ids, event)
+    do_differently = _do_differently_html(ta, ca) if ta is not None and ca is not None else (
+        "<div class='empty-state'>Lock a squad to see what could change this recommendation.</div>"
+    )
+    return (
+        "<div class='intel-section'><h3>What changed</h3>" + what_changed + "</div>"
+        "<div class='intel-grid-2'>"
+        "<div class='intel-section'><h3>Who benefits</h3>" + who_benefits + "</div>"
+        "<div class='intel-section'><h3>Risk Monitor <span class='panel-subtitle'>who's at risk</span></h3>" + who_at_risk + "</div>"
+        "</div>"
+        "<div class='intel-section'><h3>What should I do differently</h3>" + do_differently + "</div>"
+    )
+
+
+# --- Market (section 5 of the new product hierarchy) - real aggregation,
+# never a raw bookmaker-row dump. "Model vs consensus" reuses this project's
+# own already-computed real numbers on both sides - the live Dixon-Coles/
+# odds-blended fixture-goals model (the exact figure `_fixture_projections_
+# html`'s grid renders) against devigged bookmaker consensus, put on the
+# ONE metric both sides can produce comparably (real expected total goals -
+# `models.blend.market_implied_total_goals` inverts the devigged over/under
+# 2.5 line back into the same units the model itself outputs). Never shown
+# for a fixture with no real live odds row - no fabricated consensus. ------
+
+def _market_divergence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to compare market vs model for yet.</div>"
+    team_rows = conn.execute(
+        "SELECT DISTINCT t.id, t.short_name FROM players p JOIN teams t ON t.id = p.team_id "
+        "WHERE p.id IN ({}) ORDER BY t.short_name".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not team_rows:
+        return "<div class='empty-state'>No squad team data synced yet.</div>"
+
+    from fpl_agent.models.blend import market_implied_total_goals
+    from fpl_agent.models.odds_devig import devig_totals_odds
+
+    goals_cache: dict = {}
+    rows_html = []
+    for r in team_rows:
+        entries = team_fixture_ticker(conn, r["id"], n_gw=1)
+        if not entries:
+            continue
+        e = entries[0]
+        fixture_row = conn.execute("SELECT * FROM fixtures WHERE id=?", (e.fixture_id,)).fetchone()
+        goals_for, goals_against = _cached_fixture_goals_for(conn, fixture_row, r["id"], goals_cache)
+        model_total = goals_for + goals_against
+        odds_row = conn.execute(
+            "SELECT over_2_5_odds, under_2_5_odds FROM fixture_odds_live WHERE fixture_id=? "
+            "AND over_2_5_odds IS NOT NULL AND under_2_5_odds IS NOT NULL LIMIT 1",
+            (e.fixture_id,),
+        ).fetchone()
+        if odds_row is None:
+            rows_html.append(
+                f"<div class='market-row'><span class='market-team'>{_esc(r['short_name'])} vs {_esc(e.opponent_short)}</span>"
+                f"<span class='market-model'>model {model_total:.2f}</span>"
+                f"<span class='market-consensus market-consensus-missing'>no live odds synced</span></div>"
+            )
+            continue
+        try:
+            totals = devig_totals_odds(odds_row["over_2_5_odds"], odds_row["under_2_5_odds"])
+            consensus_total = market_implied_total_goals(totals)
+        except Exception:
+            continue
+        divergence = model_total - consensus_total
+        div_cls = "warn" if abs(divergence) > 0.5 else "ok"
+        rows_html.append(
+            f"<div class='market-row'><span class='market-team'>{_esc(r['short_name'])} vs {_esc(e.opponent_short)}</span>"
+            f"<span class='market-model'>model {model_total:.2f}</span>"
+            f"<span class='market-consensus'>consensus {consensus_total:.2f}</span>"
+            f"<span class='market-divergence market-divergence-{div_cls}'>{divergence:+.2f} divergence</span></div>"
+        )
+    if not rows_html:
+        return "<div class='empty-state'>No upcoming squad fixtures to compare yet.</div>"
+    return (
+        "<div class='panel-subtitle' style='margin-bottom:8px'>Real expected total goals - this project's own "
+        "Dixon-Coles/odds-blended model vs devigged bookmaker consensus, next fixture only</div>"
+        + "\n".join(rows_html)
+    )
+
+
+def _transfer_momentum_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Real net transfers-in-minus-out this event, share of the whole real
+    manager pool (`player_transfer_momentum_history` + `app_meta.
+    total_players`, already synced every regular cycle) - a different real
+    cut of the same underlying data Price Movement uses (that panel asks
+    "is a price CHANGE likely"; this one asks "who is the market actually
+    moving on, regardless of whether it's enough to move price yet")."""
+    if not squad_ids:
+        return "<div class='empty-state'>No squad to check transfer momentum for yet.</div>"
+    total_row = conn.execute("SELECT value FROM app_meta WHERE key='total_players'").fetchone()
+    total_players = int(total_row["value"]) if total_row and total_row["value"] else None
+    rows = conn.execute(
+        "SELECT m.transfers_in_event, m.transfers_out_event, p.web_name, t.short_name AS team "
+        "FROM player_transfer_momentum_history m JOIN players p ON p.id = m.player_id JOIN teams t ON t.id = p.team_id "
+        "WHERE m.player_id IN ({}) AND m.valid_until IS NULL".format(",".join("?" * len(squad_ids))),
+        tuple(squad_ids),
+    ).fetchall()
+    if not rows or not total_players:
+        return "<div class='empty-state'>No real transfer-momentum data synced yet for your squad.</div>"
+    entries = [(r, r["transfers_in_event"] - r["transfers_out_event"]) for r in rows]
+    entries.sort(key=lambda e: -abs(e[1]))
+    lines = []
+    for r, net in entries[:10]:
+        cls = "ok" if net > 0 else ("bad" if net < 0 else "warn")
+        arrow = "&#9650;" if net > 0 else ("&#9660;" if net < 0 else "&#8226;")
+        ratio_pct = net / total_players * 100
+        lines.append(
+            f"<div class='momentum-row'><span class='momentum-name'><strong>{_esc(r['web_name'])}</strong> "
+            f"<span class='fx-teams'>{_esc(r['team'])}</span></span>"
+            f"<span class='momentum-{cls}'>{arrow} {net:+,} net this GW ({ratio_pct:+.2f}% of managers)</span></div>"
+        )
+    return (
+        "<div class='panel-subtitle' style='margin-bottom:8px'>Real net transfers-in minus transfers-out this "
+        "GW, as a share of all real registered managers</div>" + "\n".join(lines)
+    )
+
+
+def _market_summary_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    divergence = _market_divergence_html(conn, squad_ids)
+    momentum = _transfer_momentum_html(conn, squad_ids)
+    price = _price_predictions_html(conn, squad_ids)
+    return (
+        "<div class='market-section'><h3>Model vs consensus</h3>" + divergence + "</div>"
+        "<div class='market-grid-2'>"
+        "<div class='market-section'><h3>Price movement</h3>" + price + "</div>"
+        "<div class='market-section'><h3>Transfer momentum</h3>" + momentum + "</div>"
+        "</div>"
+    )
+
+
 def _news_html(conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6) -> str:
     """Editorial-feed emphasis (2026-08-21, third session, section 14):
     "important news subtle emphasis, normal news quiet - do NOT give every
@@ -1979,51 +2171,155 @@ def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
     )
 
 
+def _normalize_path(p: dict) -> dict:
+    """Real backward-compatibility fix (found live against the real
+    production DB, 2026-08-27) - a real decision logged BEFORE `fpl
+    strategic-plan` started emitting `path_total`/`delta_vs_roll`/
+    `delta_vs_leader` only carries the older `total_net_ev` field. Normalize
+    once here rather than fabricate a roll baseline that was never computed
+    for that older run - `delta_vs_roll`/`delta_vs_leader` stay honestly
+    `None` when genuinely absent, `path_total` always falls back to the real
+    `total_net_ev` value (same number, just the newer, unambiguous name).
+    Module-level (not nested) so every consumer of a logged `strategic_plan`
+    decision (Primary Decision, Strategy Explorer, Squad State Machine)
+    degrades identically, not just one of them."""
+    if "path_total" in p:
+        return p
+    return {**p, "path_total": p.get("total_net_ev"), "delta_vs_roll": p.get("delta_vs_roll"), "delta_vs_leader": p.get("delta_vs_leader", 0.0)}
+
+
+def _normalize_strategic_detail(sd: dict | None) -> dict | None:
+    if sd is None:
+        return None
+    paths = [_normalize_path(p) for p in (sd.get("paths") or [])]
+    best_path = sd.get("best_path")
+    best_path = _normalize_path(best_path) if best_path is not None else (paths[0] if paths else None)
+    return {
+        **sd, "paths": paths, "best_path": best_path,
+        "horizon_comparison": [_normalize_path(c) for c in (sd.get("horizon_comparison") or [])],
+    }
+
+
+def _analyze_locked_decisions(conn: sqlite3.Connection, locked):
+    """One shared, cached-per-call computation of the real transfer/captain
+    counterfactuals - both `_strategic_plan_html` (Primary Decision) and
+    `_strategy_explorer_html`/`_intelligence_summary_html` need the same
+    real `analyze_transfer_decision`/`analyze_captain_decision` result, and
+    each call does a real ~580-player candidate scan - computed once per
+    dashboard regen (see `generate_dashboard_html`), not once per section."""
+    from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+
+    return analyze_transfer_decision(conn, locked), analyze_captain_decision(conn, locked)
+
+
+def _confidence_strip_html(ta) -> str:
+    """Real, disclosed confidence/robustness/expected-advantage row for the
+    primary decision - section 2's own explicit ask ("confidence, expected
+    advantage, robustness"), never previously surfaced as its own compact
+    strip (only buried in prose inside WHY)."""
+    bits = []
+    if ta.expected_advantage_3gw is not None:
+        bits.append(f"<div class='decision-metric'><span>Expected advantage</span><strong>{ta.expected_advantage_3gw:+.1f} xP / 3GW</strong></div>")
+    if ta.decision_confidence:
+        bits.append(f"<div class='decision-metric'><span>Confidence</span><strong>{_esc(ta.decision_confidence)}</strong></div>")
+    if ta.robustness:
+        bits.append(f"<div class='decision-metric'><span>Robustness</span><strong>{_esc(ta.robustness)}</strong></div>")
+    if not bits:
+        return ""
+    return f"<div class='decision-metric-row'>{''.join(bits)}</div>"
+
+
+def _model_football_conflict_html(ta, ca) -> str:
+    """Explicit MODEL vs FOOTBALL VIEW conflict block (2026-08-27, "final
+    product pass" Part 6). `ta.qualitative_note`/`ca.qualitative_note` are
+    already real, rule-based (`models.decision_fusion`) - only ever set on
+    a genuine QUALITATIVE_WINS/UNDECIDED disagreement (a real, persistent
+    2+-match evidence trend beating a single-match blip, or a real recorded
+    user observation), never hard-coded toward a specific player. This just
+    makes the conflict explicit and labeled rather than buried inside a
+    prose WHY line - "conflict: NO" is the equally real, common case."""
+    bits = []
+    if ta.qualitative_note:
+        bits.append(f"<div class='conflict-row'><span class='conflict-label'>TRANSFER</span><span class='conflict-yes'>CONFLICT</span> {_esc(ta.qualitative_note)}</div>")
+    if ca.qualitative_note:
+        bits.append(f"<div class='conflict-row'><span class='conflict-label'>CAPTAIN</span><span class='conflict-yes'>CONFLICT</span> {_esc(ca.qualitative_note)}</div>")
+    if not bits:
+        return "<div class='conflict-row'><span class='conflict-label'>MODEL / FOOTBALL VIEW</span><span class='conflict-no'>NO CONFLICT</span> real football evidence agrees with the model's own projection for this decision.</div>"
+    return "".join(bits)
+
+
+def _alternatives_html(ta, ca) -> str:
+    """Real top-2 ranked alternatives for both the transfer and captain
+    verdict (section 2's own explicit ask) - `TransferOption`/
+    `CaptainOptionRanked` already carry `rank`/`rejected_reason` from
+    `optimization.decision_analysis`, this just renders ranks 2-3 (rank 1 is
+    the chosen/suggested option already shown in the verdict itself)."""
+    rows = []
+    for opt in ta.candidates[1:3]:
+        c = opt.candidate
+        rows.append(
+            "<div class='alt-row'><span class='alt-rank'>#" + str(opt.rank) + "</span>"
+            "<span class='alt-body'>" + _esc(c.player_out_name) + " &rarr; " + _esc(c.player_in_name)
+            + f" ({c.net_ev_3gw:+.1f} xP/3GW)</span>"
+            "<span class='alt-reason'>" + _esc(opt.rejected_reason or "") + "</span></div>"
+        )
+    for opt in ca.options[1:3]:
+        o = opt.option
+        rows.append(
+            "<div class='alt-row'><span class='alt-rank'>#" + str(opt.rank) + "</span>"
+            "<span class='alt-body'>Captain: " + _esc(o.web_name) + f" (median {o.median:.1f})</span>"
+            "<span class='alt-reason'>" + _esc(opt.rejected_reason or "") + "</span></div>"
+        )
+    if not rows:
+        return ""
+    return "<div class='panel-subtitle' style='margin-top:10px'>Top alternatives considered</div><div class='alt-list'>" + "".join(rows) + "</div>"
+
+
 def _strategic_plan_html(
     conn: sqlite3.Connection, locked=None, decision=None, squad_ids: set[int] | None = None,
+    *, ta=None, ca=None,
 ) -> str:
-    """THE authoritative decision surface (rewritten 2026-08-27, "final
-    product-level dashboard" pass - direct user audit: the dashboard could
-    simultaneously show Hero=Haaland, AI Decisions=Haaland->Mbeumo, Next GW
-    Plan=Haaland->Mbeumo (stale), Optimizer Delta=Mbeumo->Haaland (a
-    DIFFERENT question - a from-scratch rebuilt squad's own captain, not a
-    same-squad comparison), Transfer Watch=Tzolis->Tavernier (1GW),
-    Strategic Plan=B.Fernandes->Tavernier (8GW) - five surfaces, no shared
-    source of truth, genuinely contradictory to read. This is now the ONE
-    place captain/transfer/chip recommendations render. AI Decisions/Next GW
-    Plan/Chip Strategy/Optimizer Delta have been removed from the primary
-    panel flow (see generate_dashboard_html's panel_order) - their
-    underlying computations stay real and independently tested, they are
-    just no longer separately surfaced as a second, competing "what should I
-    do" answer.
+    """PRIMARY DECISION - the one authoritative recommendation (rewritten
+    2026-08-27, "personal FPL decision terminal" redesign, section 2 of the
+    new product hierarchy). Answers exactly "what should I do, and why":
+    current state, recommended action, confidence, expected advantage,
+    robustness, top-2 alternatives, why. The multi-GW path search/timeline
+    (section 3, "what does this do to my squad over time") now lives in the
+    separate `_strategy_explorer_html` - kept apart so this panel stays a
+    single, compact, dominant verdict rather than growing back into a
+    five-things-at-once wall, per the direct product-architecture request
+    that started this pass ("NO other section should contradict this").
 
     Captain/transfer verdicts come from `optimization.decision_analysis`'s
-    `analyze_transfer_decision`/`analyze_captain_decision` - the same real
-    `_evaluate_transfer`/`_evaluate_captain` core `evaluate_locked_squad`
-    already used for `decision`, with the richer ranked-alternatives/
-    evidence-confidence/robustness/value-of-information layer this
-    dashboard never surfaced before. Computed live, every regen - never
-    stale like the old daemon-only Next GW Plan snapshot."""
+    `analyze_transfer_decision`/`analyze_captain_decision` (`ta`/`ca` -
+    passed in by `generate_dashboard_html` once per regen via
+    `_analyze_locked_decisions` so Strategy Explorer/Intelligence don't
+    re-run the same real ~580-player candidate scan; computed locally here
+    when called standalone, e.g. from a test)."""
     if locked is None:
         return "<div class='empty-state'>No real locked squad - lock a squad (`fpl my-team` or `fpl build-team --must-include ...`) to see the strategic plan.</div>"
 
-    from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
-
-    ta = analyze_transfer_decision(conn, locked)
-    ca = analyze_captain_decision(conn, locked)
+    if ta is None or ca is None:
+        computed_ta, computed_ca = _analyze_locked_decisions(conn, locked)
+        ta = ta if ta is not None else computed_ta
+        ca = ca if ca is not None else computed_ca
 
     # --- CURRENT LOCKED STATE - real, current-state facts, never a
     # recommendation - every other row below is judged AGAINST this. ------
     cap_name = locked.xi.captain.web_name if locked.xi.captain else "n/a"
     bank_bit = f"£{locked.bank_tenths / 10:.1f}m" if locked.bank_tenths is not None else "unknown"
+    real_ft = getattr(locked, "free_transfers", None)
+    ft_bit = (
+        f"FT {real_ft}" if real_ft is not None else
+        "<span title='Not derivable yet - no real synced squad history exists for this entry (pre-sync, or a gap in synced history). Assumed 1 below.'>FT not tracked (assumed 1 below)</span>"
+    )
     current_html = (
         f"<div class='strategic-current'><strong>CURRENT LOCKED STATE</strong> &middot; "
-        f"captain {_captain_html(cap_name)} &middot; bank {bank_bit} &middot; "
-        f"<span title='This project does not track real free-transfer count from any synced source - a real, disclosed gap, not a fabricated number.'>FT not tracked (assumed 1 below)</span></div>"
+        f"captain {_captain_html(cap_name)} &middot; bank {bank_bit} &middot; {ft_bit}</div>"
     )
 
     strategic = latest_decision_of_type(conn, "strategic_plan")
-    sd = strategic.detail if strategic is not None else None
+    sd = _normalize_strategic_detail(strategic.detail if strategic is not None else None)
 
     # --- IMMEDIATE OPTIMUM (live, from decision_analysis) -----------------
     immediate_action = "ROLL"
@@ -2034,26 +2330,7 @@ def _strategic_plan_html(
 
     # --- STRATEGIC OPTIMUM (from the last logged `fpl strategic-plan` run) -
     horizon_gw = sd.get("horizon_gw", "?") if sd else "?"
-    paths = (sd.get("paths") or []) if sd else []
-    best_path = (sd.get("best_path") or (paths[0] if paths else None)) if sd else None
-
-    # Real backward-compatibility fix (found live against the real
-    # production DB, 2026-08-27) - a real decision logged BEFORE this pass
-    # added `path_total`/`delta_vs_roll`/`delta_vs_leader` only carries the
-    # older `total_net_ev` field. Normalize once here rather than fabricate
-    # a roll baseline that was never computed for that older run -
-    # `delta_vs_roll`/`delta_vs_leader` stay honestly `None` when genuinely
-    # absent, `path_total` always falls back to the real `total_net_ev`
-    # value (same number, just the newer, unambiguous name).
-    def _normalize_path(p: dict) -> dict:
-        if "path_total" in p:
-            return p
-        return {**p, "path_total": p.get("total_net_ev"), "delta_vs_roll": p.get("delta_vs_roll"), "delta_vs_leader": p.get("delta_vs_leader", 0.0)}
-
-    paths = [_normalize_path(p) for p in paths]
-    best_path = _normalize_path(best_path) if best_path is not None else None
-    if sd is not None:
-        sd = {**sd, "horizon_comparison": [_normalize_path(c) for c in (sd.get("horizon_comparison") or [])]}
+    best_path = sd.get("best_path") if sd else None
 
     strategic_action = "?"
     if best_path and best_path.get("steps"):
@@ -2061,16 +2338,40 @@ def _strategic_plan_html(
     elif sd is not None:
         strategic_action = "ROLL"
 
-    # Real primary verdict - the strategic optimum's own opening action
-    # when a real strategic plan exists (it sees further ahead and is the
-    # one this whole section exists to promote); falls back to the live
-    # immediate verdict when no strategic plan has ever been run.
-    primary_action = strategic_action if sd is not None and strategic_action != "?" else immediate_action
-    primary_verdict = "ROLL" if primary_action == "ROLL" else ("REVIEW" if primary_action in ("?", "REVIEW") else "TRANSFER")
-    verdict_cls = {"ROLL": "low", "TRANSFER": "monitor", "REVIEW": "action"}.get(primary_verdict, "action")
+    # --- CURRENT RECOMMENDED ACTION (2026-08-27, "final high-value pass" P0
+    # decision hierarchy) - when the last `fpl strategic-plan` run computed
+    # one (`--current-action`, on by default), it is THE single authoritative
+    # answer: every meaningful real starting action's own best future was
+    # already compared (`compare_starting_actions`/`synthesize_current_
+    # recommendation`), so this never needs to re-derive or second-guess it
+    # from `best_path` alone. Falls back to the older best_path-derived
+    # primary_action only for a decision logged before this field existed,
+    # or a `--no-current-action` run - degrades honestly, never fabricates.
+    current_rec = sd.get("current_recommendation") if sd else None
+
+    if current_rec is not None:
+        primary_action = current_rec["label"]
+        if current_rec["verdict"] == "REVIEW":
+            primary_verdict = "REVIEW"
+        elif current_rec["action_kind"] == "roll":
+            primary_verdict = "ROLL"
+        elif current_rec["action_kind"] == "chip":
+            primary_verdict = "CHIP"
+        else:
+            primary_verdict = "TRANSFER"
+    else:
+        # Real primary verdict - the strategic optimum's own opening action
+        # when a real strategic plan exists (it sees further ahead and is the
+        # one this whole section exists to promote); falls back to the live
+        # immediate verdict when no strategic plan has ever been run.
+        primary_action = strategic_action if sd is not None and strategic_action != "?" else immediate_action
+        primary_verdict = "ROLL" if primary_action == "ROLL" else ("REVIEW" if primary_action in ("?", "REVIEW") else "TRANSFER")
+    verdict_cls = {"ROLL": "low", "TRANSFER": "monitor", "CHIP": "monitor", "REVIEW": "action"}.get(primary_verdict, "action")
 
     ev_suffix = ""
-    if best_path is not None and best_path.get("path_total") is not None:
+    if current_rec is not None:
+        ev_suffix = f" &mdash; real path total {current_rec['path_total']:+.1f} pts over {horizon_gw} GWs (best of every real starting action considered)"
+    elif best_path is not None and best_path.get("path_total") is not None:
         ev_suffix = f" &mdash; real path total {best_path['path_total']:+.1f} pts over {horizon_gw} GWs"
         if best_path.get("delta_vs_roll") is not None:
             ev_suffix += f" ({best_path['delta_vs_roll']:+.1f} vs rolling every GW)"
@@ -2080,42 +2381,19 @@ def _strategic_plan_html(
         f"<span class='strategic-primary-body'>{_esc(primary_action)}{ev_suffix}</span>"
         f"</div>"
     )
-
-    # --- IMMEDIATE vs STRATEGIC, explicitly labeled, explicit reconciliation
-    differ = immediate_action != strategic_action and strategic_action not in ("?", None)
-    reconcile_html = ""
-    if sd is not None:
-        if differ:
-            reconcile_html = (
-                f"<div class='strategic-note strategic-note-differ'>IMMEDIATE OPTIMUM ({_esc(immediate_action)}) differs "
-                f"from STRATEGIC OPTIMUM ({_esc(strategic_action)}) - the multi-GW path search sees further ahead and found "
-                f"a different opening move once it can see the whole horizon. {_esc(sd.get('note', ''))}</div>"
-            )
-        else:
-            reconcile_html = "<div class='strategic-note strategic-note-agree'>Immediate and strategic optimum agree.</div>"
-    two_col_html = (
-        f"<div class='strategic-twocol'>"
-        f"<div class='strategic-col'><div class='strategic-col-label'>IMMEDIATE OPTIMUM (1 GW)</div>"
-        f"<div class='strategic-col-value'>{_esc(immediate_action)}</div></div>"
-        f"<div class='strategic-col'><div class='strategic-col-label'>STRATEGIC OPTIMUM ({_esc(str(horizon_gw))} GW)</div>"
-        f"<div class='strategic-col-value'>{_esc(strategic_action)}</div></div>"
-        f"</div>{reconcile_html}"
-    )
-
-    horizon_row_parts = []
-    for c in ((sd.get("horizon_comparison") or []) if sd else []):
-        row_cls = "strategic-horizon-current" if c["horizon_gw"] == horizon_gw else ""
-        roll_bit = f"{c['delta_vs_roll']:+.1f}" if c.get("delta_vs_roll") is not None else "n/a"
-        horizon_row_parts.append(
-            f"<tr class='{row_cls}'><td>{c['horizon_gw']}GW</td><td>{_esc(c['opening_action'])}</td>"
-            f"<td>{c['path_total']:+.1f}</td><td>{roll_bit}</td></tr>"
+    current_rec_alternatives_html = ""
+    if current_rec is not None and current_rec.get("starting_action_options"):
+        rows = "".join(
+            f"<li>{_esc(o['label'])} &middot; path_total={o['path_total']:+.1f}</li>"
+            for o in current_rec["starting_action_options"][:5]
         )
-    horizon_html = ""
-    if horizon_row_parts:
-        horizon_html = (
-            f"<table class='strategic-horizon-table'><thead><tr><th>Horizon</th><th>Opening action</th>"
-            f"<th>Path total</th><th>Delta vs roll</th></tr></thead><tbody>{''.join(horizon_row_parts)}</tbody></table>"
+        current_rec_alternatives_html = (
+            f"<div class='strategic-subrow'><strong>REAL ALTERNATIVES CONSIDERED</strong> (ranked by full-horizon path_total)"
+            f"<ul class='strategic-alt-list'>{rows}</ul></div>"
         )
+
+    confidence_strip_html = _confidence_strip_html(ta)
+    alternatives_html = _alternatives_html(ta, ca)
 
     # --- CAPTAIN recommendation (real, live, from analyze_captain_decision) -
     # Same `decision-action` badge class the old AI Decisions panel's
@@ -2140,10 +2418,30 @@ def _strategic_plan_html(
     else:
         captain_html = ""
 
+    # --- CHIP headline (nearest window only - the full timeline lives in
+    # Strategy Explorer below, this is just "is a chip part of the primary
+    # decision right now"). Cheap reads only, same bar chip_strategy_html
+    # already established (>2.0 xP before claiming an action). -----------
+    chip_headline_html = ""
+    try:
+        squad_list = sorted(squad_ids or locked.squad_ids)
+        cheap_values = {"bboost": bench_boost_value, "3xc": triple_captain_value}
+        for w in eligible_chips(conn):
+            if not w.eligible_now or w.name not in cheap_values:
+                continue
+            value = cheap_values[w.name](conn, squad_list)
+            if value > 2.0:
+                chip_headline_html = f"<div class='strategic-subrow'><strong>CHIP</strong> <span class=\"decision-action\">CONSIDER</span> {_esc(w.name.upper())} &middot; median +{value:.1f} xP right now</div>"
+                break
+    except Exception:
+        chip_headline_html = ""
+
     # --- CONFIDENCE / WHY / WHAT COULD CHANGE IT (real, from decision_analysis,
     # never fabricated - a real REVIEW-gated decision states its own reason
     # instead of a confident-sounding verdict the underlying data can't support). -
     why_bits = []
+    if current_rec is not None:
+        why_bits.append(_esc(current_rec["reason"]))
     if ta.decision_kind == "transfer" and ta.chosen is not None:
         why_bits.append(f"real net advantage vs roll: {ta.expected_advantage_3gw:+.1f} xP over 3 GW" if ta.expected_advantage_3gw is not None else "")
     if ta.reason:
@@ -2164,28 +2462,139 @@ def _strategic_plan_html(
         + f"<div class='strategic-subrow-muted'>{_esc(ta.future_ft_note)}</div>"
     )
 
-    chip_schedule = sd.get("chip_schedule") if sd else None
+    age_bit = f" &middot; multi-GW search last run {_esc(_relative_time(strategic.created_at))}" if strategic is not None else " &middot; no multi-GW search has been run yet - run <code>fpl strategic-plan</code>"
+    freshness_html = f"<div class='freshness-tag' style='margin-bottom:8px'>Live decision as of now{age_bit}</div>"
+
+    conflict_html = _model_football_conflict_html(ta, ca)
+
+    return (
+        f"{freshness_html}{current_html}{primary_html}{confidence_strip_html}{alternatives_html}"
+        f"{captain_html}{chip_headline_html}{conflict_html}{why_html}{current_rec_alternatives_html}"
+    )
+
+
+def _strategy_explorer_html(conn: sqlite3.Connection, locked=None, squad_ids: set[int] | None = None, *, ta=None) -> str:
+    """STRATEGY EXPLORER (section 3 of the new product hierarchy) - the main
+    product, per the direct spec: a real, selectable multi-GW planner, not
+    five static cards. Real interactivity (vanilla JS, no new dependency,
+    same "nothing breaks without JS" posture this dashboard already uses for
+    kickoff-time conversion): clicking a path tab shows that path's own
+    timeline; clicking a GW step within it updates the Squad State Machine's
+    preview (`_squad_state_machine_html`, rendered as a separate section -
+    the two share one DOM-wide click contract via `data-path`/`data-event`
+    attributes, wired by one shared script in `generate_dashboard_html`).
+    Every path/step stays present in the raw HTML regardless of which is
+    visually active (`hidden` attribute, not removed) - progressive
+    enhancement, and exactly why every pre-existing test asserting on "Path
+    1"/"Path 2"/chip-badge text etc keeps passing against this output."""
+    if locked is None:
+        return "<div class='empty-state'>No real locked squad - lock a squad to explore multi-GW strategies.</div>"
+
+    if ta is None:
+        from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
+
+        ta = analyze_transfer_decision(conn, locked)
+
+    immediate_action = "ROLL"
+    if ta.decision_kind == "transfer" and ta.chosen is not None:
+        immediate_action = f"{ta.chosen.candidate.player_out_name} -> {ta.chosen.candidate.player_in_name}"
+    elif ta.decision_kind == "review":
+        immediate_action = "REVIEW"
+
+    strategic = latest_decision_of_type(conn, "strategic_plan")
+    sd = _normalize_strategic_detail(strategic.detail if strategic is not None else None)
+
+    age_bit = f" &middot; multi-GW search last run {_esc(_relative_time(strategic.created_at))}" if strategic is not None else " &middot; no multi-GW search has been run yet - run <code>fpl strategic-plan</code>"
+    freshness_html = f"<div class='freshness-tag' style='margin-bottom:8px'>{age_bit}</div>"
+    if sd is None:
+        return freshness_html + "<div class='empty-state'>Run <code>fpl strategic-plan</code> to see the real multi-GW path search and per-GW squad timeline.</div>"
+
+    horizon_gw = sd.get("horizon_gw", "?")
+    best_path = sd.get("best_path")
+    strategic_action = best_path["steps"][0].get("action", "?") if best_path and best_path.get("steps") else "ROLL"
+
+    differ = immediate_action != strategic_action and strategic_action not in ("?", None)
+    if differ:
+        reconcile_html = (
+            f"<div class='strategic-note strategic-note-differ'>IMMEDIATE OPTIMUM ({_esc(immediate_action)}) differs "
+            f"from STRATEGIC OPTIMUM ({_esc(strategic_action)}) - the multi-GW path search sees further ahead and found "
+            f"a different opening move once it can see the whole horizon. {_esc(sd.get('note', ''))}</div>"
+        )
+    else:
+        reconcile_html = "<div class='strategic-note strategic-note-agree'>Immediate and strategic optimum agree.</div>"
+    two_col_html = (
+        f"<div class='strategic-twocol'>"
+        f"<div class='strategic-col'><div class='strategic-col-label'>IMMEDIATE OPTIMUM (1 GW)</div>"
+        f"<div class='strategic-col-value'>{_esc(immediate_action)}</div></div>"
+        f"<div class='strategic-col'><div class='strategic-col-label'>STRATEGIC OPTIMUM ({_esc(str(horizon_gw))} GW)</div>"
+        f"<div class='strategic-col-value'>{_esc(strategic_action)}</div></div>"
+        f"</div>{reconcile_html}"
+    )
+
+    horizon_row_parts = []
+    for c in (sd.get("horizon_comparison") or []):
+        row_cls = "strategic-horizon-current" if c["horizon_gw"] == horizon_gw else ""
+        roll_bit = f"{c['delta_vs_roll']:+.1f}" if c.get("delta_vs_roll") is not None else "n/a"
+        horizon_row_parts.append(
+            f"<tr class='{row_cls}'><td>{c['horizon_gw']}GW</td><td>{_esc(c['opening_action'])}</td>"
+            f"<td>{c['path_total']:+.1f}</td><td>{roll_bit}</td></tr>"
+        )
+    horizon_html = ""
+    if horizon_row_parts:
+        horizon_html = (
+            f"<table class='strategic-horizon-table'><thead><tr><th>Horizon</th><th>Opening action</th>"
+            f"<th>Path total</th><th>Delta vs roll</th></tr></thead><tbody>{''.join(horizon_row_parts)}</tbody></table>"
+        )
+
+    paths = sd.get("paths") or []
+    chip_schedule = sd.get("chip_schedule")
     chip_by_event: dict[int, list[dict]] = {}
     for entry in (chip_schedule.get("entries") if chip_schedule else []) or []:
         chip_by_event.setdefault(entry["event"], []).append(entry)
 
-    path_cards = []
     leader_total = paths[0].get("path_total") if paths else None
+    # Real path-diversity honesty (P0 audit + Part 12 of the "final product
+    # pass" spec: "do not show Path 1 as BEST if the difference is noise" -
+    # computed BEFORE the tab/card loop so the "BEST" vs "TOP TIER" label
+    # itself reflects it, not just a separate note underneath). Groups every
+    # path within 5% of the real leader's path_total as statistically
+    # indistinguishable - names the real group size, never a fabricated
+    # confidence figure.
+    tied: list[int] = []
+    if len(paths) >= 2 and leader_total:
+        tied = [i for i, p in enumerate(paths, 1) if p.get("path_total") is not None and abs(p["path_total"] - leader_total) / abs(leader_total) < 0.05]
+    is_tied_group = len(tied) >= 2
+
+    tab_buttons = []
+    path_cards = []
     for i, p in enumerate(paths, 1):
-        marker = " strategic-path-best" if i == 1 else ""
+        is_first = i == 1
+        in_tied_group = is_tied_group and i in tied
+        rank_label = "TOP TIER" if in_tied_group else ("BEST" if is_first else "")
+        tab_cls = "path-tab-btn is-active" if is_first else "path-tab-btn"
+        tab_label = "Path " + str(i) + (" &middot; " + rank_label if rank_label else "")
+        tab_buttons.append("<button type='button' class='" + tab_cls + "' data-path='" + str(i) + "'>" + tab_label + "</button>")
+
+        card_marker_cls = " strategic-path-best" if (is_first or in_tied_group) else ""
+        card_cls = "strategic-path-card" + card_marker_cls
+        card_hidden = "" if is_first else " hidden"
         steps = p.get("steps") or []
         step_parts = []
-        for s in steps:
-            has_chip = i == 1 and s["event"] in chip_by_event
-            step_cls = " strategic-path-step-chip" if has_chip else ""
+        for j, s in enumerate(steps):
+            event = s["event"]
+            step_cls = "strategic-path-step path-step-btn"
+            if i == 1 and event in chip_by_event:
+                step_cls += " strategic-path-step-chip"
+            if is_first and j == 0:
+                step_cls += " is-active"
             hit_suffix = " (HIT)" if s.get("uses_hit") else ""
-            badges = ""
-            if i == 1:
-                badges = "".join(f"<span class='chip-badge'>{_esc(c['chip_name'].upper())}</span>" for c in chip_by_event.get(s["event"], []))
+            badges = "".join(
+                "<span class='chip-badge'>" + _esc(c["chip_name"].upper()) + "</span>" for c in chip_by_event.get(event, [])
+            ) if i == 1 else ""
             step_parts.append(
-                f"<div class='strategic-path-step{step_cls}'>"
-                f"<span class='strategic-path-gw'>GW{s['event']}</span>"
-                f"<span class='strategic-path-action'>{_esc(s['action'])}{hit_suffix}</span>{badges}</div>"
+                "<button type='button' class='" + step_cls + "' data-path='" + str(i) + "' data-event='" + str(event) + "'>"
+                "<span class='strategic-path-gw'>GW" + str(event) + "</span>"
+                "<span class='strategic-path-action'>" + _esc(s["action"]) + hit_suffix + "</span>" + badges + "</button>"
             )
         step_html = "".join(step_parts)
         delta_leader_bit = ""
@@ -2193,27 +2602,20 @@ def _strategic_plan_html(
             delta_leader_bit = f" &middot; {p['path_total'] - leader_total:+.1f} vs leader"
         delta_roll_bit = f" &middot; {p['delta_vs_roll']:+.1f} vs roll" if p.get("delta_vs_roll") is not None else ""
         path_cards.append(
-            f"<div class='strategic-path-card{marker}'>"
-            f"<div class='strategic-path-header'><strong>Path {i}</strong>{' &middot; BEST' if i == 1 else ''} "
+            "<div class='" + card_cls + "' data-path='" + str(i) + "'" + card_hidden + ">"
+            + f"<div class='strategic-path-header'><strong>Path {i}</strong>{' &middot; ' + rank_label if rank_label else ''} "
             f"&middot; {p['path_total']:+.1f} pts{delta_roll_bit}{delta_leader_bit} &middot; final FT {p.get('final_free_transfers', '?')} "
             f"&middot; bank £{p.get('final_bank_tenths', 0) / 10:.1f}m</div>"
             f"<div class='strategic-path-timeline'>{step_html}</div>"
-            f"</div>"
+            "</div>"
         )
-    # Real path-diversity honesty (P0 audit: "do not visually crown Path 1
-    # as uniquely best when it is not"). Groups every path within 5% of the
-    # real leader's path_total as statistically indistinguishable, not just
-    # a pairwise Path-1-vs-Path-2 check - names the real group size rather
-    # than a fabricated confidence figure.
     stability_note = ""
-    if len(paths) >= 2 and leader_total:
-        tied = [i for i, p in enumerate(paths, 1) if p.get("path_total") is not None and abs(p["path_total"] - leader_total) / abs(leader_total) < 0.05]
-        if len(tied) >= 2:
-            stability_note = (
-                f"<div class='strategic-note strategic-note-differ'>Paths {tied[0]}-{tied[-1]} are statistically "
-                f"indistinguishable (within 5% of each other's real path total) - not a uniquely optimal pick, "
-                f"treat all {len(tied)} as live candidates.</div>"
-            )
+    if is_tied_group:
+        stability_note = (
+            f"<div class='strategic-note strategic-note-differ'>These strategies are statistically equivalent - "
+            f"Paths {tied[0]}-{tied[-1]} are within 5% of each other's real path total, not a uniquely optimal "
+            f"pick. Treat all {len(tied)} as live candidates.</div>"
+        )
 
     chip_html = ""
     if chip_schedule is not None:
@@ -2240,20 +2642,153 @@ def _strategic_plan_html(
                 f"before GW{rec['event']} {_esc(rec['chip_name'])} ({rec['delta']:+.1f} over baseline)</span></div>"
             )
 
-    age_bit = f" &middot; multi-GW search last run {_esc(_relative_time(strategic.created_at))}" if strategic is not None else " &middot; no multi-GW search has been run yet - run <code>fpl strategic-plan</code>"
-    freshness_html = f"<div class='freshness-tag' style='margin-bottom:8px'>Live decision as of now{age_bit}</div>"
-
     paths_html = ""
     if paths:
         paths_html = (
-            f"<div class='panel-subtitle' style='margin-top:14px'>Top {len(paths)} real paths</div>"
+            f"<div class='panel-subtitle' style='margin-top:14px'>Top {len(paths)} real paths - select one to update the timeline and squad preview below</div>"
+            f"<div class='path-tabs'>{''.join(tab_buttons)}</div>"
             f"<div class='strategic-path-grid'>{''.join(path_cards)}</div>"
         )
 
-    return (
-        f"{freshness_html}{current_html}{primary_html}{two_col_html}{horizon_html}"
-        f"{captain_html}{why_html}{stability_note}{paths_html}{chip_html}"
+    return f"{freshness_html}{two_col_html}{horizon_html}{stability_note}{paths_html}{chip_html}"
+
+
+def _squad_state_by_event(initial_squad_ids: set[int], steps: list[dict]) -> dict[int, set[int]]:
+    """Reconstructs the real per-GW squad along one strategic path from the
+    step dicts `fpl strategic-plan` logs (`cli/main.py::_path_detail`) -
+    each step's `player_out_id`/`player_in_id` (added 2026-08-27 specifically
+    for the Squad State Machine) says exactly who left/joined at that event.
+    A step missing either id (a real ROLL step, or a decision logged before
+    these ids existed) changes nothing - the squad carries over unchanged to
+    that event, never a guess. Pure, real, additive reconstruction - no new
+    search, no new query, just replaying already-computed transfer ids."""
+    current = set(initial_squad_ids)
+    by_event: dict[int, set[int]] = {}
+    for step in steps:
+        out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+        if out_id is not None and in_id is not None and out_id in current:
+            current = (current - {out_id}) | {in_id}
+        by_event[step["event"]] = set(current)
+    return by_event
+
+
+def _bulk_player_lookup(conn: sqlite3.Connection, player_ids: set[int]) -> dict[int, dict]:
+    if not player_ids:
+        return {}
+    rows = conn.execute(
+        "SELECT p.id, p.web_name, t.short_name AS team_short, et.singular_name_short AS position, "
+        "cur.value_tenths AS price_tenths "
+        "FROM players p JOIN teams t ON t.id = p.team_id JOIN element_types et ON et.id = p.element_type "
+        "LEFT JOIN player_price_history cur ON cur.player_id = p.id AND cur.valid_until IS NULL "
+        "WHERE p.id IN ({})".format(",".join("?" * len(player_ids))),
+        tuple(player_ids),
+    ).fetchall()
+    return {r["id"]: dict(r) for r in rows}
+
+
+def _squad_state_block_body_html(lookup: dict[int, dict], squad_ids: set[int], step: dict, chip_by_event: dict[int, list[dict]]) -> str:
+    event = step["event"]
+    out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+    if out_id is not None and in_id is not None:
+        out_p, in_p = lookup.get(out_id), lookup.get(in_id)
+        out_name = out_p["web_name"] if out_p else step.get("action", "?").split(" -> ")[0]
+        in_name = in_p["web_name"] if in_p else step.get("action", "?").split(" -> ")[-1]
+        hit_bit = " (HIT)" if step.get("uses_hit") else ""
+        transfer_line = (
+            "<div class='squad-state-transfer'><span class='squad-state-out'>OUT " + _esc(out_name) + "</span> "
+            "<span class='squad-state-in'>IN " + _esc(in_name) + "</span>" + hit_bit + "</div>"
+        )
+    else:
+        transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
+    chip_line = "".join("<span class='chip-badge'>" + _esc(c["chip_name"].upper()) + "</span>" for c in chip_by_event.get(event, []))
+
+    by_pos: dict[str, list[dict]] = {}
+    for pid in squad_ids:
+        p = lookup.get(pid)
+        if p is None:
+            continue
+        by_pos.setdefault(p["position"], []).append(p)
+    pos_rows = []
+    for pos in _POSITION_ORDER:
+        players = sorted(by_pos.get(pos, []), key=lambda p: p["web_name"])
+        if not players:
+            continue
+        cards = "".join(
+            "<span class='squad-state-player" + (" squad-state-player-in" if p["id"] == in_id else "") + "'>"
+            + _esc(p["web_name"]) + " <span class='fx-teams'>" + _esc(p["team_short"]) + "</span></span>"
+            for p in players
+        )
+        pos_rows.append("<div class='squad-state-pos-row'><span class='squad-state-pos-label'>" + pos + "</span>" + cards + "</div>")
+    return transfer_line + chip_line + "<div class='squad-state-players'>" + "".join(pos_rows) + "</div>"
+
+
+def _squad_state_machine_html(conn: sqlite3.Connection, locked=None) -> str:
+    """SQUAD STATE MACHINE (section 3's own "what does this do to my squad"
+    requirement) - the squad is the visualization of the selected strategic
+    path, not a static panel. `_squad_state_machine_html` renders only the
+    toggleable FUTURE-GW previews (one per real path/event combination,
+    hidden by default except the first path's first step); the CURRENT
+    squad keeps its own existing, unchanged full pitch render elsewhere on
+    the page (`squad_section_html` in `generate_dashboard_html`) - reusing
+    that real, already-tested renderer rather than duplicating it here.
+    Clicking a GW step inside Strategy Explorer's timeline (`.path-step-btn`)
+    shows the matching block here via one shared script - see
+    `generate_dashboard_html`'s own JS block for the click contract.
+    Captain/vice are never reassigned by the path search (`transfers.py`
+    only ever swaps one squad member for another) - deliberately not shown
+    per-GW here rather than fabricating a future captain pick the model
+    never actually made."""
+    if locked is None:
+        return "<div class='empty-state'>No real locked squad - lock a squad to see how it evolves under your strategic plan.</div>"
+
+    strategic = latest_decision_of_type(conn, "strategic_plan")
+    sd = _normalize_strategic_detail(strategic.detail if strategic is not None else None)
+    if sd is None or not sd.get("paths"):
+        return "<div class='empty-state'>Run <code>fpl strategic-plan</code> to see how your squad evolves along the recommended multi-GW path.</div>"
+
+    paths = sd["paths"]
+    chip_schedule = sd.get("chip_schedule")
+    chip_by_event: dict[int, list[dict]] = {}
+    for entry in (chip_schedule.get("entries") if chip_schedule else []) or []:
+        chip_by_event.setdefault(entry["event"], []).append(entry)
+
+    all_ids: set[int] = set(locked.squad_ids)
+    per_path_squads: list[dict[int, set[int]]] = []
+    any_reconstructable = False
+    for p in paths:
+        steps = p.get("steps") or []
+        by_event = _squad_state_by_event(set(locked.squad_ids), steps)
+        per_path_squads.append(by_event)
+        for ids in by_event.values():
+            all_ids |= ids
+        if any(s.get("player_out_id") is not None for s in steps):
+            any_reconstructable = True
+    lookup = _bulk_player_lookup(conn, all_ids)
+
+    blocks = []
+    for i, (p, by_event) in enumerate(zip(paths, per_path_squads), start=1):
+        steps = p.get("steps") or []
+        for j, step in enumerate(steps):
+            event = step["event"]
+            is_default = i == 1 and j == 0
+            block_cls = "squad-state-block is-active" if is_default else "squad-state-block"
+            hidden_attr = "" if is_default else " hidden"
+            squad_here = by_event.get(event, set(locked.squad_ids))
+            body = _squad_state_block_body_html(lookup, squad_here, step, chip_by_event)
+            blocks.append(
+                "<div class='" + block_cls + "' data-path='" + str(i) + "' data-event='" + str(event) + "'" + hidden_attr + ">"
+                + body + "</div>"
+            )
+
+    hint = (
+        "<div class='squad-state-hint'>Select a path above in Strategy Explorer, then a gameweek, to preview "
+        "your squad after that transfer. Captain/vice are shown unchanged from your current squad - the path "
+        "search does not reassign the armband.</div>"
+        if any_reconstructable else
+        "<div class='squad-state-hint'>This strategic plan was logged before real per-transfer squad "
+        "reconstruction existed - re-run <code>fpl strategic-plan</code> for a real GW-by-GW squad preview.</div>"
     )
+    return hint + "<div class='squad-state-preview'>" + "".join(blocks) + "</div>"
 
 
 _LIFECYCLE_TO_DASH_STATE = {
@@ -2397,10 +2932,21 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
             verdict = _esc("not yet analyzed - run the match-intelligence-analysis skill")
         else:
             verdict = _esc(f"{obs_count} observation(s) recorded")
-        impl_html = "".join(
+        # Real "too much text" density fix (2026-08-27, visual polish pass,
+        # direct user feedback) - up to 5 full evidence bullets used to
+        # render inline, always visible, on every single card at once (the
+        # single biggest source of wall-of-text on this page). All the same
+        # real data stays reachable, just collapsed by default behind a
+        # native `<details>` toggle (zero new JS - same pattern the Team
+        # Outlook table above already uses for its own per-row detail).
+        impl_bullets_html = "".join(
             f"<div class='outlook-news'><span class='outlook-chip'>{_esc(i['direction'])}/{_esc(i['signal'])}</span> "
             f"{_esc(i['reason'] or '')}</div>"
             for i in impl_rows
+        )
+        impl_html = (
+            f"<details class='match-intel-evidence'><summary>Evidence ({len(impl_rows)})</summary>{impl_bullets_html}</details>"
+            if impl_bullets_html else ""
         )
         score = f"{m['home_score'] if m['home_score'] is not None else '-'}-{m['away_score'] if m['away_score'] is not None else '-'}"
 
@@ -2862,7 +3408,21 @@ def generate_dashboard_html(
         gw_window == 1 and must_include_ids is None and must_start_ids is None and exclude_ids is None
     )
     locked = get_locked_squad(conn) if default_call else None
-    decision = evaluate_locked_squad(conn, locked) if locked is not None else None
+    # Real, one-time computation (2026-08-27, "personal FPL decision
+    # terminal" + "final product pass" redesigns) - Primary Decision,
+    # Strategy Explorer, Intelligence's "what should I do differently", AND
+    # evaluate_locked_squad below all need the same real
+    # `analyze_transfer_decision`/`analyze_captain_decision` result; each
+    # call does a genuine full-squad candidate scan, so this is computed
+    # ONCE here (before evaluate_locked_squad, so it can reuse this instead
+    # of re-scanning) and threaded through everywhere else that needs it.
+    ta = ca = None
+    if locked is not None:
+        try:
+            ta, ca = _analyze_locked_decisions(conn, locked)
+        except Exception:
+            ta = ca = None
+    decision = evaluate_locked_squad(conn, locked, ta=ta, ca=ca) if locked is not None else None
 
     report = generate_build_team_report(
         conn, gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
@@ -2922,6 +3482,21 @@ def generate_dashboard_html(
             bank_m = (budget_tenths - primary.result.total_cost_tenths) / 10
         pitch_heading = "Optimizer Recommendation"
         pitch_html = _pitch_html(conn, report, live_payload, reference_event)
+
+    # Real free-transfer state (2026-08-27, "final product pass" Part 3) -
+    # `locked.free_transfers` is a real replay of official FPL history
+    # (models/free_transfers.py) whenever the squad source is a real synced
+    # entry; genuinely `None` for a locked_decision (pre-sync) squad or a
+    # real gap in synced history - shown honestly rather than guessed.
+    real_ft = getattr(locked, "free_transfers", None) if locked is not None else None
+    if real_ft is not None:
+        ft_tile_value = str(real_ft)
+        ft_tile_cls = ""
+        ft_tile_title = "Real free-transfer count, replayed from official FPL history (models/free_transfers.py)."
+    else:
+        ft_tile_value = "not tracked"
+        ft_tile_cls = " hero-metric-value-muted"
+        ft_tile_title = "Not derivable yet - no real synced squad history exists for this entry (pre-sync, or a gap in synced history). Never guessed."
 
     # Real Gameweek Command Strip (2026-08-21, third session, section 4) -
     # a single inline status band, not more rounded tiles: risk count
@@ -3126,31 +3701,63 @@ def generate_dashboard_html(
         f"{my_live_score.points:.0f} {_esc(gw_label)} pts &middot; " if my_live_score is not None else ""
     )
     xp_summary_label = "next-GW xP" if my_live_score is not None else "projected xP"
+    # Squad State Machine (2026-08-27, "personal FPL decision terminal"
+    # redesign, section 4) - the squad is the visualization of the selected
+    # strategic path, not a static panel. Appended directly onto the
+    # existing, unchanged, real "My Locked Squad" pitch render below (same
+    # section, same nav anchor) - only rendered when a real locked squad
+    # exists, since a from-scratch Mode-A recommendation has no strategic
+    # path to visualize evolving.
+    squad_state_html = (
+        "<div class='squad-state-heading'>How this squad evolves under your strategic plan</div>"
+        + _squad_state_machine_html(conn, locked)
+        if locked is not None else ""
+    )
     squad_section_html = f"""<section class="panel panel-team" id="squad" data-cat="data">
   <h2>{_esc(pitch_heading)}
     <span class="panel-subtitle">{actual_points_label}{headline_xp:.1f} {xp_summary_label} &middot; £{squad_value_m:.1f}m &middot;
       {_captain_html(captain_name)} captain</span></h2>
   {squad_error_html}{pitch_html}
+  {squad_state_html}
 </section>"""
-    # Strategic Plan (rewritten 2026-08-27, "final product-level dashboard"
-    # pass) - THE one authoritative decision surface: CURRENT LOCKED STATE ->
-    # IMMEDIATE vs STRATEGIC optimum -> captain -> why/confidence -> top
-    # paths -> chip timeline. The old standalone "AI Decisions" panel
-    # (captain/transfer cards) has been removed from the primary flow - its
-    # content now lives inside Strategic Plan itself via
-    # `optimization.decision_analysis`, computed live every regen. Reads
-    # the last logged `fpl strategic-plan`
-    # result only - see `_strategic_plan_html`'s own docstring for why this
-    # never triggers a fresh ~1-minute search from the dashboard regen path.
-    strategic_plan_section_html = f"""<section class="panel panel-strategic-plan" id="strategic-plan" data-cat="decision">
-  <h2>Strategic Plan <span class="panel-subtitle">the one authoritative recommendation - immediate vs strategic, captain, chips</span></h2>
-  {_strategic_plan_html(conn, locked, decision, squad_ids)}
+    # PRIMARY DECISION (rewritten 2026-08-27, "personal FPL decision terminal"
+    # redesign, section 2) - the one authoritative recommendation: current
+    # state, recommended action, confidence, expected advantage, robustness,
+    # top-2 alternatives, why. The real multi-GW path search/timeline (section
+    # 3) now lives in the separate Strategy Explorer below, so this panel
+    # stays a single, compact, dominant verdict. `ta`/`ca` computed once
+    # above (`_analyze_locked_decisions`), shared with Strategy Explorer and
+    # Intelligence so the real ~580-player candidate scan runs once per regen.
+    primary_decision_section_html = f"""<section class="panel panel-decision panel-primary-decision" id="decision" data-cat="decision">
+  <h2>Primary Decision <span class="panel-subtitle">what should I do, and why - the one authoritative recommendation</span></h2>
+  {_strategic_plan_html(conn, locked, decision, squad_ids, ta=ta, ca=ca)}
 </section>"""
-    risks_section_html = f"""<section class="panel panel-risks" id="risks" data-cat="decision">
-  <h2>Risk Monitor <span class="panel-subtitle">what could go wrong</span></h2>
-  <div class="risk-monitor">
-{_risk_monitor_html(conn, squad_ids, reference_event)}
-  </div>
+    # STRATEGY EXPLORER (section 3) - the main product: a real, selectable
+    # multi-GW planner (real interactivity, see _strategy_explorer_html's own
+    # docstring), not five static cards. Refers to the real "Strategic Plan"
+    # (`fpl strategic-plan`) concept by name in its own subtitle.
+    strategy_explorer_section_html = f"""<section class="panel panel-explorer" id="explore" data-cat="decision">
+  <h2>Strategy Explorer <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad preview above</span></h2>
+  {_strategy_explorer_html(conn, locked, squad_ids, ta=ta)}
+</section>"""
+    # INTELLIGENCE (section 4) - real signals converted into WHAT CHANGED /
+    # WHO BENEFITS / WHO IS AT RISK ("Risk Monitor" - same heading text this
+    # dashboard has always used for this real severity-tiered content) /
+    # WHAT SHOULD I DO DIFFERENTLY, instead of exposing each raw source as
+    # its own disconnected panel. Team Outlook/Match Intelligence keep their
+    # own existing, richer panels elsewhere on the page (unchanged) - this
+    # is the compact decision-relevant summary, not a replacement for them.
+    intelligence_summary_section_html = f"""<section class="panel panel-intelligence-summary" id="intelligence-summary" data-cat="intelligence">
+  <h2>Intelligence <span class="panel-subtitle">what changed, who benefits, who's at risk, what to reconsider</span></h2>
+  {_intelligence_summary_html(conn, squad_ids, reference_event, ta, ca)}
+</section>"""
+    # MARKET (section 5) - real aggregation (model vs devigged consensus,
+    # price movement, transfer momentum), never a raw bookmaker-row dump.
+    # Only calibrated/already-live-used figures - see _market_summary_html's
+    # own docstring.
+    market_summary_section_html = f"""<section class="panel panel-market-summary" id="market-signals" data-cat="data">
+  <h2>Market Signals <span class="panel-subtitle">model vs consensus, price movement, transfer momentum</span></h2>
+  {_market_summary_html(conn, squad_ids)}
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
@@ -3187,32 +3794,33 @@ def generate_dashboard_html(
     if dash_state == "LIVE":
         panel_order = [
             live_section_html, match_intelligence_section_html,
-            strategic_plan_section_html, team_outlook_section_html, squad_section_html,
-            risks_section_html, compare_panel,
+            primary_decision_section_html, strategy_explorer_section_html,
+            team_outlook_section_html, squad_section_html,
+            intelligence_summary_section_html, market_summary_section_html, compare_panel,
         ]
     elif dash_state == "POST_MATCH":
         # Real fix, found live against the real production DB (2026-08-27):
         # POST_MATCH (GW just finished, next one not live yet) is the
-        # REAL common state right after a gameweek - Strategic Plan was
-        # still ordered after the squad pitch here even though the same
+        # REAL common state right after a gameweek - the decision surface
+        # was still ordered after the squad pitch here even though the same
         # spec's "first thing after the hero" ask applies just as much
         # post-match as pre-deadline. Live match recap (live/match-
         # intelligence) still leads - "what just happened" is genuinely
-        # the first real question right after a gameweek - but Strategic
-        # Plan now outranks the plain squad pitch.
+        # the first real question right after a gameweek - but Primary
+        # Decision now outranks the plain squad pitch.
         panel_order = [
             live_section_html, match_intelligence_section_html,
-            strategic_plan_section_html, squad_section_html,
-            team_outlook_section_html, risks_section_html, compare_panel,
+            primary_decision_section_html, strategy_explorer_section_html, squad_section_html,
+            team_outlook_section_html, intelligence_summary_section_html, market_summary_section_html, compare_panel,
         ]
     else:
-        # Real, explicit ordering fix (2026-08-27, "final product-level
-        # dashboard" pass, direct spec: "the first thing after the hero
-        # should be STRATEGIC PLAN") - promoted ahead of the squad pitch in
-        # the default (PRE_DEADLINE) state, the single most common view.
+        # Real, explicit ordering fix (direct spec: COMMAND -> PRIMARY
+        # DECISION -> STRATEGY EXPLORER -> SQUAD STATE MACHINE ->
+        # INTELLIGENCE -> MARKET) - the default (PRE_DEADLINE) state, the
+        # single most common view.
         panel_order = [
-            strategic_plan_section_html, squad_section_html,
-            risks_section_html, compare_panel, live_section_html,
+            primary_decision_section_html, strategy_explorer_section_html, squad_section_html,
+            intelligence_summary_section_html, market_summary_section_html, compare_panel, live_section_html,
         ]
     ordered_panels_html = "\n\n".join(p for p in panel_order if p)
     # PRE_DEADLINE never promotes either card into panel_order above (kept
@@ -3270,10 +3878,12 @@ def generate_dashboard_html(
 </header>
 
 <nav class="site-nav" aria-label="Section navigation">
-  <a href="#strategic-plan">Plan</a>
+  <a href="#decision">Decision</a>
+  <a href="#explore">Explore</a>
   <a href="#squad">Squad</a>
   <a href="#live">Live</a>
-  <a href="#football-intelligence">Intelligence</a>
+  <a href="#intelligence-summary">Intelligence</a>
+  <a href="#market-signals">Market</a>
   <a href="#fixtures">Fixtures</a>
   <a href="#system">System</a>
 </nav>
@@ -3307,6 +3917,10 @@ def generate_dashboard_html(
       <div class="hero-metric-label">In the Bank</div>
       <div class="hero-metric-value">£{bank_m:.1f}m</div>
     </div>'''}
+    <div class="hero-metric">
+      <div class="hero-metric-label">Free Transfers</div>
+      <div class="hero-metric-value{_esc(ft_tile_cls)}" title="{_esc(ft_tile_title)}">{_esc(ft_tile_value)}</div>
+    </div>
     {live_rank_tile_html}
   </div>
   <div class="hero-strip">
@@ -3339,25 +3953,6 @@ def generate_dashboard_html(
     <summary><h2 style="display:inline">Chip Strategy <span class="panel-subtitle">ADVANCED - single-decision-point value (is using this chip worth it RIGHT NOW, in isolation) - a different, narrower question from Strategic Plan's chip timeline above (when across the real horizon, jointly timed against the winning transfer path)</span></h2></summary>
     <div class="chip-strategy-list">
 {_chip_strategy_html(conn, squad_ids)}
-    </div>
-  </details>
-
-  <section class="panel panel-activity" data-cat="data">
-    <h2>Activity <span class="panel-subtitle">squad changes + price moves, Tier 1</span></h2>
-    <div class="activity-group-label">Squad changes</div>
-    <div class="change-list">
-{_squad_changes_html(conn)}
-    </div>
-    <div class="activity-group-label">Price moves</div>
-    <div class="price-list">
-{_price_changes_html(conn)}
-    </div>
-  </section>
-
-  <details class="panel panel-price-predict panel-advanced">
-    <summary><h2 style="display:inline">Price Predictions <span class="panel-subtitle">ADVANCED - real transfer momentum, uncalibrated heuristic</span></h2></summary>
-    <div class="price-predict-list">
-{_price_predictions_html(conn, squad_ids)}
     </div>
   </details>
 
@@ -3513,6 +4108,56 @@ def generate_dashboard_html(
   }}
   tick();
   setInterval(tick, 1000);
+}})();
+
+// Real Strategy Explorer <-> Squad State Machine interactivity (2026-08-27,
+// "personal FPL decision terminal" redesign) - vanilla JS, no dependency.
+// Every path/step/squad-state block is already present in the raw HTML
+// (server-rendered, `hidden` attribute not removal) - this only toggles
+// visibility, so nothing breaks if scripts are disabled, same posture the
+// kickoff-time conversion above already established. Click contract:
+// `.path-tab-btn[data-path]` selects a path (shows its own
+// `.strategic-path-card`, hides the others, auto-selects its first real GW
+// step); `.path-step-btn[data-path][data-event]` (the GW pills inside a
+// path's own timeline) selects one GW, showing the matching
+// `.squad-state-block[data-path][data-event]` in the Squad State Machine
+// section above and hiding every other one.
+(function() {{
+  function showSquadState(pathIdx, event) {{
+    document.querySelectorAll('.squad-state-block[data-path]').forEach(function(block) {{
+      var match = block.getAttribute('data-path') === String(pathIdx) && block.getAttribute('data-event') === String(event);
+      block.hidden = !match;
+    }});
+    document.querySelectorAll('.path-step-btn[data-path]').forEach(function(btn) {{
+      var match = btn.getAttribute('data-path') === String(pathIdx) && btn.getAttribute('data-event') === String(event);
+      btn.classList.toggle('is-active', match);
+    }});
+  }}
+  function showPath(pathIdx) {{
+    document.querySelectorAll('.strategic-path-card[data-path]').forEach(function(card) {{
+      card.hidden = card.getAttribute('data-path') !== String(pathIdx);
+    }});
+    document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(btn) {{
+      btn.classList.toggle('is-active', btn.getAttribute('data-path') === String(pathIdx));
+    }});
+    var firstStep = document.querySelector('.path-step-btn[data-path="' + pathIdx + '"]');
+    if (firstStep) showSquadState(pathIdx, firstStep.getAttribute('data-event'));
+  }}
+  document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(btn) {{
+    btn.addEventListener('click', function() {{ showPath(btn.getAttribute('data-path')); }});
+  }});
+  document.querySelectorAll('.path-step-btn[data-path][data-event]').forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      var pathIdx = btn.getAttribute('data-path');
+      showSquadState(pathIdx, btn.getAttribute('data-event'));
+      document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(t) {{
+        t.classList.toggle('is-active', t.getAttribute('data-path') === pathIdx);
+      }});
+      document.querySelectorAll('.strategic-path-card[data-path]').forEach(function(card) {{
+        card.hidden = card.getAttribute('data-path') !== pathIdx;
+      }});
+    }});
+  }});
 }})();
 </script>
 </body>
@@ -3921,6 +4566,13 @@ _CSS = """
     text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
   .outlook-detail-row details > div { margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
   .outlook-alert-text { color: var(--fpl-pink); }
+  .match-intel-evidence { margin-top: 6px; }
+  .match-intel-evidence summary { cursor: pointer; font-size: 0.72rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; list-style: none; }
+  .match-intel-evidence summary::-webkit-details-marker { display: none; }
+  .match-intel-evidence summary::before { content: '+ '; }
+  .match-intel-evidence[open] summary::before { content: '\2212 '; }
+  .match-intel-evidence > .outlook-news { margin-top: 6px; }
   @media (max-width: 640px) {
     .outlook-table { font-size: 0.76rem; }
     .outlook-table th:nth-child(2), .outlook-row td:nth-child(2) { display: none; }
@@ -4136,6 +4788,8 @@ _CSS = """
   .strategic-subrow { font-size: 0.82rem; color: var(--fg); padding: 6px 2px; }
   .strategic-subrow strong { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
   .strategic-subrow-muted { font-size: 0.75rem; color: var(--muted); padding: 3px 2px; }
+  .strategic-alt-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .strategic-alt-list li { font-size: 0.78rem; color: var(--muted); padding: 2px 0; }
   .strategic-path-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
   .strategic-path-card { background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border);
     padding: 10px 12px; font-size: 0.8rem; }
@@ -4155,6 +4809,90 @@ _CSS = """
     .strategic-path-timeline { flex-wrap: nowrap; }
     .strategic-twocol { grid-template-columns: 1fr; }
   }
+
+  /* --- Primary Decision: confidence/alternatives (2026-08-27, "personal
+     FPL decision terminal" redesign) --- */
+  .decision-metric-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+  .decision-metric { background: var(--surface-2); border-radius: 10px; padding: 7px 12px; font-size: 0.76rem; }
+  .decision-metric span { display: block; color: var(--faint); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .decision-metric strong { color: var(--fg); font-size: 0.9rem; }
+  .alt-list { display: flex; flex-direction: column; gap: 4px; }
+  .alt-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78rem; padding: 4px 2px; color: var(--muted); }
+  .alt-rank { color: var(--faint); font-weight: 700; flex-shrink: 0; }
+  .alt-body { color: var(--fg); flex-shrink: 0; }
+  .alt-reason { color: var(--faint); font-size: 0.82rem; }
+  /* --- Model vs Football View conflict block (2026-08-27, Part 6) --- */
+  .conflict-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem; color: var(--fg);
+    padding: 6px 2px; flex-wrap: wrap; }
+  .conflict-label { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); flex-shrink: 0; }
+  .conflict-yes { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--fpl-pink); flex-shrink: 0; }
+  .conflict-no { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ok-text); flex-shrink: 0; }
+
+  /* --- Strategy Explorer: interactive path tabs/steps (real vanilla-JS
+     click contract, see generate_dashboard_html's own <script> block) --- */
+  .path-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+  .path-tab-btn, .path-step-btn, .squad-state-pill-btn {
+    font-family: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); border-radius: 8px; padding: 6px 12px; font-size: 0.76rem; font-weight: 700;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+  .path-tab-btn:hover, .path-step-btn:hover, .squad-state-pill-btn:hover { border-color: var(--accent); color: var(--fg); }
+  .path-tab-btn.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .strategic-path-step.path-step-btn { display: flex; flex-direction: column; gap: 2px; text-align: left;
+    align-items: flex-start; }
+  .strategic-path-step.path-step-btn.is-active { outline: 2px solid var(--accent-2); outline-offset: -1px; }
+  .strategic-path-card[hidden] { display: none; }
+
+  /* --- Squad State Machine (2026-08-27) - the squad as the real
+     visualization of the selected strategic path, not a static panel --- */
+  .squad-state-heading { font-family: "Titillium Web", sans-serif; font-size: 0.78rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 8px;
+    padding-top: 14px; border-top: 1px solid var(--border); }
+  .squad-state-hint { font-size: 0.76rem; color: var(--faint); margin-bottom: 10px; }
+  .squad-state-block[hidden] { display: none; }
+  .squad-state-preview { background: var(--surface-2); border-radius: 14px; padding: 14px 16px; }
+  .squad-state-transfer { font-size: 0.86rem; font-weight: 700; margin-bottom: 8px; }
+  .squad-state-transfer.squad-state-roll { color: var(--muted); font-weight: 600; }
+  .squad-state-out { color: var(--bad); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 60%, transparent); }
+  .squad-state-in { color: var(--ok-text); }
+  .squad-state-pos-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 0;
+    border-top: 1px solid var(--border); }
+  .squad-state-pos-row:first-of-type { border-top: none; }
+  .squad-state-pos-label { flex-shrink: 0; width: 38px; font-size: 0.66rem; font-weight: 800; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .squad-state-player { font-size: 0.8rem; color: var(--fg); background: var(--surface); border-radius: 999px;
+    padding: 3px 10px; }
+  .squad-state-player-in { background: color-mix(in srgb, var(--ok) 22%, var(--surface)); color: var(--ok-text); font-weight: 700; }
+
+  /* --- Intelligence (2026-08-27) - WHAT CHANGED / WHO BENEFITS / RISK
+     MONITOR / WHAT SHOULD I DO DIFFERENTLY, replacing scattered raw panels --- */
+  .intel-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0; }
+  .intel-section h3, .market-section h3 { font-family: "Titillium Web", sans-serif; font-size: 0.76rem;
+    font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 8px; }
+  .intel-section:first-child h3, .market-section:first-child h3 { margin-top: 0; }
+  @media (max-width: 640px) { .intel-grid-2, .market-grid-2 { grid-template-columns: 1fr; } }
+
+  /* --- Market Signals (2026-08-27) - real model-vs-consensus/momentum,
+     never a raw bookmaker-row dump --- */
+  .market-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0; }
+  .market-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 7px 2px;
+    border-top: 1px solid var(--border); font-size: 0.8rem; }
+  .market-row:first-of-type { border-top: none; }
+  .market-team { color: var(--fg); font-weight: 700; flex-shrink: 0; min-width: 140px; }
+  .market-model, .market-consensus { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .market-consensus-missing { color: var(--faint); font-style: italic; }
+  .market-divergence { font-weight: 700; margin-left: auto; }
+  .market-divergence-ok { color: var(--ok-text); }
+  .market-divergence-warn { color: #ff9f43; }
+  .momentum-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 2px;
+    border-top: 1px solid var(--border); font-size: 0.8rem; }
+  .momentum-row:first-of-type { border-top: none; }
+  .momentum-ok { color: var(--ok-text); font-weight: 700; }
+  .momentum-bad { color: var(--bad); font-weight: 700; }
+  .momentum-warn { color: var(--warn); font-weight: 700; }
   .ok-line .dot { background: var(--ok); }
   .warn-line .dot { background: var(--warn); }
 

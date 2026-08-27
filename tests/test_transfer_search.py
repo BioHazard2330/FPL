@@ -16,8 +16,8 @@ def _seed_two_team_pool(conn: sqlite3.Connection):
     conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','{now}')")
     conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (2,2,'Team B','TMB','{now}')")
     conn.execute(
-        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
-        f"VALUES (1,'Forward','FWD','Forwards','{now}')"
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, "
+        f"squad_max_play, squad_select, updated_at) VALUES (1,'Forward','FWD','Forwards',1,3,3,'{now}')"
     )
     for pid, team_id, name, price in ((1, 1, 'Weak A', 50), (2, 1, 'Weak B', 50), (3, 2, 'Strong A', 55), (4, 2, 'Strong B', 55)):
         conn.execute(
@@ -461,5 +461,180 @@ def test_search_transfer_sequences_validates_club_limit_across_multiple_real_ste
     assert 6 in incoming_ids and 7 in incoming_ids, (
         "expected the search to take the real, legal path: P6(A, highest legal EV) then P7(C), "
         f"got incoming players {incoming_ids}"
+    )
+
+
+def _seed_wildcard_pool(conn):
+    """Shared fixture for the joint chip+transfer tests below: the same
+    15-slot-legal player pool test_optimization_squad.py uses for its own
+    real optimise_squad ILP tests (club_limit=4 - with only 4 teams in the
+    pool, club_limit must be >=4 for a 15-man squad to be reachable at all,
+    same real constraint test_optimization_squad.py's own feasible fixtures
+    already respect), plus a real eligible wildcard window."""
+    from test_optimization_squad import _ELEMENT_TYPES, _PLAYERS, _TEAMS
+    from fpl_agent.ingestion.sync import _upsert_many
+
+    now = "t0"
+    _upsert_many(conn, "teams", _TEAMS, now)
+    _upsert_many(conn, "element_types", _ELEMENT_TYPES, now)
+    players_rows = [
+        {
+            "id": pid, "code": pid, "web_name": f"P{pid}", "first_name": None, "second_name": None,
+            "team_id": team_id, "element_type": et, "squad_number": None, "status": "a",
+            "news": None, "news_added": None, "opta_code": None, "removed": 0,
+        }
+        for pid, et, team_id, _price, _xp in _PLAYERS
+    ]
+    _upsert_many(conn, "players", players_rows, now)
+    for pid, _et, _team_id, price, _xp in _PLAYERS:
+        conn.execute(
+            "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES (?,?,?,NULL)",
+            (pid, price, now),
+        )
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.squad_team_limit','2026-27',1,?,?,?)", (now, "fpl_api_bootstrap", "4"),
+    )
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.max_extra_free_transfers','2026-27',1,?,?,?)", (now, "fpl_api_bootstrap", "4"),
+    )
+    conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, updated_at) VALUES (1,'GW1','2026-08-01T00:00:00Z',0,0,0,1,1,'t0')"
+    )
+    conn.execute(
+        "INSERT INTO chip_windows (season, name, number, start_event, stop_event, chip_type, updated_at) VALUES "
+        "('2026-27','wildcard',1,1,5,'transfer','t0')"
+    )
+    conn.commit()
+    return {pid: xp for pid, _et, _team_id, _price, xp in _PLAYERS}
+
+
+# Deliberately the weakest legal player at each position - real total xp far
+# below what the same budget can buy elsewhere in the pool.
+_WEAK_SQUAD_IDS = [1, 3, 17, 15, 11, 13, 14, 27, 23, 25, 21, 26, 34, 33, 32]
+
+
+def _patch_wildcard_pool_expected_points(monkeypatch, xp_map):
+    from fpl_agent.optimization import chips as chips_mod
+    from fpl_agent.optimization import squad as squad_mod
+
+    def fake_expected_points(conn, player_id, n_gw=1, from_event=None):
+        median = xp_map[player_id]
+        return SimpleNamespace(median=median, floor=median * 0.5, ceiling=median * 1.8, confidence="MEDIUM", expected_minutes=75.0)
+
+    def fake_expected_points_window(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=xp_map[player_id])
+
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake_expected_points_window)
+    monkeypatch.setattr(squad_mod, "expected_points", fake_expected_points)
+    monkeypatch.setattr(squad_mod, "expected_points_window", fake_expected_points_window)
+    monkeypatch.setattr(chips_mod, "expected_points", fake_expected_points)
+
+
+def test_joint_search_can_choose_wildcard_over_a_plain_transfer(db_conn, monkeypatch):
+    """Real gap this task closes (2026-08-27, "final high-value pass" P0 joint
+    transfer+chip optimization): the beam used to only ever compare ROLL against
+    single-swap TRANSFER candidates, with chip timing decided by a wholly
+    separate post-hoc DP (chips.py::schedule_chips) that never competed on the
+    same ranking key. Seeds a deliberately weak 15-man current squad next to a
+    much stronger legal pool it can't reach one swap at a time (only a full
+    rebuild gets there under the real club-limit/budget constraints) and a real
+    eligible wildcard window at the search's only horizon step - if the joint
+    beam genuinely considers a chip action as a first-class branch, it must
+    beat every single-swap alternative and win outright."""
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1, beam_width=8,
+    )
+    best = sequences[0]
+
+    assert any(st.chip_played == "wildcard" for st in best.steps), (
+        f"expected the joint search to choose the wildcard branch, got steps={best.steps}"
+    )
+    assert best.chips_used == ("wildcard",)
+    weak_total = sum(xp_map[pid] for pid in _WEAK_SQUAD_IDS)
+    assert best.total_net_ev > weak_total + 5, (
+        f"wildcard rebuild ({best.total_net_ev}) should clearly beat the weak squad's own total ({weak_total})"
+    )
+
+
+def test_joint_search_excludes_an_already_used_chip(db_conn, monkeypatch):
+    """used_chip_names must stop the joint beam from ever offering a chip the
+    user has already burned this season - same real-history-driven exclusion
+    schedule_chips' own used_chip_names parameter already applies, now also
+    respected by the beam that actually picks the path."""
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=0, horizon_gw=1, beam_width=8,
+        used_chip_names=frozenset({"wildcard"}),
+    )
+    for seq in sequences:
+        assert "wildcard" not in seq.chips_used
+        assert all(st.chip_played != "wildcard" for st in seq.steps)
+
+
+def test_compare_starting_actions_ranks_transfer_above_roll_when_it_wins(db_conn, monkeypatch):
+    """Real P0 gap this task closes: the beam search could always internally
+    discover the best single sequence, but never surfaced a real side-by-side
+    "here is ROLL's own best future vs here is each other starting action's
+    own best future" comparison. Reuses the exact same hand-verified
+    two-team pool as test_search_transfer_sequences_credits_transferred_
+    player_across_full_horizon above (team 2 flat 6.0/GW, team 1 flat 3.0/GW)
+    so the correct ranking is hand-computable: fixing "transfer 1->3 now" and
+    letting the same joint search optimize the remaining 1 GW must reach a
+    higher real path_total (21.0) than fixing "roll" and optimizing the same
+    remaining GW (15.0), because a strong replacement bought this GW keeps
+    contributing every GW it's held, exactly the property the beam search
+    itself already relies on."""
+    from fpl_agent.optimization.transfers import compare_starting_actions
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1, 2], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=4,
+    )
+
+    by_label = {o.label: o for o in options}
+    assert "ROLL" in by_label
+    roll = by_label["ROLL"]
+    transfer_options = [o for o in options if o.kind == "transfer"]
+    assert transfer_options, "expected at least one transfer option (player 1 or 2 -> a strong replacement)"
+    best_transfer = max(transfer_options, key=lambda o: o.path_total)
+
+    assert best_transfer.path_total > roll.path_total, (
+        f"expected the transfer into a strong replacement ({best_transfer.path_total}) to beat "
+        f"ROLL's own best future ({roll.path_total}) - both hand-computable from the fixture's flat "
+        "per-GW rates (see this test's docstring)"
+    )
+    # options must be returned already ranked best-first
+    assert options[0].path_total == max(o.path_total for o in options)
+
+
+def test_compare_starting_actions_surfaces_a_legal_chip_option(db_conn, monkeypatch):
+    """A real eligible chip must appear as its own ranked starting-action
+    option, not only reachable via the main beam's internal branching."""
+    from fpl_agent.optimization.transfers import compare_starting_actions
+
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1,
+    )
+
+    chip_options = [o for o in options if o.kind == "chip"]
+    assert any(o.chip_name == "wildcard" for o in chip_options), (
+        f"expected a wildcard option among {[o.label for o in options]}"
+    )
+    assert options[0].kind == "chip" and options[0].chip_name == "wildcard", (
+        "the wildcard rebuild should dominate every single-swap alternative here, same as the "
+        "joint search's own winning path in test_joint_search_can_choose_wildcard_over_a_plain_transfer"
     )
 

@@ -18,7 +18,7 @@ from fpl_agent.models.expected_points import expected_points_window
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.price_forecast import classify_price_change
 from fpl_agent.models.rules import current_season, get_rule
-from fpl_agent.optimization.chips import eligible_chips
+from fpl_agent.optimization.chips import SUPPORTED_CHIP_NAMES, chip_gw_marginal_value, eligible_chips
 
 HIT_COST = 4  # points, per transfer beyond the free allowance
 
@@ -205,6 +205,7 @@ class TransferSequenceStep:
     player_in_id: int | None
     player_in_name: str | None
     uses_hit: bool
+    chip_played: str | None = None  # "wildcard"/"freehit"/"bboost"/"3xc", or None for a plain roll/transfer step
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,7 @@ class TransferSequence:
     final_bank_tenths: int
     total_net_ev: float  # pure squad EV minus real hit costs - never includes tiebreak_adjustment
     tiebreak_adjustment: float  # sum of PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY nudges, reported separately
+    chips_used: tuple[str, ...] = ()  # chip names played anywhere in this sequence, in event order
 
 
 @dataclass(frozen=True)
@@ -226,6 +228,7 @@ class _BeamState:
     hit_cost_total: float  # real HIT_COST charges only - never the wildcard penalty
     tiebreak_adjustment: float  # PRICE_TIEBREAK_BONUS/WILDCARD_PROXIMITY_PENALTY nudges, kept separate
     steps: tuple[TransferSequenceStep, ...]
+    chips_used: frozenset[str] = frozenset()
 
 
 def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: dict[tuple, float]) -> float:
@@ -268,6 +271,9 @@ def search_transfer_sequences(
     bank_tenths: int,
     horizon_gw: int = 5,
     beam_width: int = 8,
+    used_chip_names: frozenset[str] = frozenset(),
+    start_event: int | None = None,
+    cache: dict[tuple, float] | None = None,
 ) -> list[TransferSequence]:
     """Beam search over transfer sequences across a rolling horizon (section: Pillar
     1 Plan 1a). Scores each candidate sequence by TOTAL squad EV summed across every
@@ -287,6 +293,24 @@ def search_transfer_sequences(
     amounts accumulate separately in tiebreak_adjustment, reported on
     TransferSequence as its own honestly-labeled field rather than hidden inside
     total_net_ev = round(cumulative_ev - hit_cost_total, 2).
+
+    Joint chip+transfer optimization (2026-08-27, "final high-value pass"): at
+    every step the beam also branches on "play chip X this GW" for each chip
+    window that is real-eligible at that event and not already in
+    `used_chip_names`/this branch's own `chips_used` - competing directly
+    against ROLL and every transfer candidate on the exact same
+    cumulative_ev - hit_cost_total + tiebreak_adjustment ranking key, rather
+    than being decided by a separate post-hoc DP overlay
+    (`chips.py::schedule_chips`, still available for its own richer
+    Monte-Carlo-risk-band/opportunity-cost narrative, but no longer the
+    mechanism that picks the chosen path). See
+    `chips.py::chip_gw_marginal_value` for the per-chip value definitions
+    (identical to this module's own single-decision-point functions, just
+    event-aware). A chip action permanently marks its name as used for every
+    later step of that branch (`chips_used`), so the same branch can never
+    play e.g. two wildcards; wildcard also permanently replaces the branch's
+    squad/bank going forward, while bench boost/triple captain/free hit only
+    affect that one step's EV.
 
     Scope note: each horizon step can only ever make ONE transfer (never two in the
     same GW, e.g. to justify a hit with two incoming players) - the beam only
@@ -322,17 +346,29 @@ def search_transfer_sequences(
     """
     season = current_season(conn)
     max_banked = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)
-    start_event = _reference_event(conn)
-    cache: dict[tuple, float] = {}
+    start_event = start_event if start_event is not None else _reference_event(conn)
+    # `cache` accepts an external dict (2026-08-27, added for
+    # compare_starting_actions below) so a caller running MANY related
+    # searches - e.g. one continuation search per starting action - can
+    # share one (player_id, event)/(player_id, n, from_event) memo across
+    # all of them instead of each call re-deriving the same
+    # expected_points_window lookups from scratch. Defaults to a fresh dict,
+    # identical to every existing caller's behaviour.
+    cache = cache if cache is not None else {}
 
     states = [_BeamState(
         squad_ids=tuple(squad_ids), free_transfers=free_transfers, bank_tenths=bank_tenths,
-        cumulative_ev=0.0, hit_cost_total=0.0, tiebreak_adjustment=0.0, steps=(),
+        cumulative_ev=0.0, hit_cost_total=0.0, tiebreak_adjustment=0.0, steps=(), chips_used=frozenset(),
     )]
 
     for offset in range(horizon_gw):
         event = start_event + offset
         wildcard_soon = _wildcard_or_freehit_starting_soon(conn, event)
+        chip_windows_this_event = [
+            w for w in eligible_chips(conn, event)
+            if w.name in SUPPORTED_CHIP_NAMES and w.start_event <= event <= w.stop_event
+            and w.name not in used_chip_names
+        ]
         next_states: list[_BeamState] = []
 
         for state in states:
@@ -344,6 +380,7 @@ def search_transfer_sequences(
                 cumulative_ev=state.cumulative_ev + _squad_gw_ev(conn, state.squad_ids, event, cache),
                 hit_cost_total=state.hit_cost_total,
                 tiebreak_adjustment=state.tiebreak_adjustment,
+                chips_used=state.chips_used,
                 steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False),),
             ))
 
@@ -385,11 +422,48 @@ def search_transfer_sequences(
                         cumulative_ev=state.cumulative_ev + gw_ev,
                         hit_cost_total=state.hit_cost_total + hit_cost,
                         tiebreak_adjustment=state.tiebreak_adjustment + tiebreak,
+                        chips_used=state.chips_used,
                         steps=state.steps + (TransferSequenceStep(
                             event, player_out_id, cand.player_out_name,
                             cand.player_in_id, cand.player_in_name, is_hit,
                         ),),
                     ))
+
+            # Option 3: play an eligible, not-yet-used chip this GW instead of
+            # rolling/transferring. Base squad EV is computed once (same
+            # primitive as the roll branch); chip_gw_marginal_value adds the
+            # chip's own real marginal value on top (extra bench points, the
+            # extra captain multiple, or a rebuilt-squad gap) - never both a
+            # transfer AND a chip in the same step (matches this beam's
+            # existing single-action-per-step scope, see this function's
+            # own docstring on that boundary).
+            base_gw_ev = None
+            for w in chip_windows_this_event:
+                if w.name in state.chips_used:
+                    continue
+                if base_gw_ev is None:
+                    base_gw_ev = _squad_gw_ev(conn, state.squad_ids, event, cache)
+                remaining_horizon = horizon_gw - offset
+                chip_result = chip_gw_marginal_value(
+                    conn, state.squad_ids, event, w.name,
+                    bank_tenths=state.bank_tenths, remaining_horizon_gw=remaining_horizon,
+                )
+                step_ev = base_gw_ev + chip_result.marginal_value
+                new_squad = chip_result.new_squad_ids if chip_result.new_squad_ids is not None else state.squad_ids
+                new_bank = chip_result.new_bank_tenths if chip_result.new_bank_tenths is not None else state.bank_tenths
+
+                next_states.append(_BeamState(
+                    squad_ids=new_squad,
+                    # A chip GW grants next week's real +1 FT the same as a roll -
+                    # no transfer was made through the normal mechanism.
+                    free_transfers=min(state.free_transfers + 1, max_banked),
+                    bank_tenths=new_bank,
+                    cumulative_ev=state.cumulative_ev + step_ev,
+                    hit_cost_total=state.hit_cost_total,
+                    tiebreak_adjustment=state.tiebreak_adjustment,
+                    chips_used=state.chips_used | {w.name},
+                    steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False, chip_played=w.name),),
+                ))
 
         next_states.sort(key=lambda s: s.cumulative_ev - s.hit_cost_total + s.tiebreak_adjustment, reverse=True)
         states = next_states[:beam_width]
@@ -399,6 +473,142 @@ def search_transfer_sequences(
             steps=s.steps, final_squad_ids=s.squad_ids, final_free_transfers=s.free_transfers,
             final_bank_tenths=s.bank_tenths, total_net_ev=round(s.cumulative_ev - s.hit_cost_total, 2),
             tiebreak_adjustment=round(s.tiebreak_adjustment, 2),
+            chips_used=tuple(st.chip_played for st in s.steps if st.chip_played is not None),
         )
         for s in states
     ]
+
+
+@dataclass(frozen=True)
+class StartingActionOption:
+    """One real, legally-available action this GW, together with its own
+    best real future (from continuing the same joint beam search onward).
+    `path_total` is the SAME `total_net_ev` concept `TransferSequence`
+    reports elsewhere in this module - full-squad EV summed across the whole
+    horizon, this action's own GW plus its best continuation - never a
+    delta-only number, so options here are directly comparable to each
+    other and to a `TransferSequence.total_net_ev` from the main search."""
+    label: str  # "ROLL", "PlayerOut -> PlayerIn", or "PLAY WILDCARD" etc.
+    kind: str  # "roll" | "transfer" | "chip"
+    player_out_id: int | None
+    player_out_name: str | None
+    player_in_id: int | None
+    player_in_name: str | None
+    chip_name: str | None
+    uses_hit: bool
+    path_total: float
+    best_continuation: TransferSequence | None
+
+
+def compare_starting_actions(
+    conn: sqlite3.Connection,
+    squad_ids: list[int],
+    free_transfers: int,
+    bank_tenths: int,
+    horizon_gw: int = 8,
+    continuation_beam_width: int = 3,
+    used_chip_names: frozenset[str] = frozenset(),
+) -> list[StartingActionOption]:
+    """Real full-squad starting-action comparison (2026-08-27, "final
+    high-value pass" P0): for every meaningful action legally available THIS
+    GW - roll, the single best replacement for each current squad player,
+    and each chip that is really eligible right now - fixes that action as
+    the horizon's very first step, then lets the SAME joint beam search
+    (`search_transfer_sequences`, now itself chip-aware) continue optimally
+    from the resulting state for the rest of `horizon_gw`. Ranks the
+    resulting options by their own real path_total.
+
+    This answers "best starting action given its best future" rather than
+    "best swap today" - `search_transfer_sequences` already discovers this
+    internally when the true optimum happens to survive beam pruning, but
+    never before surfaced a side-by-side comparison of a DIFFERENT opening
+    move against its own optimal continuation, which is what lets a
+    dashboard/CLI show real alternatives ("here's what ROLL's own best future
+    looks like, here's what each other sell candidate's best future looks
+    like") rather than only the single winning path.
+
+    `continuation_beam_width` is deliberately narrower than a typical
+    `search_transfer_sequences(beam_width=...)` call (same cost-bounding
+    pattern `build_strategic_plan`'s `comparison_beam_width` already uses for
+    its own extra horizon-checkpoint calls) - this function makes up to
+    ~(1 + len(squad_ids) + eligible chip count) continuation searches, so
+    keeping each one cheap matters for real wall-clock cost."""
+    season = current_season(conn)
+    max_banked = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)
+    start_event = _reference_event(conn)
+    cache: dict[tuple, float] = {}
+    squad_ids = list(squad_ids)
+
+    def _continue(new_squad, new_ft, new_bank, new_used_chips) -> TransferSequence | None:
+        if horizon_gw <= 1:
+            return None
+        seqs = search_transfer_sequences(
+            conn, list(new_squad), new_ft, new_bank, horizon_gw=horizon_gw - 1,
+            beam_width=continuation_beam_width, used_chip_names=new_used_chips, start_event=start_event + 1,
+            cache=cache,
+        )
+        return seqs[0] if seqs else None
+
+    options: list[StartingActionOption] = []
+
+    # ROLL
+    roll_ev = _squad_gw_ev(conn, tuple(squad_ids), start_event, cache)
+    roll_ft = min(free_transfers + 1, max_banked)
+    roll_cont = _continue(squad_ids, roll_ft, bank_tenths, used_chip_names)
+    options.append(StartingActionOption(
+        label="ROLL", kind="roll", player_out_id=None, player_out_name=None,
+        player_in_id=None, player_in_name=None, chip_name=None, uses_hit=False,
+        path_total=round(roll_ev + (roll_cont.total_net_ev if roll_cont else 0.0), 2),
+        best_continuation=roll_cont,
+    ))
+
+    # Best single replacement for each current squad player
+    is_hit = free_transfers < 1
+    for player_out_id in squad_ids:
+        candidates = best_transfer_for_player(
+            conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=1, top_n=1, from_event=start_event,
+        )
+        if not candidates:
+            continue
+        cand = candidates[0]
+        new_squad = tuple(pid for pid in squad_ids if pid != player_out_id) + (cand.player_in_id,)
+        gw_ev = _squad_gw_ev(conn, new_squad, start_event, cache)
+        hit_cost = HIT_COST if is_hit else 0.0
+        next_ft = min(free_transfers + 1, max_banked) if is_hit else min(free_transfers, max_banked)
+        new_bank = bank_tenths - cand.price_delta_tenths
+        cont = _continue(new_squad, next_ft, new_bank, used_chip_names)
+        options.append(StartingActionOption(
+            label=f"{cand.player_out_name} -> {cand.player_in_name}" + (" (HIT)" if is_hit else ""),
+            kind="transfer", player_out_id=player_out_id, player_out_name=cand.player_out_name,
+            player_in_id=cand.player_in_id, player_in_name=cand.player_in_name, chip_name=None,
+            uses_hit=is_hit,
+            path_total=round(gw_ev - hit_cost + (cont.total_net_ev if cont else 0.0), 2),
+            best_continuation=cont,
+        ))
+
+    # Each chip that's really eligible right now and not already used
+    base_gw_ev = None
+    for w in eligible_chips(conn, start_event):
+        if w.name not in SUPPORTED_CHIP_NAMES or w.name in used_chip_names:
+            continue
+        if not (w.start_event <= start_event <= w.stop_event):
+            continue
+        if base_gw_ev is None:
+            base_gw_ev = _squad_gw_ev(conn, tuple(squad_ids), start_event, cache)
+        chip_result = chip_gw_marginal_value(
+            conn, tuple(squad_ids), start_event, w.name,
+            bank_tenths=bank_tenths, remaining_horizon_gw=horizon_gw,
+        )
+        new_squad = chip_result.new_squad_ids if chip_result.new_squad_ids is not None else tuple(squad_ids)
+        new_bank = chip_result.new_bank_tenths if chip_result.new_bank_tenths is not None else bank_tenths
+        next_ft = min(free_transfers + 1, max_banked)
+        cont = _continue(new_squad, next_ft, new_bank, used_chip_names | {w.name})
+        options.append(StartingActionOption(
+            label=f"PLAY {w.name.upper()}", kind="chip", player_out_id=None, player_out_name=None,
+            player_in_id=None, player_in_name=None, chip_name=w.name, uses_hit=False,
+            path_total=round(base_gw_ev + chip_result.marginal_value + (cont.total_net_ev if cont else 0.0), 2),
+            best_continuation=cont,
+        ))
+
+    options.sort(key=lambda o: o.path_total, reverse=True)
+    return options

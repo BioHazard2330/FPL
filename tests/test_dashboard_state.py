@@ -151,8 +151,9 @@ def test_panels_carry_a_real_data_intelligence_decision_category(db_conn):
     result = generate_dashboard_html(db_conn)
 
     assert 'id="squad" data-cat="data"' in result
-    assert 'id="strategic-plan" data-cat="decision"' in result
-    assert 'id="risks" data-cat="decision"' in result
+    assert 'id="decision" data-cat="decision"' in result
+    assert 'id="explore" data-cat="decision"' in result
+    assert 'id="intelligence-summary" data-cat="intelligence"' in result
     assert 'id="football-intelligence" data-cat="intelligence"' in result
     assert 'id="match-centre" data-cat="intelligence"' in result
 
