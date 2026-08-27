@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 
-import fpl_agent.monitoring.dashboard.legacy as dash_mod
+import fpl_agent.monitoring.dashboard.opportunity as opportunity_mod
 from fpl_agent.database.decisions import log_decision
-from fpl_agent.monitoring.dashboard.legacy import _compute_primary_verdict, _decision_comparison_html, _opportunity_board_html
+from fpl_agent.monitoring.dashboard.legacy import _compute_primary_verdict, _decision_comparison_html
+from fpl_agent.monitoring.dashboard.opportunity import render_opportunity_workspace
 
 
 def test_decision_comparison_absent_when_no_audit_cached(db_conn):
@@ -39,10 +40,10 @@ def test_decision_comparison_absent_with_fewer_than_two_real_candidates(db_conn)
 
 
 def test_opportunity_board_empty_state_when_nothing_clears_the_bar(db_conn, monkeypatch):
-    monkeypatch.setattr(dash_mod, "find_breakouts", lambda conn: [])
-    monkeypatch.setattr(dash_mod, "find_traps", lambda conn: [])
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
 
-    result = _opportunity_board_html(db_conn, set())
+    result = render_opportunity_workspace(db_conn, set())
 
     assert "No real league-wide opportunities" in result
 
@@ -62,10 +63,10 @@ def _trap(player_id=2, web_name="O'Reilly", position="DEF", ownership=21.1, eo_s
 
 
 def test_opportunity_board_renders_a_breakout_card_and_excludes_squad_members(db_conn, monkeypatch):
-    monkeypatch.setattr(dash_mod, "find_breakouts", lambda conn: [_breakout(player_id=1), _breakout(player_id=2, web_name="Already Owned")])
-    monkeypatch.setattr(dash_mod, "find_traps", lambda conn: [])
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1), _breakout(player_id=2, web_name="Already Owned")])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
 
-    result = _opportunity_board_html(db_conn, {2})  # player 2 already in squad
+    result = render_opportunity_workspace(db_conn, {2})  # player 2 already in squad
 
     assert "Mendy" in result
     assert "Already Owned" not in result
@@ -74,10 +75,10 @@ def test_opportunity_board_renders_a_breakout_card_and_excludes_squad_members(db
 
 
 def test_opportunity_board_renders_a_trap_card_with_real_reasons(db_conn, monkeypatch):
-    monkeypatch.setattr(dash_mod, "find_breakouts", lambda conn: [])
-    monkeypatch.setattr(dash_mod, "find_traps", lambda conn: [_trap()])
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [_trap()])
 
-    result = _opportunity_board_html(db_conn, set())
+    result = render_opportunity_workspace(db_conn, set())
 
     assert "opp-card-trap" in result
     assert "O&#x27;Reilly" in result or "O'Reilly" in result

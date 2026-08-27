@@ -1,10 +1,11 @@
-"""Dashboard entry point (2026-08-27, frontend redesign) - orchestrates the
-new HOME/PLAN/SQUAD workspaces (`home.py`/`plan.py`/`squad.py`) plus the
-still-unmigrated legacy panels (Intelligence/Opportunities/Market/Fixtures/
-Advanced - `legacy.py`, own future phase). All real setup logic (locked
-squad, `ta`/`ca`, primary verdict, live window, live-rank tile) is carried
-over unchanged from the pre-redesign `generate_dashboard_html` - only the
-HTML composed from it changes shape."""
+"""Dashboard entry point (2026-08-27/28, frontend redesign Phase 1+2) -
+orchestrates HOME/PLAN/SQUAD (`home.py`/`plan.py`/`squad.py`), INTELLIGENCE/
+MARKET/OPPORTUNITIES/FIXTURES (`intelligence.py`/`market.py`/`opportunity.py`/
+`fixtures.py`), and Advanced (still `legacy.py` - system health, decision
+detail, chip strategy, player odds, optimizer delta). All real setup logic
+(locked squad, `ta`/`ca`, primary verdict, live window, live-rank tile) is
+carried over unchanged from the pre-redesign `generate_dashboard_html` -
+only the HTML composed from it changes shape."""
 import sqlite3
 from datetime import datetime, timezone
 
@@ -14,11 +15,10 @@ from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
-from fpl_agent.monitoring.dashboard import home, plan, squad
+from fpl_agent.monitoring.dashboard import fixtures, home, intelligence, market, opportunity, plan, squad
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
-    _FDR_TICKS,
     _PROJECTION_GWS,
     _alternatives_html,
     _analyze_locked_decisions,
@@ -32,16 +32,13 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _decision_comparison_html,
     _esc,
     _fixture_projections_html,
-    _fixture_ticker_html,
     _health_summary_html,
     _humanize,
-    _intelligence_summary_html,
     _lifecycle_stage_label,
     _live_tracking_html,
     _match_intelligence_html,
     _model_football_conflict_html,
     _news_html,
-    _opportunity_board_html,
     _pitch_html,
     _pitch_html_from_xi,
     _player_odds_html,
@@ -52,7 +49,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _squad_live_window,
     _statistics_html,
     _team_outlook_html,
-    _market_summary_html,
     _chip_strategy_html,
 )
 from fpl_agent.monitoring.dashboard.plan import path_confidence, path_descriptor
@@ -284,16 +280,16 @@ def generate_dashboard_html(
     </details>"""
 
     intelligence_summary_section_html = f"""<section class="panel panel-intelligence-summary" id="intelligence-summary" data-cat="intelligence">
-  <h2>Intelligence <span class="panel-subtitle">what changed, who benefits, who's at risk, what to reconsider</span></h2>
-  {_intelligence_summary_html(conn, squad_ids, reference_event, ta, ca)}
+  <h2>Intelligence <span class="panel-subtitle">real match data turned into an FPL briefing - league-wide, not just your squad</span></h2>
+  {intelligence.render_intelligence_workspace(conn, squad_ids, reference_event, ta, ca)}
 </section>"""
     market_summary_section_html = f"""<section class="panel panel-market-summary" id="market-signals" data-cat="data">
-  <h2>Market <span class="panel-subtitle">model vs consensus, price movement, transfer momentum</span></h2>
-  {_market_summary_html(conn, squad_ids)}
+  <h2>Market <span class="panel-subtitle">model vs consensus, price movement, ownership momentum</span></h2>
+  {market.render_market_workspace(conn, squad_ids)}
 </section>"""
     opportunity_board_section_html = f"""<section class="panel panel-opportunity" id="opportunities" data-cat="intelligence">
-  <h2>Opportunity Board <span class="panel-subtitle">the real league-wide scan - breakouts, fixture swings, role changes, traps, price moves</span></h2>
-  {_opportunity_board_html(conn, squad_ids)}
+  <h2>Opportunity Board <span class="panel-subtitle">a real scouting board - breakout, fixture swing, role change, value, trap</span></h2>
+  {opportunity.render_opportunity_workspace(conn, squad_ids)}
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
@@ -385,18 +381,8 @@ def generate_dashboard_html(
 {ordered_panels_html}
 
 <section class="panel panel-ticker" id="fixtures" data-cat="data">
-  <h2>Fixture Ticker <span class="panel-subtitle">next {_FDR_TICKS} - green easy, red hard, real FPL strength ratings</span></h2>
-  <div class="fdr-sort" role="group" aria-label="Sort fixture ticker">
-    <span class="fdr-sort-label">Sort</span>
-    <button type="button" class="fdr-sort-btn is-active" data-sort="fdr">Easiest first</button>
-    <button type="button" class="fdr-sort-btn" data-sort="fdr-desc">Hardest first</button>
-    <button type="button" class="fdr-sort-btn" data-sort="squad">My squad first</button>
-    <button type="button" class="fdr-sort-btn" data-sort="az">A&ndash;Z</button>
-    {fixtures_fresh_html}
-  </div>
-  <div class="fdr-grid" id="fdr-grid">
-{_fixture_ticker_html(conn, squad_ids)}
-  </div>
+  <h2>Fixture Tool <span class="panel-subtitle">green easy, red hard, real FPL strength ratings</span>{fixtures_fresh_html}</h2>
+{fixtures.render_fixture_tool_html(conn, squad_ids)}
 </section>
 
 {"" if match_intelligence_promoted else team_outlook_section_html}
@@ -529,6 +515,63 @@ def generate_dashboard_html(
       rows.forEach(function(row) {{ grid.appendChild(row); }});
     }});
   }});
+}})();
+
+// Fixture Tool: range / metric / filter controls (2026-08-28, frontend
+// redesign Phase 2) - all real client-side reveals over the one real 8-GW
+// server render (every cell already carries its own real overall/attack/
+// defence class + event number as data attributes) - no second query.
+(function() {{
+  var grid = document.getElementById('fdr-grid');
+  if (!grid) return;
+
+  var rangeButtons = document.querySelectorAll('.fdr-range-btn');
+  rangeButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      rangeButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      var n = parseInt(btn.getAttribute('data-range'), 10);
+      grid.querySelectorAll('.fdr-cells').forEach(function(cellsEl) {{
+        var cells = cellsEl.children;
+        for (var i = 0; i < cells.length; i++) {{
+          cells[i].style.display = i < n ? '' : 'none';
+        }}
+      }});
+    }});
+  }});
+
+  var metricButtons = document.querySelectorAll('.fdr-metric-btn');
+  metricButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      metricButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      var metric = btn.getAttribute('data-metric');
+      grid.querySelectorAll('.fdr-cell').forEach(function(cell) {{
+        var cls = cell.getAttribute('data-fdr-' + metric);
+        if (!cls) return;
+        cell.classList.remove('fdr-ok', 'fdr-warn', 'fdr-bad', 'fdr-blank');
+        cell.classList.add('fdr-' + cls);
+      }});
+    }});
+  }});
+
+  var filterButtons = document.querySelectorAll('.fdr-filter-btn');
+  filterButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      filterButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      var squadOnly = btn.getAttribute('data-filter') === 'squad';
+      grid.querySelectorAll('.fdr-row').forEach(function(row) {{
+        row.style.display = (!squadOnly || row.getAttribute('data-in-squad') === '1') ? '' : 'none';
+      }});
+    }});
+  }});
+
+  // Apply the default-active range button's cut immediately - the server
+  // renders all 8 real GWs, so without this the "5 GW" button would show
+  // as active while all 8 remain visible until the user clicks something.
+  var defaultRange = document.querySelector('.fdr-range-btn.is-active');
+  if (defaultRange) defaultRange.click();
 }})();
 
 // Plan <-> Squad workspace interactivity (2026-08-27, frontend redesign) -
@@ -694,4 +737,42 @@ _CSS_WORKSPACE = """
   .squad-switcher-btn { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: transparent;
     color: var(--fg); font-weight: 600; font-size: 0.82rem; cursor: pointer; font-family: inherit; }
   .squad-switcher-btn.is-active { background: var(--accent); color: #14002b; border-color: transparent; }
+
+  /* INTELLIGENCE workspace - league-wide team-signal cards. */
+  .intel-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-top: 8px; }
+  .intel-team-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface-2); }
+  .intel-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .intel-card-team { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.02em; }
+  .intel-card-squad-tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-2);
+    border: 1px solid var(--accent-2); border-radius: 999px; padding: 1px 6px; margin-left: auto; }
+  .intel-card-why { font-weight: 600; font-size: 0.88rem; margin-bottom: 4px; }
+  .intel-card-evidence { font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
+  .intel-card-impact { font-size: 0.82rem; margin-bottom: 8px; }
+  .intel-card-confidence { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+  .intel-confidence-high, .intel-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
+  .intel-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
+  .intel-confidence-low, .intel-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
+  .intel-card-details { margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
+
+  /* OPPORTUNITY workspace - scouting-board cards, one visible per category by default. */
+  .opp-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; align-items: start; }
+  .opp-category { display: flex; flex-direction: column; gap: 6px; }
+  .opp-card-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
+  .opp-card-metric { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
+  .opp-card-confidence { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em;
+    text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-top: 6px; }
+  .opp-confidence-high, .opp-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
+  .opp-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
+  .opp-confidence-low, .opp-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
+  .opp-category-more { margin-top: 4px; font-size: 0.76rem; color: var(--muted); cursor: pointer; }
+  .opp-category-more[open] summary { margin-bottom: 6px; }
+
+  /* FIXTURE TOOL - range/metric/sort/filter controls. */
+  .fixture-tool-controls { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; }
+  .fixture-tool-control-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .fdr-range-btn, .fdr-metric-btn, .fdr-filter-btn { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .fdr-range-btn.is-active, .fdr-metric-btn.is-active, .fdr-filter-btn.is-active { background: var(--accent-2); color: #06110b; border-color: transparent; }
+  .fixture-tool-fallback-note { margin-bottom: 8px; }
 """

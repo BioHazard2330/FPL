@@ -1,8 +1,10 @@
-"""Unit tests for the new HOME/PLAN/SQUAD workspace modules (2026-08-27,
-frontend redesign) - direct, focused tests of the new presentation-only
-functions, separate from the existing end-to-end `generate_dashboard_html`
-coverage in test_dashboard.py/test_dashboard_state.py."""
-from fpl_agent.monitoring.dashboard import data_payload, home, plan
+"""Unit tests for the new HOME/PLAN/SQUAD/INTELLIGENCE workspace modules
+(2026-08-27/28, frontend redesign Phase 1+2) - direct, focused tests of the
+new presentation-only functions, separate from the existing end-to-end
+`generate_dashboard_html` coverage in test_dashboard.py/test_dashboard_state.py."""
+from types import SimpleNamespace
+
+from fpl_agent.monitoring.dashboard import data_payload, home, intelligence, plan
 from test_dashboard import _locked_and_decision, _seed
 from test_optimization_squad import _seed as _seed_squad
 
@@ -183,3 +185,76 @@ def test_render_payload_script_escapes_script_close_tag():
     html = data_payload.render_payload_script({"note": "</script><script>alert(1)</script>"})
     assert "</script><script>" not in html
     assert html.startswith('<script id="workspace-data" type="application/json">')
+
+
+# --- intelligence.py: league-wide team-signal cards -------------------------
+
+def _fake_trend(direction, label="PERSISTENT_TREND"):
+    return SimpleNamespace(signal="TEAM_ATTACK", label=label, current_direction=direction, sample_size=2, history=[direction])
+
+
+def _fake_qualitative(**kwargs):
+    defaults = dict(
+        current_tactical_signal=None, current_attacking_signal=None, current_defensive_signal=None,
+        current_key_observation=None, current_fpl_implication=None, current_confidence=None, trends=[],
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+def _fake_outlook(team_id=1, team_name="Arsenal", qualitative=None, churn_label="squad largely retained (5% turnover)",
+                   formation=None, manager_change=None, lineup_news=None):
+    return SimpleNamespace(
+        team_id=team_id, team_name=team_name, qualitative=qualitative, churn_label=churn_label,
+        formation=formation, manager_change=manager_change, lineup_news=lineup_news,
+    )
+
+
+def test_signal_arrow_maps_direction_to_real_arrow():
+    assert intelligence._signal_arrow("POSITIVE") == " &uarr;"
+    assert intelligence._signal_arrow("NEGATIVE") == " &darr;"
+    assert intelligence._signal_arrow(None) == ""
+    assert intelligence._signal_arrow("NEUTRAL") == ""
+
+
+def test_leading_trend_skips_noise():
+    trends = [_fake_trend("POSITIVE", label="NOISE"), _fake_trend("NEGATIVE", label="PERSISTENT_TREND")]
+    trend = intelligence._leading_trend(trends)
+    assert trend.current_direction == "NEGATIVE"
+
+
+def test_leading_trend_none_when_every_real_trend_is_noise():
+    trends = [_fake_trend("POSITIVE", label="NOISE")]
+    assert intelligence._leading_trend(trends) is None
+
+
+def test_team_signal_card_skipped_when_no_real_qualitative_data(db_conn):
+    outlook = _fake_outlook(qualitative=None)
+    assert intelligence._team_signal_card(db_conn, outlook, in_squad=False) is None
+
+    outlook_empty = _fake_outlook(qualitative=_fake_qualitative())
+    assert intelligence._team_signal_card(db_conn, outlook_empty, in_squad=False) is None
+
+
+def test_team_signal_card_renders_real_fields_and_arrow(db_conn):
+    q = _fake_qualitative(
+        current_attacking_signal="Strong attacking environment",
+        current_key_observation="1.88 xG · 20 shots",
+        current_fpl_implication="Tzolis / Calafiori benefit",
+        current_confidence="MEDIUM",
+        trends=[_fake_trend("POSITIVE")],
+    )
+    outlook = _fake_outlook(qualitative=q)
+
+    result = intelligence._team_signal_card(db_conn, outlook, in_squad=True)
+
+    assert "ARSENAL" in result and "&uarr;" in result
+    assert "Strong attacking environment" in result
+    assert "Tzolis / Calafiori benefit" in result
+    assert "MEDIUM" in result
+    assert "your squad" in result
+
+
+def test_render_what_changed_html_empty_state(db_conn):
+    result = intelligence.render_what_changed_html(db_conn, set())
+    assert "No real match-analyzed team signals yet" in result
