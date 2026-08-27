@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 import numpy as np
@@ -15,10 +16,10 @@ for _stream in (sys.stdout, sys.stderr):
 
 from fpl_agent.alerts.engine import Alert, TerminalNotifier, configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
-from fpl_agent.config import DATA_DIR, load_dotenv, load_storage_budget
+from fpl_agent.config import DATA_DIR, LOGS_DIR, PROJECT_ROOT, load_dotenv, load_storage_budget
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
-from fpl_agent.database.decisions import get_decision, list_decisions, log_decision
+from fpl_agent.database.decisions import get_decision, latest_decision_of_type, list_decisions, log_decision
 from fpl_agent.database.migrate import run_migrations
 from fpl_agent.ingestion.eo_sample import _DEFAULT_SAMPLE_SIZE, sample_effective_ownership
 from fpl_agent.ingestion.change_detection import (
@@ -1287,6 +1288,18 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled post-GW pipeline failed - not fatal to the sync itself")
 
+    # Real "optimizer must run automatically" fix (2026-08-29, master
+    # automation pass) - see _maybe_trigger_strategic_plan_recompute's own
+    # docstring. Fires a real ~2-10min `fpl strategic-plan` as a detached
+    # background subprocess (never blocks this cycle) only when a real
+    # material change has happened since the last cached decision.
+    try:
+        auto_reason = _maybe_trigger_strategic_plan_recompute(conn)
+        if auto_reason:
+            logger.info("run-scheduled auto-triggered strategic-plan recompute: %s", auto_reason)
+    except Exception:
+        logger.exception("run-scheduled strategic-plan auto-trigger failed - not fatal to the sync itself")
+
     conn.close()
 
     if retighten_msg:
@@ -1477,7 +1490,7 @@ def _log_livefpl_rank_decision(conn, snapshot) -> int:
     )
 
 
-_LIVEFPL_MIN_REFRESH_MINUTES = 10  # cheap single GET - safe to refresh often, still throttled so a tight scheduler interval can't hammer a free third-party endpoint
+_LIVEFPL_MIN_REFRESH_MINUTES = 5  # cheap single GET - lowered 10->5 (2026-08-29) to meet the "~5min during an active GW" cadence spec via live-match-poll's own faster loop; still throttled so a tight scheduler interval can't hammer a free third-party endpoint
 
 
 def _maybe_refresh_livefpl_rank(conn) -> dict | None:
@@ -1630,6 +1643,130 @@ def _maybe_refresh_live_rank(conn) -> dict | None:
     return {"decision_id": decision_id, "estimated_rank": estimate.estimated_rank}
 
 
+# Real "the optimizer must run automatically" fix (2026-08-29, master
+# automation pass, direct spec: "NO 'open Claude Code', NO 'run fpl
+# strategic-plan'... the daemon must do this"). Everything upstream of this
+# already fires unattended (`run_scheduled`'s own real change-detection
+# steps write real `change_events` rows; `models/decision_freshness.py`,
+# 2026-08-29 same day earlier, already makes the dashboard DISCLOSE staleness
+# when one postdates the cached `strategic_plan` decision) - the one real gap
+# left was that nothing ever ACTED on that disclosure by re-running the real
+# ~2-10min beam search. `optimization/post_gw_pipeline.py::
+# _has_material_change_since_last_plan` already established the exact right
+# pattern for a DIFFERENT decision type (`post_gw_plan`/`chip`) - this reuses
+# the SAME real materiality bar (`models.decision_freshness.
+# has_material_change_since`, itself built on the identical HIGH-severity
+# `change_events` signal) for `strategic_plan` specifically.
+
+_STRATEGIC_PLAN_AUTO_STALE_MINUTES = 15  # generous upper bound above the documented 2-10min real cost - a lock older than this is treated as an abandoned/crashed run, never a permanent deadlock
+
+
+def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
+    """Fires the real `fpl strategic-plan` command as a DETACHED background
+    subprocess (never awaited) when a real material change has happened
+    since the last cached decision, or none has ever been logged. Detached,
+    not synchronous, for a real, load-bearing reason: Task Scheduler's own
+    `FPLAgentSync` registration caps `run_scheduled` at a 10-minute
+    `ExecutionTimeLimit` (`scripts/setup_scheduler.ps1`) - blocking on a
+    real 2-10min beam search here could push the WHOLE sync cycle past that
+    limit and get it killed mid-run by the OS scheduler itself. The
+    background process keeps running (and logging its own real
+    `strategic_plan` decision) independently of whether `run_scheduled`
+    itself has already finished and exited.
+
+    The dashboard's own RECOMPUTING banner (`decision_freshness.py`) already
+    correctly describes this exact window (real change detected, no fresh
+    decision yet) - this function is what makes that state self-heal within
+    minutes instead of staying stuck until a human remembers to run the CLI
+    command by hand.
+
+    Real, disclosed limitation: the freshly-registered background process
+    isn't tracked to completion here (no PID stored, no result surfaced to
+    THIS cycle's own dashboard regen) - the NEXT `run_scheduled` cycle (or a
+    manual dashboard reload once the ~2-10min real search finishes) is what
+    actually shows the new decision. This is the same "cheap regen now,
+    expensive recompute happens on its own schedule" split this project's
+    own CLAUDE.md already establishes for the manual path."""
+    from fpl_agent.models.decision_freshness import has_material_change_since
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    locked = get_locked_squad(conn)
+    if locked is None or not locked.squad_ids:
+        return None
+
+    now = datetime.now(timezone.utc)
+
+    # Overlap guard - a real prior auto-trigger might still be genuinely
+    # running (the real search can take up to ~10min); a lock older than
+    # _STRATEGIC_PLAN_AUTO_STALE_MINUTES is treated as abandoned (a crashed
+    # process, a killed Task Scheduler run) rather than a permanent block,
+    # same self-healing posture as this project's other app_meta markers
+    # (post_gw_pipeline_started_event etc).
+    lock_row = conn.execute(
+        "SELECT value FROM app_meta WHERE key='strategic_plan_auto_started_at'"
+    ).fetchone()
+    if lock_row is not None:
+        try:
+            lock_ts = datetime.fromisoformat(lock_row["value"].replace("Z", "+00:00"))
+            if lock_ts.tzinfo is None:
+                lock_ts = lock_ts.replace(tzinfo=timezone.utc)
+            if (now - lock_ts).total_seconds() / 60 < _STRATEGIC_PLAN_AUTO_STALE_MINUTES:
+                return None  # a real prior auto-run is plausibly still in flight
+        except ValueError:
+            pass
+
+    last = latest_decision_of_type(conn, "strategic_plan")
+    if last is None:
+        reason = "no strategic_plan decision has ever been logged"
+    else:
+        # Real "squad changed outside the model" check (2026-08-29) - a
+        # transfer made directly in the official FPL app or a chip played by
+        # hand changes `locked.squad_ids` with no corresponding player-level
+        # `change_events` row (those only cover injury/price/lineup signals),
+        # so the has_material_change_since check below would otherwise miss
+        # it entirely. Only checked when the last decision actually recorded
+        # its own squad (an older decision logged before this field existed
+        # has `logged_squad_ids=None` - degrades to the change_events-only
+        # check below, never a false trigger from a field that doesn't exist).
+        logged_squad_ids = last.detail.get("squad_ids")
+        if logged_squad_ids is not None and set(logged_squad_ids) != set(locked.squad_ids):
+            reason = "locked squad has changed since the last strategic plan (real transfer/chip made outside the model)"
+        else:
+            change = has_material_change_since(conn, last.created_at, set(locked.squad_ids))
+            if change is None:
+                return None
+            if change["entity"] == "player":
+                row = conn.execute("SELECT web_name FROM players WHERE id=?", (change["entity_id"],)).fetchone()
+                name = row["web_name"] if row is not None else f"player {change['entity_id']}"
+                reason = f"{name}: {change['event_type']} ({change['old_value']} -> {change['new_value']})"
+            else:
+                reason = f"{change['entity']} {change['entity_id']}: {change['event_type']}"
+
+    fpl_exe = Path(sys.executable).parent / ("fpl.exe" if sys.platform == "win32" else "fpl")
+    if not fpl_exe.exists():
+        return None  # real dev/test environment without an installed console script - a genuine no-op, not an error
+
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('strategic_plan_auto_started_at', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (now.isoformat(), now.isoformat()),
+    )
+    conn.commit()
+
+    log_path = LOGS_DIR / "strategic_plan_auto.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(f"\n--- auto-triggered {now.isoformat()} ({reason}) ---\n")
+        log_file.flush()
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        subprocess.Popen(
+            [str(fpl_exe), "strategic-plan"],
+            stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            cwd=str(PROJECT_ROOT), creationflags=creationflags,
+        )
+    return reason
+
+
 def _write_dashboard(
     gw_window: int = 1, must_include_ids: set[int] | None = None, must_start_ids: set[int] | None = None,
     exclude_ids: set[int] | None = None,
@@ -1741,24 +1878,38 @@ def source_status():
 
 
 _SCHEDULER_TASK_NAME = "FPLAgentSync"  # must match scripts/setup_scheduler.ps1's default
+_LIVE_POLL_TASK_NAME = "FPLAgentLivePoll"  # must match scripts/setup_live_poll_scheduler.ps1's default
 
 
 @cli.command("scheduler-status")
 def scheduler_status():
-    """Check whether the Windows Task Scheduler entry exists and when it last/next ran."""
+    """Check whether the Windows Task Scheduler entries exist and when they last/next ran.
+
+    Real gap fixed 2026-08-29 (master automation pass, restart-recovery
+    audit): this only ever checked `FPLAgentSync` (the slow-cadence data
+    sync) - `FPLAgentLivePoll` (the fast live-match poller,
+    `setup_live_poll_scheduler.ps1`) is a REAL, separately-registered daemon
+    task this project's own CLAUDE.md documents as required for live-GW
+    behavior, but this command silently said nothing about it either way -
+    a real gap in the one command whose whole job is "prove the daemon is
+    actually running unattended". Now reports both, never claiming the
+    daemon is healthy while only checking half of it."""
     if sys.platform != "win32":
         click.echo("scheduler-status only supports Windows Task Scheduler currently")
         return
 
-    info = check_scheduler_registered(_SCHEDULER_TASK_NAME)
-    if info is None:
-        click.echo(f"task '{_SCHEDULER_TASK_NAME}' not registered")
-        click.echo("register with: powershell -ExecutionPolicy Bypass -File scripts\\setup_scheduler.ps1")
-        return
-
-    click.echo(f"task '{_SCHEDULER_TASK_NAME}':")
-    for key, value in info.items():
-        click.echo(f"  {key}={value}")
+    for task_name, setup_script in (
+        (_SCHEDULER_TASK_NAME, "scripts\\setup_scheduler.ps1"),
+        (_LIVE_POLL_TASK_NAME, "scripts\\setup_live_poll_scheduler.ps1"),
+    ):
+        info = check_scheduler_registered(task_name)
+        if info is None:
+            click.echo(f"task '{task_name}' not registered")
+            click.echo(f"  register with: powershell -ExecutionPolicy Bypass -File {setup_script}")
+            continue
+        click.echo(f"task '{task_name}':")
+        for key, value in info.items():
+            click.echo(f"  {key}={value}")
 
 
 @cli.command("live-bonus")
@@ -2241,6 +2392,25 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                         )
                 except Exception as e:
                     click.echo(f"live-match-poll: post-GW pipeline failed this tick ({e}) - continuing", err=True)
+
+            # Real live-rank cadence fix (2026-08-29, direct user spec:
+            # "LIVE FPL / rank: ~5 min during active GW"). Before this,
+            # LiveFPL rank only ever refreshed on the slow `run_scheduled`
+            # cadence (best case every 15min, the live-window `freshness.yaml`
+            # interval) - this loop already runs every `interval` seconds
+            # (default 25s) while a tracked match is genuinely LIVE/HALFTIME,
+            # so calling the SAME real `_maybe_refresh_livefpl_rank` here too
+            # (its own internal `_LIVEFPL_MIN_REFRESH_MINUTES` throttle -
+            # lowered 10->5 alongside this change - makes every other call a
+            # cheap no-op) gets rank refreshed on a genuine ~5min cadence
+            # during a live match, not just whenever run_scheduled next fires.
+            # Gated to `any_live` only, matching the dashboard-regen check
+            # below - never worth a network call on a quiet pre-kickoff tick.
+            if any_live:
+                try:
+                    _maybe_refresh_livefpl_rank(conn)
+                except Exception as e:
+                    click.echo(f"live-match-poll: live-rank refresh failed this tick ({e}) - continuing", err=True)
 
             # file most of the time during a live match. Regenerate here too,
             # but only when something actually changed (a match genuinely
@@ -3078,6 +3248,15 @@ def strategic_plan_cmd(
         strategic_decision_id = log_decision(
             conn, "strategic_plan", summary=best_summary,
             detail={
+                # Real "was this computed against MY CURRENT squad" field
+                # (2026-08-29, master automation pass) - lets
+                # _maybe_trigger_strategic_plan_recompute detect a real
+                # squad change made OUTSIDE this project (a transfer made
+                # directly in the official FPL app, a chip played by hand)
+                # as material even though no `change_events` row exists for
+                # "the squad itself changed" specifically - those only cover
+                # player-level signals (injury/price/lineup), not this.
+                "squad_ids": sorted(squad_ids),
                 "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
                 "horizon_comparison": horizon_comparison_detail,
                 "roll_total": roll_total,

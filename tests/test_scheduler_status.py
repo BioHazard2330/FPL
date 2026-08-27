@@ -1,7 +1,37 @@
 import subprocess
 
+from click.testing import CliRunner
+
+from fpl_agent.cli.main import cli
 from fpl_agent.scheduler import status as status_mod
 from fpl_agent.scheduler.status import check_scheduler_registered
+
+
+def test_scheduler_status_cli_reports_both_real_daemon_tasks(monkeypatch):
+    """Real gap fixed 2026-08-29 (restart-recovery audit): `fpl
+    scheduler-status` used to only ever check FPLAgentSync, silently saying
+    nothing about the real, separately-registered FPLAgentLivePoll task
+    this project's own CLAUDE.md documents as required - confirmed live on
+    the real dev machine that BOTH tasks are actually registered, but the
+    status command only ever reported one of them."""
+    import fpl_agent.cli.main as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+
+    def fake_check(task_name):
+        if task_name == "FPLAgentSync":
+            return {"State": "Ready", "LastRunTime": "t1", "NextRunTime": "t2", "LastResult": "0"}
+        return None  # FPLAgentLivePoll not registered on this test machine
+
+    monkeypatch.setattr(main_mod, "check_scheduler_registered", fake_check)
+
+    result = CliRunner().invoke(cli, ["scheduler-status"])
+
+    assert result.exit_code == 0
+    assert "FPLAgentSync" in result.output
+    assert "FPLAgentLivePoll" in result.output
+    assert "not registered" in result.output
+    assert "setup_live_poll_scheduler.ps1" in result.output
 
 
 def test_returns_none_when_task_not_registered(monkeypatch):

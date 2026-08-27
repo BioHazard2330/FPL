@@ -1879,3 +1879,84 @@ def test_statistics_honest_empty_state_before_any_snapshot(db_conn):
     result = _statistics_html(db_conn, {1, 10})
 
     assert "No current-season stats synced yet" in result
+
+
+# --- CURRENT_FPL_STATE invariant: the dashboard must never present a stale
+# cached decision as current (2026-08-29, master automation pass, P0
+# "one authoritative current state" - direct spec: "Never allow an old
+# decision/audit to visually compete with the current decision"). Unit-level
+# coverage for the underlying pieces already exists (home.py's
+# `_freshness_html`/`render_hero`, `models/decision_freshness.py`'s own
+# module tests) - these two are the real END-TO-END proof that
+# `generate_dashboard_html` itself wires a genuine stale scenario through
+# the whole real pipeline (assemble.py -> decision_freshness.py -> home.py),
+# not just the isolated pieces. ---------------------------------------------
+
+def _seed_strategic_plan_with_current_rec(conn, *, path_total=20.0):
+    from fpl_agent.database.decisions import log_decision
+
+    return log_decision(
+        conn, "strategic_plan", "ROLL (strategic 8GW EV=20.0)",
+        {
+            "horizon_gw": 8, "note": "test", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": path_total}],
+            "best_path": {
+                "total_net_ev": path_total, "path_total": path_total, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            },
+            "paths": [{
+                "total_net_ev": path_total, "path_total": path_total, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
+                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            }],
+            "chip_schedule": None,
+            "current_recommendation": {
+                "verdict": "ACT", "action_kind": "roll", "label": "ROLL", "path_total": path_total,
+                "immediate_optimum_label": "ROLL", "strategic_optimum_label": "ROLL",
+                "immediate_vs_strategic_differ": False, "evidence_confidence": "HIGH",
+                "reason": "no transfer clears the bar", "starting_action_options": [],
+            },
+        },
+    )
+
+
+def test_current_fpl_state_shows_recomputing_when_a_real_change_postdates_the_decision(db_conn):
+    """The real invariant: once a genuine HIGH-severity change has landed
+    for a squad player AFTER the cached strategic_plan decision was
+    computed, the dashboard's hero must visibly say RECOMPUTING - never
+    silently keep showing the old verdict as if it were still current."""
+    from datetime import datetime, timedelta, timezone
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    from test_optimization_locked_squad import _seed_real_picks
+    _seed_real_picks(db_conn)
+    _seed_strategic_plan_with_current_rec(db_conn)
+    later = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) "
+        "VALUES ('status_change','player',30,'a','i',?,'[]','CONFIRMED','HIGH',NULL,0)", (later,),
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "RECOMPUTING" in result
+    assert "status_change" in result
+
+
+def test_current_fpl_state_shows_no_stale_banner_when_nothing_material_changed(db_conn):
+    """The negative case, equally real: a fresh decision with no material
+    change since must NOT show RECOMPUTING - the banner is earned by a real
+    detected change, never shown by default just because a decision exists."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    from test_optimization_locked_squad import _seed_real_picks
+    _seed_real_picks(db_conn)
+    _seed_strategic_plan_with_current_rec(db_conn)
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "RECOMPUTING" not in result
+    assert "ROLL" in result

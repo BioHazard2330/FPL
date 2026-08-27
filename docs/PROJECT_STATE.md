@@ -24,6 +24,16 @@ shows a card for a player already in the squad (matches Breakout's existing excl
 real intermittent "dashboard shows no squad" bug - a torn read in `ingestion/my_team.py::get_latest_squad`
 racing against the project's own scheduled sync writer (`docs/history/20-...md`).
 
+**The optimizer now runs automatically (2026-08-29)** - `run_scheduled` fires a real `fpl
+strategic-plan` as a detached background subprocess whenever a real material change (HIGH-severity
+`change_events` on a squad player, or the locked squad itself diverging from what the last plan was
+computed against) has happened since the last cached decision (`cli/main.py::_maybe_trigger_strategic_plan_recompute`).
+Live rank now refreshes on a genuine ~5min cadence during an active GW (`live-match-poll`'s own fast
+loop, not the slower `run_scheduled` cadence). `fpl scheduler-status` reports both real registered
+daemon tasks, not just one. See `docs/history/21-...md` for the full real architecture audit (most
+of a much larger automation/optimizer spec was found already built - minutes model, correlated
+scenario sampling, adaptive scheduler cadence, calibration capture - rather than needing new code).
+
 
 **Season**: 2026-27, GW1 finished (all 10 fixtures analyzed, real qualitative evidence recorded for Arsenal-Coventry and league-wide via the zero-LLM statistical detector), GW2 not yet locked (real fixtures scheduled ~Aug 29-Sep 1). Real locked squad synced (entry 7378572, `fpl my-team`).
 
