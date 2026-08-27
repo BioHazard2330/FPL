@@ -1,9 +1,24 @@
 from click.testing import CliRunner
 
+import fpl_agent.cli.main as cli_main_mod
 import fpl_agent.ingestion.fpl_api as fpl_api_mod
 from fpl_agent.cli.main import _maybe_refresh_live_rank, cli
 from fpl_agent.ingestion.fpl_api import RawFetch
+from fpl_agent.ingestion.livefpl_source import LiveFPLFetchError
 from fpl_agent.ingestion.my_team import set_my_team_entry_id
+
+
+def _force_livefpl_unreachable(monkeypatch):
+    """These tests exercise the self-built stratified-sample estimator (the
+    real subject under test) - `fpl live-rank` now tries the real LiveFPL
+    endpoint FIRST (2026-08-27), which would otherwise mean a real network
+    call from a unit test. Forces the same real "LiveFPL unreachable" fallback
+    path a genuine network failure would take, so these tests keep testing
+    what they've always tested."""
+    def _boom(entry_id):
+        raise LiveFPLFetchError("test: no network")
+
+    monkeypatch.setattr(cli_main_mod, "fetch_livefpl_snapshot", _boom)
 
 
 def _fake_raw(source_name, data):
@@ -90,6 +105,7 @@ def test_live_rank_end_to_end_with_a_real_reference_sample(monkeypatch, db_conn)
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_picks", fake_fetch_entry_picks)
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_league_standings", fake_fetch_league_standings)
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_event_live", fake_fetch_event_live)
+    _force_livefpl_unreachable(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["live-rank", "--event", "1", "--sample-size", "50"])
@@ -167,6 +183,7 @@ def test_live_rank_cli_never_prints_a_fake_number_for_a_degenerate_sample(monkey
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_history", fake_fetch_entry_history)
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_picks", fake_fetch_entry_picks)
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_event_live", fake_fetch_event_live)
+    _force_livefpl_unreachable(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["live-rank", "--event", "1"])
@@ -303,3 +320,119 @@ def test_live_rank_fails_cleanly_with_no_entry_id(monkeypatch, db_conn):
 
     assert result.exit_code == 1
     assert "no entry id" in result.output
+
+
+# --- LiveFPL as the primary live-rank source (2026-08-27, direct user
+# instruction: "uses livefpl as the main source to track my live rank
+# always") - real fetch mocked at the connector boundary (same pattern
+# fotmob_source's own tests use), never a real network call in a unit test. ---
+
+def _fake_livefpl_snapshot(**overrides):
+    from fpl_agent.ingestion.livefpl_source import LiveFPLSnapshot
+
+    fields = dict(
+        team_id=12345, name="Test Manager", curgw=1, gw_points=51,
+        gw_rank=4149531, pre_subs_rank=3477519, post_subs_rank=4088241,
+        old_rank=4000000, rank_gain=-88241, change_pct=2.21, safety_score=53.0,
+        template_pct=82.0, chip_played=None, source_time="2026-08-24 23:01:25",
+        fetched_at="2026-08-27T00:00:00+00:00",
+    )
+    fields.update(overrides)
+    return LiveFPLSnapshot(**fields)
+
+
+def test_live_rank_cmd_uses_livefpl_as_the_primary_source_and_skips_the_estimator(monkeypatch, db_conn):
+    set_my_team_entry_id(db_conn, 12345)
+    monkeypatch.setattr(cli_main_mod, "fetch_livefpl_snapshot", lambda entry_id: _fake_livefpl_snapshot())
+    # If the estimator path were reached, this would raise (no picks/points
+    # synced) - proves the LiveFPL success path short-circuits it entirely.
+    monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_entry_picks",
+                         lambda self, entry_id, event: (_ for _ in ()).throw(AssertionError("estimator path reached")))
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["live-rank"])
+
+    assert result.exit_code == 0, result.output
+    assert "source=livefpl" in result.output
+    assert "live rank: 4,088,241" in result.output
+    row = db_conn.execute("SELECT decision_type, detail FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["decision_type"] == "live_rank"
+    import json
+    detail = json.loads(row["detail"])
+    assert detail["source"] == "livefpl"
+    assert detail["estimated_rank"] == 4088241
+    assert detail["precision"] == "exact"
+
+
+def test_live_rank_cmd_no_livefpl_flag_forces_the_estimator(monkeypatch, db_conn):
+    """`--no-livefpl` must never even attempt the real network call - proves
+    the estimator path (real error, no picks synced yet) is reached directly."""
+    _seed_event(db_conn, event_id=1, deadline_epoch=0)
+    set_my_team_entry_id(db_conn, 12345)
+    monkeypatch.setattr(
+        cli_main_mod, "fetch_livefpl_snapshot",
+        lambda entry_id: (_ for _ in ()).throw(AssertionError("LiveFPL should never be called with --no-livefpl")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["live-rank", "--event", "1", "--no-livefpl"])
+
+    assert "source=livefpl" not in result.output
+
+
+def test_maybe_refresh_livefpl_rank_logs_a_real_decision(monkeypatch, db_conn):
+    from fpl_agent.cli.main import _maybe_refresh_livefpl_rank
+
+    set_my_team_entry_id(db_conn, 12345)
+    monkeypatch.setattr(cli_main_mod, "fetch_livefpl_snapshot", lambda entry_id: _fake_livefpl_snapshot())
+
+    result = _maybe_refresh_livefpl_rank(db_conn)
+
+    assert result == {"decision_id": result["decision_id"], "estimated_rank": 4088241}
+    row = db_conn.execute("SELECT decision_type FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["decision_type"] == "live_rank"
+
+
+def test_maybe_refresh_livefpl_rank_is_a_noop_with_no_entry_id(db_conn):
+    from fpl_agent.cli.main import _maybe_refresh_livefpl_rank
+
+    assert _maybe_refresh_livefpl_rank(db_conn) is None
+    assert db_conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 0
+
+
+def test_maybe_refresh_livefpl_rank_throttles_within_the_minimum_refresh_window(monkeypatch, db_conn):
+    from datetime import datetime, timezone
+
+    from fpl_agent.cli.main import _maybe_refresh_livefpl_rank
+
+    set_my_team_entry_id(db_conn, 12345)
+    now = datetime.now(timezone.utc).isoformat()
+    db_conn.execute(
+        "INSERT INTO decisions (decision_type, summary, detail, confidence, created_at) "
+        "VALUES ('live_rank', 'prior estimate', '{}', 'low', ?)", (now,),
+    )
+    db_conn.commit()
+    monkeypatch.setattr(
+        cli_main_mod, "fetch_livefpl_snapshot",
+        lambda entry_id: (_ for _ in ()).throw(AssertionError("must not fetch within the throttle window")),
+    )
+
+    result = _maybe_refresh_livefpl_rank(db_conn)
+
+    assert result is None
+    assert db_conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 1
+
+
+def test_maybe_refresh_livefpl_rank_falls_back_silently_when_unreachable(monkeypatch, db_conn):
+    from fpl_agent.cli.main import _maybe_refresh_livefpl_rank
+
+    set_my_team_entry_id(db_conn, 12345)
+    monkeypatch.setattr(
+        cli_main_mod, "fetch_livefpl_snapshot",
+        lambda entry_id: (_ for _ in ()).throw(LiveFPLFetchError("connection refused")),
+    )
+
+    result = _maybe_refresh_livefpl_rank(db_conn)
+
+    assert result is None
+    assert db_conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 0

@@ -31,6 +31,8 @@ from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference, sample_live_rank_reference
+from fpl_agent.ingestion.livefpl_source import LiveFPLFetchError, fetch_livefpl_snapshot
+from fpl_agent.ingestion.livefpl_source import SOURCE_NAME as _LIVEFPL_SOURCE_NAME
 from fpl_agent.ingestion.my_team import (
     get_latest_squad,
     get_my_team_entry_id,
@@ -1351,6 +1353,22 @@ def run_scheduled():
     # short scheduler interval can't turn this into the heaviest network
     # pattern in the project running every single cycle. Non-fatal on
     # failure, same posture as every other step here.
+    # Real, always-on LiveFPL refresh (2026-08-27, direct user instruction:
+    # "uses livefpl as the main source to track my live rank always") -
+    # tried first, every real cycle (cheap - a single GET, throttled to
+    # once per _LIVEFPL_MIN_REFRESH_MINUTES), on or off a live matchday.
+    # The self-built estimator below stays as the live-window-only
+    # fallback for when this real third-party endpoint is unreachable.
+    try:
+        conn5b = get_connection()
+        livefpl_refreshed = _maybe_refresh_livefpl_rank(conn5b)
+        if livefpl_refreshed is not None:
+            logger.info("run-scheduled LiveFPL live-rank refresh: decision_id=%s rank=~%s",
+                        livefpl_refreshed["decision_id"], livefpl_refreshed["estimated_rank"])
+        conn5b.close()
+    except Exception:
+        logger.exception("run-scheduled LiveFPL live-rank refresh failed - not fatal to the sync itself")
+
     try:
         conn5 = get_connection()
         refreshed = _maybe_refresh_live_rank(conn5)
@@ -1416,6 +1434,93 @@ def _maybe_fetch_live_payload(conn) -> dict | None:
         return None
     update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
     return payload
+
+
+def _log_livefpl_rank_decision(conn, snapshot) -> int:
+    """Logs a real LiveFPL snapshot into the SAME `live_rank` decision
+    journal type the self-built estimator already uses (2026-08-27, direct
+    user instruction to make LiveFPL the main live-rank source) - the
+    dashboard's existing live-rank tile already reads `latest_decision_of_
+    type(conn, "live_rank")` and displays whatever real `estimated_rank`/
+    `precision` it finds, so routing LiveFPL's own real number through the
+    same journal type means the dashboard picks it up with no separate code
+    path. `precision="exact"` is a real, new value (never used by the
+    self-built estimator, which only ever logs "approximate"/"degenerate")
+    - this is LiveFPL's own real point estimate, not an interval this
+    project derived and hedged itself; `source="livefpl"` is the real
+    provenance marker the dashboard uses to decide whether to show the
+    self-estimator's own uncertainty language or not."""
+    rank = snapshot.post_subs_rank
+    summary = (
+        f"LiveFPL: rank ~{rank:,} (GW{snapshot.curgw}, {snapshot.gw_points} pts)" if rank is not None
+        else f"LiveFPL: GW{snapshot.curgw} snapshot fetched, no rank field returned"
+    )
+    return log_decision(
+        conn, "live_rank", summary=summary,
+        detail={
+            "source": "livefpl", "team_id": snapshot.team_id, "name": snapshot.name,
+            "event": snapshot.curgw, "estimated_rank": rank,
+            "pre_subs_rank": snapshot.pre_subs_rank, "gw_rank": snapshot.gw_rank,
+            "old_rank": snapshot.old_rank, "rank_gain": snapshot.rank_gain,
+            "change_pct": snapshot.change_pct, "safety_score": snapshot.safety_score,
+            "template_pct": snapshot.template_pct, "chip_played": snapshot.chip_played,
+            "gw_points": snapshot.gw_points, "precision": "exact",
+            "source_time": snapshot.source_time,
+        },
+        confidence="high" if rank is not None else "low",
+    )
+
+
+_LIVEFPL_MIN_REFRESH_MINUTES = 10  # cheap single GET - safe to refresh often, still throttled so a tight scheduler interval can't hammer a free third-party endpoint
+
+
+def _maybe_refresh_livefpl_rank(conn) -> dict | None:
+    """Real, cheap, always-on live-rank refresh (2026-08-27, direct user
+    instruction: "uses livefpl as the main source to track my live rank
+    always" - not just during a live match, unlike the self-built
+    estimator's own `_maybe_refresh_live_rank` below, which stays correctly
+    gated to live windows only because ITS cost (a real multi-manager
+    sample) genuinely justifies that gate. This is a single small GET to a
+    free public JSON endpoint - cheap enough to run every real `fpl
+    run-scheduled` cycle, on or off a live matchday, so the dashboard's own
+    live-rank tile always reflects LiveFPL's latest real number rather than
+    only updating mid-match. Returns None on any real reason not to refresh
+    (no entry id, too soon since the last refresh, the real fetch failed) -
+    every one of those is an expected, non-fatal state."""
+    entry_id = get_my_team_entry_id(conn)
+    if entry_id is None:
+        return None
+
+    # Real, simple throttle - checks the latest `live_rank` decision of
+    # EITHER source rather than filtering by source in SQL (no dependency
+    # on the SQLite build having the JSON1 extension enabled). Slightly
+    # under-refreshes on the rare cycle where the self-built estimator just
+    # logged one during a live match - harmless, that path already has a
+    # real, current number logged either way.
+    last = conn.execute(
+        "SELECT created_at FROM decisions WHERE decision_type='live_rank' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if last is not None and last["created_at"]:
+        try:
+            last_ts = datetime.fromisoformat(last["created_at"].replace("Z", "+00:00"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            age_minutes = (datetime.now(timezone.utc) - last_ts).total_seconds() / 60
+            if age_minutes < _LIVEFPL_MIN_REFRESH_MINUTES:
+                return None
+        except ValueError:
+            pass
+
+    try:
+        snapshot = fetch_livefpl_snapshot(entry_id)
+    except LiveFPLFetchError as e:
+        update_source_health(conn, _LIVEFPL_SOURCE_NAME, success=False, error=str(e))
+        return None
+    update_source_health(conn, _LIVEFPL_SOURCE_NAME, success=True)
+
+    decision_id = _log_livefpl_rank_decision(conn, snapshot)
+    conn.commit()
+    return {"decision_id": decision_id, "estimated_rank": snapshot.post_subs_rank}
 
 
 _LIVE_RANK_MIN_REFRESH_MINUTES = 20
@@ -1712,30 +1817,47 @@ def live_bonus_cmd(event_num: int | None):
 
 @cli.command("live-rank")
 @click.option("--entry-id", "entry_id_opt", default=None, type=int, help="FPL entry id (default: the saved my-team entry id)")
-@click.option("--event", "event_num", default=None, type=int, help="gameweek number (default: current/next event)")
-@click.option("--sample-size", default=300, type=int, help="reference managers to sample (heaviest network call in this project - see the command's own warning)")
-@click.option("--force", is_flag=True, help="resample even if a reference sample already exists for this event")
-def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: int, force: bool):
-    """Estimate your real live overall rank during an in-progress gameweek -
-    FPL's own API never publishes this (confirmed by real research, see
-    models/live_rank.py's own module docstring), so this samples a real,
-    rank-stratified set of managers across the FULL 1..total_players range
-    (not just the competitive top 10k `fpl sync-eo` samples - a real,
-    deliberate difference, since a typical manager's own real rank can sit
-    anywhere in that range) and interpolates where your own real live
-    points total falls among them. Real, disclosed limitations, not
-    oversold: uncalibrated (no real live-gameweek results exist yet to fit
-    against), doesn't model autosubs (a non-appearing starter simply
-    contributes 0, not a fabricated substitution), and the underlying
-    sample is the heaviest network call in this project - opt-in only,
-    idempotent per event unless --force, same posture `fpl sync-eo`
-    already established for the same reason."""
+@click.option("--event", "event_num", default=None, type=int, help="gameweek number (default: current/next event) - only used by the self-built-estimator fallback path")
+@click.option("--sample-size", default=300, type=int, help="reference managers to sample (heaviest network call in this project - see the command's own warning) - only used by the self-built-estimator fallback path")
+@click.option("--force", is_flag=True, help="resample even if a reference sample already exists for this event - only used by the self-built-estimator fallback path")
+@click.option("--no-livefpl", is_flag=True, help="skip LiveFPL and go straight to this project's own self-built stratified-sample estimator")
+def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: int, force: bool, no_livefpl: bool):
+    """Your real live overall rank. PRIMARY source (2026-08-27, direct user
+    instruction): LiveFPL's own real, free, public JSON endpoint for this
+    exact entry id - live-verified this session (see ingestion/livefpl_
+    source.py's own docstring for the real network-capture evidence). Falls
+    back to this project's own self-built stratified-sample estimator
+    (models/live_rank.py) only if LiveFPL is unreachable, or with
+    --no-livefpl. The self-built path's own real, disclosed limitations
+    (uncalibrated, no autosub modeling, heaviest network call in this
+    project) are unchanged - see its own docstring."""
     conn = get_connection()
     entry_id = entry_id_opt if entry_id_opt is not None else get_my_team_entry_id(conn)
     if entry_id is None:
         click.echo("no entry id - pass --entry-id or run `fpl my-team --entry-id <id>` first", err=True)
         conn.close()
         raise SystemExit(1)
+
+    if not no_livefpl:
+        try:
+            snapshot = fetch_livefpl_snapshot(entry_id)
+        except LiveFPLFetchError as e:
+            update_source_health(conn, _LIVEFPL_SOURCE_NAME, success=False, error=str(e))
+            click.echo(f"LiveFPL unreachable ({e}) - falling back to the self-built estimator", err=True)
+        else:
+            update_source_health(conn, _LIVEFPL_SOURCE_NAME, success=True)
+            decision_id = _log_livefpl_rank_decision(conn, snapshot)
+            conn.close()
+            click.echo(f"decision_id={decision_id}  source=livefpl")
+            click.echo(f"manager: {snapshot.name}   GW{snapshot.curgw}: {snapshot.gw_points} pts")
+            if snapshot.post_subs_rank is not None:
+                click.echo(
+                    f"live rank: {snapshot.post_subs_rank:,}"
+                    + (f"  ({snapshot.rank_gain:+,} vs pre-GW)" if snapshot.rank_gain is not None else "")
+                )
+            else:
+                click.echo("LiveFPL returned a snapshot with no rank field yet")
+            return
 
     if event_num is None:
         event_num = live_or_reference_event(conn)

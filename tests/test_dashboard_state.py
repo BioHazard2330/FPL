@@ -16,7 +16,13 @@ def test_dashboard_state_maps_lifecycle_state():
     assert _dashboard_state("LIVE") == "LIVE"
     assert _dashboard_state("GW_FINISHED") == "POST_MATCH"
     assert _dashboard_state("NEXT_GW_ANALYSIS") == "POST_MATCH"
-    assert _dashboard_state("READY_FOR_NEXT_DEADLINE") == "POST_MATCH"
+    # READY_FOR_NEXT_DEADLINE reads as PRE_DEADLINE, not POST_MATCH
+    # (2026-08-27, product design pass) - real bug found live: this state can
+    # hold for DAYS, and POST_MATCH's panel order leads with live/match-recap
+    # ahead of Primary Decision, which is only right in the narrow "what just
+    # happened" window (GW_FINISHED/NEXT_GW_ANALYSIS) - once genuinely caught
+    # up and waiting for the next deadline, "what should I do" belongs first.
+    assert _dashboard_state("READY_FOR_NEXT_DEADLINE") == "PRE_DEADLINE"
     assert _dashboard_state("PRE_DEADLINE") == "PRE_DEADLINE"
     assert _dashboard_state("LOCKED") == "PRE_DEADLINE"
     assert _dashboard_state("UNKNOWN") == "PRE_DEADLINE"

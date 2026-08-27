@@ -1639,10 +1639,19 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
     result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
     explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
 
-    assert "TRANSFER" in result
+    # The bare verdict badge (2026-08-27, product design pass) now lives in
+    # the Hero, computed once via _compute_primary_verdict and shared with
+    # this panel - this panel's own job is exclusively WHY, so the real
+    # check here is that the transfer-specific reasoning is present, not a
+    # second copy of the badge word.
     assert "B.Fernandes -&gt; Tavernier" in result or "B.Fernandes -> Tavernier" in result
     assert "CURRENT LOCKED STATE" in result
-    assert "IMMEDIATE OPTIMUM" in explorer_result and "STRATEGIC OPTIMUM" in explorer_result
+    # The old "IMMEDIATE OPTIMUM vs STRATEGIC OPTIMUM" two-column + horizon
+    # table (2026-08-27, direct user rejection: "it looks like nonsense",
+    # plus a real copy bug - a raw backend `note` fragment glued onto a
+    # rewritten sentence) is gone from this panel - that same real
+    # information already has one clean home, Primary Decision's own WHY
+    # list (`result`, not `explorer_result`, asserted above/elsewhere).
     assert "Path 1" in explorer_result and "Path 2" in explorer_result
     assert "WILDCARD" in explorer_result  # chip badge, uppercased
     assert "statistically equivalent" in explorer_result  # 12.06 vs 11.9 is well within 5%
@@ -1680,7 +1689,7 @@ def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn)
     explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
 
     assert "ROLL" in result
-    assert "No chip cleared a real positive value" in explorer_result
+    assert "No chip earns its keep" in explorer_result
 
 
 # --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---
@@ -1780,7 +1789,7 @@ def test_statistics_shows_real_current_season_totals(db_conn):
     result = _statistics_html(db_conn, {1, 10})
 
     assert "P1" in result
-    assert "<span>12</span>" in result
+    assert "<span class='stats-pts'>12</span>" in result
 
 
 def test_statistics_honest_empty_state_before_any_snapshot(db_conn):
