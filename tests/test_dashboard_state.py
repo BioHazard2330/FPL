@@ -1,8 +1,8 @@
-from fpl_agent.monitoring.dashboard import (
+from fpl_agent.monitoring.dashboard import generate_dashboard_html
+from fpl_agent.monitoring.dashboard.legacy import (
     _compute_my_live_score,
     _dashboard_state,
     _squad_play_status_counts,
-    generate_dashboard_html,
 )
 from fpl_agent.optimization.locked_squad import get_locked_squad
 from test_optimization_locked_squad import _BENCH_4, _STARTING_11, _seed_real_picks
@@ -109,6 +109,12 @@ def test_dashboard_keeps_original_panel_order_when_pre_deadline(db_conn):
 
 
 def test_dashboard_promotes_live_panel_when_a_squad_fixture_is_live(db_conn):
+    """Squad is now a fixed top-level workspace (2026-08-27, frontend
+    redesign - HOME/PLAN/SQUAD/INTELLIGENCE/MARKET, a stable task-oriented
+    nav, not reordered by match state) - what genuinely still promotes on a
+    live fixture is Live Tracking/Match Intelligence moving ahead of the
+    OTHER secondary panels (intelligence-summary/opportunities/market), and
+    the live-emphasis class/state on the page and hero."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn, captain_id=30, vice_id=20)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
@@ -116,7 +122,7 @@ def test_dashboard_promotes_live_panel_when_a_squad_fixture_is_live(db_conn):
     result = generate_dashboard_html(db_conn, live_payload={"elements": []})
 
     assert 'class="state-live"' in result
-    assert result.index('id="live"') < result.index('id="squad"')
+    assert result.index('id="live"') < result.index('id="intelligence-summary"')
     assert "panel-live-emphasis" in result
     assert "GW1 &middot; LIVE" in result
 
@@ -157,8 +163,7 @@ def test_panels_carry_a_real_data_intelligence_decision_category(db_conn):
     result = generate_dashboard_html(db_conn)
 
     assert 'id="squad" data-cat="data"' in result
-    assert 'id="decision" data-cat="decision"' in result
-    assert 'id="explore" data-cat="decision"' in result
+    assert 'id="plan" data-cat="decision"' in result
     assert 'id="intelligence-summary" data-cat="intelligence"' in result
     assert 'id="football-intelligence" data-cat="intelligence"' in result
     assert 'id="match-centre" data-cat="intelligence"' in result
@@ -172,7 +177,7 @@ def test_squad_live_window_treats_match_intelligence_full_time_as_finished(db_co
     match is genuinely over. Without this override, "My Live Score" stayed
     stuck reporting LIVE for real minutes after the match had actually
     ended."""
-    from fpl_agent.monitoring.dashboard import _squad_live_window
+    from fpl_agent.monitoring.dashboard.legacy import _squad_live_window
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
@@ -199,7 +204,7 @@ def test_squad_live_window_never_unfinishes_a_real_fpl_confirmed_fixture(db_conn
     """The override only ever moves finished 0->1, never the reverse - a
     missing/stale match_intelligence row must never contradict FPL's own
     already-confirmed finished=1."""
-    from fpl_agent.monitoring.dashboard import _squad_live_window
+    from fpl_agent.monitoring.dashboard.legacy import _squad_live_window
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=1)
@@ -248,7 +253,7 @@ def test_any_in_progress_is_false_once_the_only_started_fixture_finished(db_conn
     needs `any_in_progress` instead, which must go back to False once the
     one started fixture is confirmed finished, even though `state` itself
     correctly stays "live"."""
-    from fpl_agent.monitoring.dashboard import _squad_live_window
+    from fpl_agent.monitoring.dashboard.legacy import _squad_live_window
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     # Real, deliberate two-fixture scenario (matches the real production
@@ -275,7 +280,7 @@ def test_any_in_progress_is_false_once_the_only_started_fixture_finished(db_conn
 
 
 def test_any_in_progress_is_true_while_a_fixture_is_genuinely_live(db_conn):
-    from fpl_agent.monitoring.dashboard import _squad_live_window
+    from fpl_agent.monitoring.dashboard.legacy import _squad_live_window
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
@@ -302,7 +307,7 @@ def test_compare_panel_shows_real_actual_points_once_a_match_has_played(db_conn)
     """Real bug fix: the Optimizer Delta panel's "Real xP" label was a
     stale-framed pre-match projection once real matches have played - now
     shows real accrued actual points (GW1 pts) alongside the projection."""
-    from fpl_agent.monitoring.dashboard import _MyLiveScore, _compare_panel_html
+    from fpl_agent.monitoring.dashboard.legacy import _MyLiveScore, _compare_panel_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn, captain_id=30, vice_id=20)
@@ -319,7 +324,7 @@ def test_compare_panel_shows_real_actual_points_once_a_match_has_played(db_conn)
 
 
 def test_compare_panel_falls_back_to_projected_xp_before_any_match_played(db_conn):
-    from fpl_agent.monitoring.dashboard import _compare_panel_html
+    from fpl_agent.monitoring.dashboard.legacy import _compare_panel_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn, captain_id=30, vice_id=20)

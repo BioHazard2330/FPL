@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
-import fpl_agent.monitoring.dashboard as dash_mod
+import fpl_agent.monitoring.dashboard.legacy as dash_mod
 from fpl_agent.database.decisions import log_decision
-from fpl_agent.monitoring.dashboard import _compute_primary_verdict, _decision_comparison_html, _opportunity_board_html
+from fpl_agent.monitoring.dashboard.legacy import _compute_primary_verdict, _decision_comparison_html, _opportunity_board_html
 
 
 def test_decision_comparison_absent_when_no_audit_cached(db_conn):

@@ -2,7 +2,8 @@ from click.testing import CliRunner
 
 from fpl_agent.cli.main import cli
 from fpl_agent.ingestion.my_team import set_my_team_entry_id
-from fpl_agent.monitoring.dashboard import (
+from fpl_agent.monitoring.dashboard import generate_dashboard_html
+from fpl_agent.monitoring.dashboard.legacy import (
     _format_kickoff,
     _local_time_span,
     _match_intelligence_html,
@@ -10,7 +11,6 @@ from fpl_agent.monitoring.dashboard import (
     _news_html,
     _pitch_html_from_xi,
     _risk_monitor_html,
-    generate_dashboard_html,
 )
 from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 from test_optimization_squad import _seed
@@ -70,7 +70,7 @@ def test_dashboard_decision_center_shows_real_captain_and_no_fabricated_transfer
     reading `optimization.decision_analysis` directly) - it remains real,
     tested, standalone Mode-A/no-locked-squad code, tested directly here
     rather than through the full page."""
-    from fpl_agent.monitoring.dashboard import _decision_center_html
+    from fpl_agent.monitoring.dashboard.legacy import _decision_center_html
     from fpl_agent.optimization.build_team import generate_build_team_report
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
@@ -84,7 +84,7 @@ def test_dashboard_decision_center_shows_real_captain_and_no_fabricated_transfer
 
 def test_dashboard_decision_center_shows_a_real_logged_transfer(db_conn):
     from fpl_agent.database.decisions import log_decision
-    from fpl_agent.monitoring.dashboard import _decision_center_html
+    from fpl_agent.monitoring.dashboard.legacy import _decision_center_html
     from fpl_agent.optimization.build_team import generate_build_team_report
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
@@ -280,7 +280,7 @@ def test_dashboard_health_panel_summary_reports_all_healthy(db_conn, monkeypatch
     real-degraded on minimal data, which is correct behavior, not this
     test's concern) - mocks both real health sources directly to isolate
     the summary-aggregation logic itself."""
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     from fpl_agent.monitoring.readiness import ReadinessCheck
 
     monkeypatch.setattr(dash_mod, "run_readiness_checks", lambda conn: [
@@ -297,7 +297,7 @@ def test_dashboard_health_panel_summary_reports_all_healthy(db_conn, monkeypatch
 
 
 def test_dashboard_health_panel_summary_names_a_real_degraded_source(db_conn, monkeypatch):
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     from fpl_agent.monitoring.readiness import ReadinessCheck
 
     from fpl_agent.monitoring.source_status import SourceStatus
@@ -323,7 +323,7 @@ def test_chip_strategy_panel_shows_real_value_keyed_by_chip_name(db_conn, monkey
     chip_type silently always missed and fell through to the "run `fpl
     chips`" muted fallback for every chip, every time. Fixed to key by
     w.name; this pins it so it can't quietly regress."""
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     from fpl_agent.optimization.chips import ChipWindow
 
     monkeypatch.setattr(
@@ -347,7 +347,7 @@ def test_chip_strategy_panel_reads_wildcard_freehit_from_the_decision_journal(db
     call live on every dashboard regen. Reads the last value `fpl chips`
     already logged instead of recomputing, with a real "as of" age rather
     than presenting a stale number as fresh."""
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     from fpl_agent.database.decisions import log_decision
     from fpl_agent.optimization.chips import ChipWindow
 
@@ -371,7 +371,7 @@ def test_chip_strategy_panel_reads_wildcard_freehit_from_the_decision_journal(db
 
 
 def test_chip_strategy_panel_falls_back_when_nothing_ever_logged(db_conn, monkeypatch):
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     from fpl_agent.optimization.chips import ChipWindow
 
     monkeypatch.setattr(
@@ -483,7 +483,7 @@ def test_dashboard_live_tracking_shows_defcon_progress_for_a_def(db_conn):
     optimizer - which player it actually picks for the recommended 15 is
     not this test's concern, only whether the panel renders DEFCON data
     correctly for a real live payload."""
-    from fpl_agent.monitoring.dashboard import _live_tracking_html
+    from fpl_agent.monitoring.dashboard.legacy import _live_tracking_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     now = "t0"
@@ -1018,11 +1018,13 @@ def test_dashboard_explicit_override_still_shows_optimizer_recommendation_even_w
 
 
 def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain(db_conn, monkeypatch):
-    """Real end-to-end test of the consolidated Strategic Plan CAPTAIN row
-    (2026-08-27, "final product-level dashboard" pass) - captain/transfer
-    verdicts against a real locked squad now render inside Strategic Plan
-    (`optimization.decision_analysis.analyze_captain_decision`), not the
-    removed standalone AI Decisions panel."""
+    """Real end-to-end test of the Home hero's own CAPTAIN verdict line
+    (2026-08-27, frontend redesign - `analyze_captain_decision`'s real
+    KEEP/CHANGE/REVIEW verdict now renders as a structured-fact sentence in
+    Home's hero, not the old `<strong>CAPTAIN</strong> <span
+    class="decision-action">KEEP</span>` badge markup from the removed
+    Strategic Plan panel - same real decision-analysis result, new copy
+    shape per the redesign's own copy rule)."""
     from test_optimization_locked_squad import _seed_real_picks
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
@@ -1030,13 +1032,14 @@ def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain
 
     result = generate_dashboard_html(db_conn)
 
-    assert '<strong>CAPTAIN</strong> <span class="decision-action">KEEP</span>' in result
+    assert "Captain: keep" in result
+    assert "home-hero-captain-verdict" in result
 
 
 def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squad(db_conn, monkeypatch):
     """Section 20's explicit requirement: an invalid locked XI must never
     render silently."""
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.assemble as dash_mod
     from fpl_agent.optimization.locked_squad import LockedSquadState
     from fpl_agent.optimization.squad import StartingXI
 
@@ -1129,7 +1132,7 @@ def test_squad_changes_panel_does_not_show_price_change_twice(db_conn):
     )
     db_conn.commit()
 
-    import fpl_agent.monitoring.dashboard as dash_mod
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
     result = dash_mod._squad_changes_html(db_conn)
 
     assert "No squad changes detected yet this session." in result
@@ -1271,7 +1274,7 @@ def _pitch_test_xi():
 
 
 def test_pitch_shows_actual_points_for_a_finished_fixture_not_projected_xp(db_conn):
-    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1293,7 +1296,7 @@ def test_pitch_shows_actual_points_for_a_finished_fixture_not_projected_xp(db_co
 
 
 def test_pitch_shows_live_points_for_an_in_progress_fixture(db_conn):
-    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1315,7 +1318,7 @@ def test_pitch_shows_live_points_for_an_in_progress_fixture(db_conn):
 
 
 def test_pitch_shows_next_xp_projection_for_a_yet_to_play_player(db_conn):
-    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
@@ -1335,7 +1338,7 @@ def test_pitch_shows_last_finished_gws_real_points_alongside_next_xp(db_conn):
     points (`prediction_outcomes`, written once by the post-GW pipeline)
     must still show on the card, not silently disappear the moment
     play_state stops being "played"/"live" for the NEW reference event."""
-    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1367,7 +1370,7 @@ def test_pitch_never_shows_xp_as_current_performance_once_a_match_has_played(db_
     whose match has genuinely finished shows exactly ONE points figure (the
     real ACTUAL one), never the bare future-xP div a not-yet-played
     teammate on the same pitch correctly still shows."""
-    from fpl_agent.monitoring.dashboard import _pitch_html_from_xi
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1538,15 +1541,17 @@ def _locked_and_decision(conn):
     return locked, decision
 
 
-def test_strategic_plan_panel_handles_an_older_decision_missing_path_total(db_conn):
+def test_plan_workspace_handles_an_older_decision_missing_path_total(db_conn):
     """Real bug found live against the real production DB (2026-08-27): a
     `strategic_plan` decision logged BEFORE this pass added `path_total`/
     `delta_vs_roll`/`delta_vs_leader` only carries the older `total_net_ev`
-    field - `_strategic_plan_html` crashed with a real KeyError on the real
-    production dashboard regen. Must fall back to `total_net_ev` instead of
-    fabricating a roll baseline that was never computed for that older run."""
+    field - must fall back to `total_net_ev` (via `_normalize_strategic_detail`,
+    the same normalization `_compute_primary_verdict` applies before Plan
+    ever sees `sd`) instead of fabricating a roll baseline that was never
+    computed for that older run."""
     from fpl_agent.database.decisions import log_decision
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     locked, decision = _locked_and_decision(db_conn)
@@ -1561,42 +1566,40 @@ def test_strategic_plan_panel_handles_an_older_decision_missing_path_total(db_co
         },
     )
     db_conn.commit()
+    from fpl_agent.database.decisions import latest_decision_of_type
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
 
-    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
 
-    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
-    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
-
-    assert "12.1 pts" in result or "12.06" in result or "12.1" in result
-    assert "Path 1" in explorer_result
+    assert "12.1" in result or "12.06" in result
+    assert "Path 1" in result
 
 
-def test_strategic_plan_panel_shows_empty_state_when_no_locked_squad(db_conn):
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+def test_plan_workspace_shows_empty_state_when_no_locked_squad(db_conn):
+    from fpl_agent.monitoring.dashboard import plan
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
-    result = _strategic_plan_html(db_conn, None, None, None)
+    result = plan.render_plan_workspace(db_conn, None, None, None)
 
     assert "No real locked squad" in result
 
 
-def test_strategic_plan_panel_shows_no_search_run_yet_state_with_a_real_locked_squad(db_conn):
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+def test_plan_workspace_shows_no_search_run_yet_state_with_a_real_locked_squad(db_conn):
+    from fpl_agent.monitoring.dashboard import plan
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     locked, decision = _locked_and_decision(db_conn)
 
-    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+    result = plan.render_plan_workspace(db_conn, None, locked, set(locked.squad_ids))
 
-    assert "no multi-GW search has been run yet" in result
     assert "fpl strategic-plan" in result
-    assert "CURRENT LOCKED STATE" in result
 
 
-def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
-    from fpl_agent.database.decisions import log_decision
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+def test_plan_workspace_shows_real_top_paths(db_conn):
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     locked, decision = _locked_and_decision(db_conn)
@@ -1612,13 +1615,13 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
             "best_path": {
                 "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
                 "final_free_transfers": 1, "final_bank_tenths": 5,
-                "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
+                "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
             },
             "paths": [
                 {
                     "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
                     "final_free_transfers": 1, "final_bank_tenths": 5,
-                    "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "uses_hit": False}],
+                    "steps": [{"event": 2, "action": "B.Fernandes -> Tavernier", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
                 },
                 {
                     "total_net_ev": 11.9, "path_total": 11.9, "delta_vs_roll": 2.84, "delta_vs_leader": -0.16,
@@ -1633,34 +1636,20 @@ def test_strategic_plan_panel_shows_real_top_paths_and_primary_verdict(db_conn):
         },
     )
     db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
 
-    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
 
-    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
-    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
-
-    # The bare verdict badge (2026-08-27, product design pass) now lives in
-    # the Hero, computed once via _compute_primary_verdict and shared with
-    # this panel - this panel's own job is exclusively WHY, so the real
-    # check here is that the transfer-specific reasoning is present, not a
-    # second copy of the badge word.
-    assert "B.Fernandes -&gt; Tavernier" in result or "B.Fernandes -> Tavernier" in result
-    assert "CURRENT LOCKED STATE" in result
-    # The old "IMMEDIATE OPTIMUM vs STRATEGIC OPTIMUM" two-column + horizon
-    # table (2026-08-27, direct user rejection: "it looks like nonsense",
-    # plus a real copy bug - a raw backend `note` fragment glued onto a
-    # rewritten sentence) is gone from this panel - that same real
-    # information already has one clean home, Primary Decision's own WHY
-    # list (`result`, not `explorer_result`, asserted above/elsewhere).
-    assert "Path 1" in explorer_result and "Path 2" in explorer_result
-    assert "WILDCARD" in explorer_result  # chip badge, uppercased
-    assert "statistically equivalent" in explorer_result  # 12.06 vs 11.9 is well within 5%
-    assert "TOP TIER" in explorer_result  # Part 12: never crown Path 1 "BEST" alone when tied
+    assert "Path 1" in result and "Path 2" in result
+    assert "WILDCARD" in result  # chip badge, uppercased
+    assert "statistically equivalent" in result  # 12.06 vs 11.9 is well within 5%
+    assert "TOP TIER" in result  # never crown Path 1 "BEST" alone when tied
 
 
-def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn):
-    from fpl_agent.database.decisions import log_decision
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
+def test_plan_workspace_notes_when_no_chip_cleared_positive_value(db_conn):
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     locked, decision = _locked_and_decision(db_conn)
@@ -1682,20 +1671,17 @@ def test_strategic_plan_panel_notes_when_no_chip_cleared_positive_value(db_conn)
         },
     )
     db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
 
-    from fpl_agent.monitoring.dashboard import _strategy_explorer_html
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
 
-    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
-    explorer_result = _strategy_explorer_html(db_conn, locked, set(locked.squad_ids))
-
-    assert "ROLL" in result
-    assert "No chip earns its keep" in explorer_result
+    assert "No chip earns its keep" in result
 
 
 # --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---
 
 def test_price_predictions_shows_real_forecast_for_squad(db_conn):
-    from fpl_agent.monitoring.dashboard import _price_predictions_html
+    from fpl_agent.monitoring.dashboard.legacy import _price_predictions_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000', 't0')")
@@ -1712,7 +1698,7 @@ def test_price_predictions_shows_real_forecast_for_squad(db_conn):
 
 
 def test_price_predictions_empty_state_without_a_squad(db_conn):
-    from fpl_agent.monitoring.dashboard import _price_predictions_html
+    from fpl_agent.monitoring.dashboard.legacy import _price_predictions_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
@@ -1727,7 +1713,7 @@ def test_fixture_projections_shows_real_goals_and_clean_sheet_grids(db_conn):
     score + clean sheet %"). Real, unmocked expected_points()/blend.py
     computation over a small synthetic pool - no meaningful numbers, but
     both real grids must render for every real team without crashing."""
-    from fpl_agent.monitoring.dashboard import _fixture_projections_html
+    from fpl_agent.monitoring.dashboard.legacy import _fixture_projections_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
@@ -1740,7 +1726,7 @@ def test_fixture_projections_shows_real_goals_and_clean_sheet_grids(db_conn):
 
 
 def test_fixture_projections_highlights_squad_teams(db_conn):
-    from fpl_agent.monitoring.dashboard import _fixture_projections_html
+    from fpl_agent.monitoring.dashboard.legacy import _fixture_projections_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
@@ -1750,7 +1736,7 @@ def test_fixture_projections_highlights_squad_teams(db_conn):
 
 
 def test_player_odds_shows_real_matched_data(db_conn):
-    from fpl_agent.monitoring.dashboard import _player_odds_html
+    from fpl_agent.monitoring.dashboard.legacy import _player_odds_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1776,7 +1762,7 @@ def test_player_odds_shows_real_matched_data(db_conn):
 
 
 def test_statistics_shows_real_current_season_totals(db_conn):
-    from fpl_agent.monitoring.dashboard import _statistics_html
+    from fpl_agent.monitoring.dashboard.legacy import _statistics_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1793,7 +1779,7 @@ def test_statistics_shows_real_current_season_totals(db_conn):
 
 
 def test_statistics_honest_empty_state_before_any_snapshot(db_conn):
-    from fpl_agent.monitoring.dashboard import _statistics_html
+    from fpl_agent.monitoring.dashboard.legacy import _statistics_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 

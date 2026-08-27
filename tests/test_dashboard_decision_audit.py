@@ -1,5 +1,5 @@
 from fpl_agent.database.decisions import log_decision
-from fpl_agent.monitoring.dashboard import _decision_audit_html
+from fpl_agent.monitoring.dashboard.legacy import _decision_audit_html
 
 
 def _seed_minimal(conn):
@@ -68,20 +68,22 @@ def test_decision_audit_panel_renders_compact_falsifier_and_collapsed_full_trace
     assert "ROBUST" in result
 
 
-def test_decision_audit_panel_is_wired_into_the_primary_decision_panel(db_conn):
-    from fpl_agent.monitoring.dashboard import _strategic_plan_html
-    from fpl_agent.optimization.decision_engine import evaluate_locked_squad
-    from fpl_agent.optimization.locked_squad import get_locked_squad
+def test_decision_audit_panel_is_wired_into_the_advanced_drawer(db_conn):
+    """Decision Audit lives under Advanced (2026-08-27, frontend redesign -
+    "historical audit belongs under Advanced, never the primary screen") -
+    real end-to-end check that `generate_dashboard_html`'s Advanced/Decision
+    Detail drawer actually includes it, not just the standalone
+    `_decision_audit_html` unit above."""
+    from fpl_agent.monitoring.dashboard import generate_dashboard_html
     from test_optimization_locked_squad import _seed_real_picks
     from test_dashboard import _seed
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn)
-    locked = get_locked_squad(db_conn)
-    decision = evaluate_locked_squad(db_conn, locked)
     log_decision(db_conn, "decision_audit", "summary", _fake_audit_detail())
     db_conn.commit()
 
-    result = _strategic_plan_html(db_conn, locked, decision, set(locked.squad_ids))
+    result = generate_dashboard_html(db_conn)
 
     assert "View decision audit" in result
+    assert 'id="advanced"' in result

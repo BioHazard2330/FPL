@@ -52,7 +52,7 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | Team/player/manager intelligence rollups | `models/team_outlook.py`, `models/team_intelligence.py`, `models/player_intelligence.py`, `models/manager_intelligence.py` |
 | GW lifecycle + autonomous post-GW pipeline | `models/gw_lifecycle.py`, `optimization/post_gw_pipeline.py` |
 | Live rank (honest, degenerate-sample-aware) | `models/live_rank.py` |
-| Dashboard | `monitoring/dashboard.py` |
+| Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point, `home.py`/`plan.py`/`squad.py` workspaces, `data_payload.py` embedded-JSON snapshot, `legacy.py` not-yet-migrated panels) |
 | Calibration / prediction-vs-outcome storage | `models/calibration.py`, `prediction_outcomes` table |
 
 ## Conventions
