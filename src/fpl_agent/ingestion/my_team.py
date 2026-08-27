@@ -278,3 +278,34 @@ def get_latest_squad(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list
     if not rows:
         return None
     return rows[0]["event"], [r["player_id"] for r in rows]
+
+
+def get_latest_squad_detail(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list[sqlite3.Row]] | None:
+    """Same real, atomic scalar-subquery pattern as `get_latest_squad` above,
+    extended to the full row (squad_slot/is_captain/is_vice_captain, not
+    just player_id) - added 2026-08-29 to close a real, still-recurring
+    residual race `get_latest_squad()`'s own 2026-08-29 fix didn't cover.
+
+    `optimization.locked_squad.get_locked_squad` used to call
+    `get_latest_squad()` (one atomic read) and THEN a second, separate
+    `my_team_picks` query inside `_xi_from_real_picks` to get slot/captain
+    detail - two independent un-transacted reads of the same table, with no
+    guarantee the real concurrent writer (`run-scheduled`'s own
+    `_upsert_picks` resync, DELETE-then-reinsert for one event) can't land
+    in between. Confirmed live in production logs (2026-08-27/28): the
+    exact warning `_xi_from_real_picks` added specifically to make this race
+    loud ("my_team_picks now has zero rows for it - likely a concurrent
+    resync landed between the two reads") fired repeatedly, roughly once
+    per sync cycle - the race was diagnosed and logged, never actually
+    closed. This function is the real close: ONE atomic statement returns
+    everything `get_locked_squad` needs, so there is no second read left to
+    race against."""
+    rows = conn.execute(
+        "SELECT event, player_id, squad_slot, is_captain, is_vice_captain FROM my_team_picks WHERE entry_id=? "
+        "AND event=(SELECT MAX(event) FROM my_team_picks WHERE entry_id=?) "
+        "ORDER BY squad_slot",
+        (entry_id, entry_id),
+    ).fetchall()
+    if not rows:
+        return None
+    return rows[0]["event"], rows

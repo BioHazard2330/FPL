@@ -135,6 +135,112 @@ def _upsert_player_match_row(conn, season: str, row: dict) -> None:
     )
 
 
+def repair_unresolved_player_ids(
+    conn, limit: int | None = None, delay: float = _MATCH_FETCH_DELAY_SECONDS, season: str | None = None,
+) -> dict:
+    """Real, safe re-resolution pass for historical `player_match_stats_history`
+    rows with `player_id IS NULL` (2026-08-28, direct user P2 ask - a real,
+    confirmed, disclosed gap: 31,983/56,581 rows, predating
+    `market_identity.py::resolve_player_id`'s 2026-08-26 team-scoped-fallback
+    fix, never retroactively re-run against already-inserted rows).
+
+    No player name is stored on this table (only `understat_player_id`) -
+    `_upsert_player_match_row`'s own `ON CONFLICT` clause never updates
+    `player_id` either (only the stat columns), so simply re-running
+    `backfill_understat` would neither re-fetch an already-present match NOR
+    fix its `player_id` even if it did. The only safe way to recover a real
+    name is a genuine re-fetch of that exact match's own Understat page (the
+    real `understat_match_id` already stored on each unresolved row) - never
+    a guess, never a fabricated mapping. Every resolution goes through the
+    exact same `resolve_player_id()` team-scoped fallback every other real
+    Understat ingestion already trusts, matched against the raw name
+    Understat itself reports for that `understat_player_id` in the SAME
+    real match this session.
+
+    Zero duplicate-row risk: this only ever `UPDATE`s an existing row by its
+    own `id`, never inserts - the `UNIQUE(understat_match_id,
+    understat_player_id)` constraint is never touched. Zero cross-fixture-
+    contamination risk: resolution is scoped per real match (each match's
+    own roster only), and `resolve_player_id`'s own alias cache
+    (`player_name_aliases`, keyed by (source, source_name)) is shared with
+    every other real Understat caller - reused, not duplicated.
+
+    `limit` caps how many DISTINCT unresolved matches to re-fetch this call -
+    real, network-bound (one request per match, ~0.3s politeness delay each,
+    same as `backfill_understat`), meant to be run in bounded batches, not
+    necessarily all 1908 distinct matches in one call. `season` scopes the
+    repair to one real season - a real, deliberate prioritization found live
+    running an unscoped first batch: `understat_match_id` ordering correlates
+    with chronological order, so an unscoped run repairs the OLDEST season
+    first (2021-22) - the real season that matters least, since only the
+    two most recent prior seasons actually feed the live model's
+    hierarchical-prior fix (`expected_points.py::_hierarchical_prior_rates`).
+    Also structurally lower-yield: many 2021-22 rows are for players long
+    since removed from this project's own live `players` table (a real,
+    live roster, not a historical archive) - `resolve_player_id`'s
+    team-scoped fallback correctly can't resolve someone who genuinely isn't
+    in that table anymore, which is honest behavior, not a repair failure.
+    Idempotent and safely resumable: only ever touches rows still
+    `player_id IS NULL` at call time."""
+    season_clause, season_params = ("AND season=?", (season,)) if season else ("", ())
+    match_ids = [
+        r["understat_match_id"] for r in conn.execute(
+            f"SELECT DISTINCT understat_match_id FROM player_match_stats_history "
+            f"WHERE player_id IS NULL {season_clause} ORDER BY understat_match_id",
+            season_params,
+        ).fetchall()
+    ]
+    if limit is not None:
+        match_ids = match_ids[:limit]
+
+    matches_processed = rows_resolved = rows_still_unresolved = errors = 0
+
+    for match_id in match_ids:
+        try:
+            match_json = fetch_understat_match_page(match_id)
+            time.sleep(delay)
+            rosters = _parse_json(match_json, f"match {match_id} data")["rosters"]
+        except (UnderstatFetchError, UnderstatParseError, KeyError):
+            errors += 1
+            continue
+
+        name_by_understat_id = {
+            str(entry["id"]): entry["player"]
+            for side in ("h", "a") for entry in rosters.get(side, {}).values()
+        }
+
+        unresolved_rows = conn.execute(
+            "SELECT id, understat_player_id, market_team_id FROM player_match_stats_history "
+            "WHERE understat_match_id=? AND player_id IS NULL", (match_id,),
+        ).fetchall()
+        for row in unresolved_rows:
+            name = name_by_understat_id.get(str(row["understat_player_id"]))
+            if name is None:
+                rows_still_unresolved += 1
+                continue
+            team_row = conn.execute(
+                "SELECT fpl_team_id FROM market_teams WHERE id=?", (row["market_team_id"],)
+            ).fetchone()
+            fpl_team_id = team_row["fpl_team_id"] if team_row else None
+            new_player_id = resolve_player_id(conn, "understat", name, team_id=fpl_team_id)
+            if new_player_id is not None:
+                conn.execute(
+                    "UPDATE player_match_stats_history SET player_id=? WHERE id=?", (new_player_id, row["id"]),
+                )
+                rows_resolved += 1
+            else:
+                rows_still_unresolved += 1
+        conn.commit()
+        matches_processed += 1
+
+    if rows_resolved:
+        invalidate_cache_for_connection(conn)
+    return {
+        "matches_processed": matches_processed, "rows_resolved": rows_resolved,
+        "rows_still_unresolved": rows_still_unresolved, "errors": errors,
+    }
+
+
 def backfill_understat(
     conn, season: str,
     season_page_html: str | None = None,

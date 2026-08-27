@@ -29,7 +29,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
+from fpl_agent.ingestion.my_team import get_latest_squad_detail, get_my_team_entry_id
 
 _logger = logging.getLogger("fpl_agent.locked_squad")
 from fpl_agent.models.free_transfers import compute_real_free_transfers
@@ -59,36 +59,27 @@ class LockedSquadState:
 
 
 def _xi_from_real_picks(
-    conn: sqlite3.Connection, event: int, entry_id: int, squad_ids: list[int],
+    conn: sqlite3.Connection, event: int, entry_id: int, picks: list[sqlite3.Row],
 ) -> StartingXI | None:
     """Real ground truth: FPL's own squad_slot/multiplier/is_captain/
     is_vice_captain, not re-derived via pick_starting_xi's own heuristic -
     the whole point of a real synced squad is that FPL already tells us
-    exactly who started/benched/captained, so trust that directly."""
+    exactly who started/benched/captained, so trust that directly.
+
+    `picks` is already-fetched data (`get_latest_squad_detail`'s single
+    atomic read), not re-queried here - see that function's own docstring
+    for the real, confirmed-live race this closes (2026-08-29: this used to
+    run a SECOND, separate `my_team_picks` query here, which could land in
+    the gap of a concurrent writer's delete-then-reinsert resync for the
+    exact event `get_latest_squad()` had just proven had real rows -
+    diagnosed and logged at the time, not actually fixed until now)."""
     pool = build_player_pool(conn, n_gw=1)
     by_id = {c.player_id: c for c in pool}
-    picks = conn.execute(
-        "SELECT player_id, squad_slot, is_captain, is_vice_captain FROM my_team_picks "
-        "WHERE entry_id=? AND event=? ORDER BY squad_slot",
-        (entry_id, event),
-    ).fetchall()
     if not picks:
-        # Real diagnostic added 2026-08-29 (same "dashboard randomly shows no
-        # squad" investigation as get_latest_squad()'s own fix) - this path
-        # was previously silent (no exception, no log), which is exactly why
-        # a prior real incident left no trace to debug. `event`/`squad_ids`
-        # just came from a real, now-atomic get_latest_squad() read, so a
-        # genuinely empty result here means a concurrent writer (this
-        # project's own scheduled `run-scheduled`/`_upsert_picks`, real and
-        # independent of any interactive session) deleted this event's real
-        # rows between that read and this one - a real, narrow residual race
-        # get_latest_squad()'s own fix doesn't fully close, now at least
-        # loud instead of silent.
-        _logger.warning(
-            "get_latest_squad() reported entry_id=%s event=%s but my_team_picks now has zero rows for it "
-            "- likely a concurrent resync landed between the two reads; get_locked_squad will report this "
-            "as 'no locked squad' this cycle even though real picks exist", entry_id, event,
-        )
+        # Defensive only - get_locked_squad's real call path never passes an
+        # empty list (get_latest_squad_detail returns None first), but a
+        # future direct caller getting this wrong shouldn't crash silently.
+        _logger.warning("_xi_from_real_picks called with zero picks for entry_id=%s event=%s", entry_id, event)
         return None
 
     starting: list[PlayerCandidate] = []
@@ -148,10 +139,11 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
     case."""
     entry_id = get_my_team_entry_id(conn)
     if entry_id is not None:
-        latest = get_latest_squad(conn, entry_id)
+        latest = get_latest_squad_detail(conn, entry_id)
         if latest is not None:
-            event, squad_ids = latest
-            xi = _xi_from_real_picks(conn, event, entry_id, squad_ids)
+            event, picks = latest
+            squad_ids = [r["player_id"] for r in picks]
+            xi = _xi_from_real_picks(conn, event, entry_id, picks)
             if xi is not None and xi.starting:
                 summary = conn.execute(
                     "SELECT bank_tenths, team_value_tenths FROM my_team_gw_summary WHERE entry_id=? AND event=?",

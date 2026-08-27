@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from fpl_agent.models.scenario_engine import _sample_fixture_scorelines, _sample_player_trial_points
 from fpl_agent.models.scenario_engine import sample_season_scenarios
+from fpl_agent.models.scenario_sampling import sample_team_group_trial_points
 
 
 def test_reproducible_with_fixed_seed():
@@ -180,3 +181,98 @@ def test_sample_season_scenarios_shares_one_scoreline_per_fixture(db_conn, monke
             assert def_pts >= 2.0 + 4.0 - 1e-9  # appearance + clean sheet, no conceded penalty
         else:
             assert def_pts < 2.0 + 4.0  # some conceded penalty applied, clean sheet lost
+
+
+# --- Real correlation fix (2026-08-28): two+ squad-tracked teammates sharing
+# a fixture must never have their combined drawn goals exceed the real team
+# total - the independent-per-player binomial this replaced could (and did)
+# double-count the same real goal.
+
+def _high_share_player(player_id, share):
+    return {
+        "player_id": player_id,
+        "rates": _rates(player_share_per90=share),
+        "conceded_rate": 0.0,
+    }
+
+
+def test_team_group_combined_goals_never_exceed_the_real_team_total():
+    rng = np.random.default_rng(11)
+    n_trials = 5000
+    # Two teammates each with a real, substantial share (0.6 + 0.5 = 1.1 > 1.0) -
+    # exactly the shape that broke independent binomial draws: both "could" score
+    # on their own high-probability roll in the same trial.
+    players = [_high_share_player(1, 0.6), _high_share_player(2, 0.5)]
+    team_goals = np.random.default_rng(1).poisson(2.0, size=n_trials)
+    opp_goals = np.zeros(n_trials, dtype=int)
+
+    result = sample_team_group_trial_points(rng, players, team_goals, opp_goals)
+    p1_goals = (result[1] - 2.0) / 4.0  # appearance(2.0) + goals*goals_rate(4.0), rest zeroed by _rates()
+    p2_goals = (result[2] - 2.0) / 4.0
+
+    combined = p1_goals + p2_goals
+    assert np.all(combined <= team_goals + 1e-9)
+
+
+def test_team_group_goal_shares_recover_the_real_mean():
+    """Statistical sanity check: over many trials, each player's own share of
+    the drawn team goals converges to their real configured share - the
+    joint multinomial redistributes WHO scored, it doesn't change HOW MANY
+    goals either player is expected to get on average."""
+    rng = np.random.default_rng(22)
+    n_trials = 40000
+    players = [_high_share_player(1, 0.4), _high_share_player(2, 0.3)]
+    team_goals = np.full(n_trials, 3, dtype=int)  # fixed team total isolates the attribution mechanism
+    opp_goals = np.zeros(n_trials, dtype=int)
+
+    result = sample_team_group_trial_points(rng, players, team_goals, opp_goals)
+    p1_mean_goals = (result[1] - 2.0).mean() / 4.0
+    p2_mean_goals = (result[2] - 2.0).mean() / 4.0
+
+    assert abs(p1_mean_goals - 0.4 * 3) < 0.05
+    assert abs(p2_mean_goals - 0.3 * 3) < 0.05
+
+
+def test_sample_season_scenarios_jointly_attributes_goals_for_same_team_squad_members(db_conn, monkeypatch):
+    """Integration-level regression: two squad players on the SAME team in
+    the SAME fixture must never have their combined drawn goals exceed that
+    fixture's real drawn team total, across every trial."""
+    _seed_two_player_one_fixture_pool(db_conn)
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (3, 203, 'Striker2', 1, 1, 'a', 't0')"
+    )
+    db_conn.commit()
+    import fpl_agent.models.scenario_engine as se_mod
+
+    def fake_rates(conn, player_id, as_of_date=None, season=None):
+        share = {1: 0.6, 3: 0.5}.get(player_id, 0.0)
+        return dict(
+            position="FWD", goals_rate=4.0, assists_rate=0.0, clean_sheet_pts=0.0,
+            shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=0.0,
+            player_share_per90=share, bonus90=0.0, rules_season="2026-27",
+            minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
+        )
+
+    monkeypatch.setattr(se_mod, "_player_match_rates", fake_rates)
+    monkeypatch.setattr(se_mod, "_blended_fixture_goals", lambda conn, fid, tid, oid, date: (2.2, 0.5))
+    monkeypatch.setattr(se_mod, "_get_or_fit_dc_model", lambda conn, date: None)
+    # Fixed, known team_goals per trial (bypassing the real Poisson/DC draw) so
+    # the real invariant (combined drawn goals <= the real team total) can be
+    # checked EXACTLY per trial, not just bounded loosely.
+    n_trials = 3000
+    known_team_goals = np.random.default_rng(3).integers(0, 6, size=n_trials)
+    monkeypatch.setattr(
+        se_mod, "_sample_fixture_scorelines",
+        lambda rng, lam, mu, rho, n_trials: (known_team_goals, np.zeros(n_trials, dtype=int)),
+    )
+
+    outcomes = sample_season_scenarios(
+        db_conn, squad_ids=[1, 3], from_event=10, horizon_gw=1, n_trials=n_trials, rng=np.random.default_rng(9),
+    )
+
+    for i, o in enumerate(outcomes):
+        p1_goals = (o.points_by_event_player[(10, 1)] - 2.0) / 4.0
+        p3_goals = (o.points_by_event_player[(10, 3)] - 2.0) / 4.0
+        assert p1_goals >= 0 and p3_goals >= 0
+        assert p1_goals + p3_goals <= known_team_goals[i] + 1e-9

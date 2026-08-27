@@ -16,6 +16,7 @@ from fpl_agent.database.decisions import log_decision
 from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
 from fpl_agent.ingestion.fotmob_source import refresh_in_progress_matches
 from fpl_agent.models.calibration import record_outcomes_for_finished_event
+from fpl_agent.models.decision_calibration import reveal_decision_outcomes
 from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state, needs_post_gw_pipeline
 from fpl_agent.optimization.chips import (
     bench_boost_value,
@@ -130,6 +131,12 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
     # gameweek starts generating points) - this is the real, time-sensitive
     # moment to capture it, not something safely deferrable.
     record_outcomes_for_finished_event(conn, event, squad_list)
+    # Real decision-outcome reveal (2026-08-28) - same real, time-sensitive
+    # moment as the player-level outcome capture above (player_stats_snapshot
+    # still correctly reflects this event, before the next one overwrites
+    # it). A genuine no-op when no decision snapshot was ever captured for
+    # this event (e.g. a squad locked before this feature existed).
+    reveal_decision_outcomes(conn, event)
 
     windows = eligible_chips(conn, event)
     bb = bench_boost_value(conn, squad_list)

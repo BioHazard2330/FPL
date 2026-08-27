@@ -3892,6 +3892,19 @@ _CSS = """
   .risk-list li { display: flex; align-items: flex-start; gap: 8px; }
   .risk-list .dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
 
+  /* --- Independent Model Benchmark (2026-08-27) --- */
+  .benchmark-panel h4 { margin: 14px 0 6px; font-size: 0.8rem; color: var(--faint); text-transform: uppercase;
+    letter-spacing: 0.03em; }
+  .benchmark-panel h4:first-child { margin-top: 0; }
+  .benchmark-freshness { font-size: 0.78rem; color: var(--faint); margin-bottom: 8px; }
+  .benchmark-crosscheck { font-size: 0.84rem; color: var(--muted); padding: 7px 0; }
+  .benchmark-crosscheck strong { color: var(--fg); }
+  .benchmark-row { display: flex; align-items: center; gap: 10px; padding: 8px 11px; background: var(--surface-2);
+    border-radius: 10px; font-size: 0.84rem; margin-bottom: 6px; flex-wrap: wrap; }
+  .benchmark-name { font-weight: 700; color: var(--fg); min-width: 110px; }
+  .benchmark-values { color: var(--muted); flex: 1; min-width: 0; }
+  .benchmark-why { color: var(--faint); font-size: 0.78rem; width: 100%; }
+
   /* --- Strategic Plan (2026-08-27, "generate all of it" pass) - the real
      dominant multi-GW section: primary ROLL/TRANSFER/REVIEW call, the
      1/3/5/8-GW horizon comparison, real top-N paths with a horizontal

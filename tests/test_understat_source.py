@@ -1,6 +1,8 @@
 import json
 
-from fpl_agent.ingestion.understat_source import backfill_understat, parse_understat_match_players
+from fpl_agent.ingestion.understat_source import (
+    backfill_understat, parse_understat_match_players, repair_unresolved_player_ids,
+)
 
 
 def test_parse_understat_match_players_flattens_both_sides():
@@ -116,3 +118,99 @@ def test_backfill_understat_raises_when_dates_key_missing(db_conn):
     import pytest
     with pytest.raises(KeyError):
         backfill_understat(db_conn, "2024-25", season_page_html=json.dumps({"teams": {}, "players": []}))
+
+
+# --- repair_unresolved_player_ids (2026-08-28, real Understat re-resolution
+# pass) ---
+
+def _seed_haaland_player(conn, team_id=50, fpl_team_id=1):
+    conn.execute(
+        "INSERT OR IGNORE INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,'t0')",
+        (fpl_team_id, 100 + fpl_team_id, "Man City", "MCI"),
+    )
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, first_name, second_name, team_id, element_type, status, updated_at) "
+        "VALUES (999,999,'Haaland','Erling','Haaland',?,1,'a','t0')",
+        (fpl_team_id,),
+    )
+    conn.commit()
+
+
+def test_repair_unresolved_player_ids_resolves_a_real_row(db_conn, monkeypatch):
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    # Seed one real unresolved row (no players in the DB at backfill time).
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    row = db_conn.execute("SELECT id, player_id FROM player_match_stats_history WHERE understat_player_id='101'").fetchone()
+    assert row["player_id"] is None
+
+    # NOW seed the real player (as if a later live sync added them) and re-fetch the same match.
+    _seed_haaland_player(db_conn)
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    result = repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    assert result == {"matches_processed": 1, "rows_resolved": 1, "rows_still_unresolved": 0, "errors": 0}
+    fixed = db_conn.execute("SELECT player_id FROM player_match_stats_history WHERE id=?", (row["id"],)).fetchone()
+    assert fixed["player_id"] == 999
+
+
+def test_repair_unresolved_player_ids_never_fabricates_when_the_real_player_still_cant_be_found(db_conn, monkeypatch):
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    # No player seeded at all this time - a genuinely unresolvable real row.
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    result = repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    assert result["rows_resolved"] == 0
+    assert result["rows_still_unresolved"] == 1
+    row = db_conn.execute("SELECT player_id FROM player_match_stats_history").fetchone()
+    assert row["player_id"] is None
+
+
+def test_repair_unresolved_player_ids_never_creates_a_duplicate_row(db_conn, monkeypatch):
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    _seed_haaland_player(db_conn)
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    count = db_conn.execute("SELECT COUNT(*) n FROM player_match_stats_history").fetchone()["n"]
+    assert count == 1  # updated in place, never a second row
+
+
+def test_repair_unresolved_player_ids_respects_the_season_filter(db_conn, monkeypatch):
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    _seed_haaland_player(db_conn)
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    result = repair_unresolved_player_ids(db_conn, season="2099-00", delay=0.0)  # a season with no real unresolved rows
+
+    assert result == {"matches_processed": 0, "rows_resolved": 0, "rows_still_unresolved": 0, "errors": 0}
+
+
+def test_repair_unresolved_player_ids_counts_a_real_fetch_error_without_crashing(db_conn, monkeypatch):
+    import fpl_agent.ingestion.understat_source as us_mod
+    from fpl_agent.ingestion.understat_source import UnderstatFetchError
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+
+    def _boom(match_id):
+        raise UnderstatFetchError("real network failure")
+
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", _boom)
+
+    result = repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    assert result["errors"] == 1
+    assert result["matches_processed"] == 0

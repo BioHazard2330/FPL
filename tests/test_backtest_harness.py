@@ -154,9 +154,9 @@ def test_predictions_use_only_data_strictly_before_each_round_start(db_conn, mon
     real_shrunk = harness.player_shrunk_rates
     real_minutes = harness.minutes_bucket_probabilities
 
-    def spy_shrunk(conn, player_id, season, as_of_date=None):
+    def spy_shrunk(conn, player_id, season, as_of_date=None, prior_overrides=None):
         seen["shrunk"].append(as_of_date)
-        return real_shrunk(conn, player_id, season, as_of_date=as_of_date)
+        return real_shrunk(conn, player_id, season, as_of_date=as_of_date, prior_overrides=prior_overrides)
 
     def spy_minutes(conn, player_id, season, as_of_date=None):
         seen["minutes"].append(as_of_date)

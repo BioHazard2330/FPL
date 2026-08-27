@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 
 from fpl_agent.models.bonus_regression import expected_bonus_per90
 from fpl_agent.models.differentials import find_differentials
+from fpl_agent.models.expected_points import _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR, _hierarchical_prior_rates
 from fpl_agent.models.minutes_distribution import expected_appearance_points, minutes_bucket_probabilities
 from fpl_agent.models.player_regression import player_shrunk_rates
 from fpl_agent.models.rules import get_rule
@@ -155,7 +156,39 @@ def run_backtest(conn, season: str, model_version: str) -> BacktestResult:
                 fallback_excluded += 1
                 continue
 
-            shrunk = player_shrunk_rates(conn, row["player_id"], season, as_of_date=round_start)
+            # Real fix (2026-08-28) - this harness used to call
+            # player_shrunk_rates() directly, bypassing the SAME
+            # hierarchical-prior fix _player_match_rates()/
+            # core_expected_points() apply on the live path (a real,
+            # confirmed doc-drift bug: core_expected_points' own docstring
+            # claims it's "the entry point the walk-forward backtest harness
+            # scores against" - it never actually was; this harness has
+            # always had its own separate, duplicated rate-computation
+            # inline, corrected below in that docstring too). Only the
+            # 'goals' prior applies here - this harness scores the actual
+            # ASSISTS COUNT stat (`shrunk["assists"]`), not the live path's
+            # xA-based one (`shrunk["xa"]`) `_hierarchical_prior_rates`
+            # computes a prior for - a real, disclosed, smaller-scope gap,
+            # not fixed this pass (season_shrunk_rate's own
+            # `_SEASON_FALLBACK_COLUMNS` whitelist has no raw-assists-count
+            # column to build an equivalent prior from).
+            #
+            # Gated to _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR matches, same as
+            # the live path - a real, data-driven finding from running THIS
+            # exact harness ungated first: the prior override was net-
+            # HARMFUL (~1% MAE regression, consistent across every scoreable
+            # round) once a player already has this many real current-season
+            # matches. Below this bar (this harness's own minutes-empirical
+            # gate above already excludes the very thinnest 0-3-match rows
+            # from being scored at all, so the override rarely fires within
+            # what this harness can measure - but the guard is here for
+            # correctness/consistency with the live path regardless).
+            unshrunk = player_shrunk_rates(conn, row["player_id"], season, as_of_date=round_start)
+            if 0 < unshrunk["goals"].matches_played < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
+                hierarchical_priors = _hierarchical_prior_rates(conn, row["player_id"], season, as_of_date=round_start)
+                shrunk = player_shrunk_rates(conn, row["player_id"], season, as_of_date=round_start, prior_overrides=hierarchical_priors)
+            else:
+                shrunk = unshrunk
             goals_rate, assists_rate, yellow_card_rate = _scoring_rates(conn, season, position)
             effective_minutes_fraction = (
                 minutes_probs.p_partial * _PARTIAL_MINUTES_FRACTION + minutes_probs.p_full

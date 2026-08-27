@@ -135,7 +135,7 @@ def render_hero(
 
     actual_tile = (
         f"""<div class="home-metric"><div class="home-metric-label">Actual GW points</div>
-      <div class="home-metric-value">{actual_points:.0f}</div></div>"""
+      <div class="home-metric-value" id="live-points-value">{actual_points:.0f}</div></div>"""
         if actual_points is not None else ""
     )
 

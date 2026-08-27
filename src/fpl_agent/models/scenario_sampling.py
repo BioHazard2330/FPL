@@ -83,3 +83,86 @@ def sample_player_trial_points(
     conceded_points = (opp_goals // 2) * conceded_rate * np.minimum(weight, 1.0)
 
     return appearance + goals_points + assists_points + bonus_points + cards_points + clean_sheet_points + conceded_points
+
+
+def sample_team_group_trial_points(
+    rng: np.random.Generator,
+    players: list[dict],
+    team_goals: np.ndarray,
+    opp_goals: np.ndarray,
+) -> dict[int, np.ndarray]:
+    """Real correlation fix (2026-08-28, direct user correlation audit:
+    "trace whether the simulation correctly handles same-team attackers").
+    `sample_player_trial_points` draws each player's own goal count
+    independently via `rng.binomial(team_goals, goal_prob)` - correct (and
+    left unchanged, see `sample_season_scenarios`) for the common case of
+    exactly one squad-tracked scorer per team+fixture, but a real, confirmed
+    LOGICAL inconsistency when two+ squad-tracked teammates share a fixture:
+    independent per-player draws can double (or triple-)count the same real
+    goal - e.g. two Man City attackers each independently drawing 2 goals in
+    a trial where the team only scored 2 in total, four individual "goals"
+    attributed to a real team total of two. Not merely an understated
+    correlation - team_goals is a hard real constraint on how many goals
+    exist to attribute in that trial.
+
+    `players`: `[{"player_id", "rates", "conceded_rate"}, ...]` - every
+    squad-tracked player sharing this exact team+fixture. Jointly
+    multinomial-attributes `team_goals` across the group PLUS an implicit
+    "someone else on the team" residual bucket (`1 - sum(shares)`) per
+    trial, so the group's own drawn goals can never exceed the real team
+    total. Reduces to the existing single-player binomial exactly when
+    `len(players) == 1` (a 2-outcome multinomial IS a binomial), so this is
+    a strict generalization, not a competing model.
+
+    Assists/bonus/cards/clean-sheet/conceded stay independent per player,
+    same formulas `sample_player_trial_points` already uses - a real,
+    disclosed, NOT-fixed gap (see the live audit report): there is no
+    team-relative "share of team assists/bonus" primitive this project
+    computes the way `player_share_of_team_xg` does for goals, so a
+    matching joint-attribution fix for those isn't a same-scope change."""
+    n_trials = team_goals.shape[0]
+    n_players = len(players)
+
+    buckets, weights, played_full_list = [], [], []
+    for p in players:
+        probs = p["rates"]["minutes_probs"]
+        bucket = rng.choice(3, size=n_trials, p=[probs.p_zero, probs.p_partial, probs.p_full])
+        buckets.append(bucket)
+        weights.append(np.where(bucket == 0, 0.0, np.where(bucket == 1, 1 / 3, 1.0)))
+        played_full_list.append(bucket == 2)
+
+    # A benched-this-trial player can't score - their own share collapses to 0
+    # via `weight`, same as the single-player path already does.
+    goal_probs = np.stack(
+        [np.clip(p["rates"]["player_share_per90"] * w, 0.0, 1.0) for p, w in zip(players, weights)], axis=1
+    )  # shape (n_trials, n_players)
+    residual = np.clip(1.0 - goal_probs.sum(axis=1, keepdims=True), 0.0, None)
+    pvals = np.concatenate([goal_probs, residual], axis=1)
+    pvals = pvals / pvals.sum(axis=1, keepdims=True)  # guard float drift before multinomial's own strict-sum check
+
+    drawn = rng.multinomial(team_goals, pvals)  # shape (n_trials, n_players + 1)
+
+    result = {}
+    for i, p in enumerate(players):
+        rates = p["rates"]
+        weight = weights[i]
+        played_full = played_full_list[i]
+        appearance = np.where(buckets[i] == 0, 0.0, np.where(buckets[i] == 1, 1.0, 2.0))
+        goals_points = drawn[:, i] * rates["goals_rate"]
+
+        assist_rate = np.clip(rates["shrunk_xa90"] * weight, 0.0, None)
+        assists_points = rng.poisson(assist_rate) * rates["assists_rate"]
+
+        card_prob = np.clip(rates["shrunk_cards90"] * weight, 0.0, 1.0)
+        cards_points = (rng.random(n_trials) < card_prob).astype(float) * rates["yellow_card_rate"]
+
+        bonus_points = rng.poisson(np.clip(rates["bonus90"] * weight, 0.0, None))
+
+        clean_sheet_points = np.where(played_full & (opp_goals == 0), rates["clean_sheet_pts"], 0.0)
+        conceded_points = (opp_goals // 2) * p["conceded_rate"] * np.minimum(weight, 1.0)
+
+        result[p["player_id"]] = (
+            appearance + goals_points + assists_points + bonus_points + cards_points
+            + clean_sheet_points + conceded_points
+        )
+    return result

@@ -354,6 +354,100 @@ def sync_player_odds_cmd():
     click.echo(f"failed           {result['failed']}")
 
 
+@cli.command("solio-sync")
+@click.option("--force", is_flag=True, help="bypass the ~4h cadence gate and fetch now")
+def solio_sync_cmd(force: bool):
+    """Fetch the public Solio Analytics projections snapshot
+    (fpl.solioanalytics.com, no key) - an independent external-model
+    benchmark, not a data dependency for our own projections. Respects
+    Solio's own stated ~4h refresh cadence (`config/freshness.yaml`'s
+    `solio` key) unless --force. Already wired into `fpl run-scheduled`."""
+    from fpl_agent.ingestion.solio_source import sync_solio
+
+    conn = get_connection()
+    try:
+        result = sync_solio(conn, force=force)
+    finally:
+        conn.close()
+    if result.get("skipped"):
+        click.echo(f"skipped: {result['reason']}")
+        return
+    if "error" in result:
+        click.echo(f"solio-sync failed: {result['error']}", err=True)
+        raise SystemExit(1)
+    click.echo(f"gameweek         {result['gameweek']}")
+    click.echo(f"generated_at     {result['generated_at']}")
+    click.echo(f"players matched  {result['players_matched']}/{result['players_total']}")
+    click.echo(f"teams            {result['teams_total']}")
+
+
+@cli.command("model-benchmark")
+@click.option("--top", default=10, type=int, help="how many top divergences to show")
+@click.option("--min-classification", default="MATERIAL_DIVERGENCE",
+              type=click.Choice(["MINOR_DIVERGENCE", "MATERIAL_DIVERGENCE", "MAJOR_OUTLIER"]))
+def model_benchmark_cmd(top: int, min_classification: str):
+    """Independent-model benchmark report against Solio Analytics: top
+    player-projection divergences (with the component driving each),
+    team-level clean-sheet/goals cross-check, and a captain/transfer-target
+    cross-check against the real current decision (`analyze_transfer_decision`/
+    `evaluate_captaincy` - never re-derived here, only cross-referenced). A
+    divergence is reported for investigation; it never changes the decision
+    layer's own verdict (see `models/external_benchmark.py`'s module
+    docstring). Run `fpl solio-sync` first if no snapshot exists yet."""
+    from fpl_agent.models.external_benchmark import (
+        compare_captain_pick, compare_team_outlooks, compare_transfer_target,
+        latest_solio_snapshot, top_divergences,
+    )
+    from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    conn = get_connection()
+    try:
+        snapshot = latest_solio_snapshot(conn)
+        if snapshot is None:
+            click.echo("no Solio snapshot yet - run `fpl solio-sync` first", err=True)
+            raise SystemExit(1)
+        click.echo(f"Solio snapshot: GW{snapshot.gameweek}, generated {snapshot.generated_at}, "
+                    f"retrieved {snapshot.age_hours:.1f}h ago")
+        click.echo("")
+
+        click.echo(f"--- top {top} divergences (>= {min_classification}) ---")
+        for c in top_divergences(conn, n=top, min_classification=min_classification, snapshot=snapshot):
+            click.echo(
+                f"{c.web_name:20s} our={c.our_median:6.2f}  solio={c.solio_pr_points:6.2f}  "
+                f"diff={c.absolute_diff:+6.2f} ({c.relative_diff:+.0%})  {c.classification:20s}  "
+                f"driver={c.largest_driver or 'n/a'}  rank_diff={c.rank_diff}"
+            )
+        click.echo("")
+
+        click.echo("--- team clean-sheet/goals cross-check ---")
+        for t in compare_team_outlooks(conn, snapshot):
+            if t.classification == "AGREEMENT":
+                continue
+            click.echo(
+                f"{t.team_name:15s} our_cs={t.our_cs_prob:.0%}  solio_cs={t.solio_cs_prob:.0%}  {t.classification}"
+            )
+        click.echo("")
+
+        locked = get_locked_squad(conn)
+        if locked is not None:
+            cap = compare_captain_pick(conn, list(locked.squad_ids), snapshot)
+            solio_cap_pts = f"{cap.solio_captain_points:.2f}" if cap.solio_captain_points is not None else "n/a"
+            click.echo(f"CAPTAIN   ours={cap.our_pick_name} ({cap.our_captain_points})  "
+                       f"solio={cap.solio_pick_name} ({solio_cap_pts})  {cap.verdict}")
+            click.echo(f"          why: {cap.why}")
+
+            ta = analyze_transfer_decision(conn, locked)
+            target_id = target_name = None
+            if ta.chosen is not None:
+                target_id, target_name = ta.chosen.candidate.player_in_id, ta.chosen.candidate.player_in_name
+            xfer = compare_transfer_target(conn, target_id, target_name, snapshot)
+            click.echo(f"TRANSFER  our decision: {ta.decision_kind} ({ta.reason[:80]})")
+            click.echo(f"          vs solio: {xfer.verdict} - {xfer.why}")
+    finally:
+        conn.close()
+
+
 @cli.command("team-news")
 @click.option("--limit", default=20, type=int, help="max articles to show")
 def team_news_cmd(limit: int):
@@ -929,6 +1023,33 @@ def backfill_xg(season: str):
     click.echo(f"player rows upserted {summary['player_rows_inserted']}")
 
 
+@cli.command("repair-understat-players")
+@click.option("--season", default=None, help="scope to one real season, e.g. 2025-26 (recommended - see the command's own docstring)")
+@click.option("--limit", default=None, type=int, help="cap how many distinct unresolved matches to re-fetch this call")
+@click.option("--delay", default=0.3, type=float, help="politeness delay between real match-page requests, seconds")
+def repair_understat_players_cmd(season: str | None, limit: int | None, delay: float):
+    """Real re-resolution pass for historical player_match_stats_history rows
+    with player_id IS NULL (2026-08-28, direct user P2 ask) - re-fetches each
+    real unresolved match's own Understat page (the only safe way to recover
+    a name, since none is stored) and re-runs the same team-scoped
+    resolve_player_id() fallback every other real Understat caller trusts.
+    Never guesses/fabricates a mapping. --season is recommended: unscoped
+    runs repair oldest-season-first by default match-id ordering, but only
+    the most recent 1-2 seasons actually feed the live model's hierarchical-
+    prior fix - see repair_unresolved_player_ids's own docstring."""
+    from fpl_agent.ingestion.understat_source import repair_unresolved_player_ids
+
+    conn = get_connection()
+    try:
+        result = repair_unresolved_player_ids(conn, limit=limit, delay=delay, season=season)
+    finally:
+        conn.close()
+    click.echo(f"matches processed      {result['matches_processed']}")
+    click.echo(f"rows resolved          {result['rows_resolved']}")
+    click.echo(f"rows still unresolved  {result['rows_still_unresolved']}")
+    click.echo(f"fetch/parse errors     {result['errors']}")
+
+
 @cli.command("backfill-cross-league")
 @click.option("--season", default=None, help="defaults to the current season - the players checked are always this season's genuinely-new-to-the-English-top-flight signings")
 def backfill_cross_league(season: str | None):
@@ -1049,6 +1170,51 @@ def calibration_report(season: str | None, min_samples: int):
     click.echo(f"{'cohort':<38} {'n':>5} {'mae':>8}")
     for r in rows:
         click.echo(f"{r.cohort:<38} {r.n:>5} {r.mae:>8}")
+
+
+@cli.command("decision-backtest")
+@click.option("--season", default=None, help="defaults to the live season")
+def decision_backtest_cmd(season: str | None):
+    """Real decision-outcome backtest (2026-08-28, direct user P1 ask: "was
+    the optimizer actually useful?") - reads the real `decision_outcomes`
+    rows `run-scheduled`/the post-GW pipeline already capture/reveal
+    automatically (real deadline-freeze snapshot -> real GW outcome, never
+    hindsight-derived). ROLL-vs-best-available-transfer and recommended-
+    transfer-vs-best-rejected are the same stored comparison shape (see
+    `models/decision_calibration.py`'s own module docstring); captain
+    compares the recommended pick against the next-best real alternative.
+    Never claims significance from a small n - read the n column before the
+    win_rate/mean_advantage ones."""
+    from fpl_agent.models.decision_calibration import decision_backtest_summary, decision_outcome_rows
+
+    conn = get_connection()
+    try:
+        summaries = decision_backtest_summary(conn, season=season)
+        rows = decision_outcome_rows(conn, season=season)
+    finally:
+        conn.close()
+
+    if not summaries:
+        click.echo(
+            "no real decision-outcome rows revealed yet - captured at each real deadline freeze, "
+            "revealed once that gameweek finishes; this is expected until at least one full real "
+            "gameweek cycle has completed since this feature shipped"
+        )
+        return
+
+    click.echo(f"{'decision_kind':<16}{'n':>5}{'win_rate':>12}{'mean_advantage':>18}")
+    for s in summaries:
+        click.echo(f"{s.decision_kind:<16}{s.n:>5}{s.win_rate:>12.1%}{s.mean_advantage:>+18.2f}")
+        if s.n < 5:
+            click.echo(f"  (n={s.n} - not enough real samples to claim statistical significance)")
+
+    click.echo("\nper-event detail:")
+    for r in rows:
+        beat = "chosen>=alt" if r.chosen_beat_alt else "chosen<alt"
+        click.echo(
+            f"  GW{r.event} {r.decision_kind:<10} {r.chosen_action:<10} "
+            f"chosen={r.chosen_delta:+.2f} alt={r.alt_delta:+.2f} ({beat})"
+        )
 
 
 @cli.command("run-scheduled")
@@ -1238,6 +1404,24 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled player-odds sync failed - not fatal to the sync itself")
 
+    # Solio Analytics independent-model benchmark (2026-08-27, external-
+    # model-comparison pass) - self-throttled to Solio's own ~4h cadence via
+    # `should_sync`'s own app_meta gate, so calling this every scheduled
+    # cycle is a real no-op most ticks, same posture player-odds above uses.
+    try:
+        from fpl_agent.ingestion.solio_source import sync_solio
+
+        solio_result = sync_solio(conn)
+        if not solio_result.get("skipped") and "error" not in solio_result:
+            logger.info(
+                "run-scheduled solio sync: GW%s, %d/%d player(s) matched",
+                solio_result["gameweek"], solio_result["players_matched"], solio_result["players_total"],
+            )
+        elif "error" in solio_result:
+            logger.warning("run-scheduled solio sync failed: %s", solio_result["error"])
+    except Exception:
+        logger.exception("run-scheduled solio sync failed - not fatal to the sync itself")
+
     # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
     # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new
     # "tracked match" registry: re-syncs any not-yet-FULL_TIME match_intelligence
@@ -1357,6 +1541,25 @@ def run_scheduled():
                 if n_written:
                     logger.info("run-scheduled prediction capture: %d player(s) recorded for event %s",
                                 n_written, lifecycle.event)
+
+                # Real decision-outcome backtest capture (2026-08-28, direct
+                # user P1 ask: "was the optimizer actually useful?") - same
+                # real deadline-freeze moment as the player-prediction
+                # capture above, reusing the SAME already-computed ta/ca
+                # (`_analyze_locked_decisions`, the exact pair
+                # `evaluate_locked_squad`/the dashboard already compute -
+                # never a second, independently-derived scan).
+                try:
+                    from fpl_agent.models.decision_calibration import record_decision_snapshot
+                    from fpl_agent.monitoring.dashboard.legacy import _analyze_locked_decisions
+
+                    ta, ca = _analyze_locked_decisions(conn6, locked_for_pred)
+                    n_decisions = record_decision_snapshot(conn6, lifecycle.event, ta, ca)
+                    if n_decisions:
+                        logger.info("run-scheduled decision-outcome capture: %d decision(s) recorded for event %s",
+                                    n_decisions, lifecycle.event)
+                except Exception:
+                    logger.exception("run-scheduled decision-outcome capture failed - not fatal to the sync itself")
         conn6.close()
     except Exception:
         logger.exception("run-scheduled prediction capture failed - not fatal to the sync itself")
@@ -1793,6 +1996,18 @@ def _write_dashboard(
             conn, live_payload=live_payload, gw_window=gw_window,
             must_include_ids=must_include_ids, must_start_ids=must_start_ids, exclude_ids=exclude_ids,
         )
+        # Keeps the cheap live_snapshot.json channel in sync with every real
+        # dashboard regen too (not just live-match-poll's own faster
+        # cadence) - reuses the SAME already-fetched live_payload, no second
+        # network call. See monitoring/live_snapshot.py's own docstring.
+        try:
+            from fpl_agent.monitoring.live_snapshot import write_live_snapshot
+
+            write_live_snapshot(conn, live_payload)
+        except Exception:
+            logging.getLogger("fpl_agent.dashboard").exception(
+                "write_live_snapshot failed during dashboard regen - not fatal to the regen itself"
+            )
     finally:
         conn.close()
     path = _dashboard_path()
@@ -2412,17 +2627,33 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                 except Exception as e:
                     click.echo(f"live-match-poll: live-rank refresh failed this tick ({e}) - continuing", err=True)
 
-            # file most of the time during a live match. Regenerate here too,
-            # but only when something actually changed (a match genuinely
-            # live, or a real FULL_TIME transition this tick) - never on a
-            # quiet pre-kickoff idle tick, where nothing on the dashboard
-            # would look any different anyway. Non-fatal: a dashboard-write
-            # failure must never stop the underlying live poll.
-            if any_live or any_full_time_transition:
+            # Real perf fix (2026-08-28, direct user P0: "do not rebuild the
+            # entire static dashboard every 15-30 seconds"). This used to
+            # call `_write_dashboard()` - the SAME ~1-minute
+            # `generate_dashboard_html()` pipeline `fpl dashboard` uses -
+            # every tick a match was live, which starves this loop's own
+            # configured `interval` (default 25s) back down to however long
+            # the full rebuild actually takes, real and confirmed. The cheap
+            # live_snapshot.json channel (below) now carries the fields that
+            # genuinely change every tick (live rank, live points, played/
+            # live/to-play); the full dashboard only needs to regenerate on
+            # a real FULL_TIME transition (a meaningful, infrequent event -
+            # new post-GW pipeline state, real final scores) - unchanged
+            # cadence otherwise (run_scheduled's own regular regen).
+            if any_full_time_transition:
                 try:
                     _write_dashboard()
                 except Exception as e:
                     click.echo(f"live-match-poll: dashboard regen failed this tick ({e}) - continuing", err=True)
+
+            if any_live:
+                try:
+                    from fpl_agent.monitoring.live_snapshot import write_live_snapshot
+
+                    live_payload = _maybe_fetch_live_payload(conn)
+                    write_live_snapshot(conn, live_payload)
+                except Exception as e:
+                    click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)
 
             consecutive_failures = consecutive_failures + 1 if any_failure else 0
             if consecutive_failures:
@@ -3800,6 +4031,36 @@ def decisions(limit: int, decision_type: str | None):
         return
     for d in all_decisions:
         click.echo(f"#{d.id:<4} {d.created_at}  {d.decision_type:<16} {d.summary}")
+
+
+@cli.command("decision-changes")
+def decision_changes_cmd():
+    """Real "why did the recommendation change" explanation (2026-08-28,
+    direct user P4 ask) - diffs the two most recent real `strategic_plan`
+    decisions' own CURRENT RECOMMENDED ACTION label and, when it changed,
+    attributes it to the real triggering `change_events` row (the same
+    change log the dashboard's own staleness banner already reads). Never
+    re-derives a decision, only explains a real change that already
+    happened."""
+    from fpl_agent.models.decision_change import latest_recommendation_change
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    conn = get_connection()
+    try:
+        locked = get_locked_squad(conn)
+        squad_ids = set(locked.squad_ids) if locked is not None else None
+        change = latest_recommendation_change(conn, squad_ids)
+    finally:
+        conn.close()
+
+    if change is None:
+        click.echo("no real recommendation change to explain (fewer than two strategic-plan runs logged, or unchanged)")
+        return
+    click.echo(f"OLD      {change.old_verdict}: {change.old_label}")
+    click.echo(f"NEW      {change.new_verdict}: {change.new_label}")
+    click.echo(f"TRIGGER  {change.trigger or 'no single HIGH-severity event recorded'}")
+    click.echo(f"TIME     {change.changed_at}")
+    click.echo(f"WHY      {change.explanation}")
 
 
 @cli.command()

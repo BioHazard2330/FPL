@@ -89,6 +89,7 @@ from fpl_agent.models.minutes_distribution import (
 )
 from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
 from fpl_agent.models.player_regression import (
+    PRIOR_STRENGTH_MATCHES,
     live_season_shrunk_rate,
     player_share_of_team_xg,
     player_shrunk_rates,
@@ -416,6 +417,140 @@ def _scoring_season(conn: sqlite3.Connection, season: str | None) -> str | None:
     return season if exists else current_season(conn)
 
 
+_HIERARCHICAL_PRIOR_STAT_COLUMNS = {"goals": "goals_scored", "xa": "expected_assists"}
+
+# Real, backtest-informed threshold (2026-08-28) - the hierarchical-prior
+# blend only applies below this many real current-season matches. A real
+# segmented walk-forward backtest (2025-26) found the blend net-harmful
+# (~1% MAE regression, consistent across every round it could measure) once
+# a player already has this many real current-season matches - matches
+# `minutes_distribution.py::_MIN_MATCHES_FOR_EMPIRICAL`'s own threshold,
+# not coincidentally: that's the exact real sample size this project
+# already treats as "enough to trust the current season on its own" for
+# minutes, and the backtest now confirms the same bar for goals/xa/share
+# too. See `_player_match_rates`'s own call sites for the full account.
+_MIN_MATCHES_FOR_HIERARCHICAL_PRIOR = 4
+
+
+def _hierarchical_prior_rates(
+    conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None
+) -> dict[str, float]:
+    """Real modeling-flaw fix (2026-08-28, direct user audit request: "trace
+    exactly why our Haaland/Bruno projections diverge so far from an
+    independent benchmark"). `_player_match_rates`' current-season branch
+    used to shrink a player's raw current-season goals/xa rate toward the
+    bare CURRENT-SEASON position average (`position_average_per90`) the
+    moment `player_shrunk_rates` saw even one current-season match - discarding
+    the player's own, far more informative prior-season record entirely.
+    Confirmed live against the real production DB: Haaland's real 2025-26
+    Understat record (32.8 match-equivalents, shrunk goals90=0.73, a
+    realistic elite-striker rate) was completely discarded after his single
+    real 2026-27 match (a blank), collapsing his shrunk rate to 0.22 - barely
+    above the FWD position average and roughly a third of his own real,
+    much larger sample's rate. One blank match is real evidence, but it
+    should DILUTE a strong prior, not replace it with a much weaker,
+    unrelated one (the current-season position pool, itself thin this early
+    in the season for every position, not just this player).
+
+    Returns per-stat ('goals'/'xa') override priors to shrink the CURRENT
+    season's raw rate toward instead - the player's own last-season rate
+    when real PL history exists for them, else the same cross-league prior
+    the zero-current-season-data branch below already uses for genuinely
+    new-to-the-PL signings, else omitted entirely (falls through to
+    `player_shrunk_rates`' own bare position-average default - byte-identical
+    to today's behavior for a real rookie with no informative prior anywhere).
+    `season_shrunk_rate`'s own `before_season` semantics (see its docstring
+    and `_player_match_rates`' existing season-fallback branch, which this
+    mirrors exactly) is "the latest `player_season_history` row strictly
+    before this boundary" - the boundary must be the CURRENT season itself
+    (slash-converted, e.g. "2026/27"), not `prior_season(season)`
+    ("2025/26"), which would incorrectly exclude last season's own row too
+    (not strictly before itself) and silently fall back one season further
+    than intended. A real bug of exactly this shape was caught live while
+    building this function (season-format mismatch pulled Haaland's 2024/25
+    record instead of his real, more recent 2025/26 one) - fixed before
+    this shipped, not left in. Leakage-safe for a walk-forward backtest the
+    same way the existing cards-prior fallback already is: real
+    `player_season_history` rows are only ever written for FULLY COMPLETED
+    seasons, so "strictly before the season being predicted" can never
+    include same-season data regardless of `as_of_date`'s in-season cutoff.
+    Cross-league lookup is unguarded by as_of_date, matching this same
+    function's existing else-branch precedent (real cross-league prior data
+    is a static preseason snapshot, not date-indexed)."""
+    season_boundary = season.replace("-", "/") if season else None
+    priors: dict[str, float] = {}
+
+    for key, column in _HIERARCHICAL_PRIOR_STAT_COLUMNS.items():
+        if not season_boundary:
+            continue
+        last_season = season_shrunk_rate(conn, player_id, column, season_boundary)
+        if last_season.matches_played > 0:
+            priors[key] = last_season.shrunk_per90
+
+    if len(priors) < len(_HIERARCHICAL_PRIOR_STAT_COLUMNS):
+        cross_league = get_cross_league_prior(conn, player_id)
+        if cross_league is not None:
+            priors.setdefault("goals", cross_league["goals_per90"])
+            priors.setdefault("xa", cross_league["xa_per90"])
+
+    return priors
+
+
+def _hierarchical_share_prior(
+    conn: sqlite3.Connection, player_id: int, current_team_market_id: int, season: str, as_of_date: str | None,
+    rate_derived_fallback: float | None = None,
+) -> float | None:
+    """Real second half of the same modeling-flaw fix `_hierarchical_prior_rates`
+    closes for goals/xa rates - `player_share_of_team_xg` (this player's
+    accumulated share of their TEAM's total xG) is accumulated from
+    CURRENT-season Understat rows only, with no shrinkage toward the
+    player's own established share at all. Confirmed live as the actual
+    dominant cause of Bruno Fernandes' still-low goals projection even after
+    the rate-prior fix above: his one real 2026-27 match happened to be a
+    genuinely quiet one (3 shots, 0.041 xG) - 2.3% of Man Utd's real match
+    xG that day, versus a real, much larger last-season share his own
+    extensive history would support. `player_share_per90` (the primary-
+    branch goals formula's real driver, not `shrunk_goals90` - see the
+    docstring above) inherits that single-match noise entirely unshrunk.
+
+    Guards against the real trap this project has hit before (a real
+    transfer changing which team's xG a player's own share is even
+    meaningful against, e.g. a player who changed PL clubs since last
+    season) - only uses a real last-season SHARE when the player's own
+    last-season rows show them at the SAME market team as
+    `current_team_market_id`.
+
+    `rate_derived_fallback` (2026-08-28, real second finding from tracing
+    Isak's own real remaining divergence: a genuine same-league transfer
+    with a full real last-season record - just at a DIFFERENT club - was
+    falling all the way through to the unshrunk single-match share with no
+    prior at all, since a cross-team share is meaningless but the guard
+    above correctly refused to use it). When given (the caller's own
+    `min(shrunk_goals90 / _LEAGUE_AVERAGE_GOALS, 1.0)` - the exact same
+    rate-to-share approximation the zero-current-season-data branch below
+    already uses), this becomes the fallback prior for exactly that case:
+    a team-relative signal doesn't transfer, but the player's own PERSONAL
+    scoring rate (from `_hierarchical_prior_rates`, real and club-agnostic)
+    still does. `None` only when genuinely nothing at all is available."""
+    before_season = prior_season(season) if season else None
+    if before_season:
+        clause, extra = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
+        team_rows = conn.execute(
+            f"SELECT DISTINCT market_team_id FROM player_match_stats_history WHERE player_id=? AND season=? {clause}",
+            (player_id, before_season) + extra,
+        ).fetchall()
+        team_ids = {r["market_team_id"] for r in team_rows if r["market_team_id"] is not None}
+        if team_ids == {current_team_market_id}:
+            minutes = conn.execute(
+                f"SELECT SUM(minutes) AS m FROM player_match_stats_history WHERE player_id=? AND season=? {clause}",
+                (player_id, before_season) + extra,
+            ).fetchone()["m"] or 0
+            if minutes > 0:
+                return player_share_of_team_xg(conn, player_id, current_team_market_id, before_season, as_of_date=None)
+
+    return rate_derived_fallback
+
+
 def _player_match_rates(
     conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None, season: str | None = None
 ) -> dict:
@@ -439,7 +574,28 @@ def _player_match_rates(
     assists_rate = get_rule(conn, rules_season, "scoring.assists", 0) or 0
     clean_sheet_pts = get_rule(conn, rules_season, f"scoring.clean_sheets.{position}", 0) or 0
 
+    # Real, data-informed refinement (2026-08-28, direct user walk-forward
+    # backtest request) - the hierarchical-prior override above was
+    # originally applied unconditionally. A real segmented backtest run
+    # against 2025-26 found it net-HARMFUL once a player's current-season
+    # sample is already >= _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR real matches
+    # (every measurable round showed a small but consistent MAE regression,
+    # ~1%) - once the current sample is that substantial, it's already a
+    # more relevant, trustworthy signal than blending in a possibly-stale
+    # prior-season rate. The backtest harness's own minutes-empirical gate
+    # (`_MIN_MATCHES_FOR_EMPIRICAL=4` in minutes_distribution.py) structurally
+    # excludes anything thinner than 4 matches from being scored at all, so
+    # this exact real regression finding says nothing about the sub-4-match
+    # window the fix actually targets (Haaland's real 1-match 2026-27
+    # collapse) - only that the fix should NOT also apply once a player
+    # already has a real, substantial current-season sample of their own.
+    # A cheap first pass (unshrunk, matching pre-fix behavior) decides
+    # whether the current sample is thin enough to warrant the override at
+    # all; only re-computed with it when it genuinely is.
     shrunk = player_shrunk_rates(conn, player_id, season, as_of_date)
+    if 0 < shrunk["goals"].matches_played < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
+        hierarchical_priors = _hierarchical_prior_rates(conn, player_id, season, as_of_date)
+        shrunk = player_shrunk_rates(conn, player_id, season, as_of_date, prior_overrides=hierarchical_priors)
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
@@ -454,6 +610,41 @@ def _player_match_rates(
         # cannot own more than all of their team's xG per 90, and a tiny sample
         # (one start out of ten team matches) can otherwise blow the ratio up.
         share_per90 = min(player_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
+
+        # Real modeling-flaw fix (2026-08-28) - see _hierarchical_share_prior's
+        # own docstring. share_per90 above is accumulated from CURRENT-season
+        # matches only, unshrunk - a real single quiet match (Bruno's own real
+        # GW1: 3 shots, 0.041 xG, 2.3% of Man Utd's match xG that day) fully
+        # determines it otherwise, discarding the player's own much larger,
+        # more informative last-season share entirely. Same empirical-Bayes
+        # weighting shrink_rate() already uses elsewhere in this module,
+        # weighted by the real current-season sample size just computed above
+        # (shrunk["goals"].matches_played) - more current-season evidence
+        # earns proportionally more trust, never a step-function cutover.
+        # Same real, backtest-informed threshold as the goals/xa rate prior
+        # above (see that comment) - the identical weighted-blend shape
+        # (PRIOR_STRENGTH_MATCHES vs current_matches) is what the backtest
+        # showed net-harmful past ~4 real current-season matches; gated the
+        # same way here as a consistent, evidence-informed precaution
+        # (the backtest harness doesn't exercise share_per90 at all, so
+        # there's no direct measurement for this specific blend - but no
+        # reason to trust its weighting shape more than the one that WAS
+        # measured and found wanting at the same sample size).
+        current_matches = shrunk["goals"].matches_played
+        if current_matches < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
+            rate_derived_share_fallback = min(shrunk_goals90 / _LEAGUE_AVERAGE_GOALS, 1.0)
+            share_prior = _hierarchical_share_prior(
+                conn, player_id, team_market_id, season, as_of_date,
+                rate_derived_fallback=rate_derived_share_fallback,
+            )
+        else:
+            share_prior = None
+        if share_prior is not None:
+            share_per90 = min(
+                (current_matches * share_per90 + PRIOR_STRENGTH_MATCHES * share_prior)
+                / (current_matches + PRIOR_STRENGTH_MATCHES),
+                1.0,
+            )
         goals_source = "understat"
     else:
         # player_match_stats_history has zero rows for this player+season - a real,
@@ -677,6 +868,39 @@ def _fixture_date(fixture_row) -> str:
 def _fixture_goals_for(conn: sqlite3.Connection, fixture_row, team_id: int) -> tuple[float, float]:
     opponent_id = fixture_row["team_a"] if fixture_row["team_h"] == team_id else fixture_row["team_h"]
     return _blended_fixture_goals(conn, fixture_row["id"], team_id, opponent_id, _fixture_date(fixture_row))
+
+
+@dataclass(frozen=True)
+class TeamFixtureProjection:
+    team_id: int
+    fixture_id: int
+    event: int | None
+    goals_for: float
+    goals_against: float
+    cs_prob: float
+
+
+def team_next_fixture_projection(conn: sqlite3.Connection, team_id: int) -> TeamFixtureProjection | None:
+    """Team-level slice of the real per-player pipeline (odds-blended
+    Dixon-Coles via `_blended_fixture_goals`) - added so a caller comparing
+    team-level clean-sheet/goals projections against an external source
+    (`models/external_benchmark.py`) reads the identical numbers a player's
+    own `expected_points()` would have used, rather than a second,
+    independently-computed team-strength read. `None` when the team has no
+    unfinished fixture on record (season over, or not yet synced)."""
+    fixture_row = conn.execute(
+        "SELECT id, team_h, team_a, kickoff_time, event FROM fixtures "
+        "WHERE (team_h=? OR team_a=?) AND finished=0 ORDER BY event LIMIT 1",
+        (team_id, team_id),
+    ).fetchone()
+    if fixture_row is None:
+        return None
+    goals_for, goals_against = _fixture_goals_for(conn, fixture_row, team_id)
+    return TeamFixtureProjection(
+        team_id=team_id, fixture_id=fixture_row["id"], event=fixture_row["event"],
+        goals_for=goals_for, goals_against=goals_against,
+        cs_prob=clean_sheet_probability(goals_against),
+    )
 
 
 _FLOOR_CEILING_TRIALS = 500
@@ -924,11 +1148,20 @@ def core_expected_points(
     cards - for one player, as of `as_of_date` (None = live, all data) within
     `season` (None = the live season from the `rules` table).
 
-    This is the entry point the walk-forward backtest harness scores against.
-    expected_points()'s public signature is locked to (conn, player_id, n_gw),
-    so `as_of_date` cannot be threaded through it; this function exists so an
-    as-of-a-past-date path is reachable from outside the module without a
-    caller having to reimplement the player layer.
+    Real doc-drift fix (2026-08-28, found while wiring the hierarchical-prior
+    fix into the backtest harness): this docstring used to claim it's "the
+    entry point the walk-forward backtest harness scores against" - it never
+    actually was. `backtesting/harness.py::run_backtest` has always had its
+    own separate, duplicated inline rate computation (`player_shrunk_rates`
+    called directly), which is exactly why the 2026-08-28 hierarchical-prior
+    fix (below, and in `player_regression.py`) had zero effect on that
+    harness's own MAE until it was wired in there too, separately. The real
+    caller of THIS function is `models/differentials.py`'s differential-
+    heuristic scorer - unrelated to backtesting. `expected_points()`'s public
+    signature is locked to (conn, player_id, n_gw), so `as_of_date` cannot be
+    threaded through it; this function exists so an as-of-a-past-date path is
+    reachable from outside the module without a caller having to reimplement
+    the player layer.
 
     PASS `season` WHEN BACKTESTING. Every underlying query filters
     `season = ?`; defaulting to the live season against a real DB (which holds

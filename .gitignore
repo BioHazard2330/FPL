@@ -18,6 +18,7 @@ data/backups/
 data/*.npz
 data/*.joblib
 data/dashboard.html
+data/live_snapshot.json
 logs/*.log
 logs/*.log.*
 *.cache/

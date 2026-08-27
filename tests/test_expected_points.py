@@ -462,8 +462,17 @@ def test_player_share_is_normalized_to_per90_before_fixture_minutes(db_conn):
     assert starter_rates["historical_minutes_fraction"] == pytest.approx(1.0)
     # Accumulated shares differ by exactly the minutes ratio...
     assert rotation_rates["player_share"] == pytest.approx(starter_rates["player_share"] / 2)
-    # ...but the per-90-equivalent share the goals term consumes must not.
-    assert rotation_rates["player_share_per90"] == pytest.approx(starter_rates["player_share_per90"])
+    # ...and the per-90-equivalent share the goals term consumes must stay
+    # CLOSE (proving the double-discount bug this test guards against is
+    # still fixed - that bug halved the rotation player's share outright, a
+    # ~50% error, not a few percent one). Loosened from exact equality
+    # 2026-08-28 (real hierarchical-share-prior fix, `_hierarchical_share_prior`):
+    # both players now correctly blend toward the SAME real shrinkage prior,
+    # but the 5-match rotation player is legitimately shrunk toward it more
+    # than the 10-match starter (less current-season evidence, same
+    # empirical-Bayes weighting this project already uses everywhere else) -
+    # a real, small, sample-size-driven difference now, not a bug.
+    assert rotation_rates["player_share_per90"] == pytest.approx(starter_rates["player_share_per90"], rel=0.05)
 
 
 def test_n_gw_widens_the_fixture_window(db_conn):
@@ -910,3 +919,164 @@ def test_dc_fit_coarsening_produces_mathematically_identical_model_params(db_con
         strength_b = model_b.teams[team_id]
         assert strength_a.attack == pytest.approx(strength_b.attack, abs=1e-3)
         assert strength_a.defence == pytest.approx(strength_b.defence, abs=1e-3)
+
+
+# --- Real modeling-flaw fix (2026-08-28): hierarchical prior for the
+# current-season goals/xa shrinkage and the player's share of team xG - see
+# _hierarchical_prior_rates'/_hierarchical_share_prior's own docstrings in
+# expected_points.py for the full account (direct user audit request,
+# confirmed live: Haaland's real elite rate was being discarded down to
+# barely above the position average after just one current-season match).
+
+def _player_position(conn, player_id=1) -> str:
+    return conn.execute(
+        "SELECT et.singular_name_short p FROM players pl JOIN element_types et ON et.id=pl.element_type "
+        "WHERE pl.id=?", (player_id,),
+    ).fetchone()["p"]
+
+
+def _set_prior_season_history(conn, player_id, season_name, goals_scored, expected_assists, minutes=3420):
+    """`_seed_two_team_world` (via `_insert_season_history`) already leaves
+    one real "2025/26" `player_season_history` row for player 1 with
+    `goals_scored` hardcoded to 0 - real, full control over both stats
+    needed for these tests, so this replaces that row rather than fighting
+    the shared helper's own defaults."""
+    conn.execute("DELETE FROM player_season_history WHERE player_id=? AND season_name=?", (player_id, season_name))
+    conn.execute(
+        "INSERT INTO player_season_history (player_id, season_name, minutes, starts, total_points, goals_scored, "
+        "assists, clean_sheets, goals_conceded, bonus, bps, expected_goals, expected_assists, "
+        "expected_goal_involvements, expected_goals_conceded, defensive_contribution, start_cost, end_cost, retrieved_at) "
+        "VALUES (?,?,?,38,0,?,0,0,0,0,0,0,?,0,0,0,50,55,'t0')",
+        (player_id, season_name, minutes, goals_scored, expected_assists),
+    )
+    conn.commit()
+
+
+def test_hierarchical_prior_rates_blends_toward_last_seasons_own_rate(db_conn):
+    """One sparse current-season match (low xa) vs a real, extensive
+    prior-season record (much higher xa) - the blended current-season
+    shrunk rate must sit well above what shrinking toward the bare, thin
+    current-season position average alone would give."""
+    from fpl_agent.models.expected_points import _hierarchical_prior_rates
+    from fpl_agent.models.player_regression import position_average_per90
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15", minutes=90, xg=0.1, goals=0)
+    _set_prior_season_history(db_conn, 1, "2025/26", goals_scored=5, expected_assists=20.0)
+
+    priors = _hierarchical_prior_rates(db_conn, 1, season, as_of_date=None)
+    position = _player_position(db_conn)
+    bare_position_avg_xa = position_average_per90(db_conn, position, "xa", season)
+
+    assert "xa" in priors
+    assert priors["xa"] > bare_position_avg_xa * 1.5
+
+
+def test_hierarchical_prior_rates_omits_a_stat_with_no_real_prior_season_data(db_conn):
+    """A genuine first-PL-season player (no player_season_history rows at
+    all) must get no override for that stat - `player_shrunk_rates` then
+    falls through to its own bare position-average default, byte-identical
+    to pre-fix behavior."""
+    from fpl_agent.models.expected_points import _hierarchical_prior_rates
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")
+    db_conn.execute("DELETE FROM player_season_history WHERE player_id=1")
+    db_conn.commit()
+
+    priors = _hierarchical_prior_rates(db_conn, 1, season, as_of_date=None)
+
+    assert priors == {}
+
+
+def test_hierarchical_share_prior_blends_when_team_unchanged(db_conn):
+    """Real prior-season share of team xG, same club both seasons - must be
+    used as a real, non-None prior."""
+    from fpl_agent.models.expected_points import _hierarchical_share_prior
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")
+
+    prior = "2025-26"
+    _insert_match_stat(db_conn, prior, "p0", 1, arsenal, "2025-09-10", xg=0.6)
+    db_conn.commit()
+
+    prior_share = _hierarchical_share_prior(db_conn, 1, arsenal, season, as_of_date=None)
+
+    assert prior_share is not None
+    assert prior_share > 0
+
+
+def test_hierarchical_share_prior_none_when_player_changed_teams(db_conn):
+    """A real transfer since last season - last season's real share was
+    against a DIFFERENT club's total xG, meaningless carried over. Must
+    return None, not a misleading blended number."""
+    from fpl_agent.models.expected_points import _hierarchical_share_prior
+
+    season, arsenal, chelsea = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")  # now at Arsenal
+
+    prior = "2025-26"
+    _insert_match_stat(db_conn, prior, "p0", 1, chelsea, "2025-09-10", xg=0.6)  # was at Chelsea last season
+    db_conn.commit()
+
+    assert _hierarchical_share_prior(db_conn, 1, arsenal, season, as_of_date=None) is None
+
+
+def test_hierarchical_share_prior_uses_rate_derived_fallback_on_a_real_transfer(db_conn):
+    """Real second finding (2026-08-28, tracing Isak's own remaining
+    divergence): a genuine same-league transfer (real last-season PL
+    history, different club) must not fall all the way through to zero
+    prior when a caller supplies the rate-derived approximation - the
+    team-relative SHARE doesn't transfer, but this fallback (computed by
+    the caller from the player's own real, club-agnostic scoring rate) is
+    real, usable information the raw guard above shouldn't discard."""
+    from fpl_agent.models.expected_points import _hierarchical_share_prior
+
+    season, arsenal, chelsea = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")  # now at Arsenal
+
+    prior = "2025-26"
+    _insert_match_stat(db_conn, prior, "p0", 1, chelsea, "2025-09-10", xg=0.6)  # was at Chelsea last season
+    db_conn.commit()
+
+    result = _hierarchical_share_prior(
+        db_conn, 1, arsenal, season, as_of_date=None, rate_derived_fallback=0.35,
+    )
+
+    assert result == 0.35  # the guard correctly refused the cross-club share and used the given fallback instead
+
+
+def test_hierarchical_share_prior_none_with_no_prior_season_data(db_conn):
+    from fpl_agent.models.expected_points import _hierarchical_share_prior
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")
+    db_conn.commit()
+
+    assert _hierarchical_share_prior(db_conn, 1, arsenal, season, as_of_date=None) is None
+
+
+def test_expected_points_haaland_shaped_case_recovers_a_realistic_rate(db_conn):
+    """Real regression test for the confirmed-live production finding: a
+    proven high-volume scorer's real, extensive last-season record must
+    meaningfully lift their shrunk goals rate above the bare position
+    average after just one thin current-season match - not collapse toward
+    it. Mirrors the real Haaland case (real prod DB: shrunk goals90 rose
+    from 0.22 - barely above the FWD position average - to 0.67 once this
+    fix shipped) at unit-test scale."""
+    from fpl_agent.models.expected_points import _player_match_rates
+    from fpl_agent.models.player_regression import position_average_per90
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15", minutes=90, xg=0.1, goals=0)  # one quiet match
+    # `shrunk_goals90` is driven by `_hierarchical_prior_rates`, which reads
+    # the prior-season RATE from `player_season_history` (goals_scored) -
+    # a real, extensive last-season record at a high scoring rate.
+    _set_prior_season_history(db_conn, 1, "2025/26", goals_scored=27, expected_assists=0.0, minutes=2953)
+
+    rates = _player_match_rates(db_conn, 1, season=season)
+    position = _player_position(db_conn)
+    bare_position_avg_goals = position_average_per90(db_conn, position, "goals", season)
+
+    assert rates["shrunk_goals90"] > bare_position_avg_goals * 2

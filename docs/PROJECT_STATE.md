@@ -5,6 +5,91 @@ kept lean on purpose. **Don't add session narrative here** — a new capability/
 one short factual entry; the story of how it was built, bugs found, and live-verification detail goes
 in `docs/history/` (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-28, decision-outcome backtest + Understat repair + live-state completion pass)
+
+Built the real decision-outcome backtest (`models/decision_calibration.py`, migration 0034,
+`fpl decision-backtest`): captures the recommended action + best real rejected alternative at
+each real deadline freeze (wired into `run_scheduled`'s existing LOCKED-lifecycle trigger),
+reveals real actual outcomes once the gameweek finishes (wired into the post-GW pipeline).
+Real first sample captured against production for GW2 (pre-deadline, non-hindsight); reveal
+happens automatically once GW2 finishes.
+
+Started (not finished) the historical Understat player-id repair: `ingestion/understat_source.py
+::repair_unresolved_player_ids` safely re-fetches real match pages and re-resolves via the
+existing team-scoped fallback - no fabrication, zero duplicate-row risk. Real production run for
+the highest-value season (2025-26): 1605/4222 rows resolved (38%). Confirmed real downstream
+effect: Bruno Fernandes' own last-season data is now fully resolved, and he dropped out of the
+top Solio-divergence list. Older seasons (2021-22 to 2024-25) not yet repaired.
+
+Extended the live snapshot channel with bonus/DEFCON, recent squad-relevant changes, and decision
+freshness + a real "why did the recommendation change" explanation (`models/decision_change.py`,
+`fpl decision-changes`). Quantified (not fixed) the remaining assists/bonus correlation gap: a
+real but smaller 7% same-team violation rate for assists (vs goals' 34% before that fix) -
+judged not yet material enough to justify building the missing "share of team assists" primitive
+this pass, per the standing "quantify before rewriting" instruction.
+
+## Where things stand (updated 2026-08-28, correlation + backtest-wiring + live-perf pass)
+
+Real correlation bug found + fixed in the Monte Carlo scenario engine: two+ squad-tracked
+teammates sharing a fixture drew independent goal counts, provably double-counting the same
+real goal in ~34% of stress-tested trials. `scenario_sampling.py::sample_team_group_trial_points`
+jointly multinomial-attributes the shared team_goals draw across them instead. A real perf bug
+found + fixed in `live_match_poll_cmd`: it was calling the full ~1-minute `generate_dashboard_html()`
+on every ~25s tick during a live match, starving its own configured interval. New
+`monitoring/live_snapshot.py` writes a cheap `data/live_snapshot.json` every tick instead; the
+dashboard's own JS polls it every 20s and patches the live-rank/live-points tiles in place -
+live-verified in a real browser session, zero page reload. The full dashboard now only
+regenerates on a real FULL_TIME transition during that loop.
+
+Also found + fixed a real backtest-wiring gap: `backtesting/harness.py::run_backtest` never
+actually called the code path the 2026-08-27 hierarchical-prior fix lives in (a stale docstring
+elsewhere falsely claimed it did) - wiring it in properly surfaced a real, valuable finding:
+applied unconditionally, the fix was net-harmful (~1% MAE regression) once a player already has
+4+ real current-season matches. Gated to `_MIN_MATCHES_FOR_HIERARCHICAL_PRIOR=4` matches (both
+the goals/xa rate prior and the share-of-team-xG prior) - real production case (Haaland/Bruno,
+matches_played=1) is unaffected by the gating.
+
+Audited (not restructured) the live dependency-recompute chain: the existing two-tier split
+(cheap live decision layer every regen + expensive strategic-plan gated behind a real
+materiality check) already satisfies "don't run the whole optimizer for every source update" -
+a fully staged per-entity dependency graph doesn't exist and would be a real, separate,
+larger project. Decision-outcome backtest and Solio historical comparison remain unbuilt -
+the latter is structurally impossible (Solio's endpoint is live-only, no historical API).
+
+## Where things stand (updated 2026-08-28, projection-model root-cause fix pass)
+
+Two real, confirmed modeling bugs found and fixed via direct root-cause tracing against the
+Solio benchmark (never tuned toward Solio's numbers - see CLAUDE.md's known-blockers entry for
+the full account): (1) a shrinkage-prior cutover bug that discarded a player's real, larger
+prior-season goals/xa record the instant they had even one current-season match, and (2) an
+unshrunk player-share-of-team-xG bug (the actual dominant driver for Bruno Fernandes'
+divergence) that let a single quiet match fully determine a player's attacking share. Fixed in
+`models/expected_points.py` (`_hierarchical_prior_rates`, `_hierarchical_share_prior`) and
+`models/player_regression.py` (`player_shrunk_rates`' new `prior_overrides` param). Real
+production result: Bruno's divergence vs Solio narrowed from +95% to +30%; several previously-
+outlier players now show AGREEMENT. A real, large, disclosed data-quality gap was found in the
+process (56.5% of historical `player_match_stats_history` rows have unresolved `player_id`,
+predating the 2026-08-26 name-matching fix and never retroactively repaired) - explains why
+Bruno specifically still shows MATERIAL_DIVERGENCE rather than AGREEMENT; needs its own
+re-scrape-based repair session, not fixed this pass. Search-width experiment (beam 5/10/20/50)
+confirmed beam_width=5 is stable (identical top path at every width) - kept as-is. 8 new tests,
+full suite green (1122 tests).
+
+## Where things stand (updated 2026-08-27, Solio benchmark pass)
+
+**Independent-model benchmark against Solio Analytics** (public, no-auth `fpl.solioanalytics.com/api/data/latest.json`,
+live-verified) - `ingestion/solio_source.py` (fetch/crosswalk/store, self-throttled to Solio's own ~4h cadence,
+wired into `run_scheduled`), `models/external_benchmark.py` (AGREEMENT/MINOR/MATERIAL/MAJOR_OUTLIER divergence
+classifier + real component-level attribution reusing `expected_points()`'s own `ComponentBreakdown`, captain/
+transfer-target cross-check against the real `decision_analysis` output - never re-derives or overrides it),
+`fpl solio-sync`/`fpl model-benchmark` CLI, and a compressed (never raw-JSON) Advanced-drawer dashboard panel
+(`monitoring/dashboard/benchmark.py`). Real production run: 62/62 GW2 players and 12/12 teams crosswalked with zero
+misses; team-level clean-sheet probabilities agree closely across the board (real cross-model sanity check); found
+one real, investigated, NOT auto-corrected divergence (B.Fernandes MAJOR_OUTLIER, traced to early-season
+per-90-rate shrinkage on a 1-match sample - see CLAUDE.md's known-blockers entry) and one real AGREEMENT (current
+transfer target Tavernier also appears in Solio's own top lists). 38 new tests (ingestion, divergence
+classification, component attribution, decision cross-check, dashboard rendering, CLI).
+
 ## Where things stand (updated 2026-08-29)
 
 Dashboard: chip rendering (Plan timeline, Squad preview) is now single-sourced from each path's

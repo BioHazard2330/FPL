@@ -61,25 +61,52 @@ def test_real_synced_squad_is_preferred_source(db_conn):
     assert is_locked(db_conn) is True
 
 
-def test_xi_from_real_picks_logs_a_diagnostic_when_picks_are_unexpectedly_empty(db_conn, caplog):
-    """Real diagnostic added 2026-08-29 alongside get_latest_squad()'s own
-    atomicity fix (direct user report: dashboard "randomly" showed no squad,
-    zero trace to debug from). This simulates the narrow residual race this
-    specific diagnostic covers - `_xi_from_real_picks` called with an event
-    that (from the caller's perspective) should have real picks but the
-    table has none for right now - and proves it's now LOGGED, not silent."""
+def test_xi_from_real_picks_handles_zero_picks_defensively(db_conn, caplog):
+    """`_xi_from_real_picks` now takes already-fetched rows (see
+    `get_latest_squad_detail`'s docstring for the real race this replaced) -
+    the real call path (`get_locked_squad`) never passes an empty list, but
+    a direct/future caller getting this wrong must still degrade cleanly,
+    not crash."""
     import logging
 
     from fpl_agent.optimization.locked_squad import _xi_from_real_picks
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
-    _seed_real_picks(db_conn, event=1)
 
     with caplog.at_level(logging.WARNING, logger="fpl_agent.locked_squad"):
-        result = _xi_from_real_picks(db_conn, event=2, entry_id=7378572, squad_ids=_FULL_15)
+        result = _xi_from_real_picks(db_conn, event=2, entry_id=7378572, picks=[])
 
     assert result is None
-    assert any("my_team_picks now has zero rows" in r.message for r in caplog.records)
+    assert any("zero picks" in r.message for r in caplog.records)
+
+
+def test_get_latest_squad_detail_is_one_atomic_read_not_two(db_conn):
+    """Real regression guard for the 2026-08-29 fix: `get_locked_squad` used
+    to call `get_latest_squad()` (one read) and then a SEPARATE
+    `my_team_picks` query inside `_xi_from_real_picks` (a second read) -
+    live-confirmed in production logs to race against the scheduler's own
+    concurrent resync and intermittently report "no locked squad" despite
+    real picks existing. `get_latest_squad_detail` is the real close: proves
+    `get_locked_squad`'s only real path to `my_team_picks` is ONE query, by
+    counting every SELECT issued against that table during a real call."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn)
+
+    # Scoped to the specific query that resolves event+squad_slot/captaincy
+    # for XI-building (the one that used to run twice) - `get_locked_squad`
+    # also queries `my_team_picks` separately for `compute_real_free_transfers`
+    # (a different purpose, out of scope for this regression guard).
+    queries_seen = []
+    db_conn.set_trace_callback(
+        lambda sql: queries_seen.append(sql) if "my_team_picks" in sql and "squad_slot" in sql else None
+    )
+    try:
+        locked = get_locked_squad(db_conn)
+    finally:
+        db_conn.set_trace_callback(None)
+
+    assert locked is not None
+    assert len(queries_seen) == 1, f"expected exactly one squad_slot-detail query, got {len(queries_seen)}: {queries_seen}"
 
 
 def test_a_pick_for_an_unresolved_player_is_skipped_not_fabricated(db_conn):

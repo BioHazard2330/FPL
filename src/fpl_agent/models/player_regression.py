@@ -75,7 +75,22 @@ def position_average_per90(
     return result
 
 
-def player_shrunk_rates(conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None) -> dict:
+def player_shrunk_rates(
+    conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None,
+    prior_overrides: dict[str, float] | None = None,
+) -> dict:
+    """`prior_overrides` (2026-08-28, real modeling-flaw fix - see
+    `expected_points.py::_hierarchical_prior_rates`'s own docstring for the
+    full account): per-stat prior to shrink toward INSTEAD OF the bare
+    current-season `position_average_per90`, for stats present in the dict
+    (any stat missing from it keeps today's exact position-average prior -
+    every existing caller that doesn't pass this arg is completely
+    unaffected). Confirmed live: with the default bare-position-average
+    prior, a single current-season match (even a blank one) was enough to
+    fully discard a player's own much larger prior-season record - Haaland's
+    real shrunk goals rate collapsed to barely above the MID/FWD position
+    average (0.22) after his one real 2026-27 match, versus 0.73 using his
+    own real, extensive last-season record as the shrinkage anchor instead."""
     player = conn.execute(
         "SELECT et.singular_name_short AS position FROM players p "
         "JOIN element_types et ON et.id = p.element_type WHERE p.id=?", (player_id,),
@@ -96,8 +111,11 @@ def player_shrunk_rates(conn: sqlite3.Connection, player_id: int, season: str, a
     result = {}
     for stat in _SUPPORTED_STATS:
         total = (row[stat] if row else 0) or 0.0
-        prior = position_average_per90(conn, position, stat, season, as_of_date)
         key = "cards" if stat == "yellow_cards" else stat
+        prior = (
+            prior_overrides[key] if prior_overrides and key in prior_overrides
+            else position_average_per90(conn, position, stat, season, as_of_date)
+        )
         result[key] = shrink_rate(total, minutes, prior)
     return result
 

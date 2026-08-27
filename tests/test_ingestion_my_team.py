@@ -1,6 +1,8 @@
 from fpl_agent.ingestion import my_team
 from fpl_agent.ingestion.fpl_api import RawFetch
-from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id, set_my_team_entry_id, sync_my_team
+from fpl_agent.ingestion.my_team import (
+    get_latest_squad, get_latest_squad_detail, get_my_team_entry_id, set_my_team_entry_id, sync_my_team,
+)
 
 
 def _fake_raw(source_name, data):
@@ -158,6 +160,45 @@ def test_get_latest_squad_returns_the_max_events_own_picks_only(db_conn):
     result = get_latest_squad(db_conn, 7378572)
 
     assert result == (2, [20, 21])
+
+
+def test_get_latest_squad_detail_uses_one_atomic_query_and_returns_full_rows(db_conn):
+    """`get_latest_squad_detail` (2026-08-29) is the real close for a
+    still-recurring residual race `get_latest_squad`'s own atomicity fix
+    above didn't cover: `optimization.locked_squad.get_locked_squad` used to
+    call `get_latest_squad()` (one atomic read) and then a SEPARATE
+    `my_team_picks` query for squad_slot/is_captain/is_vice_captain detail -
+    live-confirmed in production logs to race against the scheduler's
+    concurrent resync. One atomic statement returning every column
+    `get_locked_squad` needs closes it for real."""
+    now = "2026-01-01T00:00:00Z"
+    db_conn.execute(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (7378572,1,1,1,2,1,0,NULL,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (7378572,1,2,2,1,0,1,NULL,?)", (now,),
+    )
+    db_conn.commit()
+
+    calls = []
+    db_conn.set_trace_callback(lambda sql: calls.append(sql) if "my_team_picks" in sql else None)
+    try:
+        result = get_latest_squad_detail(db_conn, 7378572)
+    finally:
+        db_conn.set_trace_callback(None)
+
+    assert len(calls) == 1, f"expected exactly one query against my_team_picks, got {len(calls)}: {calls}"
+    event, rows = result
+    assert event == 1
+    assert [r["player_id"] for r in rows] == [1, 2]
+    assert rows[0]["is_captain"] == 1
+    assert rows[1]["is_vice_captain"] == 1
+
+
+def test_get_latest_squad_detail_returns_none_when_no_picks_exist(db_conn):
+    assert get_latest_squad_detail(db_conn, 7378572) is None
 
 
 def test_sync_my_team_picks_idempotent_without_force(db_conn, monkeypatch):

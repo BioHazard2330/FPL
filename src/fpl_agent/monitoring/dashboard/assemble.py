@@ -16,7 +16,9 @@ from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
-from fpl_agent.monitoring.dashboard import fixtures, home, injuries, intelligence, market, opportunity, plan, player_data, squad
+from fpl_agent.monitoring.dashboard import (
+    benchmark, fixtures, home, injuries, intelligence, market, opportunity, plan, player_data, squad,
+)
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
@@ -213,8 +215,8 @@ def generate_dashboard_html(
                 last_trustworthy_note = "no trustworthy live-rank estimate has ever been produced"
             rank_tooltip = f"{reason} &middot; {source_note} &middot; {last_trustworthy_note}"
             live_rank_tile_html = f"""<div class="home-metric" title="{_esc(rank_tooltip)}">
-      <div class="home-metric-label">Rank</div>
-      <div class="home-metric-value home-metric-value-muted">Unavailable</div>
+      <div class="home-metric-label" id="live-rank-label">Rank</div>
+      <div class="home-metric-value home-metric-value-muted" id="live-rank-value">Unavailable</div>
     </div>"""
         else:
             rank = live_rank_decision.detail.get("estimated_rank")
@@ -231,8 +233,8 @@ def generate_dashboard_html(
             is_current = rank_event == reference_event
             rank_label = "Live rank (est.)" if is_current else f"Last rank check (GW{rank_event})"
             live_rank_tile_html = f"""<div class="home-metric">
-      <div class="home-metric-label">{_esc(rank_label)}</div>
-      <div class="home-metric-value">{_esc(rank_str)}</div>
+      <div class="home-metric-label" id="live-rank-label">{_esc(rank_label)}</div>
+      <div class="home-metric-value" id="live-rank-value">{_esc(rank_str)}</div>
     </div>"""
 
     lifecycle = compute_gw_lifecycle_state(conn)
@@ -376,7 +378,15 @@ def generate_dashboard_html(
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
     news_fresh_html = f"<span class='panel-subtitle freshness-tag'>Updated {_esc(news_fresh)}</span>" if news_fresh else ""
 
-    refresh_seconds = 20 if dash_state == "LIVE" else _REFRESH_SECONDS
+    # Real perf fix (2026-08-28, direct user P0: "do not rebuild the entire
+    # static dashboard every 15-30 seconds") - LIVE state used to full-page-
+    # reload every 20s, re-fetching the whole (real, ~1-minute-cost)
+    # dashboard.html for the sake of a rank number and a points total that
+    # change every tick. The live_snapshot.json poll below now carries those
+    # fields on its own cheap ~20s cadence; this meta-refresh becomes a
+    # slower catch-all for everything else (squad changes, new decisions),
+    # not the primary live-update mechanism anymore.
+    refresh_seconds = 90 if dash_state == "LIVE" else _REFRESH_SECONDS
 
     return f"""<!doctype html>
 <html lang="en">
@@ -491,6 +501,13 @@ def generate_dashboard_html(
     {compare_panel}
 
     <details class="panel-advanced">
+      <summary><h3>Independent Model Benchmark <span class="panel-subtitle">Solio Analytics cross-check - divergence surfaced for investigation, never auto-applied</span></h3></summary>
+      <div class="benchmark-panel">
+{benchmark.render_benchmark_html(conn, list(squad_ids) if squad_ids else None, ta)}
+      </div>
+    </details>
+
+    <details class="panel-advanced">
       <summary><h3>System health</h3></summary>
 {_health_summary_html(conn)}
       <details class="health-details">
@@ -545,6 +562,41 @@ def generate_dashboard_html(
     remaining = remaining > 0 ? remaining - 1 : 0;
     el.textContent = remaining + 's';
   }}, 1000);
+}})();
+
+(function() {{
+  // Real lightweight live-state channel (2026-08-28) - polls the small
+  // live_snapshot.json file monitoring/live_snapshot.py writes on its own
+  // cheap ~20s cadence during a live match, and patches ONLY the rank/
+  // points elements in place - never a full page reload for this. Silent
+  // no-op when the file doesn't exist yet (e.g. no live match this
+  // session) or the fetch fails (file:// origin, offline) - this must
+  // never break the page.
+  var lastVersion = null;
+  function applySnapshot(snap) {{
+    if (!snap || snap.version === lastVersion) return;
+    lastVersion = snap.version;
+    if (snap.rank) {{
+      var rankEl = document.getElementById('live-rank-value');
+      if (rankEl && snap.rank.estimated_rank != null && snap.rank.is_current && snap.rank.precision !== 'degenerate') {{
+        var prefix = snap.rank.source === 'livefpl' ? '' : '~';
+        rankEl.textContent = prefix + snap.rank.estimated_rank.toLocaleString();
+        rankEl.classList.remove('home-metric-value-muted');
+      }}
+    }}
+    if (snap.points && snap.points.points != null) {{
+      var ptsEl = document.getElementById('live-points-value');
+      if (ptsEl) ptsEl.textContent = Math.round(snap.points.points);
+    }}
+  }}
+  function poll() {{
+    fetch('live_snapshot.json', {{cache: 'no-store'}})
+      .then(function(r) {{ return r.ok ? r.json() : null; }})
+      .then(applySnapshot)
+      .catch(function() {{ /* no snapshot yet, or not served over http - silent */ }});
+  }}
+  poll();
+  setInterval(poll, 20000);
 }})();
 
 (function() {{

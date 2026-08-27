@@ -40,6 +40,7 @@ from fpl_agent.models.expected_points import _blended_fixture_goals, _fixture_da
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.scenario_sampling import sample_fixture_scorelines as _sample_fixture_scorelines
 from fpl_agent.models.scenario_sampling import sample_player_trial_points as _sample_player_trial_points
+from fpl_agent.models.scenario_sampling import sample_team_group_trial_points as _sample_team_group_trial_points
 
 # Re-exported under the original private names (moved to scenario_sampling.py
 # 2026-08-21 so expected_points.py can reuse the same real per-trial point
@@ -82,28 +83,53 @@ def sample_season_scenarios(
     n_trials: int = 1000,
     rng: np.random.Generator | None = None,
 ) -> list[ScenarioOutcome]:
+    """Real correlation fix (2026-08-28) - grouped by (event, team) rather
+    than looped one player at a time, so two+ squad-tracked teammates
+    sharing a fixture get their goals jointly attributed
+    (`sample_team_group_trial_points`) instead of independently double-
+    counting the same real team total. A team with exactly one squad-
+    tracked player in a given fixture still goes through the single-player
+    path (`sample_player_trial_points`) - mathematically identical to the
+    joint one in that case (a 2-outcome multinomial IS a binomial), so this
+    is a strict extension, not a behavior change for that common case."""
     rng = rng if rng is not None else np.random.default_rng()
     season = current_season(conn)
     fixture_cache: dict[int, tuple[int, np.ndarray, np.ndarray]] = {}
     per_player_event_trials: dict[tuple[int, int], np.ndarray] = {}
 
+    player_info: dict[int, dict] = {}
     for player_id in squad_ids:
         team_id = conn.execute("SELECT team_id FROM players WHERE id=?", (player_id,)).fetchone()["team_id"]
         rates = _player_match_rates(conn, player_id, season=season)
         conceded_rate = get_rule(conn, rates["rules_season"], f"scoring.goals_conceded.{rates['position']}", 0) or 0
         if rates["position"] not in ("DEF", "GKP"):
             conceded_rate = 0
+        player_info[player_id] = {"player_id": player_id, "team_id": team_id, "rates": rates, "conceded_rate": conceded_rate}
 
-        for event in range(from_event, from_event + horizon_gw):
+    for event in range(from_event, from_event + horizon_gw):
+        by_team: dict[int, list[int]] = {}
+        for player_id, info in player_info.items():
+            by_team.setdefault(info["team_id"], []).append(player_id)
+
+        for team_id, team_player_ids in by_team.items():
             fixture_rows = conn.execute(
                 "SELECT id, team_h, team_a, kickoff_time FROM fixtures WHERE (team_h=? OR team_a=?) AND event=?",
                 (team_id, team_id, event),
             ).fetchall()
-            total = np.zeros(n_trials)
+            totals = {pid: np.zeros(n_trials) for pid in team_player_ids}
             for fx in fixture_rows:  # naturally 0 rows (blank) or 2+ rows (double) - no special-casing needed
                 team_goals, opp_goals = _draw_fixture_for_team(conn, rng, fx, team_id, n_trials, fixture_cache)
-                total = total + _sample_player_trial_points(rng, rates, conceded_rate, team_goals, opp_goals)
-            per_player_event_trials[(event, player_id)] = total
+                if len(team_player_ids) == 1:
+                    pid = team_player_ids[0]
+                    info = player_info[pid]
+                    trial_points = {pid: _sample_player_trial_points(rng, info["rates"], info["conceded_rate"], team_goals, opp_goals)}
+                else:
+                    group = [player_info[pid] for pid in team_player_ids]
+                    trial_points = _sample_team_group_trial_points(rng, group, team_goals, opp_goals)
+                for pid in team_player_ids:
+                    totals[pid] = totals[pid] + trial_points[pid]
+            for pid in team_player_ids:
+                per_player_event_trials[(event, pid)] = totals[pid]
 
     return [
         ScenarioOutcome(trial_index=i, points_by_event_player={k: float(v[i]) for k, v in per_player_event_trials.items()})
