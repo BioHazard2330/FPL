@@ -9,7 +9,7 @@ in `docs/history/` (one new dated file per session, indexed in `docs/history/REA
 
 **Season**: 2026-27, GW1 finished (all 10 fixtures analyzed, real qualitative evidence recorded for Arsenal-Coventry and league-wide via the zero-LLM statistical detector), GW2 not yet locked (real fixtures scheduled ~Aug 29-Sep 1). Real locked squad synced (entry 7378572, `fpl my-team`).
 
-**System capability**: full pipeline from raw data → calibrated projections → multi-GW strategic planning → dashboard, running autonomously via the Windows Task Scheduler. Real free-transfer state, real chip-usage detection, real qualitative evidence (LLM + zero-LLM), real confidence/robustness/uncertainty reporting, real 1/3/5/8-GW path search with joint chip+transfer optimization (chips compete inside the beam, not a post-hoc overlay), a real full-squad starting-action comparison producing one authoritative CURRENT RECOMMENDED ACTION, real Squad State Machine (per-path/per-GW squad reconstruction), real Model-vs-Football-vs-User-view fusion.
+**System capability**: full pipeline from raw data → calibrated projections → multi-GW strategic planning → dashboard, running autonomously via the Windows Task Scheduler. Real free-transfer state, real chip-usage detection, real qualitative evidence (LLM + zero-LLM), real confidence/robustness/uncertainty reporting, real 1/3/5/8-GW path search with joint chip+transfer optimization (chips compete inside the beam, not a post-hoc overlay), a real full-squad starting-action comparison producing one authoritative CURRENT RECOMMENDED ACTION, real Squad State Machine (per-path/per-GW squad reconstruction), real Model-vs-Football-vs-User-view fusion, a real Adversarial Decision Audit (`fpl decision-audit`) that tries to disprove the current recommendation - causal trace, named-player MODEL-vs-FOOTBALL comparison, analytic counterfactual-stress falsifiers, multi-horizon (3/5/8GW) alternative-action audit, league-wide breakout/differential/trap check, cold-start coverage, qualitative-evidence chain, and a final trust/no-trust scorecard - cached in the decisions journal and surfaced as a compact "WHAT CHANGES IT" line + collapsed full trace on the dashboard's Primary Decision panel.
 
 ## Strategic planner status
 
@@ -31,14 +31,13 @@ Summarized: bonus/BPS season-grain only; single predicted-lineups source; sample
 
 ## Next recommended work (real candidates, not started)
 
-1. **Model-vs-football-vs-decision adversarial trace CLI** for an arbitrary named player (RAW MATCH EVIDENCE → STRUCTURED SIGNAL → MODEL COMPONENT → PROJECTION → CANDIDATE → PATH → DECISION) — `decision_fusion.py::compare_transfer_views`/`compare_captain_views` already give the MODEL/FOOTBALL/USER-view comparison, but only for whichever player is already the top candidate.
-2. **Path-diversity clustering** — group near-identical top-N strategic paths into real tiers (roll-heavy/transfer-heavy/fixture-led/chip-led) rather than listing near-duplicates, only where those structures genuinely emerge from the search.
-3. **Value-of-information folded into `compare_starting_actions`' own ranking**, not just the single-swap decision's separate `information_value_note`.
-4. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
-5. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.
-6. **Surface sampled-EO margin of error** in the dashboard/CLI (currently derived, never printed).
-7. **Decision-outcome calibration** — capture recommended-action-taken vs rejected-alternative's real outcome per completed GW (`models/calibration.py`/`prediction_outcomes` exist for projected-vs-actual already); needs a season with completed GWs to have real observations.
-8. **Dashboard visual/typography pass + real screenshot QA** (1440/1024/768/390/375/360px) — blocked in the 2026-08-27 session by the Browser tool's compositor being unavailable in that environment (a client-side panel-visibility issue, not a dashboard bug); needs a session where the Browser pane actually renders.
+1. **Path-diversity clustering** — group near-identical top-N strategic paths into real tiers (roll-heavy/transfer-heavy/fixture-led/chip-led) rather than listing near-duplicates, only where those structures genuinely emerge from the search.
+2. **Value-of-information folded into `compare_starting_actions`' own ranking**, not just the single-swap decision's separate `information_value_note`.
+3. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
+4. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.
+5. **Surface sampled-EO margin of error** in the dashboard/CLI (currently derived, never printed).
+6. **Decision-outcome calibration** — capture recommended-action-taken vs rejected-alternative's real outcome per completed GW (`models/calibration.py`/`prediction_outcomes` exist for projected-vs-actual already); needs a season with completed GWs to have real observations.
+7. **Dashboard visual/typography pass + real screenshot QA** (1440/1024/768/390/375/360px) — blocked in the 2026-08-27 session by the Browser tool's compositor being unavailable in that environment (a client-side panel-visibility issue, not a dashboard bug); needs a session where the Browser pane actually renders.
 
 ## Verification procedure (run before trusting any change to the decision layer)
 

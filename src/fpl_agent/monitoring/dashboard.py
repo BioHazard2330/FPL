@@ -2275,6 +2275,86 @@ def _alternatives_html(ta, ca) -> str:
     return "<div class='panel-subtitle' style='margin-top:10px'>Top alternatives considered</div><div class='alt-list'>" + "".join(rows) + "</div>"
 
 
+def _decision_audit_html(conn: sqlite3.Connection) -> str:
+    """"WHY THIS DECISION?" compact line + collapsed full trace (2026-08-27,
+    Adversarial Decision Audit pass, Part 12) - reads the real, already-
+    cached `decision_type="decision_audit"` journal entry
+    (`fpl decision-audit`, a manual/expensive command, same posture
+    `strategic_plan` already has) rather than ever computing the audit live
+    on a dashboard regen. Deliberately terse at the top level (one falsifier
+    line + a robustness/confidence badge) - the full causal chain/per-player
+    trace/stress tests/scorecard live behind a native `<details>` toggle,
+    same collapsed-by-default pattern the Optimizer Delta panel already
+    established, so this never turns the Primary Decision panel back into a
+    wall of numbers."""
+    audit = latest_decision_of_type(conn, "decision_audit")
+    if audit is None:
+        return (
+            "<div class='strategic-subrow-muted'>No adversarial decision audit run yet - "
+            "run <code>fpl decision-audit</code> to stress-test the current recommendation.</div>"
+        )
+    d = audit.detail
+    sc = d.get("scorecard") or {}
+    falsifiers = d.get("falsifiers") or []
+    top_falsifier = next((f["description"] for f in falsifiers if "not derivable" not in f.get("threshold_note", "")), None)
+    age_bit = f" &middot; audited {_esc(_relative_time(audit.created_at))}"
+    what_changes_html = (
+        f"<div class='strategic-subrow-muted'><strong>WHAT CHANGES IT</strong> &middot; {_esc(top_falsifier)}{age_bit}</div>"
+        if top_falsifier else f"<div class='strategic-subrow-muted'>No real numeric falsifier could be derived{age_bit}.</div>"
+    )
+    cross_check_note = d.get("cross_check_note")
+    cross_check_html = (
+        f"<div class='conflict-row'><span class='conflict-yes'>METHODOLOGY CONFLICT</span> {_esc(cross_check_note)}</div>"
+        if cross_check_note else ""
+    )
+
+    causal_html = "".join(
+        f"<li><strong>{_esc(s['label'])}</strong>: {_esc(s['detail'])}</li>" for s in (d.get("causal_chain") or [])
+    )
+    action_rows = "".join(
+        f"<tr><td>{_esc(a['label'])}</td><td>{_esc(str(a['horizon_results']))}</td>"
+        f"<td>{_esc(a['opportunity_cost'])}</td><td>{_esc(a.get('robustness') or '-')}</td></tr>"
+        for a in (d.get("action_audit") or [])[:8]
+    )
+    stress_rows = "".join(
+        f"<li>{_esc(s['note'])}{' <strong>*** FLIPS ***</strong>' if s['decision_flips'] else ''}</li>"
+        for s in (d.get("stress_tests") or [])
+    )
+    falsifier_rows = "".join(
+        f"<li>{_esc(f['description'])} <span class='strategic-subrow-muted'>({_esc(f['threshold_note'])})</span></li>"
+        for f in falsifiers
+    )
+    lw = d.get("league_wide") or {}
+    league_html = (
+        f"<div>{lw.get('breakout_count', 0)} real breakouts &middot; {lw.get('differential_count', 0)} real differentials "
+        f"&middot; {lw.get('trap_count', 0)} real traps tracked &middot; chosen candidate on trap list: "
+        f"{'YES' if lw.get('chosen_in_is_trap') else 'no'}</div>"
+    )
+    why_trust_html = "".join(f"<li>{_esc(w)}</li>" for w in (sc.get("why_trust") or []))
+    why_not_html = "".join(f"<li>{_esc(w)}</li>" for w in (sc.get("why_might_not_trust") or []))
+
+    return (
+        f"{what_changes_html}{cross_check_html}"
+        f"<details class='panel-advanced decision-audit-details'><summary>View decision audit "
+        f"<span class='panel-subtitle'>full adversarial trace - causal chain, per-player evidence, "
+        f"stress tests, falsifiers, scorecard{age_bit}</span></summary>"
+        f"<div class='decision-audit-body'>"
+        f"<div class='decision-audit-badges'>FINAL DECISION: {_esc(sc.get('final_decision', '?'))} "
+        f"&middot; CONFIDENCE: {_esc(sc.get('confidence', '?'))} "
+        f"&middot; ROBUSTNESS: {_esc(sc.get('decision_robustness', '?'))} "
+        f"&middot; DATA: {_esc(sc.get('data_quality', '?'))} &middot; MARKET: {_esc(sc.get('market_evidence', '?'))}</div>"
+        f"<strong>CAUSAL CHAIN</strong><ul class='decision-audit-list'>{causal_html}</ul>"
+        f"<strong>ALTERNATIVE ACTION AUDIT</strong> (label / {{horizon: path_total}} / opportunity cost / robustness)"
+        f"<table class='decision-audit-table'><tbody>{action_rows}</tbody></table>"
+        f"<strong>COUNTERFACTUAL STRESS TESTS</strong><ul class='decision-audit-list'>{stress_rows}</ul>"
+        f"<strong>FALSIFIERS - what would make this wrong</strong><ul class='decision-audit-list'>{falsifier_rows}</ul>"
+        f"<strong>LEAGUE-WIDE OPPORTUNITY CHECK</strong>{league_html}"
+        f"<strong>WHY I TRUST THIS</strong><ul class='decision-audit-list'>{why_trust_html}</ul>"
+        f"<strong>WHY I MIGHT NOT TRUST THIS</strong><ul class='decision-audit-list'>{why_not_html}</ul>"
+        f"</div></details>"
+    )
+
+
 def _strategic_plan_html(
     conn: sqlite3.Connection, locked=None, decision=None, squad_ids: set[int] | None = None,
     *, ta=None, ca=None,
@@ -2466,10 +2546,12 @@ def _strategic_plan_html(
     freshness_html = f"<div class='freshness-tag' style='margin-bottom:8px'>Live decision as of now{age_bit}</div>"
 
     conflict_html = _model_football_conflict_html(ta, ca)
+    decision_audit_html = _decision_audit_html(conn)
 
     return (
         f"{freshness_html}{current_html}{primary_html}{confidence_strip_html}{alternatives_html}"
         f"{captain_html}{chip_headline_html}{conflict_html}{why_html}{current_rec_alternatives_html}"
+        f"{decision_audit_html}"
     )
 
 
@@ -4830,6 +4912,18 @@ _CSS = """
     color: var(--fpl-pink); flex-shrink: 0; }
   .conflict-no { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--ok-text); flex-shrink: 0; }
+
+  /* --- Decision audit (2026-08-27, Adversarial Decision Audit Part 12) -
+     collapsed by design, same posture as the Optimizer Delta panel --- */
+  .decision-audit-details { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .decision-audit-details summary { cursor: pointer; font-size: 0.8rem; font-weight: 700; color: var(--fg); }
+  .decision-audit-body { margin-top: 10px; font-size: 0.8rem; color: var(--muted); }
+  .decision-audit-body strong { display: block; margin: 12px 0 4px; font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--faint); }
+  .decision-audit-badges { font-size: 0.78rem; color: var(--fg); padding: 6px 0; }
+  .decision-audit-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+  .decision-audit-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+  .decision-audit-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 
   /* --- Strategy Explorer: interactive path tabs/steps (real vanilla-JS
      click contract, see generate_dashboard_html's own <script> block) --- */

@@ -3056,6 +3056,162 @@ def strategic_plan_cmd(
             click.echo(f"    GW{st.event}: {action}")
 
 
+@cli.command("decision-audit")
+@click.option("--horizons", default="3,5,8", help="comma-separated horizons (GWs) to compare every starting action at (default 3,5,8)")
+@click.option("--continuation-beam-width", default=3, type=int, help="beam width for each starting-action's continuation search (default 3 - matches `fpl strategic-plan`'s own default; a narrower value can disagree with that cached result because a chip's per-step value comes from a full ILP rebuild while ROLL/TRANSFER's is beam-bounded - see the real, disclosed methodology cross-check this command runs against the cached strategic_plan decision)")
+@click.option("--players", default=None, help="comma-separated player ids to force into the per-player adversarial trace, in addition to the ones the audit already picks (squad + top transfer candidates)")
+def decision_audit_cmd(horizons: str, continuation_beam_width: int, players: str | None):
+    """Adversarial Decision Audit (2026-08-27) - tries to DISPROVE the
+    current winning recommendation rather than restate it: the real causal
+    chain behind it, a named-player MODEL-vs-FOOTBALL trace, counterfactual
+    stress tests with analytic falsifiers, every legal starting action's own
+    real 3/5/8-GW future, a league-wide breakout/differential/trap check,
+    cold-start coverage, the qualitative evidence chain, and a final
+    scorecard - never a second, independently-reasoned recommendation (see
+    `optimization/adversarial_audit.py`'s own module docstring for what's
+    genuinely new here vs what's reused).
+
+    EXPENSIVE - one real `compare_starting_actions` continuation search per
+    horizon (same cost class as `fpl strategic-plan --current-action`,
+    roughly 2-10+ minutes PER horizon depending on squad size/beam width).
+    Never run automatically - this is a manual command, cached in the real
+    decisions journal (`decision_type="decision_audit"`) so the dashboard's
+    "View decision audit" link never re-runs it live."""
+    from fpl_agent.optimization.adversarial_audit import run_adversarial_audit
+    from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    conn = get_connection()
+    try:
+        locked = get_locked_squad(conn)
+        if locked is None:
+            click.echo("no real locked squad found - lock a squad first (`fpl my-team`)", err=True)
+            raise SystemExit(1)
+
+        horizon_tuple = tuple(sorted({int(h.strip()) for h in horizons.split(",") if h.strip()}))
+        extra_ids = tuple(_parse_squad_option(players)) if players else ()
+
+        click.echo(f"real causal-chain + per-player + stress-test analysis, then {len(horizon_tuple)} real alternative-action searches (beam width {continuation_beam_width}) - this can take several minutes per horizon...")
+        ta = analyze_transfer_decision(conn, locked)
+        ca = analyze_captain_decision(conn, locked)
+        audit = run_adversarial_audit(
+            conn, locked, ta, ca, extra_player_ids=extra_ids,
+            horizons=horizon_tuple, continuation_beam_width=continuation_beam_width,
+        )
+
+        winner = audit.action_audit[0] if audit.action_audit else None
+        summary = f"{winner.label if winner else 'REVIEW'}  [{audit.scorecard.final_decision}/{audit.scorecard.confidence}]  robustness={audit.scorecard.decision_robustness}"
+        log_decision(
+            conn, "decision_audit", summary=summary,
+            detail={
+                "event": audit.event,
+                "causal_chain": [{"label": s.label, "detail": s.detail} for s in audit.causal_chain],
+                "cross_check_note": audit.cross_check_note,
+                "player_audits": [
+                    {
+                        "player_id": p.player_id, "web_name": p.web_name, "expected_minutes": p.expected_minutes,
+                        "p_zero": p.p_zero, "p_partial": p.p_partial, "p_full": p.p_full,
+                        "total_xp_1gw": p.total_xp_1gw, "components": p.components,
+                        "data_confidence": p.data_confidence, "minutes_confidence": p.minutes_confidence,
+                        "overall_confidence": p.overall_confidence, "understat_matches_played": p.understat_matches_played,
+                        "minutes_basis": p.minutes_basis, "rotation_risk": p.rotation_risk,
+                        "cross_league_prior_used": p.cross_league_prior_used, "evidence_reasons": list(p.evidence_reasons),
+                        "current_role": p.current_role, "current_tactical_signal": p.current_tactical_signal,
+                        "current_fpl_outlook": p.current_fpl_outlook, "persistent_trends": p.persistent_trends,
+                        "ownership_percent": p.ownership_percent, "ownership_source": p.ownership_source,
+                        "price_direction": p.price_direction, "decision_contribution": p.decision_contribution,
+                    }
+                    for p in audit.player_audits
+                ],
+                "model_football": [
+                    {"player_id": m.player_id, "web_name": m.web_name, "model_view": m.model_view,
+                     "football_view": m.football_view, "agreement": m.agreement, "decision_impact": m.decision_impact}
+                    for m in audit.model_football
+                ],
+                "stress_tests": [
+                    {"dimension": s.dimension, "magnitude": s.magnitude, "baseline_delta": s.baseline_delta,
+                     "stressed_delta": s.stressed_delta, "decision_flips": s.decision_flips, "note": s.note}
+                    for s in audit.stress_tests
+                ],
+                "falsifiers": [{"description": f.description, "threshold_note": f.threshold_note} for f in audit.falsifiers],
+                "action_audit": [
+                    {"label": a.label, "kind": a.kind, "horizon_results": a.horizon_results,
+                     "opportunity_cost": a.opportunity_cost, "confidence": a.confidence, "robustness": a.robustness,
+                     "main_reason_rejected": a.main_reason_rejected}
+                    for a in audit.action_audit
+                ],
+                "league_wide": {
+                    "candidate_pool_scope": audit.league_wide.candidate_pool_scope,
+                    "breakout_count": audit.league_wide.breakout_count, "differential_count": audit.league_wide.differential_count,
+                    "trap_count": audit.league_wide.trap_count, "chosen_in_is_trap": audit.league_wide.chosen_in_is_trap,
+                    "top_breakouts": audit.league_wide.top_breakouts, "top_differentials": audit.league_wide.top_differentials,
+                },
+                "cold_start": [
+                    {"player_id": c.player_id, "web_name": c.web_name, "understat_matches_played": c.understat_matches_played,
+                     "data_confidence": c.data_confidence, "minutes_basis": c.minutes_basis,
+                     "cross_league_prior_used": c.cross_league_prior_used, "prior_is_stale": c.prior_is_stale, "note": c.note}
+                    for c in audit.cold_start
+                ],
+                "qualitative_chain": [
+                    {"player_id": q.player_id, "web_name": q.web_name, "observed": q.observed, "inferred": q.inferred,
+                     "fpl_implication": q.fpl_implication, "projection_component_affected": q.projection_component_affected,
+                     "decision_impact": q.decision_impact}
+                    for q in audit.qualitative_chain
+                ],
+                "external_context_notes": audit.external_context_notes,
+                "scorecard": {
+                    "data_quality": audit.scorecard.data_quality, "model_quality": audit.scorecard.model_quality,
+                    "football_evidence": audit.scorecard.football_evidence, "market_evidence": audit.scorecard.market_evidence,
+                    "decision_robustness": audit.scorecard.decision_robustness,
+                    "counterfactual_stability": audit.scorecard.counterfactual_stability,
+                    "information_sufficiency": audit.scorecard.information_sufficiency,
+                    "final_decision": audit.scorecard.final_decision, "confidence": audit.scorecard.confidence,
+                    "why_trust": audit.scorecard.why_trust, "why_might_not_trust": audit.scorecard.why_might_not_trust,
+                    "what_would_change_my_mind": audit.scorecard.what_would_change_my_mind,
+                },
+            },
+            confidence=audit.scorecard.confidence.lower(),
+        )
+    finally:
+        conn.close()
+
+    click.echo()
+    click.echo("CAUSAL CHAIN:")
+    for s in audit.causal_chain:
+        click.echo(f"  {s.label}: {s.detail}")
+    if audit.cross_check_note is not None:
+        click.echo()
+        click.echo("*** METHODOLOGY CROSS-CHECK WARNING ***")
+        click.echo(f"  {audit.cross_check_note}")
+
+    click.echo()
+    click.echo("ALTERNATIVE ACTION AUDIT (ranked by full-horizon path_total):")
+    for a in audit.action_audit[:8]:
+        click.echo(f"  {a.label}  {a.horizon_results}  {a.opportunity_cost}")
+    click.echo()
+    click.echo("STRESS TESTS:")
+    for s in audit.stress_tests:
+        flip = " *** FLIPS ***" if s.decision_flips else ""
+        click.echo(f"  {s.note}{flip}")
+    click.echo()
+    click.echo("FALSIFIERS (what would make me wrong):")
+    for f in audit.falsifiers:
+        click.echo(f"  {f.description}")
+        click.echo(f"    ({f.threshold_note})")
+    click.echo()
+    sc = audit.scorecard
+    click.echo(f"FINAL DECISION: {sc.final_decision}  CONFIDENCE: {sc.confidence}")
+    click.echo("WHY I TRUST THIS:")
+    for w in sc.why_trust:
+        click.echo(f"  - {w}")
+    click.echo("WHY I MIGHT NOT TRUST THIS:")
+    for w in sc.why_might_not_trust:
+        click.echo(f"  - {w}")
+    click.echo("WHAT WOULD CHANGE MY MIND:")
+    for w in sc.what_would_change_my_mind:
+        click.echo(f"  - {w}")
+
+
 @cli.command("season-sim")
 @click.option("--squad", required=True, help="comma-separated player ids")
 @click.option("--trials", default=1000, type=int, help="number of Monte Carlo scenario trials")
