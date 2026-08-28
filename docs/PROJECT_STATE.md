@@ -1,10 +1,24 @@
 # Project State
 
-Last updated: 2026-08-29 (continuation: perf fix + more fpl.page parity). Read this before
+Last updated: 2026-08-29 (continuation: remaining limitations closed). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, continuation: remaining limitations closed)
+
+Real captain-contribution + starting-XI actual-vs-expected charts (per-finished-GW grain, real
+`prediction_outcomes`/`my_team_picks` joins - no new storage). Player Inspector drawer gained a
+real MARKET row (`external_benchmark.compare_player`) and a real REVIEW state (reuses `ta.
+evidence_confidence`) - BUY deliberately not added anywhere (would violate the "no second
+competing recommendation" rule elsewhere in this codebase). News panel now shows the real STATE
+CHANGE + MODEL IMPACT a matched news item correlates with (`change_events` within 48h, reuses
+the row's own real `fpl_impact` text). Price History's forecast table is now a real `<table>`
+(was a flex-row list), matching a genuine structural gap found via direct fpl.page screenshot
+comparison - found + fixed a real CSS bug in the process (`.price-progress-track`'s `flex-basis`
+was inert outside a flex container). See
+`docs/history/25-session-2026-08-29-remaining-limitations-closed.md`.
 
 ## Where things stand (updated 2026-08-29, continuation: perf fix + more fpl.page parity)
 

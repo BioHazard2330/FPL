@@ -1333,6 +1333,38 @@ def test_news_panel_tags_a_real_recommended_transfer_out_target(db_conn):
     assert "recommended transfer OUT" in result
 
 
+def test_news_panel_shows_a_real_correlated_state_change(db_conn):
+    """News -> Decision pipeline (fpl.page-parity continuation): a real
+    `change_events` row detected within 48h of a matched news item's own
+    publish time is shown as a real STATE CHANGE + MODEL IMPACT line -
+    reuses `change_detection.py`'s already-real `fpl_impact` text, never a
+    second invented linkage. published_at fixed at 2026-08-22T06:00:00Z by
+    `_seed_news_for_player`."""
+    _seed_news_for_player(db_conn, 3, "NewsPlayer3 ruled out for the weekend")
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) "
+        "VALUES ('status_change', 'player', 3, 'a', 'i', '2026-08-22T08:00:00Z', '[\"bbc_pl\"]', "
+        "'high', 'HIGH', 'ruled out - remove from your starting XI', 1)"
+    )
+    db_conn.commit()
+
+    result = _news_html(db_conn, {3}, captain_id=None, ta=None)
+
+    assert "news-state-change" in result
+    assert "a → i" in result
+    assert "ruled out - remove from your starting XI" in result
+
+
+def test_news_panel_no_state_change_line_without_a_real_correlated_event(db_conn):
+    _seed_news_for_player(db_conn, 4, "NewsPlayer4 in the headlines")
+    db_conn.commit()
+
+    result = _news_html(db_conn, {4}, captain_id=None, ta=None)
+
+    assert "news-state-change" not in result
+
+
 def test_match_intelligence_panel_never_shows_a_raw_debug_string(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1430,6 +1462,64 @@ def test_pitch_shows_a_real_per_player_football_signal_when_one_exists(db_conn):
     assert "player-inspector-football" in result
     assert "genuinely undervalued right now" in result
     assert "HIGH" in result
+
+
+def test_pitch_shows_a_real_per_player_market_signal_when_a_solio_snapshot_exists(db_conn, monkeypatch):
+    """fpl.page-parity pass: the Player Inspector drawer gains a real
+    MARKET section, reusing `external_benchmark.compare_player`'s already-
+    built real Solio comparison - fetched once per player, absent (not
+    fabricated) when no real Solio snapshot has ever synced."""
+    import fpl_agent.models.external_benchmark as bench_mod
+    from fpl_agent.models.expected_points import ExpectedPoints
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "2026-08-29T10:00:00Z"
+    db_conn.execute(
+        "INSERT INTO solio_snapshot (gameweek, generated_at, deadline_iso, source_url, retrieved_at) "
+        "VALUES (2, ?, NULL, 'https://fpl.solioanalytics.com', ?)", (now, now),
+    )
+    snapshot_id = db_conn.execute("SELECT id FROM solio_snapshot ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    db_conn.execute(
+        "INSERT INTO solio_player_projection (snapshot_id, player_id, source_name, pr_points, categories) "
+        "VALUES (?, 1, 'P1', 7.5, 'topProjected')", (snapshot_id,),
+    )
+    db_conn.commit()
+    monkeypatch.setattr(
+        bench_mod, "expected_points",
+        lambda conn, pid, n_gw=1: ExpectedPoints(
+            player_id=pid, position="GKP", floor=1.0, median=3.0, ceiling=5.0,
+            confidence="MEDIUM", expected_minutes=90.0, model_version="test", components=None,
+        ),
+    )
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, None, None)
+
+    assert "player-inspector-market" in result
+    assert "us 3.0 vs Solio 7.5" in result
+    assert "Major Outlier" in result
+
+
+def test_pitch_shows_review_instead_of_consider_selling_on_low_evidence_confidence(db_conn):
+    """fpl.page-parity pass: FPL VERDICT gains a real REVIEW state - the
+    recommended-out player shows REVIEW (not CONSIDER SELLING) when the
+    SAME real `ta.evidence_confidence` the Primary Decision panel's own
+    REVIEW gate already uses is LOW/VERY_LOW, never a second invented
+    confidence read."""
+    from types import SimpleNamespace
+
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    candidate = SimpleNamespace(player_out_id=1, player_in_id=99, player_in_name="Target")
+    chosen = SimpleNamespace(candidate=candidate)
+    ta = SimpleNamespace(decision_kind="transfer", chosen=chosen, evidence_confidence="LOW")
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, None, None, ta=ta)
+
+    assert "REVIEW" in result
+    assert "CONSIDER SELLING" not in result
+    assert "Evidence confidence is low" in result
 
 
 def test_pitch_shows_actual_points_for_a_finished_fixture_not_projected_xp(db_conn):

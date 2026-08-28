@@ -1021,7 +1021,7 @@ def generate_dashboard_html(
   var posFilter = document.getElementById('price-position-filter');
   var dirFilter = document.getElementById('price-direction-filter');
   if (!wrap || !search || !posFilter || !dirFilter) return;
-  var rows = Array.prototype.slice.call(wrap.querySelectorAll('.price-predict-row'));
+  var rows = Array.prototype.slice.call(wrap.querySelectorAll('.price-table-row'));
 
   function apply() {{
     var q = search.value.trim().toLowerCase();

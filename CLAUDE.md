@@ -62,6 +62,7 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | Team/player/manager intelligence rollups | `models/team_outlook.py`, `models/team_intelligence.py`, `models/player_intelligence.py`, `models/manager_intelligence.py` |
 | GW lifecycle + autonomous post-GW pipeline | `models/gw_lifecycle.py`, `optimization/post_gw_pipeline.py` |
 | Live rank (honest, degenerate-sample-aware) | `models/live_rank.py` |
+| Live/per-GW charts (rank trajectory, cumulative points, intragame rank, captain contribution, starting-XI actual-vs-expected) | `monitoring/dashboard/live_charts.py` |
 | Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point, `home.py`/`plan.py`/`squad.py`/`intelligence.py`/`market.py`/`opportunity.py`/`fixtures.py`/`points_changes.py`/`price_history.py`/`template_team.py` workspaces, `data_payload.py` embedded-JSON snapshot, `legacy.py` not-yet-migrated Advanced/Live/Team-Outlook/Match-Intelligence panels) |
 | Post-match Bonus/DefCon revision detection (real snapshot diff, never in-play bonus churn) + real GW-lock status (fpl.page's own published "locked 1h after full time" rule) | `models/points_changes.py` (`detect_points_revisions`, `is_gw_locked`), `fpl points-changes` |
 | Lightweight live-state channel (rank/points/squad/bonus-defcon/points-changes/decision-freshness/source-freshness, browser-patched every ~20s, no full regen) | `monitoring/live_snapshot.py` (`build_live_snapshot`) |

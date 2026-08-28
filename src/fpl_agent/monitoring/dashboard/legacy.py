@@ -467,6 +467,8 @@ def _player_card(
     recent_actual_points: int | None = None, recent_actual_event: int | None = None,
     is_recommended_out: bool = False, out_why: str | None = None,
     football_signal: tuple[str, str] | None = None,
+    review_low_confidence: bool = False,
+    market_signal: tuple[str, float, float] | None = None,
 ) -> str:
     light, dark = _POSITION_ACCENT.get(c.position, _POSITION_ACCENT["MID"])
     armband = ""
@@ -592,7 +594,19 @@ def _player_card(
     # per-player instead of re-derived. Everything else is WATCH (the same
     # lineup-risk signal the card's own badge already carries, just spelled
     # out) or HOLD (the honest default - "nothing flagged", not "buy more").
-    if is_recommended_out:
+    # Real REVIEW state (fpl.page-parity pass, "FPL VERDICT: BUY/HOLD/SELL/
+    # WATCH/REVIEW") - only ever set when `review_low_confidence` is True,
+    # which the caller derives from the SAME real `ta.evidence_confidence`
+    # the Primary Decision panel's own REVIEW gate already uses (LOW/
+    # VERY_LOW on either side of the model's own chosen swap) - never a
+    # second, invented confidence read.
+    if is_recommended_out and review_low_confidence:
+        status_word, status_tone = "REVIEW", "watch"
+        status_why = (
+            (out_why or "The model's current recommended swap starts with this player.")
+            + " Evidence confidence is low on this swap - worth a manual look before acting."
+        )
+    elif is_recommended_out:
         status_word, status_tone = "CONSIDER SELLING", "sell"
         status_why = out_why or "The model's current recommended swap starts with this player - see Primary Decision above for the full case."
     elif lineup_state is not None and lineup_state.state in ("OUT_UNAVAILABLE", "CONFIRMED_BENCHED"):
@@ -615,10 +629,26 @@ def _player_card(
         outlook, confidence = football_signal
         football_html = f"<div class='player-inspector-football'><b>Football</b> {_esc(outlook)} <span class='player-inspector-football-conf'>({_esc(confidence)})</span></div>"
 
+    # Real, honest per-player MARKET signal (fpl.page-parity pass, "Player
+    # Inspector... Sections: ... MARKET") - `external_benchmark.
+    # compare_player`'s already-computed real classification against Solio,
+    # fetched once per player by the caller and passed in (a real Solio
+    # snapshot must exist; `None` when it doesn't or Solio never published
+    # this specific player this GW - never a fabricated "agreement").
+    market_html = ""
+    if market_signal is not None:
+        classification, our_median, solio_points = market_signal
+        market_label = classification.replace("_", " ").title()
+        market_html = (
+            f"<div class='player-inspector-market'><b>Market</b> {_esc(market_label)} "
+            f"<span class='player-inspector-market-detail'>(us {our_median:.1f} vs Solio {solio_points:.1f})</span></div>"
+        )
+
     inspector_html = f"""<div class="player-inspector-content" hidden>
     <div class="player-inspector-status player-inspector-status-{status_tone}">{_esc(status_word)}</div>
     <div class="player-inspector-why">{_esc(status_why)}</div>
     {football_html}
+    {market_html}
     <div class="player-tooltip-row"><span>Price</span><strong>£{c.price_tenths / 10:.1f}m</strong></div>
     <div class="player-tooltip-row"><span>Floor &ndash; Ceiling</span><strong>{c.floor:.1f} &ndash; {c.ceiling:.1f}</strong></div>
     <div class="player-tooltip-row"><span>Confidence</span><strong>{_esc(c.confidence)}</strong></div>
@@ -682,8 +712,10 @@ def _pitch_html_from_xi(
         return "<div class='empty-state'>No squad could be built from the current player pool.</div>"
     recommended_out_id = None
     out_why = None
+    review_low_confidence = False
     if ta is not None and getattr(ta, "decision_kind", None) == "transfer" and getattr(ta, "chosen", None) is not None:
         recommended_out_id = ta.chosen.candidate.player_out_id
+        review_low_confidence = getattr(ta, "evidence_confidence", None) in ("LOW", "VERY_LOW")
         # Raw (not pre-escaped) - `_player_card` escapes this once itself;
         # pre-escaping here would double-escape the player name (the exact
         # "&mdash;" double-escape class of bug this project has hit before).
@@ -730,6 +762,27 @@ def _pitch_html_from_xi(
             )
         return football_signal_cache[player_id]
 
+    # Real per-player MARKET signal (fpl.page-parity pass) - the Solio
+    # snapshot itself is fetched ONCE (not per player); `compare_player`
+    # still runs its own real `expected_points()` call per player (the same
+    # real EV `PlayerCandidate.median` already reflects, recomputed rather
+    # than plumbed through - a real, bounded, disclosed cost on the FULL
+    # dashboard regen path, not the cheap live-snapshot hot path a prior
+    # perf fix this session specifically guarded).
+    from fpl_agent.models.external_benchmark import compare_player, latest_solio_snapshot
+    solio_snapshot = latest_solio_snapshot(conn)
+    market_signal_cache: dict[int, tuple[str, float, float] | None] = {}
+
+    def _market_signal_for(player_id: int) -> tuple[str, float, float] | None:
+        if solio_snapshot is None:
+            return None
+        if player_id not in market_signal_cache:
+            cmp = compare_player(conn, player_id, solio_snapshot)
+            market_signal_cache[player_id] = (
+                (cmp.classification, cmp.our_median, cmp.solio_pr_points) if cmp is not None else None
+            )
+        return market_signal_cache[player_id]
+
     by_position: dict[str, list] = {p: [] for p in _POSITION_ORDER}
     for c in xi.starting:
         by_position.setdefault(c.position, []).append(c)
@@ -752,7 +805,9 @@ def _pitch_html_from_xi(
                          live_minutes=_actual_and_minutes(c.player_id)[1],
                          recent_actual_points=recent_points_by_id.get(c.player_id), recent_actual_event=recent_event,
                          is_recommended_out=c.player_id == recommended_out_id, out_why=out_why,
-                         football_signal=_football_signal_for(c.player_id))
+                         football_signal=_football_signal_for(c.player_id),
+                         review_low_confidence=review_low_confidence and c.player_id == recommended_out_id,
+                         market_signal=_market_signal_for(c.player_id))
             for c in players
         )
         rows.append(
@@ -772,7 +827,9 @@ def _pitch_html_from_xi(
                      live_minutes=_actual_and_minutes(c.player_id)[1],
                      recent_actual_points=recent_points_by_id.get(c.player_id), recent_actual_event=recent_event,
                      is_recommended_out=c.player_id == recommended_out_id, out_why=out_why,
-                     football_signal=_football_signal_for(c.player_id))
+                     football_signal=_football_signal_for(c.player_id),
+                     review_low_confidence=review_low_confidence and c.player_id == recommended_out_id,
+                     market_signal=_market_signal_for(c.player_id))
         for i, c in enumerate(xi.bench)
     )
 
@@ -1778,6 +1835,26 @@ def _news_html(
     out_id = ta.chosen.candidate.player_out_id if ta is not None and ta.chosen is not None else None
     in_id = ta.chosen.candidate.player_in_id if ta is not None and ta.chosen is not None else None
 
+    # Real STATE CHANGE / MODEL IMPACT line (fpl.page-parity pass, "News ->
+    # Decision pipeline": SOURCE -> CLAIM -> ENTITY -> STATE CHANGE -> MODEL
+    # IMPACT). Reuses `change_events` - already real, already computed by
+    # `ingestion/change_detection.py`, including its own real `fpl_impact`
+    # text where one was derived - never a second, invented linkage. A news
+    # item and a change_events row are correlated by real proximity in time
+    # (within 48h of the article's own published_at) - a genuine, disclosed
+    # heuristic (news and an official status change don't share a key to
+    # join on directly), not a claimed causal link.
+    def _state_change_for(player_id: int, published_at: str) -> tuple[str, str, str | None] | None:
+        row = conn.execute(
+            "SELECT event_type, old_value, new_value, fpl_impact, detected_at FROM change_events "
+            "WHERE entity='player' AND entity_id=? AND detected_at BETWEEN datetime(?, '-48 hours') AND datetime(?, '+48 hours') "
+            "ORDER BY ABS(julianday(detected_at) - julianday(?)) LIMIT 1",
+            (player_id, published_at, published_at, published_at),
+        ).fetchone()
+        if row is None or row["old_value"] is None or row["new_value"] is None:
+            return None
+        return row["event_type"], f"{row['old_value']} → {row['new_value']}", row["fpl_impact"]
+
     lines = []
     for n in items:
         tags = []
@@ -1799,6 +1876,19 @@ def _news_html(
         elif in_id is not None and in_id in matched_ids:
             impact_tag = "<span class='news-impact news-impact-in'>transfer target</span>"
 
+        state_change_html = ""
+        if matched_ids and n.get("published_at"):
+            for pid in matched_ids:
+                sc = _state_change_for(pid, n["published_at"])
+                if sc is not None:
+                    event_type, change_text, fpl_impact = sc
+                    impact_bit = f" &middot; {_esc(fpl_impact)}" if fpl_impact else ""
+                    state_change_html = (
+                        f"<div class='news-state-change'><b>{_esc(event_type.replace('_', ' ').title())}</b> "
+                        f"{_esc(change_text)}{impact_bit}</div>"
+                    )
+                    break
+
         item_cls = "news-item news-item-relevant" if is_relevant else "news-item"
         relevance_tag = "<span class='news-relevance'>your squad</span>" if is_relevant else ""
         lines.append(
@@ -1806,6 +1896,7 @@ def _news_html(
             f"<div class='news-title'><a href='{_esc(n['link'])}' target='_blank' rel='noopener'>{_esc(n['title'])}</a></div>"
             f"<div class='news-meta'><span class='source-tag'>{_esc(n['source_tier'] or 'news')}</span>"
             f"<span class='news-time'>{_esc(_relative_time(n['published_at']))}</span>{relevance_tag}{impact_tag}{''.join(tags)}</div>"
+            f"{state_change_html}"
             f"</div>"
         )
     filtered_note = (
@@ -3513,6 +3604,11 @@ _CSS = """
   .player-inspector-football b { color: var(--faint); text-transform: uppercase; font-size: 0.7rem;
     letter-spacing: 0.03em; margin-right: 5px; }
   .player-inspector-football-conf { color: var(--faint); font-size: 0.75rem; }
+  .player-inspector-market { font-size: 0.8rem; color: var(--muted); margin-bottom: 10px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--gridline); }
+  .player-inspector-market b { color: var(--faint); text-transform: uppercase; font-size: 0.7rem;
+    letter-spacing: 0.03em; margin-right: 5px; }
+  .player-inspector-market-detail { color: var(--faint); font-size: 0.75rem; }
   .player-drawer-backdrop { position: fixed; inset: 0; background: rgba(4,0,8,0.55); backdrop-filter: blur(2px);
     z-index: 90; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
   .player-drawer-backdrop.is-open { opacity: 1; pointer-events: auto; }
@@ -4122,12 +4218,14 @@ _CSS = """
      rules below (search/filter controls, progress bar, squad highlight,
      news decision-impact tags). --- */
   .price-row-squad { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .xdata-table-wrap { overflow-x: auto; }
+  .price-table-row td { vertical-align: middle; }
   .price-predict-net { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 44px; text-align: right; }
   .price-history-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
   .price-search-input, .price-filter-select { background: var(--surface-2); border: 1px solid var(--gridline);
     border-radius: 6px; color: var(--text); font-size: 0.82rem; padding: 6px 10px; }
   .price-search-input { flex: 1 1 180px; }
-  .price-progress-track { flex-basis: 90px; height: 6px; border-radius: 3px; background: var(--surface-3, var(--surface-2));
+  .price-progress-track { display: block; width: 90px; height: 6px; border-radius: 3px; background: var(--surface-3, var(--surface-2));
     overflow: hidden; }
   .price-progress-fill { display: block; height: 100%; border-radius: 3px; }
   .price-progress-ok { background: var(--ok); }
@@ -4138,6 +4236,10 @@ _CSS = """
   .news-impact-captain { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
   .news-impact-out { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
   .news-impact-in { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok-text); }
+  .news-state-change { font-size: 0.76rem; color: var(--muted); margin-top: 4px; padding-top: 4px;
+    border-top: 1px dashed var(--gridline); }
+  .news-state-change b { color: var(--faint); text-transform: uppercase; font-size: 0.66rem;
+    letter-spacing: 0.03em; margin-right: 4px; }
 
   /* --- Fixture Projections (2026-08-22, replaces bookmaker-odds "Team
      Odds" panel per direct user request - real projected goals + clean
@@ -4283,6 +4385,9 @@ _CSS = """
   .chart-axis-label { font-size: 9px; fill: var(--faint); }
   .chart-last-label { font-size: 11px; font-weight: 600; fill: var(--fg); }
   .chart-empty { color: var(--faint); font-size: 0.85rem; padding: 8px 0; }
+  .live-chart-legend { display: flex; gap: 14px; margin-top: 4px; }
+  .live-chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.74rem; color: var(--muted); }
+  .live-chart-legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   /* Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"
      P0 ask) - built client-side entirely from real snapshot fields, see
      assemble.py's own poll script. Starts hidden - a real dashboard load

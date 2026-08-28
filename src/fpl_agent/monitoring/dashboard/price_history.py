@@ -42,7 +42,7 @@ def _forecast_table_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     entries = [(r, classify_price_change(conn, r["id"])) for r in rows]
     entries.sort(key=lambda e: (e[1].direction == "STABLE", -abs(e[1].momentum_ratio)))
 
-    lines = []
+    rows_html = []
     for r, forecast in entries:
         label, cls, arrow = _DIR_LABEL.get(forecast.direction, ("Unknown", "warn", "&#8226;"))
         price = f"£{r['value_tenths']/10:.1f}m" if r["value_tenths"] is not None else "£?m"
@@ -50,13 +50,13 @@ def _forecast_table_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
         progress_pct = min(100.0, abs(forecast.momentum_ratio) / RISE_THRESHOLD * 100.0) if RISE_THRESHOLD else 0.0
         squad_cls = " price-row-squad" if r["id"] in squad_ids else ""
         badge = f"<img class='injury-badge' src='{_esc(_official_badge_url(r['team_code']))}' loading='lazy' alt=''>"
-        lines.append(f"""<div class="price-predict-row{squad_cls}" data-position="{_esc(r['position'])}" data-team="{_esc(r['team'])}" data-name="{_esc(r['web_name'].lower())}" data-direction="{_esc(forecast.direction)}">
-  <span class="price-predict-name">{badge}<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])} &bull; {_esc(r['position'])}</span></span>
-  <span class="price-predict-price">{price}</span>
-  <span class="price-predict-net">{net:+,}</span>
-  <span class="price-predict-{cls}">{arrow} {_esc(label)}</span>
-  <span class="price-progress-track" title="{progress_pct:.0f}% of our own directional threshold - not FPL's real internal formula"><span class="price-progress-fill price-progress-{cls}" style="width:{progress_pct:.0f}%"></span></span>
-</div>""")
+        rows_html.append(f"""<tr class="price-table-row{squad_cls}" data-position="{_esc(r['position'])}" data-team="{_esc(r['team'])}" data-name="{_esc(r['web_name'].lower())}" data-direction="{_esc(forecast.direction)}">
+  <td><span class="xdata-player">{badge}<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])} &bull; {_esc(r['position'])}</span></span></td>
+  <td>{price}</td>
+  <td class="price-predict-net">{net:+,}</td>
+  <td class="price-predict-{cls}">{arrow} {_esc(label)}</td>
+  <td><span class="price-progress-track" title="{progress_pct:.0f}% of our own directional threshold - not FPL's real internal formula"><span class="price-progress-fill price-progress-{cls}" style="width:{progress_pct:.0f}%"></span></span></td>
+</tr>""")
 
     controls = """<div class="price-history-controls">
   <input type="search" id="price-search" class="price-search-input" placeholder="Search player...">
@@ -74,10 +74,14 @@ def _forecast_table_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     <option value="STABLE">Stable</option>
   </select>
 </div>"""
+    table = f"""<div class="xdata-table-wrap"><table class="xdata-table">
+  <thead><tr><th>Player</th><th>Price</th><th>Net transfers</th><th>Status</th><th>Progress</th></tr></thead>
+  <tbody id="price-history-rows">{''.join(rows_html)}</tbody>
+</table></div>"""
     return (
         controls
         + "<div class='panel-subtitle' style='margin:8px 0'>Uncalibrated heuristic (real transfer momentum, not a confirmed FPL trigger) - directional only. PROGRESS is our own momentum-vs-threshold ratio, not FPL's real unpublished formula.</div>"
-        + f"<div id='price-history-rows'>{''.join(lines)}</div>"
+        + table
     )
 
 
