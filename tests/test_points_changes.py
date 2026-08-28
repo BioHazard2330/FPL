@@ -1,4 +1,6 @@
-from fpl_agent.models.points_changes import detect_points_revisions
+from datetime import datetime, timedelta, timezone
+
+from fpl_agent.models.points_changes import detect_points_revisions, is_gw_locked
 
 
 def _seed_base(conn):
@@ -107,3 +109,30 @@ def test_returns_empty_when_no_finished_event(db_conn):
     result = detect_points_revisions(db_conn)
 
     assert result == []
+
+
+def test_is_gw_locked_true_well_past_full_time_plus_buffer(db_conn):
+    _seed_base(db_conn)  # fixture kickoff 2026-08-21T19:00:00Z, finished=1
+
+    assert is_gw_locked(db_conn, 1) is True
+
+
+def test_is_gw_locked_false_when_fixture_not_finished(db_conn):
+    _seed_base(db_conn)
+    db_conn.execute("UPDATE fixtures SET finished=0 WHERE id=1")
+    db_conn.commit()
+
+    assert is_gw_locked(db_conn, 1) is False
+
+
+def test_is_gw_locked_false_within_the_real_1h_lock_buffer(db_conn):
+    _seed_base(db_conn)
+    recent_kickoff = (datetime.now(timezone.utc) - timedelta(minutes=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db_conn.execute("UPDATE fixtures SET kickoff_time=? WHERE id=1", (recent_kickoff,))
+    db_conn.commit()
+
+    assert is_gw_locked(db_conn, 1) is False
+
+
+def test_is_gw_locked_none_when_event_has_no_fixtures(db_conn):
+    assert is_gw_locked(db_conn, 999) is None

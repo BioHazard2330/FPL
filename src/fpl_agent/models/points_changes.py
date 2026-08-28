@@ -25,7 +25,7 @@ finding, not a designed-to-show-something heuristic.
 """
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fpl_agent.models.defensive_contribution import DEFCON_THRESHOLDS
 
@@ -57,6 +57,34 @@ def _defcon_points(raw: int | None, threshold: int | None) -> int:
     if raw is None or threshold is None:
         return 0
     return 2 if raw >= threshold else 0
+
+
+_LOCK_BUFFER_MIN = 60  # fpl.page's own real, published rule: "locked 1 hour after full time of the final match"
+
+
+def is_gw_locked(conn: sqlite3.Connection, event: int) -> bool | None:
+    """Real GW-lock status (fpl.page-parity pass - their own real published
+    rule, verified live via their "How to use the Points Changes widget"
+    article: "Points are locked in 1 hour after full time of the final
+    match of the gameweek"). Deliberately does NOT trust the bootstrap
+    `events.finished` flag alone - `models/gw_lifecycle.py` already
+    established (and this reuses its own reasoning, not a second
+    heuristic) that flag can lag or be wrong on its own; this instead
+    checks every real fixture in the event directly, same as that module.
+    Returns `None` (never guessed) when the event has no fixtures synced,
+    or any fixture is missing a real `finished`/`kickoff_time` value."""
+    fixtures = conn.execute(
+        "SELECT finished, kickoff_time FROM fixtures WHERE event=?", (event,)
+    ).fetchall()
+    if not fixtures:
+        return None
+    if any(f["finished"] is None or not f["kickoff_time"] for f in fixtures):
+        return None
+    if not all(f["finished"] for f in fixtures):
+        return False
+    last_kickoff = max(_parse(f["kickoff_time"]) for f in fixtures)
+    lock_at = last_kickoff + timedelta(minutes=_PRESUMED_MATCH_LENGTH_MIN + _LOCK_BUFFER_MIN)
+    return datetime.now(timezone.utc) >= lock_at
 
 
 def detect_points_revisions(conn: sqlite3.Connection, event: int | None = None) -> list[PointsRevision]:

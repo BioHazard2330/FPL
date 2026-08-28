@@ -1,10 +1,25 @@
 # Project State
 
-Last updated: 2026-08-29 (fpl.page-parity P1 features pass). Read this before resuming
-work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add session narrative
-here** — a new capability/architecture change gets one short factual entry; the story of how it was
-built, bugs found, and live-verification detail goes in `docs/history/` (one new dated file per
-session, indexed in `docs/history/README.md`).
+Last updated: 2026-08-29 (final product + decision system completion pass). Read this before
+resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
+session narrative here** — a new capability/architecture change gets one short factual entry;
+the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
+(one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, final product + decision system completion pass)
+
+Real MODEL vs FOOTBALL/MARKET(Solio)/TEMPLATE cross-check (`decision_fusion.captain_cross_check`,
+never averaged, one row of AGREE/CONFLICT/DIVERGENCE + WHY) now on the Home hero, right under the
+captain verdict. Points Changes carries a real LIVE/EXPIRED status (fpl.page's own published 1h-
+lock rule; their real "Pending" state is explicitly NOT built - needs Opta's raw feed, no access)
+and is wired into `live_snapshot.json` + the live-changes feed. Chip Strategy now surfaces the
+real "why now / best alternative / opportunity cost" explanation `chips.py::schedule_chips`
+already computed but no panel read before this. SYSTEM LIVE strip gained real News/Projections
+freshness fields. Template Team shows real overlap/differential against the locked squad.
+Gameweek Projections got a real 3/5/8GW range toggle. Audited several other spec asks (fake
+countdowns, live-change feed, strategy-family clustering, burst-coalescing) and found them
+already solved by prior sessions - verified, not rebuilt. Full account:
+`docs/history/23-session-2026-08-29-final-decision-system-completion-pass.md`. 1211 tests green.
 
 ## Where things stand (updated 2026-08-29, fpl.page-parity P1 features pass)
 
@@ -309,6 +324,7 @@ Summarized: Dixon-Coles team-strength ridge (`_RIDGE_LAMBDA=2.5`, fixes a real s
 9. **Dashboard visual/typography QA at all target breakpoints, done 2026-08-29** (1440/1024/768/360px verified this pass on top of the existing 1280/375 coverage - see `docs/history/22-...md`): zero real page-level horizontal overflow at any width; the two elements a naive scan flagged (`.site-nav`, `.fdr-grid`) are intentional `overflow-x: auto` scroll containers, not bugs.
 12. **Opportunity Board "considered by optimizer" flag + Value squad-member exclusion - done 2026-08-29** (see `docs/history/19-session-2026-08-29-path-diversity-and-p1-audit.md`): every card now shows a real yes/no against the diverse-paths candidate pool (never rendered when no strategic plan has run); Value no longer shows an already-owned player as a buy opportunity (real live-screenshot QA finding, matches Breakout's existing exclusion).
 13. **P1 product-gap audit, done 2026-08-29; 6 of the "genuinely still unbuilt" items closed 2026-08-29** (see `docs/history/22-session-2026-08-29-fpl-page-parity-p1-features.md`): Points Changes (new - real post-match Bonus/DefCon revision ledger, `models/points_changes.py`, `fpl points-changes`), Template Team + elite-manager context (`template_team.py`, real sampled-EO margin of error surfaced, honest raw-ownership fallback), Price History (`price_history.py`, league-wide search/filter/progress-bar forecast + real confirmed-change ledger, replaces the old squad-only panel), news decision-impact tags (captain/transfer-out/transfer-in, `_news_html`), Fixture Tool Goals/CS% view toggle, dead-CSS/dead-function cleanup (26 CSS rules + 2 functions, scripted audit). **Genuinely still unbuilt**: Top 10K context beyond template/EO, an article feed, a full unified single-view Market redesign beyond the current section-grouped layout, Fixture Tool's "Sort by Rotation" (fpl.page's own metric - no real rotation-risk data source exists per-team to back one honestly; Easiest/Hardest/Squad-first/A-Z sort already exist), Player Inspector click-through redesign (WHY BUY/HOLD/SELL), and decision-outcome calibration (blocked on a season with completed GWs).
+14. **Final decision-system completion pass, done 2026-08-29** (see `docs/history/23-session-2026-08-29-final-decision-system-completion-pass.md`): real MODEL vs FOOTBALL/MARKET(Solio)/TEMPLATE cross-check on the Home hero, Points Changes real LIVE/EXPIRED status wired into `live_snapshot.json`, chip strategy why-now/best-alternative explainability, SYSTEM LIVE News/Projections fields, Template Team overlap/differential, Gameweek Projections 3/5/8GW range toggle. **Genuinely still unbuilt, disclosed**: Player Inspector's full BUY/HOLD/SELL/WATCH/REVIEW vocabulary (current per-player inspector is squad-scoped, narrower); intragame live-chart time-series storage (rank/GW-points/squad-contribution/captain-contribution/actual-vs-expected - real, larger infra work, own future session); Fixture Ticker rotation analysis (no real rotation-risk model exists - checked, not faked); full Intelligence-panel editorial restructuring and a structured News→Decision pipeline beyond this pass's own captain/transfer news tags; a dedicated visual-redesign audit against fresh fpl.page screenshots.
 
 ## Verification procedure (run before trusting any change to the decision layer)
 

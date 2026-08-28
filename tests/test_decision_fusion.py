@@ -1,5 +1,7 @@
+from types import SimpleNamespace
+
 import fpl_agent.models.decision_fusion as decision_fusion_mod
-from fpl_agent.models.decision_fusion import compare_captain_views, compare_transfer_views
+from fpl_agent.models.decision_fusion import captain_cross_check, compare_captain_views, compare_transfer_views
 from fpl_agent.optimization import captaincy as captaincy_mod
 from fpl_agent.optimization.transfers import TransferCandidate
 
@@ -182,3 +184,61 @@ def test_transfer_insufficient_evidence_when_no_real_candidate_exists(db_conn, m
 
     assert result.model_candidate is None
     assert result.verdict == "INSUFFICIENT_EVIDENCE"
+
+
+# --- captain_cross_check (fpl.page-parity pass: MODEL vs FOOTBALL/MARKET/TEMPLATE) ---
+
+def _fake_ca(player_id=1, web_name="Best"):
+    option = SimpleNamespace(player_id=player_id, web_name=web_name, median=6.0)
+    return SimpleNamespace(suggested=option, current=None)
+
+
+def test_cross_check_all_agree(db_conn):
+    _seed(db_conn)
+    ca = _fake_ca()
+    solio_cmp = SimpleNamespace(verdict="AGREEMENT", why="both models pick Best")
+    template_players = [SimpleNamespace(player_id=1, position="MID")]
+
+    result = captain_cross_check(db_conn, [1, 2, 3], ca=ca, solio_comparison=solio_cmp, template_players=template_players)
+
+    assert result.captain_id == 1
+    assert result.all_agree is True
+    verdicts = {a.axis: a.verdict for a in result.axes}
+    assert verdicts == {"FOOTBALL": "AGREE", "MARKET": "AGREE", "TEMPLATE": "AGREE"}
+
+
+def test_cross_check_market_conflict(db_conn):
+    _seed(db_conn)
+    ca = _fake_ca()
+    solio_cmp = SimpleNamespace(verdict="DIVERGENCE", why="our model picks Best, Solio picks someone else")
+
+    result = captain_cross_check(db_conn, [1, 2, 3], ca=ca, solio_comparison=solio_cmp, template_players=None)
+
+    market_axis = next(a for a in result.axes if a.axis == "MARKET")
+    assert market_axis.verdict == "MARKET_CONFLICT"
+    assert result.all_agree is False
+
+
+def test_cross_check_template_divergence_when_captain_not_in_template_pool(db_conn):
+    _seed(db_conn)
+    ca = _fake_ca()
+    template_players = [SimpleNamespace(player_id=2, position="MID")]  # Best (id=1) not in the pool
+
+    result = captain_cross_check(db_conn, [1, 2, 3], ca=ca, solio_comparison=None, template_players=template_players)
+
+    template_axis = next(a for a in result.axes if a.axis == "TEMPLATE")
+    assert template_axis.verdict == "TEMPLATE_DIVERGENCE"
+    assert "Best" in template_axis.why
+
+
+def test_cross_check_insufficient_evidence_with_no_model_pick(db_conn):
+    _seed(db_conn)
+
+    result = captain_cross_check(db_conn, [1, 2, 3], ca=None, solio_comparison=None, template_players=None)
+
+    assert result.captain_id is None
+    verdicts = {a.axis: a.verdict for a in result.axes}
+    assert verdicts["FOOTBALL"] == "INSUFFICIENT_EVIDENCE"
+    assert verdicts["MARKET"] == "INSUFFICIENT_EVIDENCE"
+    assert verdicts["TEMPLATE"] == "INSUFFICIENT_EVIDENCE"
+    assert result.all_agree is True  # insufficient-evidence-only is not a real conflict

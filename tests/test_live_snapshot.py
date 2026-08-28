@@ -241,3 +241,49 @@ def test_decision_status_current_and_stale_without_any_lock(db_conn):
     assert _decision_status(db_conn, is_stale=False) == "CURRENT"
     assert _decision_status(db_conn, is_stale=True) == "STALE"
     assert _decision_status(db_conn, is_stale=None) == "UNKNOWN"
+
+
+def test_points_changes_block_none_when_no_gameweek_finished(db_conn):
+    _seed_event(db_conn, event_id=1, is_next=0)
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    assert snap["points_changes"] is None
+
+
+def test_points_changes_block_reports_real_revision_count(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _points_changes_block
+
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',1,1,0,0,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO teams (id,code,name,short_name,strength_overall_home,strength_overall_away,"
+        "strength_attack_home,strength_attack_away,strength_defence_home,strength_defence_away,pulse_id,updated_at) "
+        "VALUES (1,1,'T1','T1',3,3,0,0,0,0,1,'t0'), (2,2,'T2','T2',3,3,0,0,0,0,2,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO element_types (id,singular_name,singular_name_short,plural_name,squad_min_play,"
+        "squad_max_play,squad_select,updated_at) VALUES (2,'Defender','DEF','Defenders',3,5,5,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO players (id,code,web_name,team_id,element_type,status,removed,updated_at) "
+        "VALUES (1,1,'D1',1,2,'a',0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,team_h_score,team_a_score,"
+        "finished,started,updated_at) VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,1,0,1,1,'t0')"
+    )
+    for ts, bonus, dc in (("2026-08-21T21:45:00Z", 1, 0), ("2026-08-22T09:00:00Z", 3, 0)):
+        db_conn.execute(
+            "INSERT INTO player_stats_snapshot (player_id, retrieved_at, stats_hash, bonus, defensive_contribution) "
+            "VALUES (1, ?, ?, ?, ?)",
+            (ts, ts, bonus, dc),
+        )
+    db_conn.commit()
+
+    block = _points_changes_block(db_conn, frozenset({1}))
+
+    assert block["event"] == 1
+    assert block["total_revisions"] == 1
+    assert block["squad_revisions"] == 1
+    assert block["locked"] is True

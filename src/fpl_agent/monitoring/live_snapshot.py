@@ -168,6 +168,29 @@ def _source_freshness_block(conn: sqlite3.Connection) -> list[dict]:
 _RECOMPUTE_LOCK_STALE_MINUTES = 15  # same real bound cli/main.py::_STRATEGIC_PLAN_AUTO_STALE_MINUTES uses - a lock older than this is an abandoned/crashed run, never a permanent "RECOMPUTING"
 
 
+def _points_changes_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -> dict | None:
+    """Real, cheap - reuses `models.points_changes.detect_points_revisions`/
+    `is_gw_locked` directly (the SAME functions the full Points Changes
+    dashboard panel uses, real snapshot diff already computed there - no
+    second detection pass). `None` when no gameweek has finished by the
+    bootstrap `events.finished` flag yet (never a fabricated zero-revision
+    block for a GW that hasn't happened)."""
+    from fpl_agent.models.points_changes import detect_points_revisions, is_gw_locked
+
+    row = conn.execute("SELECT id FROM events WHERE finished = 1 ORDER BY id DESC LIMIT 1").fetchone()
+    if row is None:
+        return None
+    event = row["id"]
+    revisions = detect_points_revisions(conn, event=event)
+    squad_revision_count = sum(1 for r in revisions if r.player_id in squad_ids)
+    return {
+        "event": event,
+        "locked": is_gw_locked(conn, event),
+        "total_revisions": len(revisions),
+        "squad_revisions": squad_revision_count,
+    }
+
+
 def _decision_status(conn: sqlite3.Connection, is_stale: bool | None) -> str:
     """Real CURRENT/STALE/RECOMPUTING status (2026-08-29, "final runtime
     reliability pass" P0 ask). RECOMPUTING reads the SAME real
@@ -315,6 +338,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),
         "match_events": _match_events_block(live_bonus_rows),
         "recent_changes": _recent_changes_block(conn, squad_ids),
+        "points_changes": _points_changes_block(conn, squad_ids),
         "recommendation": _recommendation_block(conn, squad_ids),
         "source_freshness": _source_freshness_block(conn),
         "cadence": _cadence_block(conn, rank_block["retrieved_at"] if rank_block else None),

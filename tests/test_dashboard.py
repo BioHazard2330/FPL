@@ -387,6 +387,44 @@ def test_chip_strategy_panel_falls_back_when_nothing_ever_logged(db_conn, monkey
     assert "run `fpl chips` for value" in result
 
 
+def test_chip_strategy_panel_shows_real_why_now_explanation_from_season_sim(db_conn, monkeypatch):
+    """fpl.page-parity pass: `chips.py::schedule_chips`'s own real
+    ChipExplanation (best_alternative_event/opportunity_cost, logged under
+    the "season_sim" decision type) was computed but never surfaced on any
+    dashboard panel - this pins that it now is, read-only (no live DP
+    solve triggered by a dashboard regen)."""
+    import fpl_agent.monitoring.dashboard.legacy as dash_mod
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.optimization.chips import ChipWindow
+
+    monkeypatch.setattr(
+        dash_mod, "eligible_chips",
+        lambda conn, event=None: [
+            ChipWindow(name="wildcard", number=1, start_event=1, stop_event=19, chip_type="transfer", eligible_now=True),
+        ],
+    )
+    monkeypatch.setattr(dash_mod, "bench_boost_value", lambda conn, squad_ids: 0.0)
+    monkeypatch.setattr(dash_mod, "triple_captain_value", lambda conn, squad_ids: 0.0)
+    log_decision(
+        db_conn, "season_sim", "P50=100.0 over GW4-8",
+        {
+            "chip_explanations": [
+                {
+                    "event": 4, "chip_name": "wildcard", "expected_value": 23.4,
+                    "best_alternative_event": 7, "best_alternative_value": 21.1,
+                    "opportunity_cost": 2.3, "confidence": "low",
+                },
+            ],
+        },
+    )
+
+    result = dash_mod._chip_strategy_html(db_conn, {1, 2, 3})
+
+    assert "GW7" in result
+    assert "+21.1pts" in result
+    assert "+2.3pts" in result
+
+
 def test_generate_dashboard_html_escapes_untrusted_text(db_conn):
     """web_name/news/team fields ultimately originate from an external API -
     must be HTML-escaped, not interpolated raw (a real XSS-shaped risk for
@@ -793,6 +831,8 @@ def test_dashboard_fixture_ticker_shows_real_projected_goals_and_clean_sheet(db_
 
     assert "xGF" in result
     assert "CS " in result
+    assert "proj-range-btn" in result
+    assert "data-col-index" in result
 
 
 def test_dashboard_fixture_ticker_has_a_real_goals_cs_view_toggle(db_conn):

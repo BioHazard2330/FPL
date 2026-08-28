@@ -1307,7 +1307,7 @@ def _price_changes_html(conn: sqlite3.Connection, limit: int = 8) -> str:
     return "\n".join(lines)
 
 
-_PROJECTION_GWS = 5  # matches fpl.page's own real "GAMEWEEK PROJECTIONS" default window
+_PROJECTION_GWS = 8  # real max range rendered server-side; client-side 3/5/8 buttons (fpl.page-parity pass) just hide/show trailing columns - same one-render-many-views pattern the Fixture Tool already established
 
 
 def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
@@ -1360,12 +1360,13 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
 
     def _cell_html(cells: list[dict], key: str, fmt) -> str:
         out = []
-        for c in cells:
+        for i, c in enumerate(cells):
             event = c["event"]
             opponent = _esc(c["opponent"])
             venue = "(H)" if c["is_home"] else "(A)"
-            out.append(f"<td class='proj-cell' title='GW{event} vs {opponent} {venue}'>{fmt(c[key])}</td>")
-        out.append("<td class='proj-cell proj-blank'>-</td>" * (_PROJECTION_GWS - len(cells)))
+            out.append(f"<td class='proj-cell' data-col-index='{i}' title='GW{event} vs {opponent} {venue}'>{fmt(c[key])}</td>")
+        for i in range(len(cells), _PROJECTION_GWS):
+            out.append(f"<td class='proj-cell proj-blank' data-col-index='{i}'>-</td>")
         return "".join(out)
 
     # Real bug fix (2026-08-27, direct user report: "projected goals scored
@@ -1385,7 +1386,7 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
     if len(header_events) < _PROJECTION_GWS:
         ref = live_or_reference_event(conn) or 1
         header_events = [{"event": ref + i} for i in range(_PROJECTION_GWS)]
-    header_cells = "".join(f"<th>GW{c['event']}</th>" for c in header_events[:_PROJECTION_GWS])
+    header_cells = "".join(f"<th data-col-index='{i}'>GW{c['event']}</th>" for i, c in enumerate(header_events[:_PROJECTION_GWS]))
 
     goals_sorted = sorted(per_team, key=lambda t: -t["total_goals"])
     goals_rows = []
@@ -1411,7 +1412,15 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
             f"<td class='proj-total'>{t['avg_cs']:.0f}%</td></tr>"
         )
 
-    return f"""<div class="proj-subtable">
+    range_controls = """<div class="fixture-tool-control-group proj-range-group" role="group" aria-label="Gameweek range">
+  <span class="fdr-sort-label">Range</span>
+  <button type="button" class="fdr-range-btn proj-range-btn" data-range="3">3 GW</button>
+  <button type="button" class="fdr-range-btn proj-range-btn is-active" data-range="5">5 GW</button>
+  <button type="button" class="fdr-range-btn proj-range-btn" data-range="8">8 GW</button>
+</div>"""
+
+    return f"""{range_controls}
+<div class="proj-subtable">
   <div class="proj-subtitle">Projected goals scored</div>
   <div class="proj-table-wrap"><table class="proj-table">
     <thead><tr><th>Team</th>{header_cells}<th>Total</th></tr></thead>
@@ -2999,6 +3008,25 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
                 value_by_type[chip_name] = logged.detail[detail_key]
                 age_by_type[chip_name] = age
 
+    # Real "why now / why not later" explanation (fpl.page-parity pass) -
+    # `chips.py::schedule_chips`'s own `ChipExplanation` (best_alternative_
+    # event/opportunity_cost, real per-event trial medians the DP itself
+    # already computed to make its choice) is logged under the "season_sim"
+    # decision type (`fpl season-sim --with-chips`) but was never read by
+    # any dashboard panel before this. Read-only, no recompute - a real
+    # beam/DP solve costs minutes, same reason the value itself above is a
+    # logged read, not a live call.
+    explanation_by_chip: dict[str, dict] = {}
+    season_sim = latest_decision_of_type(conn, "season_sim")
+    if season_sim is not None:
+        season_sim_age = _relative_time(season_sim.created_at)
+        for exp in season_sim.detail.get("chip_explanations") or []:
+            # Keep only the soonest real eligible event per chip name - the
+            # one a manager would actually be deciding on right now.
+            existing = explanation_by_chip.get(exp["chip_name"])
+            if existing is None or exp["event"] < existing["event"]:
+                explanation_by_chip[exp["chip_name"]] = exp
+
     rows = []
     for w in windows:
         if not w.eligible_now:
@@ -3023,11 +3051,28 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
                 context_line = f"<div class='chip-strategy-context'>Currently a modest {value:.1f}xP - not yet clearly worth using.</div>"
             else:
                 context_line = f"<div class='chip-strategy-context'>A real, meaningful {value:.1f}xP gain - worth genuine consideration this window.</div>"
+
+        why_line = ""
+        exp = explanation_by_chip.get(w.name)
+        if exp is not None:
+            if exp.get("best_alternative_event") is not None:
+                why_line = (
+                    "<div class='chip-strategy-why'>"
+                    f"<span class='chip-strategy-why-label'>Best alternative</span> GW{exp['best_alternative_event']} &middot; +{exp['best_alternative_value']:.1f}pts"
+                    f"<br><span class='chip-strategy-why-label'>Timing edge</span> {exp['opportunity_cost']:+.1f}pts vs that alternative"
+                    f"<br><span class='chip-strategy-why-meta'>from a {_esc(exp['confidence'])}-confidence season-sim run, {_esc(season_sim_age)}</span>"
+                    "</div>"
+                )
+            else:
+                why_line = (
+                    "<div class='chip-strategy-why'>Only real eligible GW for this chip in the sampled horizon "
+                    f"<span class='chip-strategy-why-meta'>({_esc(exp['confidence'])} confidence, {_esc(season_sim_age)})</span></div>"
+                )
         rows.append(f"""<div class="chip-strategy-row">
   <span class="chip-strategy-name">{_esc(w.name)}</span>
   <span class="chip-strategy-window">GW{w.start_event}-{w.stop_event} eligible</span>
   {value_html}
-</div>{context_line}""")
+</div>{context_line}{why_line}""")
     if not rows:
         return "<div class='empty-state'>No chips currently eligible.</div>"
     advisory = (
@@ -3596,6 +3641,11 @@ _CSS = """
   .chip-value-muted { color: var(--faint); font-weight: 500; font-size: 0.75rem; }
   .chip-advisory { margin-top: 4px; font-size: 0.76rem; color: var(--muted); font-style: italic; }
   .chip-strategy-context { font-size: 0.78rem; color: var(--muted); padding: 0 10px 6px; margin-top: -2px; }
+  .chip-strategy-why { font-size: 0.76rem; color: var(--muted); padding: 4px 10px 8px; margin-top: -2px;
+    border-top: 1px dashed var(--gridline); line-height: 1.5; }
+  .chip-strategy-why-label { color: var(--faint); font-weight: 700; text-transform: uppercase; font-size: 0.68rem;
+    letter-spacing: 0.03em; margin-right: 4px; }
+  .chip-strategy-why-meta { color: var(--faint); font-size: 0.72rem; }
 
   /* --- Live tracking (real visual redesign 2026-08-21) --- */
   .live-pending { display: flex; align-items: flex-start; gap: 10px; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }

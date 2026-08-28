@@ -129,14 +129,47 @@ def _system_live_html() -> str:
   <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
   <span class="system-live-field">Rank <b id="system-live-rank-age">&mdash;</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
   <span class="system-live-field">Decision <b id="system-live-decision-age">&mdash;</b> &middot; <b id="system-live-decision-status">&mdash;</b></span>
+  <span class="system-live-field">News <b id="system-live-news-age">&mdash;</b></span>
+  <span class="system-live-field">Projections <b id="system-live-projections-age">&mdash;</b></span>
   <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
 </div>"""
+
+
+_CROSS_CHECK_VERDICT_CLASS = {
+    "AGREE": "ok", "FOOTBALL_CONFLICT": "bad", "MARKET_CONFLICT": "bad",
+    "TEMPLATE_DIVERGENCE": "warn", "INSUFFICIENT_EVIDENCE": "muted",
+}
+_CROSS_CHECK_VERDICT_LABEL = {
+    "AGREE": "AGREE", "FOOTBALL_CONFLICT": "CONFLICT", "MARKET_CONFLICT": "CONFLICT",
+    "TEMPLATE_DIVERGENCE": "DIVERGENCE", "INSUFFICIENT_EVIDENCE": "N/A",
+}
+
+
+def _cross_check_html(cross_check) -> str:
+    """Real, compact MODEL vs FOOTBALL/MARKET/TEMPLATE row (fpl.page-parity
+    pass, direct spec: "do not average - show AGREE or CONFLICT or
+    DIVERGENCE, then WHY"). `cross_check` is the already-computed real
+    `decision_fusion.captain_cross_check` result - pure presentation here,
+    no synthesis logic. `None`/no axes renders nothing (never a fabricated
+    all-green row when the inputs weren't actually available)."""
+    if cross_check is None or not cross_check.axes:
+        return ""
+    tags = []
+    why_lines = []
+    for a in cross_check.axes:
+        cls = _CROSS_CHECK_VERDICT_CLASS.get(a.verdict, "muted")
+        label = _CROSS_CHECK_VERDICT_LABEL.get(a.verdict, a.verdict)
+        tags.append(f"<span class='cross-check-tag cross-check-{cls}'>{_esc(a.axis)} {_esc(label)}</span>")
+        if a.verdict not in ("AGREE", "INSUFFICIENT_EVIDENCE"):
+            why_lines.append(f"<div class='cross-check-why'><b>{_esc(a.axis)}</b> {_esc(a.why)}</div>")
+    why_html = "".join(why_lines) if why_lines else "<div class='cross-check-why'>No real conflicts across football/market/template evidence.</div>"
+    return f"""<div class="cross-check-row">{''.join(tags)}</div>{why_html}"""
 
 
 def render_hero(
     *, gw_label_html: str, current_rec: dict | None, ta, ca, ft_value: str, ft_title: str,
     actual_points: float | None, next_xp: float, bank_m: float, captain_name: str,
-    rank_tile_html: str, freshness=None,
+    rank_tile_html: str, freshness=None, cross_check=None,
 ) -> str:
     """The whole first viewport. Six metrics only (direct spec): Actual GW
     points, Next-GW xP, Bank, FT, Captain, Rank - nothing else renders here.
@@ -161,6 +194,7 @@ def render_hero(
     )
 
     captain_verdict_html = f"<div class='home-hero-captain-verdict'>{captain_verdict}</div>" if captain_verdict else ""
+    cross_check_html = _cross_check_html(cross_check)
 
     return f"""<section class="home-hero home-hero-{_esc(cls)}" id="home">
   {_system_live_html()}
@@ -169,6 +203,7 @@ def render_hero(
   <div class="home-hero-reason">{_esc(reason)}</div>
   <div id="home-freshness-block">{freshness_html}</div>
   {captain_verdict_html}
+  {cross_check_html}
   <div class="home-hero-metrics">
     {actual_tile}
     <div class="home-metric"><div class="home-metric-label">Next-GW xP</div><div class="home-metric-value">{next_xp:.1f}</div></div>

@@ -273,12 +273,33 @@ def generate_dashboard_html(
             conn, primary_verdict.strategic_decision if primary_verdict is not None else None,
             set(locked.squad_ids),
         )
+    # Real MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
+    # pass) - every input here is a real, already-real, independently-cheap
+    # read (no strategic beam search, no wildcard ILP). Solio's own
+    # `compare_captain_pick` does re-run `evaluate_captaincy` internally
+    # (a real, minor, disclosed duplicate of a CHEAP scan `ca` already ran -
+    # not the expensive strategic-plan/wildcard path this project's
+    # decision-engine rule actually guards against) rather than needing a
+    # deeper refactor of that module's public API for this pass.
+    cross_check = None
+    if ca is not None and locked is not None and locked.squad_ids:
+        from fpl_agent.models.decision_fusion import captain_cross_check
+        from fpl_agent.models.external_benchmark import compare_captain_pick, latest_solio_snapshot
+        from fpl_agent.models.template import get_template
+
+        solio_snapshot = latest_solio_snapshot(conn)
+        solio_cmp = compare_captain_pick(conn, list(locked.squad_ids), solio_snapshot) if solio_snapshot else None
+        template_players = get_template(conn)
+        cross_check = captain_cross_check(
+            conn, list(locked.squad_ids), ca=ca, solio_comparison=solio_cmp, template_players=template_players,
+        )
+
     home_section_html = home.render_hero(
         gw_label_html=gw_label_html,
         current_rec=current_rec, ta=ta, ca=ca, ft_value=ft_tile_value, ft_title=ft_tile_title,
         actual_points=my_live_score.points if my_live_score is not None else None,
         next_xp=headline_xp, bank_m=bank_m, captain_name=captain_name, rank_tile_html=live_rank_tile_html,
-        freshness=freshness,
+        freshness=freshness, cross_check=cross_check,
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
@@ -491,7 +512,7 @@ def generate_dashboard_html(
 
   <section class="panel panel-template-team" id="template-team" data-cat="intelligence">
     <h2>Template Team <span class="panel-subtitle">highest-owned XI, sampled top-10k-league EO where available</span></h2>
-{template_team.render_template_team_html(conn)}
+{template_team.render_template_team_html(conn, squad_ids)}
   </section>
 </div>
 
@@ -592,8 +613,14 @@ def generate_dashboard_html(
   // countdowns" per the direct instruction.
   var liveState = {{
     snapshotAt: null, decisionAt: null, rankAt: null, degraded: [], prevRank: null,
-    rankNextDueAt: null, decisionStatus: null,
+    rankNextDueAt: null, decisionStatus: null, newsAt: null, projectionsAt: null,
   }};
+  // Real news-source names this project already tags in `source_freshness`
+  // (same set `assemble.py`'s server-rendered News panel freshness tag
+  // already uses) - picking the most recent among them client-side avoids
+  // a second server-side "news freshness" field duplicating data already
+  // in the snapshot's own `source_freshness` array.
+  var NEWS_SOURCE_NAMES = {{'bbc_sport_rss': 1, 'bbc_sport_football_all_rss': 1, 'sky_sports_rss': 1}};
   function fmtAgo(ms) {{
     if (ms == null) return null;
     var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -625,6 +652,10 @@ def generate_dashboard_html(
     if (rankEl2) rankEl2.textContent = liveState.rankAt != null ? fmtAgo(liveState.rankAt) : 'unavailable';
     var rankNextEl = document.getElementById('system-live-rank-next');
     if (rankNextEl) rankNextEl.textContent = liveState.rankNextDueAt != null ? fmtIn(liveState.rankNextDueAt) : '—';
+    var newsEl = document.getElementById('system-live-news-age');
+    if (newsEl) newsEl.textContent = liveState.newsAt != null ? fmtAgo(liveState.newsAt) : 'unavailable';
+    var projEl = document.getElementById('system-live-projections-age');
+    if (projEl) projEl.textContent = liveState.projectionsAt != null ? fmtAgo(liveState.projectionsAt) : 'unavailable';
     var degEl = document.getElementById('system-live-degraded');
     if (degEl) {{
       if (liveState.degraded.length) {{
@@ -671,6 +702,21 @@ def generate_dashboard_html(
     if (snap.rank && snap.rank.retrieved_at) liveState.rankAt = Date.parse(snap.rank.retrieved_at);
     if (snap.source_freshness) {{
       liveState.degraded = snap.source_freshness.filter(function(s) {{ return s.degraded; }}).map(function(s) {{ return s.source; }});
+      // Real "News" freshness (P0 per-module live-state ask) - the most
+      // recent real `last_success` among this project's own real news
+      // sources, already in `source_freshness` - never a fabricated tick.
+      var newsTimes = snap.source_freshness
+        .filter(function(s) {{ return NEWS_SOURCE_NAMES[s.source] && s.last_success; }})
+        .map(function(s) {{ return Date.parse(s.last_success); }});
+      if (newsTimes.length) liveState.newsAt = Math.max.apply(null, newsTimes);
+    }}
+    // Real "Projections" freshness - the same real core-sync timestamp
+    // `scheduler.cadence.recommended_cadence`'s own last-success read
+    // already carries (`cadence.system.last_sync_at`) - this is genuinely
+    // when the underlying player stats/prices feeding every projection on
+    // this page last refreshed, not a second invented signal.
+    if (snap.cadence && snap.cadence.system && snap.cadence.system.last_sync_at) {{
+      liveState.projectionsAt = Date.parse(snap.cadence.system.last_sync_at);
     }}
     // Real, derived rank next-check floor (2026-08-29, "final runtime
     // reliability pass" P0 ask) - `snap.cadence.rank.next_due_floor_minutes`
@@ -745,6 +791,7 @@ def generate_dashboard_html(
   // key per entry so the same real event is never listed twice.
   var seenFeedKeys = {{}};
   var lastBonus = {{}};
+  var lastPointsChangesCount = {{}};
   function feedTime(iso) {{
     var d = iso ? new Date(iso) : new Date();
     var hh = d.getHours().toString().padStart(2, '0');
@@ -786,6 +833,20 @@ def generate_dashboard_html(
       var key = 'evt:' + e.player_id + ':' + e.kind + ':' + e.count;
       addFeedEntry(key, '<b>' + feedTime(snap.generated_at) + '</b> ' + e.web_name + ' - ' + e.kind + ' (x' + e.count + ')');
     }});
+    // Real "Points Changes" feed entries (fpl.page-parity pass) - a genuine
+    // NEW real revision this session hasn't seen yet (server-computed
+    // `total_revisions`, same `detect_points_revisions` count the full
+    // Points Changes panel shows - never a client-side recomputation).
+    if (snap.points_changes) {{
+      var pc = snap.points_changes;
+      var prevCount = lastPointsChangesCount[pc.event];
+      if (prevCount !== undefined && pc.total_revisions > prevCount) {{
+        addFeedEntry('pc:' + pc.event + ':' + pc.total_revisions,
+          '<b>' + feedTime(snap.generated_at) + '</b> Points Changes &mdash; ' +
+          (pc.total_revisions - prevCount) + ' new real revision(s) this GW');
+      }}
+      lastPointsChangesCount[pc.event] = pc.total_revisions;
+    }}
     (snap.bonus_defcon || []).forEach(function(b) {{
       var prev = lastBonus[b.player_id];
       if (prev !== undefined && prev !== b.provisional_bonus) {{
@@ -902,6 +963,31 @@ def generate_dashboard_html(
   // as active while all 8 remain visible until the user clicks something.
   var defaultRange = document.querySelector('.fdr-range-btn.is-active');
   if (defaultRange) defaultRange.click();
+}})();
+
+// Gameweek Projections: real client-side 3/5/8GW range toggle (fpl.page-
+// parity pass), same one-render-many-views pattern as the Fixture Tool -
+// every cell/header already carries its own real `data-col-index`, no
+// second query.
+(function() {{
+  var panel = document.querySelector('.panel-fixture-projections');
+  if (!panel) return;
+  var rangeButtons = panel.querySelectorAll('.proj-range-btn');
+  function applyRange(n) {{
+    panel.querySelectorAll('[data-col-index]').forEach(function(el) {{
+      var idx = parseInt(el.getAttribute('data-col-index'), 10);
+      el.style.display = idx < n ? '' : 'none';
+    }});
+  }}
+  rangeButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      rangeButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      applyRange(parseInt(btn.getAttribute('data-range'), 10));
+    }});
+  }});
+  var defaultRange = panel.querySelector('.proj-range-btn.is-active');
+  if (defaultRange) applyRange(parseInt(defaultRange.getAttribute('data-range'), 10));
 }})();
 
 // Price History: real client-side search/position/direction filter over the
@@ -1075,6 +1161,23 @@ _CSS_WORKSPACE = """
   .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
     background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
   .home-hero-stale-banner code { background: rgba(0,0,0,0.25); padding: 1px 5px; border-radius: 4px; }
+  /* --- MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
+     pass) - compact, semantic-color-only, never a fourth wall of cards. --- */
+  .cross-check-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .cross-check-tag { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 5px; border: 1px solid transparent; }
+  .cross-check-ok { background: rgba(62, 207, 142, 0.14); color: #3ecf8e; border-color: rgba(62, 207, 142, 0.35); }
+  .cross-check-bad { background: rgba(233, 0, 82, 0.14); color: #e90052; border-color: rgba(233, 0, 82, 0.35); }
+  .cross-check-warn { background: rgba(240, 196, 25, 0.14); color: #f0c419; border-color: rgba(240, 196, 25, 0.35); }
+  .cross-check-muted { background: transparent; color: var(--faint); border-color: var(--border); }
+  .cross-check-why { font-size: 0.78rem; color: var(--muted); margin-top: 4px; max-width: 640px; line-height: 1.4; }
+  .points-change-lock { display: inline-block; font-size: 0.78rem; font-weight: 700; padding: 5px 10px;
+    border-radius: 6px; margin-bottom: 8px; }
+  .points-change-lock-expired { background: var(--surface-2); color: var(--faint); }
+  .points-change-lock-live { background: rgba(62, 207, 142, 0.12); color: #3ecf8e; }
+  .template-overlap { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--gridline); }
+  .template-overlap-stat { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+  .projected-pos-row-squad .projected-pos-label { color: var(--accent-2); }
   .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-top: 22px; }
   .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }

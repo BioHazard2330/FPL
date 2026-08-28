@@ -278,3 +278,110 @@ def compare_transfer_views(
         user_sentiment=user_sentiment, user_reason=user_reason,
         verdict=verdict, explanation=explanation,
     )
+
+
+# Real gap this closes (fpl.page-parity pass, direct spec: "For every major
+# decision: OUR MODEL / SOLIO / MARKET / FOOTBALL / TEMPLATE. Do NOT average
+# them. Show AGREE or MODEL OUTLIER or FOOTBALL CONFLICT or MARKET CONFLICT
+# or TEMPLATE DIVERGENCE. Then WHY."). Every axis below already existed as
+# ITS OWN separate panel (football: `compare_captain_views` above; market:
+# `external_benchmark.compare_captain_pick` against Solio; template: the
+# fpl.page-parity Template Team panel) - never cross-referenced in one
+# place before, so answering "is the model an outlier" required opening
+# three different Advanced-drawer panels. This is a pure synthesis/labeling
+# layer over those three ALREADY-COMPUTED results - zero new modelling, no
+# second scan of any of them (every input is optional and accepted
+# pre-computed; a missing one degrades that one axis to
+# INSUFFICIENT_EVIDENCE, never silently dropped from the row).
+@dataclass(frozen=True)
+class CrossCheckAxis:
+    axis: str  # "FOOTBALL" | "MARKET" | "TEMPLATE"
+    verdict: str  # "AGREE" | "FOOTBALL_CONFLICT" | "MARKET_CONFLICT" | "TEMPLATE_DIVERGENCE" | "INSUFFICIENT_EVIDENCE"
+    why: str
+
+
+@dataclass(frozen=True)
+class CaptainCrossCheck:
+    captain_id: int | None
+    captain_name: str | None
+    axes: tuple[CrossCheckAxis, ...]
+    all_agree: bool
+
+
+def captain_cross_check(
+    conn, squad_ids: list[int], ca=None, solio_comparison=None, template_players: list | None = None,
+) -> CaptainCrossCheck:
+    """`ca` - the already-computed real `CaptainDecisionAnalysis` (the
+    dashboard's own `ca`, `decision_analysis.analyze_captain_decision`'s
+    output) - our model's REAL current pick (`ca.suggested or ca.current`),
+    never re-derived via a second `evaluate_captaincy` call the way
+    `compare_captain_views` above does on its own when no options are
+    passed. `solio_comparison`/`template_players` are likewise optional
+    already-computed results (`external_benchmark.compare_captain_pick`,
+    `models.template.get_template`) - `None` when that source genuinely
+    isn't available yet (no Solio sync, no ownership data), which degrades
+    only that one axis to INSUFFICIENT_EVIDENCE rather than fabricating a
+    verdict."""
+    model_pick = None
+    if ca is not None:
+        model_pick = ca.suggested or ca.current
+    captain_id = model_pick.player_id if model_pick else None
+    captain_name = model_pick.web_name if model_pick else None
+
+    axes = []
+
+    # FOOTBALL axis - reuses the same real, cheap qualitative-signal read
+    # `compare_captain_views` uses, not that function's own full comparison
+    # (which would re-run `evaluate_captaincy`).
+    qual_id, qual_reason, qual_persistent = _qualitative_captain_signal(conn, squad_ids)
+    if captain_id is None:
+        axes.append(CrossCheckAxis("FOOTBALL", "INSUFFICIENT_EVIDENCE", "no real model captain pick to compare against"))
+    elif qual_id is not None and qual_id != captain_id and qual_persistent:
+        qual_row = conn.execute("SELECT web_name FROM players WHERE id=?", (qual_id,)).fetchone()
+        qual_name = qual_row["web_name"] if qual_row else "another player"
+        axes.append(CrossCheckAxis(
+            "FOOTBALL", "FOOTBALL_CONFLICT",
+            f"a real persistent positive qualitative trend favors {qual_name} ({qual_reason}), not {captain_name}",
+        ))
+    else:
+        axes.append(CrossCheckAxis("FOOTBALL", "AGREE", "no real persistent qualitative signal contradicts this pick"))
+
+    # MARKET axis - Solio's own real top-captain pick, already computed by
+    # `external_benchmark.compare_captain_pick` (comparison layer only,
+    # never a projection input - see that module's own docstring).
+    if solio_comparison is None or solio_comparison.verdict == "INSUFFICIENT_EVIDENCE":
+        why = solio_comparison.why if solio_comparison is not None else "no Solio benchmark run yet this session"
+        axes.append(CrossCheckAxis("MARKET", "INSUFFICIENT_EVIDENCE", why))
+    elif solio_comparison.verdict == "DIVERGENCE":
+        axes.append(CrossCheckAxis("MARKET", "MARKET_CONFLICT", solio_comparison.why))
+    else:
+        axes.append(CrossCheckAxis("MARKET", "AGREE", solio_comparison.why))
+
+    # TEMPLATE axis - real, honest, narrow scope: does the highest-owned
+    # (sampled-EO where available, else raw) real player pool at the
+    # captain's own position even include the captain pick. This project has
+    # no real "captain popularity" data source (fpl.page's own real EO
+    # sample doesn't carry per-player captaincy share) - divergence here
+    # means "the wider template doesn't even own this player", a real,
+    # narrower, honestly-scoped signal, not a fabricated captaincy-rate
+    # comparison.
+    if captain_id is None or not template_players:
+        axes.append(CrossCheckAxis("TEMPLATE", "INSUFFICIENT_EVIDENCE", "no real template ownership data available"))
+    else:
+        position = None
+        for tp in template_players:
+            if tp.player_id == captain_id:
+                position = tp.position
+                break
+        if position is not None:
+            axes.append(CrossCheckAxis("TEMPLATE", "AGREE", f"{captain_name} is in the real highest-owned {position} pool"))
+        else:
+            axes.append(CrossCheckAxis(
+                "TEMPLATE", "TEMPLATE_DIVERGENCE",
+                f"{captain_name} does not appear in the real highest-owned pool for their position - a genuine differential captain pick",
+            ))
+
+    return CaptainCrossCheck(
+        captain_id=captain_id, captain_name=captain_name, axes=tuple(axes),
+        all_agree=all(a.verdict in ("AGREE", "INSUFFICIENT_EVIDENCE") for a in axes),
+    )

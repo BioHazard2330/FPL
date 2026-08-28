@@ -3,7 +3,7 @@ revisions, `models.points_changes.detect_points_revisions`. Squad players
 are visually flagged (real decision relevance: a revision on your own
 player changes their actual total points), everyone else shown for
 league-wide context, matching fpl.page's own scope (not squad-only)."""
-from fpl_agent.models.points_changes import detect_points_revisions
+from fpl_agent.models.points_changes import detect_points_revisions, is_gw_locked
 from fpl_agent.monitoring.dashboard.legacy import _esc, _official_badge_url
 
 
@@ -47,6 +47,24 @@ def render_points_changes_html(conn, squad_ids: set[int] | None = None) -> str:
         "\n".join(_revision_row_html(conn, r, squad_ids, team_code_cache) for r in defcon_revisions)
         if defcon_revisions else "<div class='empty-state'>No defensive contribution revisions observed.</div>"
     )
+
+    # Real LIVE/EXPIRED status (fpl.page-parity pass, their own real
+    # published lock rule - see `models.points_changes.is_gw_locked`'s
+    # docstring). Every revision shown above is, by construction, already
+    # reflected in this project's own synced data - fpl.page's real
+    # third "Pending" state (Opta has recorded a correction but FPL hasn't
+    # processed the points yet) needs Opta's own raw pre-FPL-processing
+    # feed, which this project has no access to - not fabricated here, see
+    # docs/history for the full disclosed account.
+    locked = is_gw_locked(conn, row["id"])
+    if locked is True:
+        lock_html = "<span class='points-change-lock points-change-lock-expired'>&#10060; EXPIRED &mdash; gameweek locked, no further corrections possible</span>"
+    elif locked is False:
+        lock_html = "<span class='points-change-lock points-change-lock-live'>&#9989; LIVE &mdash; corrections still possible until 1h after the final match</span>"
+    else:
+        lock_html = ""
+
     return f"""<div class="panel-subtitle" style="margin-bottom:8px">Gameweek {row['id']} revision ledger - real snapshot diff, post-full-time only, never in-play bonus churn</div>
+{lock_html}
 <div class="market-section"><h3>Bonus Points</h3>{bonus_html}</div>
 <div class="market-section"><h3>Defensive Contributions</h3>{defcon_html}</div>"""

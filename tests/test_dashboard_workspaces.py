@@ -169,6 +169,51 @@ def test_captain_verdict_none_is_empty():
     assert home._captain_verdict_html(None) == ""
 
 
+class _FakeCrossCheckAxis:
+    def __init__(self, axis, verdict, why):
+        self.axis = axis
+        self.verdict = verdict
+        self.why = why
+
+
+class _FakeCrossCheck:
+    def __init__(self, axes, all_agree):
+        self.axes = axes
+        self.all_agree = all_agree
+
+
+def test_cross_check_html_none_renders_nothing():
+    assert home._cross_check_html(None) == ""
+
+
+def test_cross_check_html_all_agree_shows_no_conflict_line():
+    cc = _FakeCrossCheck(
+        axes=[
+            _FakeCrossCheckAxis("FOOTBALL", "AGREE", "no conflict"),
+            _FakeCrossCheckAxis("MARKET", "AGREE", "both models pick Haaland"),
+            _FakeCrossCheckAxis("TEMPLATE", "AGREE", "in the pool"),
+        ],
+        all_agree=True,
+    )
+    result = home._cross_check_html(cc)
+    assert "FOOTBALL AGREE" in result
+    assert "No real conflicts" in result
+
+
+def test_cross_check_html_surfaces_a_real_conflict_reason():
+    cc = _FakeCrossCheck(
+        axes=[
+            _FakeCrossCheckAxis("FOOTBALL", "AGREE", "no conflict"),
+            _FakeCrossCheckAxis("MARKET", "MARKET_CONFLICT", "our model picks Haaland, Solio picks Salah"),
+            _FakeCrossCheckAxis("TEMPLATE", "AGREE", "in the pool"),
+        ],
+        all_agree=False,
+    )
+    result = home._cross_check_html(cc)
+    assert "MARKET CONFLICT" in result
+    assert "Solio picks Salah" in result
+
+
 # --- plan.py: path descriptor / confidence ----------------------------------
 
 def test_path_descriptor_pure_roll():
@@ -478,6 +523,26 @@ def test_template_team_panel_renders_real_positions(db_conn):
     result = template_team.render_template_team_html(db_conn)
     assert "empty-state" not in result
     assert "projected-tile" in result
+
+
+def test_template_team_panel_shows_real_overlap_and_differential(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    for pid, in db_conn.execute("SELECT id FROM players").fetchall():
+        db_conn.execute(
+            "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+            "VALUES (?, 10.0, 't0', NULL)",
+            (pid,),
+        )
+    # Player 1 (GKP, top_n=3 default so it's in the template pool) gets a
+    # very low real ownership - the squad's own honest differential pick.
+    db_conn.execute("UPDATE player_ownership_history SET selected_by_percent=0.5 WHERE player_id=1")
+    db_conn.commit()
+
+    squad_ids = {r[0] for r in db_conn.execute("SELECT id FROM players").fetchall()}
+    result = template_team.render_template_team_html(db_conn, squad_ids)
+
+    assert "template-overlap-stat" in result
+    assert "P1" in result  # lowest-owned squad player (_seed's own web_name for player 1)
 
 
 def test_points_changes_panel_honest_empty_state_no_finished_gw(db_conn):
