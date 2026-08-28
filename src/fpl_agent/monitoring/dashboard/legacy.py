@@ -272,6 +272,21 @@ def _humanize(text: str | None) -> str:
     return text
 
 
+_CHIP_DISPLAY_NAMES = {
+    "wildcard": "Wildcard", "freehit": "Free Hit", "bboost": "Bench Boost", "3xc": "Triple Captain",
+}
+
+
+def _chip_display_name(code: str | None) -> str:
+    """Real FPL chip terminology for an internal chip code ("bboost"/"3xc"/
+    "freehit"/"wildcard") - display only, never used for matching/lookup
+    (every real caller keys off the raw code, this is the last step before
+    HTML)."""
+    if not code:
+        return ""
+    return _CHIP_DISPLAY_NAMES.get(code.lower(), code.title())
+
+
 def _relative_time(iso_ts: str | None) -> str:
     if not iso_ts:
         return "unknown"
@@ -3189,7 +3204,7 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
                     f"<span class='chip-strategy-why-meta'>({_esc(exp['confidence'])} confidence, {_esc(season_sim_age)})</span></div>"
                 )
         rows.append(f"""<div class="chip-strategy-row">
-  <span class="chip-strategy-name">{_esc(w.name)}</span>
+  <span class="chip-strategy-name">{_esc(_chip_display_name(w.name))}</span>
   <span class="chip-strategy-window">GW{w.start_event}-{w.stop_event} eligible</span>
   {value_html}
 </div>{context_line}{why_line}""")
@@ -4219,6 +4234,17 @@ _CSS = """
      news decision-impact tags). --- */
   .price-row-squad { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
   .xdata-table-wrap { overflow-x: auto; }
+  /* Real fix (2026-08-28 visual QA pass): the full-league Price Changes
+     table (~600+ real, unpaginated rows - one per non-removed player, since
+     the search/position/direction controls above it are the real narrowing
+     mechanism, not a server-side LIMIT) was rendering at its natural
+     height - confirmed live at ~26,000px, ballooning the whole dashboard
+     page past 44,000px. A fixed-height internal scroll (matching this
+     project's own established "internal scroll, never page scroll" pattern
+     for wide tables/tickers) keeps every row in the DOM for the real client-
+     side filters to search while capping the visible/printed page height. */
+  .price-history-table-wrap { max-height: 560px; overflow-y: auto; border: 1px solid var(--gridline); border-radius: 8px; }
+  .price-history-table-wrap thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
   .price-table-row td { vertical-align: middle; }
   .price-predict-net { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 44px; text-align: right; }
   .price-history-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }

@@ -121,7 +121,7 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
             observed=f"{web_name} recorded {shots} real shots (xG {xg:.2f}) in this match.",
             inferred="A genuinely high shot volume/quality for a single match - real attacking involvement.",
             fpl_signal="GOAL_THREAT", fpl_direction="POSITIVE",
-            fpl_reason=f"Real match shot/xG threshold crossed ({shots} shots, {xg:.2f} xG).",
+            fpl_reason=f"{shots} shots ({xg:.2f} xG) in his last match - a real goal threat.",
             confidence="medium", evidence_ref=f"understat:shots={shots},xg={xg:.3f}",
         ))
     if key_passes >= _CREATION_KEY_PASSES or xa >= _CREATION_XA:
@@ -131,7 +131,7 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
             observed=f"{web_name} recorded {key_passes} real key passes (xA {xa:.2f}) in this match.",
             inferred="A genuinely high chance-creation output for a single match.",
             fpl_signal="CREATION", fpl_direction="POSITIVE",
-            fpl_reason=f"Real match key-pass/xA threshold crossed ({key_passes} key passes, {xa:.2f} xA).",
+            fpl_reason=f"{key_passes} key passes ({xa:.2f} xA) in his last match - a real creative threat.",
             confidence="medium", evidence_ref=f"understat:key_passes={key_passes},xa={xa:.3f}",
         ))
     if minutes is not None:
@@ -142,7 +142,7 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
                 observed=f"{web_name} played {minutes} real minutes in this match.",
                 inferred="Genuine, near-full match involvement - real evidence of a trusted current role.",
                 fpl_signal="MINUTES", fpl_direction="POSITIVE",
-                fpl_reason=f"Real {minutes}-minute involvement clears the trusted-role floor.",
+                fpl_reason=f"Played {minutes} minutes - a real, trusted starting role.",
                 confidence="medium", evidence_ref=f"understat:minutes={minutes}",
             ))
         elif minutes < _MINUTES_EARLY_WITHDRAWAL_CEILING:
@@ -152,7 +152,7 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
                 observed=f"{web_name} was withdrawn after {minutes} real minutes despite starting.",
                 inferred="A real, unexplained early withdrawal - a genuine hedge on his current role.",
                 fpl_signal="MINUTES", fpl_direction="NEGATIVE",
-                fpl_reason=f"Real early withdrawal at {minutes} minutes.",
+                fpl_reason=f"Subbed off after {minutes} minutes despite starting - a real role risk.",
                 confidence="medium", evidence_ref=f"understat:minutes={minutes}",
             ))
     return out

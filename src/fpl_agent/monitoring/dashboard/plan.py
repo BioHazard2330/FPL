@@ -13,7 +13,7 @@ evidence-confidence label on this dashboard already calls, applied to the
 path's own first real transfer pair; descriptor is plain string composition
 over the step list already computed by the real beam search."""
 from fpl_agent.models.projection_confidence import assess_projection_confidence
-from fpl_agent.monitoring.dashboard.legacy import _esc
+from fpl_agent.monitoring.dashboard.legacy import _chip_display_name, _esc
 
 
 def path_confidence(conn, path: dict) -> str | None:
@@ -45,7 +45,7 @@ def path_descriptor(path: dict) -> str:
     chip_steps = [s for s in steps if s.get("chip_played")]
     if chip_steps:
         chip = chip_steps[0]
-        bit = f"{chip['chip_played'].title()} at GW{chip['event']}"
+        bit = f"{_chip_display_name(chip['chip_played'])} at GW{chip['event']}"
         if transfer_events:
             bit += f" + {len(transfer_events)} transfer{'s' if len(transfer_events) != 1 else ''}"
         return bit
@@ -153,7 +153,7 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
             if is_first and j == 0:
                 step_cls += " is-active"
             hit_suffix = " (HIT)" if s.get("uses_hit") else ""
-            badges = f"<span class='chip-badge'>{_esc(chip_played.upper())}</span>" if chip_played else ""
+            badges = f"<span class='chip-badge'>{_esc(_chip_display_name(chip_played).upper())}</span>" if chip_played else ""
             node_parts.append(
                 f"<button type='button' class='{step_cls}' data-path='{i}' data-event='{event}'>"
                 f"<span class='timeline-node-gw'>GW{event}</span>"
@@ -173,7 +173,7 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
         if chip_steps_this_path:
             chip_summary = "".join(
                 f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>GW{cs['event']}</span>"
-                f"<span class='risk-body'><strong>{_esc(cs['chip_played'].upper())}</strong></span></div>"
+                f"<span class='risk-body'><strong>{_esc(_chip_display_name(cs['chip_played']).upper())}</strong></span></div>"
                 for cs in chip_steps_this_path
             )
         else:

@@ -345,8 +345,15 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
     }
 
 
-def write_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> Path:
+def write_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None, path: Path | None = None) -> Path:
+    """`path` lets a caller with its own (test-patchable) `DATA_DIR` - e.g.
+    `cli/main.py`, which already computes `_dashboard_path()` fresh per call
+    for exactly this reason - avoid the module-level DATA_DIR-captured-at-
+    import-time trap `SNAPSHOT_PATH` is otherwise subject to. Defaults to
+    `SNAPSHOT_PATH` (unchanged real-world behavior, and what
+    `test_live_snapshot.py` already monkeypatches directly)."""
     snapshot = build_live_snapshot(conn, live_payload)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SNAPSHOT_PATH.write_text(json.dumps(snapshot), encoding="utf-8")
-    return SNAPSHOT_PATH
+    target = path if path is not None else SNAPSHOT_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(snapshot), encoding="utf-8")
+    return target

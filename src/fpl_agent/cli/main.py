@@ -2022,7 +2022,7 @@ def _write_dashboard(
         try:
             from fpl_agent.monitoring.live_snapshot import write_live_snapshot
 
-            write_live_snapshot(conn, live_payload)
+            write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
         except Exception:
             logging.getLogger("fpl_agent.dashboard").exception(
                 "write_live_snapshot failed during dashboard regen - not fatal to the regen itself"
@@ -2689,7 +2689,7 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                     from fpl_agent.monitoring.live_snapshot import write_live_snapshot
 
                     live_payload = _maybe_fetch_live_payload(conn)
-                    write_live_snapshot(conn, live_payload)
+                    write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
                 except Exception as e:
                     click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)
 

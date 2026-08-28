@@ -79,7 +79,7 @@ def test_plan_timeline_chip_badge_is_on_the_correct_event_node(db_conn):
     gw4_node_start = result.index("data-event='4'")
     gw5_node_start = result.index("data-event='5'")
     gw4_node = result[gw4_node_start:gw5_node_start]
-    assert "3XC" in gw4_node
+    assert "TRIPLE CAPTAIN" in gw4_node
     gw5_node = result[gw5_node_start:]
     # GW5 is a plain ROLL step in this fixture - no chip badge belongs there.
     assert "chip-badge" not in gw5_node.split("</button>")[0]
@@ -117,6 +117,6 @@ def test_squad_projected_preview_chip_badge_on_correct_event_block(db_conn):
     # above it share the same `data-event` attribute but no `hidden` flag).
     gw4_start = result.index("data-event='4' hidden")
     gw5_start = result.index("data-event='5' hidden")
-    assert "FREEHIT" in result[gw4_start:gw5_start]
+    assert "FREE HIT" in result[gw4_start:gw5_start]
     gw5_end = result.index("</div></div>", gw5_start)
     assert "chip-badge" not in result[gw5_start:gw5_end]

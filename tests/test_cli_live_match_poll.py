@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from click.testing import CliRunner
 
+import fpl_agent.cli.main as main_mod
 import fpl_agent.ingestion.fotmob_source as fotmob_mod
 import fpl_agent.scheduler.process_lock as process_lock_mod
 from fpl_agent.cli.main import cli
@@ -22,8 +23,19 @@ def _isolated_live_poll_lock(tmp_path, monkeypatch):
     unisolated test run could either spuriously fail (a real live lock
     blocking a `--interval` test that expects success) or, worse, race a
     real production process. Every test in this file gets its own
-    per-test tmp_path lock file instead."""
+    per-test tmp_path lock file instead.
+
+    Same real isolation gap found + fixed for `DATA_DIR` (2026-08-28 frontend
+    QA pass): `live-match-poll` also writes `live_snapshot.json` (and, on a
+    FULL_TIME tick, the full `dashboard.html`) via `cli/main.py`'s own
+    per-call-computed `DATA_DIR` - unpatched, this file's tests were silently
+    overwriting the REAL production `data/live_snapshot.json` with this
+    file's synthetic fixture squad on every run (confirmed live: found
+    fabricated "P1"/"P20" player rows in the real file after a local test
+    run) - a genuine violation of this project's own no-fabrication rule
+    applied to a file the live dashboard trusts as real."""
     monkeypatch.setattr(process_lock_mod, "DEFAULT_LOCK_PATH", tmp_path / "live_poll.lock")
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
 
 
 def _live_payload(minute=17, home_score=0, away_score=0):

@@ -74,7 +74,7 @@ def _forecast_table_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     <option value="STABLE">Stable</option>
   </select>
 </div>"""
-    table = f"""<div class="xdata-table-wrap"><table class="xdata-table">
+    table = f"""<div class="xdata-table-wrap price-history-table-wrap"><table class="xdata-table">
   <thead><tr><th>Player</th><th>Price</th><th>Net transfers</th><th>Status</th><th>Progress</th></tr></thead>
   <tbody id="price-history-rows">{''.join(rows_html)}</tbody>
 </table></div>"""

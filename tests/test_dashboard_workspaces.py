@@ -48,7 +48,7 @@ def test_home_reason_chip_from_current_rec():
     current_rec = {"verdict": "ACT", "action_kind": "chip", "label": "PLAY WILDCARD", "path_total": 20.0}
     reason = home._action_reason(current_rec, None)
     assert "wildcard" in reason.lower()
-    assert home._action_word(current_rec, None) == ("PLAY CHIP", "chip")
+    assert home._action_word(current_rec, None) == ("PLAY WILDCARD", "chip")
 
 
 def test_home_reason_review_never_claims_confidence():

@@ -5,7 +5,18 @@ change this" prose block and the secondary metric strip (vice/squad-value/
 risks/kickoff/optimizer-status moved to the Squad workspace and the
 contextual Live banner, where that detail actually belongs - not dropped,
 just no longer competing with the one thing Home exists to answer)."""
-from fpl_agent.monitoring.dashboard.legacy import _captain_html, _esc, _humanize
+from fpl_agent.monitoring.dashboard.legacy import _captain_html, _chip_display_name, _esc, _humanize
+
+
+def _chip_label_from_rec(label: str) -> str:
+    """`current_rec['label']` for a chip action is always `f"PLAY {code.upper()}"`
+    (`optimization/transfers.py`'s `StartingActionOption` construction) - this
+    recovers the raw code to run it through `_chip_display_name` so the
+    dashboard never shows the internal code ("BBOOST"/"3XC"/"FREEHIT") as
+    real FPL chip terminology instead ("Bench Boost"/"Triple Captain"/
+    "Free Hit")."""
+    code = label[5:] if label.upper().startswith("PLAY ") else label
+    return _chip_display_name(code)
 
 
 def _action_reason(current_rec: dict | None, ta) -> str:
@@ -27,7 +38,7 @@ def _action_reason(current_rec: dict | None, ta) -> str:
         if kind == "roll":
             return "No transfer clears the bar this week - hold your transfer."
         if kind == "chip":
-            return f"{current_rec['label'].title()} is the strongest move over your horizon."
+            return f"Play {_chip_label_from_rec(current_rec['label'])} is the strongest move over your horizon."
         out_name, sep, in_name = current_rec["label"].partition(" -> ")
         if sep:
             return f"{in_name} in for {out_name} - the strongest move over your horizon."
@@ -54,7 +65,11 @@ def _action_word(current_rec: dict | None, ta) -> tuple[str, str]:
         if current_rec["verdict"] == "REVIEW":
             return "REVIEW", "review"
         kind = current_rec["action_kind"]
-        return {"roll": ("ROLL", "roll"), "chip": ("PLAY CHIP", "chip")}.get(kind, ("TRANSFER", "transfer"))
+        if kind == "roll":
+            return "ROLL", "roll"
+        if kind == "chip":
+            return f"PLAY {_chip_label_from_rec(current_rec['label']).upper()}", "chip"
+        return "TRANSFER", "transfer"
     if ta is None:
         return "NO SQUAD", "review"
     if ta.decision_kind == "roll":

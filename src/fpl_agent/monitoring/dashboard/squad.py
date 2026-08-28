@@ -20,6 +20,7 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _POSITION_ORDER,
     _bulk_player_lookup,
     _captain_html,
+    _chip_display_name,
     _esc,
     _official_shirt_url,
     _squad_state_by_event,
@@ -100,7 +101,7 @@ def _projected_squad_html(lookup: dict[int, dict], xi, step: dict, out_xp: float
     else:
         transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
     chip_played = step.get("chip_played")
-    chip_line = f"<span class='chip-badge'>{_esc(chip_played.upper())}</span>" if chip_played else ""
+    chip_line = f"<span class='chip-badge'>{_esc(_chip_display_name(chip_played).upper())}</span>" if chip_played else ""
 
     captain_id = xi.captain.player_id if xi.captain is not None else None
     vice_id = xi.vice_captain.player_id if xi.vice_captain is not None else None
