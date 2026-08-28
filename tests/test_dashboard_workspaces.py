@@ -160,8 +160,34 @@ def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_sna
     )
     assert 'data-live-state="live"' in result
     assert "not yet polled" not in result
-    assert ">CURRENT<" in result
+    # Real status-first wording (2026-08-28, direct user requirement: never
+    # show a bare "CURRENT" without context) - "Current" title-case label +
+    # an explicit "computed Xh ago" detail, not just the raw status word.
+    assert ">Current<" in result
+    assert "computed" in result
     assert "1 source(s) degraded: odds_api" in result
+
+
+def test_render_hero_shows_real_live_captain_points_when_available():
+    """Real "live browser patch coverage" gap closed (2026-08-28, direct
+    user requirement) - the snapshot already carries `points.captain_points`
+    but the Captain tile only ever showed the captain's NAME, never their
+    real live score. Must render it server-side when available, and stay
+    honestly empty (never a fabricated 0) when it isn't."""
+    snapshot_with_points = {"points": {"points": 42.0, "captain_points": 16.0}}
+    result = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Haaland", rank_tile_html="",
+        live_snapshot=snapshot_with_points,
+    )
+    assert "id='live-captain-points'" in result
+    assert "16 pts" in result
+
+    result_no_live_data = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Haaland", rank_tile_html="",
+    )
+    assert "id='live-captain-points'></span>" in result_no_live_data  # honestly empty, no fabricated points
 
 
 class _FakePlayer:

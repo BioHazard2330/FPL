@@ -214,7 +214,14 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "Chip Strategy" in result
     assert "Latest Recommendations" not in result  # removed 2026-08-21, direct user request
     assert "System health" in result
-    assert f'content="{30}"' in result  # meta-refresh tag present, tightened from 60s to 30s (2026-08-28, more-frequent-updates ask)
+    # No meta-refresh tag at all (2026-08-28, "remove the two competing
+    # live/refresh concepts" fix) - the live_snapshot.json poll is now the
+    # only user-facing freshness mechanism, not a periodic full reload.
+    assert 'http-equiv="refresh"' not in result
+    # The one remaining reload path is a silent, long safety net - only
+    # fires if the poll has NEVER once succeeded in the whole window.
+    assert "pollEverSucceeded" in result
+    assert "location.reload()" in result
 
 
 def test_dashboard_squad_changes_panel_renders_real_change_events(db_conn):

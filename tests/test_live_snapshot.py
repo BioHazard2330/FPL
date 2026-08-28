@@ -201,6 +201,39 @@ def test_points_block_carries_real_per_player_points_and_multiplier(db_conn, mon
     assert by_player[3]["play_state"] == "yet_to_play"
 
 
+def test_build_live_snapshot_logs_a_throttled_intragame_points_sample(db_conn, monkeypatch):
+    """Real intragame (sub-GW) chart data (2026-08-28, direct user
+    requirement: "do not fabricate history... store intragame snapshots
+    for timestamp/overall points/squad points/captain points/rank...
+    charts should become populated during the real GW, do not wait for
+    the GW to finish"). Reuses the exact same append-only `decisions`
+    journal pattern `live_charts.py::_intragame_rank_series` already
+    proved out for rank - a new `live_points_sample` row per real
+    `build_live_snapshot` call, throttled so a live match's fast poll
+    cadence doesn't flood the journal."""
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    _seed_player(db_conn, 1, web_name="Haaland")
+    locked = _fake_locked_squad(2, starting_ids=[1], captain_id=1, source="locked_decision")
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: locked)
+    live_payload = {"elements": [{"id": 1, "stats": {"minutes": 90, "goals_scored": 1, "assists": 0, "bps": 30, "bonus": 0, "total_points": 8}, "explain": [{"fixture": 100}]}]}
+
+    build_live_snapshot(db_conn, live_payload=live_payload)
+    rows = db_conn.execute("SELECT detail FROM decisions WHERE decision_type='live_points_sample'").fetchall()
+    assert len(rows) == 1
+    detail = json.loads(rows[0]["detail"])
+    assert detail["event"] == 2
+    assert detail["points"] == 16.0  # real captain 2x multiplier over Haaland's 8 raw points
+    assert detail["captain_points"] == 16.0
+
+    # A second call immediately after must NOT log a second row - real
+    # throttle, never one row per poll tick.
+    build_live_snapshot(db_conn, live_payload=live_payload)
+    rows_after = db_conn.execute("SELECT COUNT(*) c FROM decisions WHERE decision_type='live_points_sample'").fetchone()
+    assert rows_after["c"] == 1
+
+
 def test_source_freshness_block_flags_degraded_sources(db_conn):
     conn = db_conn
     conn.execute(
@@ -253,7 +286,9 @@ def test_decision_status_is_recomputing_while_a_real_auto_trigger_lock_is_fresh(
         (now, now),
     )
     db_conn.commit()
-    assert _decision_status(db_conn, is_stale=False) == "RECOMPUTING"
+    status, triggered_at = _decision_status(db_conn, is_stale=False)
+    assert status == "RECOMPUTING"
+    assert triggered_at == now  # real trigger timestamp, not a second guess
 
 
 def test_decision_status_ignores_a_stale_abandoned_recompute_lock(db_conn):
@@ -269,16 +304,16 @@ def test_decision_status_ignores_a_stale_abandoned_recompute_lock(db_conn):
     db_conn.commit()
     # A 30min-old lock is a real, abandoned/crashed prior run - must fall
     # back to the real freshness signal, never claim RECOMPUTING forever.
-    assert _decision_status(db_conn, is_stale=False) == "CURRENT"
-    assert _decision_status(db_conn, is_stale=True) == "STALE"
+    assert _decision_status(db_conn, is_stale=False) == ("CURRENT", None)
+    assert _decision_status(db_conn, is_stale=True) == ("STALE", None)
 
 
 def test_decision_status_current_and_stale_without_any_lock(db_conn):
     from fpl_agent.monitoring.live_snapshot import _decision_status
 
-    assert _decision_status(db_conn, is_stale=False) == "CURRENT"
-    assert _decision_status(db_conn, is_stale=True) == "STALE"
-    assert _decision_status(db_conn, is_stale=None) == "UNKNOWN"
+    assert _decision_status(db_conn, is_stale=False) == ("CURRENT", None)
+    assert _decision_status(db_conn, is_stale=True) == ("STALE", None)
+    assert _decision_status(db_conn, is_stale=None) == ("UNKNOWN", None)
 
 
 def test_points_changes_block_none_when_no_gameweek_finished(db_conn):

@@ -28,6 +28,13 @@ class FreshnessResult:
     age_relative: str  # human label, e.g. "3h ago" - reuses dashboard._relative_time
     is_stale: bool
     stale_reason: str | None  # e.g. "Haaland: status_change (a -> i) detected 2026-08-29T10:03Z"
+    # Real timestamp of the triggering change_events row itself (2026-08-28,
+    # direct user requirement: "Stale · new lineup information detected 34s
+    # ago" - the STALE label's own age must be how long ago the material
+    # change was detected, never the OLD decision's own `computed_at` age,
+    # which would make a genuinely-just-detected change read as if it were
+    # hours stale). `None` whenever `is_stale` is False - nothing to date.
+    stale_detected_at: str | None = None
 
 
 def has_material_change_since(
@@ -97,4 +104,5 @@ def assess_recommendation_freshness(
         age_relative=_relative_time(strategic_decision.created_at),
         is_stale=change is not None,
         stale_reason=stale_reason,
+        stale_detected_at=change["detected_at"] if change is not None else None,
     )

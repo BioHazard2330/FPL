@@ -85,7 +85,7 @@ from fpl_agent.models.live_bonus import LiveBonusRow, compute_live_bonus, diff_l
 from fpl_agent.models.live_rank import estimate_live_rank, estimate_squad_live_points
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
-from fpl_agent.monitoring.dashboard import _REFRESH_SECONDS, generate_dashboard_html
+from fpl_agent.monitoring.dashboard import generate_dashboard_html
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
@@ -2113,21 +2113,20 @@ def _write_dashboard(
 @click.option("--must-start", default=None, help="comma-separated player ids to force into the starting XI specifically")
 @click.option("--exclude", default=None, help="comma-separated player ids to bar from selection entirely")
 def dashboard(gw_window: int, must_include: str | None, must_start: str | None, exclude: str | None):
-    """Generate (or regenerate) the local auto-refreshing HTML dashboard -
-    the same one `fpl run-scheduled` regenerates every cycle (which always
-    uses the defaults - GW1, no forced picks - `--gw-window`/`--must-include`
-    are for an explicit manual regen only). Open
-    data/dashboard.html in a browser and leave the tab open; it reloads
-    itself on its own to show whatever the last sync produced (see
-    monitoring.dashboard._REFRESH_SECONDS for the real, current interval -
-    referenced here rather than hardcoded a second time, after this exact
-    string drifted out of sync with a real refresh-interval change once
-    already). A published, always-fresh, no-Claude-open public WEBSITE
-    isn't reachable with this project's local, free-resources-only
-    architecture (a published Artifact page can't read this local database
-    or fetch external data on its own) - this is the honest, real
-    equivalent: local, genuinely automatic once the scheduler is running,
-    zero extra cost."""
+    """Generate (or regenerate) the local HTML dashboard - the same one
+    `fpl run-scheduled` regenerates every cycle (which always uses the
+    defaults - GW1, no forced picks - `--gw-window`/`--must-include` are
+    for an explicit manual regen only). Open data/dashboard.html in a
+    browser and leave the tab open; it live-updates via the
+    live_snapshot.json poll (2026-08-28, "remove the two competing live/
+    refresh concepts" fix - no more periodic full-page reload as the
+    user-facing freshness mechanism, only a silent multi-minute safety net
+    if the poll itself never once succeeds). A published, always-fresh,
+    no-Claude-open public WEBSITE isn't reachable with this project's
+    local, free-resources-only architecture (a published Artifact page
+    can't read this local database or fetch external data on its own) -
+    this is the honest, real equivalent: local, genuinely automatic once
+    the scheduler is running, zero extra cost."""
     parsed_must_include = _parse_squad_option(must_include)
     must_include_ids = set(parsed_must_include) if parsed_must_include else None
     parsed_must_start = _parse_squad_option(must_start)
@@ -2141,7 +2140,7 @@ def dashboard(gw_window: int, must_include: str | None, must_start: str | None, 
         exclude_ids=exclude_ids,
     )
     click.echo(f"wrote {path}")
-    click.echo(f"open it in a browser and leave the tab open - it auto-reloads every {_REFRESH_SECONDS}s")
+    click.echo("open it in a browser and leave the tab open - it live-updates via the snapshot poll, no periodic reload")
 
 
 @cli.command()
@@ -3424,6 +3423,14 @@ def strategic_plan_cmd(
     from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
     from fpl_agent.optimization.strategic_planner import build_strategic_plan, synthesize_current_recommendation
 
+    # Real "no stale recommendation overrides" guard (2026-08-28, direct
+    # user requirement, marked CRITICAL: "a late-arriving old background
+    # process must not overwrite newer state"). Captured before any real
+    # search work starts - the honest "as-of" moment this run's own input
+    # (squad/DB state) was actually read, checked again right before
+    # publish below.
+    computation_started_at = datetime.now(timezone.utc).isoformat()
+
     conn = get_connection()
     try:
         immediate_optimum_label = None
@@ -3588,9 +3595,32 @@ def strategic_plan_cmd(
             for h in _CHECKPOINTS
         } if roll_start_event is not None else {}
 
+        # Real "no stale recommendation overrides" check (2026-08-28, direct
+        # user requirement, marked CRITICAL) - right before publishing,
+        # check whether a NEWER `strategic_plan` decision was already
+        # logged while THIS run was still computing (a second real search -
+        # auto-triggered by a fresher change, or a manual invocation -
+        # that started later but finished first). If so, this result is
+        # real, honest work, just based on staler input than what's already
+        # published - marked `superseded` (never silently deleted, this
+        # project's own established "skipped, not discarded" posture) and
+        # excluded from ever being read as "the current" plan
+        # (`strategic_plan_decisions_with_recommendation`'s own filter).
+        existing_latest = latest_decision_of_type(conn, "strategic_plan")
+        superseded = existing_latest is not None and existing_latest.created_at > computation_started_at
+        if superseded:
+            click.echo(
+                f"WARNING: a newer strategic_plan decision (#{existing_latest.id}, "
+                f"{existing_latest.created_at}) was already logged while this run was computing "
+                f"(started {computation_started_at}) - publishing this result as superseded, not current",
+                err=True,
+            )
+
         strategic_decision_id = log_decision(
             conn, "strategic_plan", summary=best_summary,
             detail={
+                "computation_started_at": computation_started_at,
+                "superseded": superseded,
                 # Real "was this computed against MY CURRENT squad" field
                 # (2026-08-29, master automation pass) - lets
                 # _maybe_trigger_strategic_plan_recompute detect a real

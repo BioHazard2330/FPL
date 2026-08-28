@@ -104,3 +104,56 @@ def test_strategic_plan_with_chips_overlays_a_real_chip_schedule(monkeypatch, db
     detail = json.loads(row["detail"])
     assert detail["chip_schedule"] is not None
     assert "entries" in detail["chip_schedule"]
+
+
+def test_strategic_plan_marks_itself_superseded_when_a_newer_decision_already_published(monkeypatch, db_conn):
+    """Real "no stale recommendation overrides" fix (2026-08-28, direct user
+    requirement marked CRITICAL: "a late-arriving old background process
+    must not overwrite newer state"). Simulates the real race: a NEWER
+    `strategic_plan` decision (a faster-finishing second run, started
+    later on fresher input) is already published by the time THIS run
+    reaches its own publish step - proven here by seeding a decision whose
+    `created_at` is in the future relative to when this run started. The
+    new row must still be logged (real work, never silently discarded) but
+    marked `superseded`, and `latest_strategic_plan_with_recommendation`
+    must skip it and return the genuinely-newer one instead - even though
+    the superseded row has the HIGHER row id (would win a naive
+    `ORDER BY id DESC` otherwise)."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.optimization.strategic_planner import latest_strategic_plan_with_recommendation
+
+    _seed_two_team_pool(db_conn)
+    _patch_expected_points_window(monkeypatch)
+
+    future_created_at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    db_conn.execute(
+        "INSERT INTO decisions (decision_type, summary, detail, created_at) VALUES (?,?,?,?)",
+        (
+            "strategic_plan", "a genuinely newer real decision",
+            json.dumps({"current_recommendation": {"verdict": "ACT", "action_kind": "roll", "label": "ROLL",
+                                                     "path_total": 1.0, "immediate_optimum_label": None,
+                                                     "strategic_optimum_label": "ROLL",
+                                                     "immediate_vs_strategic_differ": False,
+                                                     "evidence_confidence": None, "reason": "test"}}),
+            future_created_at,
+        ),
+    )
+    db_conn.commit()
+    newer_decision_id = db_conn.execute("SELECT id FROM decisions ORDER BY id DESC LIMIT 1").fetchone()["id"]
+
+    result = CliRunner().invoke(
+        cli, ["strategic-plan", "--squad", "1,2", "--bank", "0", "--horizon", "2", "--beam-width", "2", "--no-chips"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "superseded" in result.output.lower()
+
+    row = db_conn.execute("SELECT id, detail FROM decisions WHERE decision_type='strategic_plan' ORDER BY id DESC LIMIT 1").fetchone()
+    this_run_detail = json.loads(row["detail"])
+    assert row["id"] > newer_decision_id  # this run's own row IS the highest id
+    assert this_run_detail["superseded"] is True
+
+    latest = latest_strategic_plan_with_recommendation(db_conn)
+    assert latest.id == newer_decision_id  # the genuinely-newer decision wins, not the higher row id

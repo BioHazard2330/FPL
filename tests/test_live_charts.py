@@ -82,6 +82,54 @@ def test_intragame_rank_chart_excludes_degenerate_samples(db_conn):
     assert render_intragame_rank_chart(db_conn, 2) == ""
 
 
+def _seed_live_points_sample(conn, event, points, created_at, captain_points=None):
+    from fpl_agent.database.decisions import log_decision
+    log_decision(
+        conn, "live_points_sample", summary=f"GW{event}: {points} pts",
+        detail={"event": event, "points": points, "captain_points": captain_points},
+    )
+    conn.execute("UPDATE decisions SET created_at=? WHERE id=(SELECT MAX(id) FROM decisions)", (created_at,))
+    conn.commit()
+
+
+def test_intragame_points_chart_absent_without_an_event(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_intragame_points_chart
+    assert render_intragame_points_chart(db_conn, None) == ""
+
+
+def test_intragame_points_chart_absent_with_fewer_than_two_real_samples(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_intragame_points_chart
+    _seed_live_points_sample(db_conn, event=2, points=10, created_at="2026-08-29T12:00:00Z")
+    assert render_intragame_points_chart(db_conn, 2) == ""
+
+
+def test_intragame_points_chart_draws_real_samples_and_never_leaks_another_event(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_intragame_points_chart
+    _seed_live_points_sample(db_conn, event=2, points=10, created_at="2026-08-29T12:00:00Z", captain_points=4)
+    _seed_live_points_sample(db_conn, event=2, points=18, created_at="2026-08-29T12:05:00Z", captain_points=8)
+    _seed_live_points_sample(db_conn, event=1, points=999, created_at="2026-08-29T11:00:00Z", captain_points=999)
+
+    result = render_intragame_points_chart(db_conn, 2)
+
+    assert "<polyline" in result
+    assert "2 real samples" in result
+    assert "Captain points" in result  # both samples have a real captain value -> the dual-line overlay renders
+    assert "999" not in result  # the other event's real sample never leaks in
+
+
+def test_intragame_points_chart_omits_captain_line_when_a_sample_has_no_real_captain_value(db_conn):
+    """Real, honest partial-data handling - never invents an aligned
+    captain-points line when the real data has a genuine gap."""
+    from fpl_agent.monitoring.dashboard.live_charts import render_intragame_points_chart
+    _seed_live_points_sample(db_conn, event=2, points=10, created_at="2026-08-29T12:00:00Z", captain_points=None)
+    _seed_live_points_sample(db_conn, event=2, points=18, created_at="2026-08-29T12:05:00Z", captain_points=8)
+
+    result = render_intragame_points_chart(db_conn, 2)
+
+    assert "<polyline" in result
+    assert "Captain points" not in result
+
+
 # --- Captain contribution / actual-vs-expected (fpl.page-parity continuation) ---
 
 def _seed_player(conn, player_id, web_name="P"):

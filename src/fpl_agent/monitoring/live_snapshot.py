@@ -192,7 +192,7 @@ def _points_changes_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
     }
 
 
-def _decision_status(conn: sqlite3.Connection, is_stale: bool | None) -> str:
+def _decision_status(conn: sqlite3.Connection, is_stale: bool | None) -> tuple[str, str | None]:
     """Real CURRENT/STALE/RECOMPUTING status (2026-08-29, "final runtime
     reliability pass" P0 ask). RECOMPUTING reads the SAME real
     `app_meta['strategic_plan_auto_started_at']` lock
@@ -200,7 +200,10 @@ def _decision_status(conn: sqlite3.Connection, is_stale: bool | None) -> str:
     fires a real background recompute - never a second, invented "is it
     recomputing" signal. Falls back to STALE/CURRENT (already real, from
     `assess_recommendation_freshness`) when no recompute is genuinely
-    in-flight."""
+    in-flight. Returns `(status, triggered_at)` - the real raw lock
+    timestamp (2026-08-28, direct user requirement: "Recomputing ·
+    triggered 12s ago" needs the real trigger time, not a second guess) is
+    `None` whenever status isn't RECOMPUTING."""
     row = conn.execute("SELECT value FROM app_meta WHERE key='strategic_plan_auto_started_at'").fetchone()
     if row is not None:
         try:
@@ -209,14 +212,14 @@ def _decision_status(conn: sqlite3.Connection, is_stale: bool | None) -> str:
                 lock_ts = lock_ts.replace(tzinfo=timezone.utc)
             age_minutes = (datetime.now(timezone.utc) - lock_ts).total_seconds() / 60
             if age_minutes < _RECOMPUTE_LOCK_STALE_MINUTES:
-                return "RECOMPUTING"
+                return "RECOMPUTING", row["value"]
         except ValueError:
             pass
     if is_stale:
-        return "STALE"
+        return "STALE", None
     if is_stale is None:
-        return "UNKNOWN"
-    return "CURRENT"
+        return "UNKNOWN", None
+    return "CURRENT", None
 
 
 def _cadence_block(conn: sqlite3.Connection, rank_retrieved_at: str | None) -> dict:
@@ -267,11 +270,14 @@ def _recommendation_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
     if freshness is None and change is None:
         return None
     is_stale = freshness.is_stale if freshness else None
+    status, recompute_triggered_at = _decision_status(conn, is_stale)
     return {
         "is_stale": is_stale,
         "stale_reason": freshness.stale_reason if freshness else None,
+        "stale_detected_at": freshness.stale_detected_at if freshness else None,
         "computed_at": freshness.computed_at if freshness else None,
-        "status": _decision_status(conn, is_stale),
+        "status": status,
+        "recompute_triggered_at": recompute_triggered_at,
         "last_change": (
             {
                 "old_label": change.old_label, "new_label": change.new_label,
@@ -334,6 +340,9 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
             "by_player": list(my_live_score.by_player),
         }
 
+    if my_live_score is not None:
+        _maybe_log_intragame_points_sample(conn, event, my_live_score, rank_block)
+
     return {
         "version": now,  # ISO timestamp - sortable, and a real "as of" disclosure, not an opaque counter
         "generated_at": now,
@@ -350,6 +359,52 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "source_freshness": _source_freshness_block(conn),
         "cadence": _cadence_block(conn, rank_block["retrieved_at"] if rank_block else None),
     }
+
+
+_INTRAGAME_POINTS_SAMPLE_MIN_INTERVAL_SECONDS = 60
+
+
+def _maybe_log_intragame_points_sample(conn: sqlite3.Connection, event: int | None, my_live_score, rank_block: dict | None) -> None:
+    """Real intragame (sub-GW) points/rank time series (2026-08-28, direct
+    user requirement: "do not fabricate history... store intragame
+    snapshots for timestamp/overall points/squad points/captain points/
+    rank... charts should become populated during the real GW, do not wait
+    for the GW to finish"). Reuses the EXACT same real, already-proven
+    pattern `live_charts.py::_intragame_rank_series` established for rank -
+    append-only rows in the existing `decisions` journal (no new table/
+    migration) - this is the sibling write for squad/captain points, which
+    (unlike rank) had no logged history anywhere before this; `my_live_score`
+    is already computed fresh every real `build_live_snapshot` call, so
+    this is a pure read of already-computed values plus one throttled
+    write, never a new computation. Throttled to at most one row per
+    `_INTRAGAME_POINTS_SAMPLE_MIN_INTERVAL_SECONDS` (a live match can call
+    `build_live_snapshot` every ~10-25s; logging every tick would bloat the
+    journal for zero real chart-resolution benefit) - checks the real
+    latest logged sample's own `created_at`, never a fabricated counter."""
+    from fpl_agent.database.decisions import list_decisions_of_type, log_decision
+
+    if event is None:
+        return
+    latest = list_decisions_of_type(conn, "live_points_sample", limit=1)
+    if latest:
+        try:
+            last_ts = datetime.fromisoformat(latest[0].created_at.replace("Z", "+00:00"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - last_ts).total_seconds() < _INTRAGAME_POINTS_SAMPLE_MIN_INTERVAL_SECONDS:
+                return
+        except ValueError:
+            pass
+    log_decision(
+        conn, "live_points_sample",
+        summary=f"GW{event}: {my_live_score.points:.0f} pts",
+        detail={
+            "event": event,
+            "points": my_live_score.points,
+            "captain_points": my_live_score.captain_points,
+            "rank": rank_block["estimated_rank"] if rank_block and rank_block.get("is_current") else None,
+        },
+    )
 
 
 def write_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None, path: Path | None = None) -> Path:

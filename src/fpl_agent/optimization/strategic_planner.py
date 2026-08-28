@@ -212,9 +212,19 @@ def strategic_plan_decisions_with_recommendation(
     scanning forever."""
     from fpl_agent.database.decisions import list_decisions_of_type
 
+    # `superseded` (2026-08-28, direct user requirement: "a late-arriving
+    # old background process must not overwrite newer state") - set by
+    # `strategic_plan_cmd` itself when, right before publishing, it finds a
+    # NEWER `strategic_plan` decision already logged (a second real search -
+    # auto-triggered or manual - that started later but finished first).
+    # Still logged, never silently discarded (this project's own established
+    # "skipped, not deleted" posture - see `analysis_queue.py::
+    # supersede_stale_halftime_jobs`), just excluded from ever being read as
+    # "the current" one, same real skip-mechanism this function already uses
+    # for an incomplete `--no-current-action` run.
     complete = [
         d for d in list_decisions_of_type(conn, "strategic_plan", limit=scan_limit)
-        if d.detail.get("current_recommendation") is not None
+        if d.detail.get("current_recommendation") is not None and not d.detail.get("superseded")
     ]
     return complete[:limit]
 

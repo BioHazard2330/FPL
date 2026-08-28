@@ -166,7 +166,7 @@ def _system_live_html(snapshot: dict | None = None) -> str:
   <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">not yet polled</b></span>
   <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
   <span class="system-live-field">Rank <b id="system-live-rank-age">&mdash;</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
-  <span class="system-live-field">Decision <b id="system-live-decision-age">&mdash;</b> &middot; <b id="system-live-decision-status">&mdash;</b></span>
+  <span class="system-live-field">Decision <b id="system-live-decision-status">&mdash;</b> &middot; <span id="system-live-decision-age">&mdash;</span></span>
   <span class="system-live-field">News <b id="system-live-news-age">&mdash;</b></span>
   <span class="system-live-field">Projections <b id="system-live-projections-age">&mdash;</b></span>
   <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
@@ -193,7 +193,9 @@ def _system_live_html(snapshot: dict | None = None) -> str:
 
     snapshot_at = _iso_or_none(snapshot.get("generated_at"))
     decision_at = _iso_or_none(rec.get("computed_at"))
-    decision_status = _esc(rec.get("status") or "UNKNOWN")
+    stale_detected_at = _iso_or_none(rec.get("stale_detected_at"))
+    recompute_triggered_at = _iso_or_none(rec.get("recompute_triggered_at"))
+    raw_status = rec.get("status") or "UNKNOWN"
     rank_at = _iso_or_none(rank.get("retrieved_at"))
     rank_next_due_at = None
     if rank_at is not None and rank_cadence.get("next_due_floor_minutes") is not None:
@@ -213,8 +215,22 @@ def _system_live_html(snapshot: dict | None = None) -> str:
     # (runs on `DOMContentLoaded`, always), so this is only ever visibly
     # shown for the instant before that script block executes.
     snapshot_age = _relative_time(snapshot.get("generated_at"))
-    decision_age = _relative_time(rec.get("computed_at")) if rec.get("computed_at") else "no decision logged yet"
     rank_age = _relative_time(rank.get("retrieved_at")) if rank.get("retrieved_at") else "unavailable"
+    # Real, explicit status-first wording (2026-08-28, direct user
+    # requirement: never show a bare "CURRENT" without enough context to
+    # explain what current means - "Current · computed 8m ago" / "Stale ·
+    # {reason}, detected 34s ago" / "Recomputing · triggered 12s ago").
+    _DECISION_STATUS_LABEL = {"CURRENT": "Current", "STALE": "Stale", "RECOMPUTING": "Recomputing", "UNKNOWN": "Unknown"}
+    decision_status_label = _DECISION_STATUS_LABEL.get(raw_status, raw_status.title())
+    if raw_status == "RECOMPUTING" and rec.get("recompute_triggered_at"):
+        decision_detail = f"triggered {_relative_time(rec.get('recompute_triggered_at'))}"
+    elif raw_status == "STALE" and rec.get("stale_reason"):
+        detected_bit = f", detected {_relative_time(rec.get('stale_detected_at'))}" if rec.get("stale_detected_at") else ""
+        decision_detail = f"{rec.get('stale_reason')}{detected_bit}"
+    elif rec.get("computed_at"):
+        decision_detail = f"computed {_relative_time(rec.get('computed_at'))}"
+    else:
+        decision_detail = "no decision logged yet"
     news_age = _relative_time(max(news_times)) if news_times else "unavailable"
     projections_age = _relative_time((cadence.get("system") or {}).get("last_sync_at")) if projections_at else "unavailable"
     degraded_html = (
@@ -225,7 +241,9 @@ def _system_live_html(snapshot: dict | None = None) -> str:
     data_attrs = "".join(
         f" data-{name}=\"{_esc(value)}\""
         for name, value in (
-            ("snapshot-at", snapshot_at), ("decision-at", decision_at), ("decision-status", rec.get("status")),
+            ("snapshot-at", snapshot_at), ("decision-at", decision_at), ("decision-status", raw_status),
+            ("stale-reason", rec.get("stale_reason")), ("stale-detected-at", stale_detected_at),
+            ("recompute-triggered-at", recompute_triggered_at),
             ("rank-at", rank_at), ("rank-next-due-at", rank_next_due_at),
             ("news-at", news_at), ("projections-at", projections_at),
             ("degraded", ",".join(degraded) if degraded else None),
@@ -239,7 +257,7 @@ def _system_live_html(snapshot: dict | None = None) -> str:
   <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">{_esc(snapshot_age)}</b></span>
   <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
   <span class="system-live-field">Rank <b id="system-live-rank-age">{_esc(rank_age)}</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
-  <span class="system-live-field">Decision <b id="system-live-decision-age">{_esc(decision_age)}</b> &middot; <b id="system-live-decision-status">{decision_status}</b></span>
+  <span class="system-live-field">Decision <b id="system-live-decision-status">{_esc(decision_status_label)}</b> &middot; <span id="system-live-decision-age">{_esc(decision_detail)}</span></span>
   <span class="system-live-field">News <b id="system-live-news-age">{_esc(news_age)}</b></span>
   <span class="system-live-field">Projections <b id="system-live-projections-age">{_esc(projections_age)}</b></span>
   {degraded_html}
@@ -304,6 +322,16 @@ def render_hero(
         if actual_points is not None else ""
     )
 
+    # Real live captain points (2026-08-28, direct user "live browser patch
+    # coverage" requirement: the snapshot already carries captain_points,
+    # this tile previously showed only the captain's NAME, never their real
+    # live score). `id="live-captain-points"` mirrors the existing
+    # `live-points-value`/`live-rank-value` pattern the poll already
+    # patches - empty (never a fabricated 0) until a real live_payload has
+    # actually produced a captain score this session.
+    cap_pts = ((live_snapshot or {}).get("points") or {}).get("captain_points")
+    captain_points_html = f" <span class='home-metric-sub' id='live-captain-points'>{cap_pts:.0f} pts</span>" if cap_pts is not None else " <span class='home-metric-sub' id='live-captain-points'></span>"
+
     captain_verdict_html = f"<div class='home-hero-captain-verdict'>{captain_verdict}</div>" if captain_verdict else ""
     cross_check_html = _cross_check_html(cross_check)
 
@@ -320,7 +348,7 @@ def render_hero(
     <div class="home-metric"><div class="home-metric-label">Next-GW xP</div><div class="home-metric-value">{next_xp:.1f}</div></div>
     <div class="home-metric"><div class="home-metric-label">Bank</div><div class="home-metric-value">£{bank_m:.1f}m</div></div>
     <div class="home-metric"><div class="home-metric-label">Free transfers</div><div class="home-metric-value" title="{_esc(ft_title)}">{_esc(ft_value)}</div></div>
-    <div class="home-metric"><div class="home-metric-label">Captain</div><div class="home-metric-value">{_captain_html(captain_name)}</div></div>
+    <div class="home-metric"><div class="home-metric-label">Captain</div><div class="home-metric-value">{_captain_html(captain_name)}{captain_points_html}</div></div>
     {rank_tile_html}
   </div>
   <div class="home-hero-actions">

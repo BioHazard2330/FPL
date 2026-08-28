@@ -63,7 +63,14 @@ from fpl_agent.optimization.decision_engine import evaluate_locked_squad
 from fpl_agent.optimization.locked_squad import get_locked_squad
 from fpl_agent.optimization.squad import validate_starting_xi
 
-_REFRESH_SECONDS = 30
+# Real "remove the two competing live/refresh concepts" fix (2026-08-28) -
+# the page no longer periodically reloads itself; this is only the JS
+# safety-net threshold (see the script block below) for the one failure
+# mode the live_snapshot.json poll can't self-heal - it silently never
+# succeeding even once in this whole window (a genuine JS exception, a
+# suspended-then-resumed tab whose timers got dropped by the OS). Long on
+# purpose - a real, brief network hiccup is NOT a reason to reload.
+_SILENT_FALLBACK_RELOAD_SECONDS = 600
 
 
 def generate_dashboard_html(
@@ -427,22 +434,23 @@ def generate_dashboard_html(
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
     news_fresh_html = f"<span class='panel-subtitle freshness-tag'>Updated {_esc(news_fresh)}</span>" if news_fresh else ""
 
-    # Real perf fix (2026-08-28, direct user P0: "do not rebuild the entire
-    # static dashboard every 15-30 seconds") - LIVE state used to full-page-
-    # reload every 20s, re-fetching the whole (real, ~1-minute-cost)
-    # dashboard.html for the sake of a rank number and a points total that
-    # change every tick. The live_snapshot.json poll below now carries those
-    # fields on its own cheap ~20s cadence; this meta-refresh becomes a
-    # slower catch-all for everything else (squad changes, new decisions),
-    # not the primary live-update mechanism anymore.
-    refresh_seconds = 45 if dash_state == "LIVE" else _REFRESH_SECONDS
-
+    # Real "remove the two competing live/refresh concepts" fix (2026-08-28,
+    # direct user requirement) - a `<meta http-equiv="refresh">` full-page
+    # reload every 30-45s used to be this page's own second, competing
+    # "live" mechanism alongside the live_snapshot.json poll. The poll (see
+    # `patchLiveRows`/`applySnapshot` below) now covers every field this
+    # page shows that can meaningfully change mid-session - the meta tag is
+    # gone outright, not replaced with another user-facing timer. A silent
+    # JS safety net remains (`_SILENT_FALLBACK_RELOAD_MS` below) for the one
+    # real failure mode a client-side poll can't self-heal - the poll itself
+    # silently wedged (a genuine JS exception, a tab suspended then resumed
+    # by the OS with its timers dropped) - it only fires if NO poll has ever
+    # succeeded in that whole window, never on a fixed cadence.
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="{refresh_seconds}">
 <title>fpl-agent dashboard</title>
 <style>
 {_CSS}
@@ -638,6 +646,7 @@ def generate_dashboard_html(
   var liveState = {{
     snapshotAt: null, decisionAt: null, rankAt: null, degraded: [], prevRank: null,
     rankNextDueAt: null, decisionStatus: null, newsAt: null, projectionsAt: null,
+    staleReason: null, staleDetectedAt: null, recomputeTriggeredAt: null,
   }};
   // Real fix (2026-08-28, direct user report: a dashboard opened via
   // `file://` - downloaded/copied out of `data/` rather than served over
@@ -657,6 +666,9 @@ def generate_dashboard_html(
     if (d.snapshotAt) liveState.snapshotAt = Date.parse(d.snapshotAt);
     if (d.decisionAt) liveState.decisionAt = Date.parse(d.decisionAt);
     if (d.decisionStatus) liveState.decisionStatus = d.decisionStatus;
+    if (d.staleReason) liveState.staleReason = d.staleReason;
+    if (d.staleDetectedAt) liveState.staleDetectedAt = Date.parse(d.staleDetectedAt);
+    if (d.recomputeTriggeredAt) liveState.recomputeTriggeredAt = Date.parse(d.recomputeTriggeredAt);
     if (d.rankAt) liveState.rankAt = Date.parse(d.rankAt);
     if (d.rankNextDueAt) liveState.rankNextDueAt = Date.parse(d.rankNextDueAt);
     if (d.newsAt) liveState.newsAt = Date.parse(d.newsAt);
@@ -687,15 +699,32 @@ def generate_dashboard_html(
     if (s < 90) return 'in ' + s + 's';
     return 'in ' + Math.round(s / 60) + 'm';
   }}
+  // Real, explicit status-first decision wording (2026-08-28, direct user
+  // requirement: never show a bare "CURRENT" without enough context - the
+  // SAME 3-branch text `home._system_live_html`'s own Python builds for
+  // the immediate-paint render, kept in sync here so a live poll update
+  // never regresses back to a less informative label).
+  var DECISION_STATUS_LABEL = {{CURRENT: 'Current', STALE: 'Stale', RECOMPUTING: 'Recomputing', UNKNOWN: 'Unknown'}};
+  function decisionDetailText() {{
+    if (liveState.decisionStatus === 'RECOMPUTING' && liveState.recomputeTriggeredAt != null) {{
+      return 'triggered ' + fmtAgo(liveState.recomputeTriggeredAt);
+    }}
+    if (liveState.decisionStatus === 'STALE' && liveState.staleReason) {{
+      var detected = liveState.staleDetectedAt != null ? ', detected ' + fmtAgo(liveState.staleDetectedAt) : '';
+      return liveState.staleReason + detected;
+    }}
+    if (liveState.decisionAt != null) return 'computed ' + fmtAgo(liveState.decisionAt);
+    return 'no decision logged yet';
+  }}
   function tickLiveStrip() {{
     var strip = document.getElementById('system-live-strip');
     if (!strip) return;
     var snapEl = document.getElementById('system-live-snapshot-age');
     if (snapEl && liveState.snapshotAt != null) snapEl.textContent = fmtAgo(liveState.snapshotAt);
     var decEl = document.getElementById('system-live-decision-age');
-    if (decEl) decEl.textContent = liveState.decisionAt != null ? fmtAgo(liveState.decisionAt) : 'no decision logged yet';
+    if (decEl) decEl.textContent = decisionDetailText();
     var decStatusEl = document.getElementById('system-live-decision-status');
-    if (decStatusEl) decStatusEl.textContent = liveState.decisionStatus || 'UNKNOWN';
+    if (decStatusEl) decStatusEl.textContent = DECISION_STATUS_LABEL[liveState.decisionStatus] || (liveState.decisionStatus || 'Unknown');
     var rankEl2 = document.getElementById('system-live-rank-age');
     if (rankEl2) rankEl2.textContent = liveState.rankAt != null ? fmtAgo(liveState.rankAt) : 'unavailable';
     var rankNextEl = document.getElementById('system-live-rank-next');
@@ -749,6 +778,11 @@ def generate_dashboard_html(
     // is what actually ages, not the fact that we happened to fetch it).
     if (snap.generated_at) liveState.snapshotAt = Date.parse(snap.generated_at);
     if (snap.recommendation && snap.recommendation.computed_at) liveState.decisionAt = Date.parse(snap.recommendation.computed_at);
+    if (snap.recommendation && snap.recommendation.stale_reason) liveState.staleReason = snap.recommendation.stale_reason;
+    if (snap.recommendation && snap.recommendation.stale_detected_at) liveState.staleDetectedAt = Date.parse(snap.recommendation.stale_detected_at);
+    if (snap.recommendation && snap.recommendation.recompute_triggered_at) {{
+      liveState.recomputeTriggeredAt = Date.parse(snap.recommendation.recompute_triggered_at);
+    }}
     if (snap.rank && snap.rank.retrieved_at) liveState.rankAt = Date.parse(snap.rank.retrieved_at);
     if (snap.source_freshness) {{
       liveState.degraded = snap.source_freshness.filter(function(s) {{ return s.degraded; }}).map(function(s) {{ return s.source; }});
@@ -810,6 +844,11 @@ def generate_dashboard_html(
     if (snap.points && snap.points.points != null) {{
       var ptsEl = document.getElementById('live-points-value');
       if (ptsEl) ptsEl.textContent = Math.round(snap.points.points);
+    }}
+    if (snap.points && snap.points.captain_points != null) {{
+      var capPtsEl = document.getElementById('live-captain-points');
+      var capPtsText = Math.round(snap.points.captain_points) + ' pts';
+      if (capPtsEl && capPtsEl.textContent !== capPtsText) capPtsEl.textContent = capPtsText;
     }}
     // Real recommendation-staleness propagation (P0 "decision change" ask) -
     // reuses the SAME 'home-hero-stale-banner' CSS class the server-rendered
@@ -934,13 +973,47 @@ def generate_dashboard_html(
     list.insertBefore(li, list.firstChild);
     while (list.children.length > 8) list.removeChild(list.lastChild);
   }}
+  // Real, readable change-event text (2026-08-28, direct user requirement:
+  // "Do not emit database IDs, internal classifier names, raw SQL state
+  // changes" in the live-changes feed) - mirrors
+  // `legacy.py::_describe_change_event`'s own real per-type sentences
+  // (same STATUS_LABELS vocabulary), just built client-side since this
+  // feed is JS-only. Any real event_type this map doesn't recognize still
+  // renders (falls back to a spaced-out version of the raw type) rather
+  // than silently dropping a real, meaningful change.
+  var STATUS_LABELS = {{a: 'available', i: 'injured', s: 'suspended', u: 'unavailable', d: 'doubtful'}};
+  function humanizeChangeEvent(c) {{
+    var name = c.web_name || 'player';
+    if (c.event_type === 'status_change') {{
+      var oldS = STATUS_LABELS[c.old_value] || c.old_value || '?';
+      var newS = STATUS_LABELS[c.new_value] || c.new_value || '?';
+      return name + ' status: ' + oldS + ' → ' + newS;
+    }}
+    if (c.event_type === 'predicted_lineup_change') {{
+      return name + ' predicted status: ' + (c.old_value || 'unknown') + ' → ' + (c.new_value || 'dropped from lineup coverage');
+    }}
+    if (c.event_type === 'start_percent_change') {{
+      return name + ' start probability: ' + c.old_value + '% → ' + c.new_value + '%';
+    }}
+    if (c.event_type === 'lineup_confirmed') {{
+      return name + ' — starting XI confirmed';
+    }}
+    if (c.event_type === 'price_change') {{
+      return name + ' price: ' + c.old_value + ' → ' + c.new_value;
+    }}
+    if (c.event_type === 'club_change') {{
+      return name + ' moved club';
+    }}
+    if (c.event_type === 'setpiece_change') {{
+      return name + ' set-piece role changed';
+    }}
+    return name + ' ' + String(c.event_type || 'updated').replace(/_/g, ' ');
+  }}
   function pushLiveChanges(snap) {{
     if (snap.recent_changes) {{
       snap.recent_changes.forEach(function(c) {{
         var key = 'chg:' + c.entity_id + ':' + c.detected_at;
-        addFeedEntry(key,
-          '<b>' + feedTime(c.detected_at) + '</b> ' + (c.web_name || 'player') + ' ' +
-          c.event_type + ' (' + c.old_value + ' → ' + c.new_value + ')');
+        addFeedEntry(key, '<b>' + feedTime(c.detected_at) + '</b> ' + humanizeChangeEvent(c));
       }});
     }}
     if (snap.recommendation && snap.recommendation.last_change) {{
@@ -952,9 +1025,12 @@ def generate_dashboard_html(
         '<br><span class="live-changes-feed-meta">Trigger: ' + (ch.trigger || 'no single recorded trigger') +
         ' &middot; Impact: ' + impactText + '</span>');
     }}
+    var MATCH_EVENT_LABEL = {{goal: 'goal', assist: 'assist', red_card: 'red card'}};
     (snap.match_events || []).forEach(function(e) {{
       var key = 'evt:' + e.player_id + ':' + e.kind + ':' + e.count;
-      addFeedEntry(key, '<b>' + feedTime(snap.generated_at) + '</b> ' + e.web_name + ' - ' + e.kind + ' (x' + e.count + ')');
+      var label = MATCH_EVENT_LABEL[e.kind] || String(e.kind).replace(/_/g, ' ');
+      var countText = e.count > 1 ? e.count + ' ' + label + 's' : label;
+      addFeedEntry(key, '<b>' + feedTime(snap.generated_at) + '</b> ' + e.web_name + ' — ' + countText);
     }});
     // Real "Points Changes" feed entries (fpl.page-parity pass) - a genuine
     // NEW real revision this session hasn't seen yet (server-computed
@@ -979,14 +1055,26 @@ def generate_dashboard_html(
       lastBonus[b.player_id] = b.provisional_bonus;
     }});
   }}
+  var pollEverSucceeded = false;
   function poll() {{
     fetch('live_snapshot.json', {{cache: 'no-store'}})
-      .then(function(r) {{ return r.ok ? r.json() : null; }})
+      .then(function(r) {{
+        if (r.ok) pollEverSucceeded = true;
+        return r.ok ? r.json() : null;
+      }})
       .then(applySnapshot)
       .catch(function() {{ /* no snapshot yet, or not served over http - silent */ }});
   }}
   poll();
   setInterval(poll, POLL_INTERVAL_MS);
+  // Real silent safety-net reload (2026-08-28, "remove the two competing
+  // live/refresh concepts" fix) - the ONLY remaining page reload, and only
+  // when the poll above has NEVER once reached a real server in this
+  // entire window (see `_SILENT_FALLBACK_RELOAD_SECONDS`'s own docstring
+  // for why - not a periodic timer, checked exactly once).
+  setTimeout(function() {{
+    if (!pollEverSucceeded) location.reload();
+  }}, {_SILENT_FALLBACK_RELOAD_SECONDS * 1000});
 }})();
 
 (function() {{
@@ -1326,6 +1414,8 @@ _CSS_WORKSPACE = """
   .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }
   .home-metric-value-muted { opacity: 0.55; font-size: 1.05rem; }
+  .home-metric-sub { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.85rem; font-weight: 600;
+    color: var(--accent-2); margin-left: 4px; }
   /* Real rank delta (2026-08-29, P0 live-rank ask: "Δ since previous
      snapshot") - populated client-side only, from two real observed
      values (see the poll script). Green = rank improved (numerically

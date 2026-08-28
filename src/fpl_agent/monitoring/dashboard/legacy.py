@@ -64,11 +64,6 @@ from fpl_agent.optimization.chips import (
     wildcard_value,
 )
 
-_REFRESH_SECONDS = 60  # client-side reload cadence - tightened 2026-08-20 (was 300) per direct
-# user ask for near-real-time updates; the actual data freshness ceiling is however often
-# fpl run-scheduled last ran (scheduler/adaptive.py now retightens that too, 15-360min by
-# real deadline-proximity - see config/freshness.yaml), reloading the static HTML file
-# itself is free, so there's no cost to checking far more often than that.
 _CHANGE_EVENT_TYPES = (
     "new_player", "removed_player", "club_change", "status_change",
     # Real gap closed 2026-08-21 (locked-squad product architecture pass,

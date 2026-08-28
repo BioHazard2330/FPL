@@ -8,16 +8,17 @@ Scope: rank trajectory + cumulative GW points, both single-source from
 `my_team_gw_summary` (real official FPL per-GW summary, one row per
 finished event - `ingestion/my_team.py`), a genuinely intragame live-rank
 chart (`render_intragame_rank_chart` - no new storage, reuses the decision
-journal's own already-append-only `live_rank` rows), and (added this pass)
-per-finished-GW captain contribution + actual-vs-expected, both real joins
-over `prediction_outcomes` (predicted/actual per-player-per-event,
-`models/calibration.py`) and `my_team_picks` (real `is_captain`/
-`multiplier`) - no new storage needed here either, both tables already
-existed. Real, disclosed scope limit: these are PER-FINISHED-GW (same
-grain as rank trajectory/cumulative points), not intragame - a live,
-sub-GW version of squad/captain contribution would need genuinely new
-per-tick storage (the live snapshot's own JSON file deliberately doesn't
-persist history) and is still real, separate, unbuilt follow-up work."""
+journal's own already-append-only `live_rank` rows), per-finished-GW
+captain contribution + actual-vs-expected (real joins over
+`prediction_outcomes`/`my_team_picks`, no new storage), and (2026-08-28,
+direct user requirement: "store intragame snapshots... charts should
+become populated during the real GW, do not wait for it to finish")
+`render_intragame_points_chart` - the sibling live chart for squad/captain
+points, same real append-only-journal reuse pattern the rank chart already
+proved out (`monitoring/live_snapshot.py::_maybe_log_intragame_points_sample`
+writes one throttled real row - at most 1/60s - per live `build_live_
+snapshot` call, under a new `live_points_sample` decision type; no new
+table/migration)."""
 import sqlite3
 from dataclasses import dataclass
 
@@ -263,6 +264,68 @@ def render_intragame_rank_chart(conn: sqlite3.Connection, event: int | None) -> 
   </div>"""
 
 
+_INTRAGAME_POINTS_SAMPLE_LIMIT = 200  # generous real cap - at the ~60s write-side throttle this covers well over 3h of one live GW
+
+
+def _intragame_points_series(conn: sqlite3.Connection, event: int) -> tuple[ChartSeries, list[str], ChartSeries]:
+    """Real intragame (sub-GW) squad-points + captain-points time series
+    (2026-08-28, direct user requirement: "store intragame snapshots...
+    charts should become populated during the real GW, do not wait for
+    the GW to finish"). Same real append-only-journal reuse pattern
+    `_intragame_rank_series` already established -
+    `monitoring/live_snapshot.py::_maybe_log_intragame_points_sample`
+    writes one throttled real row per live tick; this is a pure read over
+    it, no new computation. Returns (points_series, timestamps,
+    captain_points_series) - captain_points entries with no real value yet
+    (a squad with no locked captain) are dropped from that series only,
+    never imputed as 0."""
+    from fpl_agent.database.decisions import list_decisions_of_type
+
+    rows = list_decisions_of_type(conn, "live_points_sample", limit=_INTRAGAME_POINTS_SAMPLE_LIMIT)
+    samples = [
+        (r.created_at, r.detail.get("points"), r.detail.get("captain_points"))
+        for r in rows
+        if r.detail.get("event") == event and r.detail.get("points") is not None
+    ]
+    samples.sort(key=lambda s: s[0])
+    timestamps = [s[0] for s in samples]
+    points_series = ChartSeries(events=list(range(len(samples))), values=[float(s[1]) for s in samples])
+    cap_pairs = [(i, s[2]) for i, s in enumerate(samples) if s[2] is not None]
+    captain_series = ChartSeries(events=[i for i, _ in cap_pairs], values=[float(v) for _, v in cap_pairs])
+    return points_series, timestamps, captain_series
+
+
+def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None) -> str:
+    """`''` (no panel) when there's no real current/reference event, or
+    fewer than 2 real trustworthy samples logged yet for it - never a
+    fabricated single-point "trend". Captain contribution overlays on the
+    same axis only when EVERY points sample also has a real captain-points
+    value alongside it (same length, same real sample set) - a squad with
+    any gap in real captain resolution simply omits that line entirely
+    rather than inventing an alignment/fill scheme for a genuinely partial
+    series."""
+    if event is None:
+        return ""
+    points_series, timestamps, captain_series = _intragame_points_series(conn, event)
+    if len(points_series.values) < 2:
+        return ""
+    x_labels = (_time_label(timestamps[0]), _time_label(timestamps[-1]))
+    if len(captain_series.values) == len(points_series.values):
+        svg = _dual_line_chart(
+            points_series, "Squad points", "--accent",
+            captain_series, "Captain points", "--accent-2", value_fmt="int",
+        )
+    else:
+        svg = _svg_line_chart(
+            points_series, invert_y=False, color_var="--accent", value_fmt="int", x_labels=x_labels,
+            aria_label=f"Live squad points during GW{event}, {x_labels[0]} to {x_labels[1]}",
+        )
+    return f"""<div class="live-chart-card">
+    <div class="live-chart-title">Live squad points this gameweek <span class="panel-subtitle">{len(points_series.values)} real samples</span></div>
+    {svg}
+  </div>"""
+
+
 def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: int | None = None) -> str:
     """Per-GW charts (rank trajectory, cumulative GW points - real
     `my_team_gw_summary` data, needs 2+ finished GWs) plus, when real
@@ -271,7 +334,7 @@ def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: in
     finished, the real gap this closes). `''` only when there's no real
     synced entry AND no real intragame samples either - never a
     placeholder/mock chart."""
-    intragame_html = render_intragame_rank_chart(conn, event)
+    intragame_html = render_intragame_rank_chart(conn, event) + render_intragame_points_chart(conn, event)
     if entry_id is None:
         return f'<div class="live-charts-grid">{intragame_html}</div>' if intragame_html else ""
 
