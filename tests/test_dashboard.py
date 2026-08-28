@@ -7,7 +7,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _format_kickoff,
     _local_time_span,
     _match_intelligence_html,
-    _next_gw_plan_html,
     _news_html,
     _pitch_html_from_xi,
     _risk_monitor_html,
@@ -515,7 +514,13 @@ def test_dashboard_live_tracking_shows_defcon_progress_for_a_def(db_conn):
 
 def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
     """GKP is never DEFCON-eligible (defcon_threshold is None) - the panel
-    must not fabricate a "0/None" or any other progress badge for one."""
+    must not fabricate a "0/None" or any other progress badge for one.
+    Scoped to `_live_tracking_html` directly (not the whole page) - the
+    Points Changes panel (fpl.page-parity pass) legitimately mentions
+    "DefCon" in its own always-present static section label, unrelated to
+    this GKP-specific live-tracking assertion."""
+    from fpl_agent.monitoring.dashboard.legacy import _live_tracking_html
+
     _seed(db_conn, budget_tenths=950, club_limit=4)
     now = "t0"
     db_conn.execute(
@@ -534,7 +539,7 @@ def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
         ]
     }
 
-    result = generate_dashboard_html(db_conn, live_payload=live_payload)
+    result = _live_tracking_html(db_conn, {1}, live_payload)
 
     assert "DEFCON +2" not in result
     assert "DefCon" not in result
@@ -788,6 +793,30 @@ def test_dashboard_fixture_ticker_shows_real_projected_goals_and_clean_sheet(db_
 
     assert "xGF" in result
     assert "CS " in result
+
+
+def test_dashboard_fixture_ticker_has_a_real_goals_cs_view_toggle(db_conn):
+    """fpl.page-parity item: the Fixture Tool's own Goals/CS% tabs, swapping
+    the cell's displayed value between opponent-short and the same real
+    already-computed xGF/CS% numbers the hover tooltip already carries -
+    zero new computation."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',1,0,0,1,0,'t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,team_h_score,team_a_score,"
+        "team_h_difficulty,team_a_difficulty,finished,started,updated_at) "
+        "VALUES (1,1,1,'2026-08-21T19:00:00Z',1,2,NULL,NULL,3,3,0,0,'t0')"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "fdr-view-btn" in result
+    assert "data-view='goals'" in result
+    assert "data-view='cs'" in result
 
 
 def test_format_kickoff_is_human_readable_not_raw_iso():
@@ -1200,6 +1229,70 @@ def test_news_panel_filters_out_generic_football_items_with_no_real_player_or_te
     assert "1 generic football item(s) filtered" in result
 
 
+def _seed_news_for_player(conn, player_id, title, team_id=1):
+    exists = conn.execute("SELECT 1 FROM teams WHERE id=?", (team_id,)).fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,'t0')",
+            (team_id, team_id, f"Team{team_id}", f"T{team_id}"),
+        )
+    p_exists = conn.execute("SELECT 1 FROM players WHERE id=?", (player_id,)).fetchone()
+    if not p_exists:
+        conn.execute(
+            "INSERT INTO element_types (id,singular_name,singular_name_short,plural_name,squad_min_play,"
+            "squad_max_play,squad_select,updated_at) VALUES (99,'Midfielder','MID','Midfielders',2,5,5,'t0')"
+        )
+        conn.execute(
+            "INSERT INTO players (id,code,web_name,team_id,element_type,status,removed,updated_at) "
+            "VALUES (?,?,?,?,99,'a',0,'t0')",
+            (player_id, player_id, f"NewsPlayer{player_id}", team_id),
+        )
+    row = conn.execute(
+        "INSERT INTO news_items (source, source_tier, external_id, title, link, published_at, retrieved_at) "
+        "VALUES ('bbc_pl','strong_reporter',?,?, 'http://x', '2026-08-22T06:00:00Z', 't0') RETURNING id",
+        (title, title),
+    ).fetchone()
+    conn.execute("INSERT INTO news_item_players (news_item_id, player_id) VALUES (?,?)", (row["id"], player_id))
+    conn.commit()
+    return row["id"]
+
+
+def test_news_panel_tags_a_real_decision_impact_for_the_squads_captain(db_conn):
+    """Real decision-impact enrichment (fpl.page-parity item: "why does this
+    news matter to MY decision"), reusing the already-computed captain_id -
+    never a second, competing relevance scan."""
+    web_name = "NewsPlayer1"
+    _seed_news_for_player(db_conn, 1, f"{web_name} doubtful for Gameweek 3")
+
+    result = _news_html(db_conn, {1}, captain_id=1, ta=None)
+
+    assert "your captain" in result
+
+
+def test_news_panel_tags_a_real_recommended_transfer_out_target(db_conn):
+    from fpl_agent.optimization.transfers import TransferCandidate
+
+    web_name = "NewsPlayer2"
+    _seed_news_for_player(db_conn, 2, f"{web_name} injury concern")
+    fake_candidate = TransferCandidate(
+        player_out_id=2, player_out_name=web_name, player_in_id=99, player_in_name="Target",
+        price_delta_tenths=0, ev_1gw=0.0, ev_3gw=0.0, ev_5gw=0.0,
+        net_ev_1gw=0.0, net_ev_3gw=0.0, net_ev_5gw=0.0, uses_hit=False,
+    )
+
+    class _FakeChosenWrap:
+        def __init__(self, candidate):
+            self.candidate = candidate
+
+    class _FakeTA:
+        def __init__(self, chosen):
+            self.chosen = chosen
+
+    result = _news_html(db_conn, {2}, captain_id=None, ta=_FakeTA(_FakeChosenWrap(fake_candidate)))
+
+    assert "recommended transfer OUT" in result
+
+
 def test_match_intelligence_panel_never_shows_a_raw_debug_string(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
@@ -1488,39 +1581,6 @@ def test_risk_monitor_adds_confirmed_benched_locked_squad_member(db_conn):
 
     assert "risk-severity-action" in result
     assert "confirmed not in the starting lineup" in result
-
-
-def test_next_gw_plan_panel_shows_pending_state_when_never_run(db_conn):
-    _seed(db_conn, budget_tenths=950, club_limit=4)
-
-    result = _next_gw_plan_html(db_conn)
-
-    assert "not generated yet" in result
-
-
-def test_next_gw_plan_panel_shows_real_verdicts_when_logged(db_conn):
-    from fpl_agent.database.decisions import log_decision
-
-    _seed(db_conn, budget_tenths=950, club_limit=4)
-    log_decision(
-        db_conn, "post_gw_plan", "captain=change transfer=keep",
-        {
-            "event": 2,
-            "captain": {"kind": "change", "current": "Haaland", "suggested": "Salah", "delta": 1.5},
-            "transfer": {"kind": "keep", "delta": 0.3},
-            "risks": [],
-            "bench_boost": 5.0, "triple_captain": 3.0, "wildcard_5gw": 1.0, "free_hit": 0.5,
-            "eligible_chip_windows": ["bboost"],
-        },
-    )
-    db_conn.commit()
-
-    result = _next_gw_plan_html(db_conn)
-
-    assert "CAPTAIN" in result
-    assert "Salah" in result
-    assert "TRANSFER" not in result or "no transfer currently justified" in result
-    assert "Chip" in result or "CHIP" in result
 
 
 # --- Strategic Plan (2026-08-27, "generate all of it" + "final product-level
@@ -1820,10 +1880,10 @@ def test_plan_workspace_notes_when_path_plays_no_chip(db_conn):
     assert "No chip played on this path" in result
 
 
-# --- Price Predictions / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22) ---
+# --- Price History / Team Odds / Player Odds / Statistics (dashboard-overhaul pass, 2026-08-22; price forecast made league-wide + change ledger added later) ---
 
-def test_price_predictions_shows_real_forecast_for_squad(db_conn):
-    from fpl_agent.monitoring.dashboard.legacy import _price_predictions_html
+def test_price_history_shows_real_forecast_league_wide(db_conn):
+    from fpl_agent.monitoring.dashboard.price_history import render_price_history_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '1000', 't0')")
@@ -1833,20 +1893,36 @@ def test_price_predictions_shows_real_forecast_for_squad(db_conn):
     )
     db_conn.commit()
 
-    result = _price_predictions_html(db_conn, {1, 10})
+    result = render_price_history_html(db_conn, {1})
 
-    assert "Rise likely" in result
+    assert "Predicted to rise" in result
     assert "P1" in result  # _seed's own web_name for player 1
+    assert "price-row-squad" in result  # player 1 is in the passed squad_ids
 
 
-def test_price_predictions_empty_state_without_a_squad(db_conn):
-    from fpl_agent.monitoring.dashboard.legacy import _price_predictions_html
+def test_price_history_change_ledger_empty_state_with_no_confirmed_changes(db_conn):
+    from fpl_agent.monitoring.dashboard.price_history import render_price_history_html
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
-    result = _price_predictions_html(db_conn, set())
+    result = render_price_history_html(db_conn, set())
 
-    assert "empty-state" in result
+    assert "No confirmed price changes recorded yet" in result
+
+
+def test_price_history_change_ledger_shows_real_confirmed_change(db_conn):
+    from fpl_agent.monitoring.dashboard.price_history import render_price_history_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute("UPDATE player_price_history SET valid_until='t1' WHERE player_id=1 AND valid_until IS NULL")
+    db_conn.execute(
+        "INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES (1, 999, 't1', NULL)"
+    )
+    db_conn.commit()
+
+    result = render_price_history_html(db_conn, set())
+
+    assert "£99.9m" in result
 
 
 def test_fixture_projections_shows_real_goals_and_clean_sheet_grids(db_conn):

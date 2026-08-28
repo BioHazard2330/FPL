@@ -1307,58 +1307,6 @@ def _price_changes_html(conn: sqlite3.Connection, limit: int = 8) -> str:
     return "\n".join(lines)
 
 
-def _price_predictions_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """Price Predictions (dashboard-overhaul pass, 2026-08-22, direct user
-    request - "fpl.page has updates on price change predictions"). This
-    project already has a real, tested price-forecast heuristic
-    (`models.price_forecast.classify_price_change`, real transfer-momentum
-    ratio from already-synced `player_transfer_momentum_history`) that had
-    never been wired into the dashboard at all - no new modelling here, just
-    surfacing it. Explicitly labeled `confidence="low"`/uncalibrated, same
-    honesty posture the underlying module itself documents - never presented
-    as a confident prediction."""
-    if not squad_ids:
-        return "<div class='empty-state'>No squad to forecast prices for yet.</div>"
-    rows = conn.execute(
-        "SELECT p.id, p.web_name, t.short_name AS team, cur.value_tenths "
-        "FROM players p JOIN teams t ON t.id = p.team_id "
-        "LEFT JOIN player_price_history cur ON cur.player_id = p.id AND cur.valid_until IS NULL "
-        "WHERE p.id IN ({})".format(",".join("?" * len(squad_ids))),
-        tuple(squad_ids),
-    ).fetchall()
-    if not rows:
-        return "<div class='empty-state'>No squad price data synced yet.</div>"
-
-    from fpl_agent.models.price_forecast import classify_price_change
-
-    entries = []
-    for r in rows:
-        forecast = classify_price_change(conn, r["id"])
-        entries.append((r, forecast))
-    # Real movers first (rise/fall likely), stable players after - the whole
-    # point of a forecast panel is surfacing what's actually moving.
-    entries.sort(key=lambda e: (e[1].direction == "STABLE", -abs(e[1].momentum_ratio)))
-
-    _DIR_LABEL = {
-        "RISE_LIKELY": ("Rise likely", "ok", "&#9650;"),
-        "FALL_LIKELY": ("Fall likely", "bad", "&#9660;"),
-        "STABLE": ("Unlikely to change", "warn", "&#8226;"),
-    }
-    lines = []
-    for r, forecast in entries:
-        label, cls, arrow = _DIR_LABEL.get(forecast.direction, ("Unknown", "warn", "&#8226;"))
-        price = f"£{r['value_tenths']/10:.1f}m" if r["value_tenths"] is not None else "£?m"
-        lines.append(f"""<div class="price-predict-row">
-  <span class="price-predict-name"><strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])}</span></span>
-  <span class="price-predict-price">{price}</span>
-  <span class="price-predict-{cls}">{arrow} {_esc(label)}</span>
-</div>""")
-    return (
-        "<div class='panel-subtitle' style='margin-bottom:8px'>Uncalibrated heuristic (real transfer momentum, "
-        "not a confirmed FPL trigger) - directional only</div>" + "\n".join(lines)
-    )
-
-
 _PROJECTION_GWS = 5  # matches fpl.page's own real "GAMEWEEK PROJECTIONS" default window
 
 
@@ -1716,7 +1664,10 @@ def _transfer_momentum_html(conn: sqlite3.Connection, squad_ids: set[int]) -> st
     )
 
 
-def _news_html(conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6) -> str:
+def _news_html(
+    conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6,
+    captain_id: int | None = None, ta: "TransferDecisionAnalysis | None" = None,
+) -> str:
     """Editorial-feed emphasis (2026-08-21, third session, section 14):
     "important news subtle emphasis, normal news quiet - do NOT give every
     article equal visual weight." "Important" is derived, not fabricated -
@@ -1768,14 +1719,26 @@ def _news_html(conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6) ->
 
     squad_web_names: set[str] = set()
     squad_team_shorts: set[str] = set()
+    web_name_to_id: dict[str, int] = {}
     if squad_ids:
         for row in conn.execute(
-            "SELECT p.web_name, t.short_name FROM players p JOIN teams t ON t.id = p.team_id "
+            "SELECT p.id, p.web_name, t.short_name FROM players p JOIN teams t ON t.id = p.team_id "
             "WHERE p.id IN ({})".format(",".join("?" * len(squad_ids))),
             tuple(squad_ids),
         ).fetchall():
             squad_web_names.add(row["web_name"])
             squad_team_shorts.add(row["short_name"])
+            web_name_to_id[row["web_name"]] = row["id"]
+
+    # Real decision-impact enrichment (fpl.page-parity item: "why does this
+    # news matter to MY decision", not just "this news mentions a squad
+    # player"). Reuses the already-computed `ta`/`captain_id` this project's
+    # own decision layer produced for this regen - never a second, competing
+    # scan (`CLAUDE.md`'s decision-engine rule) - so a news item is only ever
+    # tagged with a real, current recommendation already surfaced elsewhere
+    # on the dashboard (Home hero / Plan), not a fabricated relevance score.
+    out_id = ta.chosen.candidate.player_out_id if ta is not None and ta.chosen is not None else None
+    in_id = ta.chosen.candidate.player_in_id if ta is not None and ta.chosen is not None else None
 
     lines = []
     for n in items:
@@ -1786,17 +1749,25 @@ def _news_html(conn: sqlite3.Connection, squad_ids: set[int], limit: int = 6) ->
             tags.append(f"<span class='tag tag-team'>{_esc(n['teams'])}</span>")
         players_str = n.get("players") or ""
         teams_str = n.get("teams") or ""
-        is_relevant = (
-            any(name in players_str for name in squad_web_names)
-            or any(short in teams_str.split(", ") for short in squad_team_shorts)
-        )
+        matched_names = [name for name in squad_web_names if name in players_str]
+        is_relevant = bool(matched_names) or any(short in teams_str.split(", ") for short in squad_team_shorts)
+        matched_ids = {web_name_to_id[name] for name in matched_names}
+
+        impact_tag = ""
+        if captain_id is not None and captain_id in matched_ids:
+            impact_tag = "<span class='news-impact news-impact-captain'>your captain</span>"
+        elif out_id is not None and out_id in matched_ids:
+            impact_tag = "<span class='news-impact news-impact-out'>flagged: recommended transfer OUT</span>"
+        elif in_id is not None and in_id in matched_ids:
+            impact_tag = "<span class='news-impact news-impact-in'>transfer target</span>"
+
         item_cls = "news-item news-item-relevant" if is_relevant else "news-item"
         relevance_tag = "<span class='news-relevance'>your squad</span>" if is_relevant else ""
         lines.append(
             f"<div class='{item_cls}'>"
             f"<div class='news-title'><a href='{_esc(n['link'])}' target='_blank' rel='noopener'>{_esc(n['title'])}</a></div>"
             f"<div class='news-meta'><span class='source-tag'>{_esc(n['source_tier'] or 'news')}</span>"
-            f"<span class='news-time'>{_esc(_relative_time(n['published_at']))}</span>{relevance_tag}{''.join(tags)}</div>"
+            f"<span class='news-time'>{_esc(_relative_time(n['published_at']))}</span>{relevance_tag}{impact_tag}{''.join(tags)}</div>"
             f"</div>"
         )
     filtered_note = (
@@ -2189,102 +2160,6 @@ def _compute_my_live_score(conn: sqlite3.Connection, locked, live_payload: dict 
         captain_play_state=cap_play_state,
         played=status["played"], live=status["live"], yet_to_play=status["yet_to_play"],
         bench=len(locked.xi.bench),
-    )
-
-
-def _captain_points_suffix(my_live_score: "_MyLiveScore | None") -> str:
-    """Real ACTUAL-vs-not-yet-played disambiguation for the hero's captain
-    line (post-match-consistency pass, 2026-08-22): raw `0 pts` is
-    genuinely ambiguous between "played and scored zero" and "hasn't
-    played yet" - the exact gap flagged live (Haaland's own hero line read
-    plain '0 pts' while his own fixture hadn't kicked off). Never printed
-    for a captain whose match is still ahead."""
-    if my_live_score is None or my_live_score.captain_points is None:
-        return ""
-    if my_live_score.captain_play_state == "yet_to_play":
-        return " &middot; yet to play"
-    return f" &middot; {my_live_score.captain_points:.0f} pts"
-
-
-def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
-    """Next GW Plan panel (2026-08-22, automation-lifecycle pass, item 9) -
-    "the main optimizer output should be KEEP/TRANSFER/CAPTAIN/CHIP/REVIEW
-    relative to my current squad." Reads the real `post_gw_plan` decision
-    `optimization.post_gw_pipeline.run_post_gw_pipeline` logs once per
-    gameweek (the daemon's own real, official snapshot - distinct from the
-    always-live-recomputed AI Decisions panel above it) - never fabricates a
-    plan when the pipeline hasn't run yet for this event."""
-    logged = latest_decision_of_type(conn, "post_gw_plan")
-    if logged is None:
-        return "<div class='empty-state'>Next-GW plan not generated yet - the daemon runs this automatically once the gameweek finishes.</div>"
-
-    detail = logged.detail
-    age = _relative_time(logged.created_at)
-
-    def _verdict_row(label: str, kind: str | None, body: str) -> str:
-        verdict = {
-            "keep": "KEEP", "change": "CAPTAIN", "transfer": "TRANSFER",
-        }.get(kind, "REVIEW")
-        cls = {"KEEP": "low", "TRANSFER": "monitor", "CAPTAIN": "monitor", "REVIEW": "action"}.get(verdict, "action")
-        return (
-            f"<div class='risk-row'><span class='risk-severity risk-severity-{cls}'>{_esc(verdict)}</span>"
-            f"<span class='risk-body'><strong>{_esc(label)}</strong> &middot; {body}</span></div>"
-        )
-
-    captain = detail.get("captain", {})
-    transfer = detail.get("transfer", {})
-    rows = [
-        _verdict_row(
-            "Captain", captain.get("kind"),
-            f"{_esc(captain.get('current') or '?')}" + (
-                f" &rarr; {_esc(captain.get('suggested'))} ({captain.get('delta'):+.1f} xP)"
-                if captain.get("kind") == "change" and captain.get("suggested") else " - no change"
-            ),
-        ),
-        _verdict_row(
-            "Transfer", transfer.get("kind"),
-            "no transfer currently justified" if transfer.get("kind") == "keep"
-            else f"real net gain available ({transfer.get('delta'):+.1f} xP)" if transfer.get("delta") is not None
-            else "review manually",
-        ),
-    ]
-    eligible = detail.get("eligible_chip_windows") or []
-    if eligible:
-        chip_value_key = {
-            "bboost": "bench_boost", "3xc": "triple_captain", "wildcard": "wildcard_5gw", "freehit": "free_hit",
-        }
-        chip_bits = ", ".join(
-            f"{name} {detail.get(chip_value_key.get(name, ''), 0):.1f}xP" for name in eligible
-        )
-        rows.append(_verdict_row("Chip", "review", f"eligible this window - {_esc(chip_bits)}"))
-
-    risks = detail.get("risks") or []
-    risk_note = f"<div class='panel-subtitle'>{len(risks)} squad risk(s) flagged</div>" if risks else ""
-
-    # Real, opt-in multi-GW strategic path note (2026-08-27) - reads the last
-    # `fpl strategic-plan` result the same cheap way the Chip Strategy/Live
-    # Rank tiles read their own last-logged state; never triggers a fresh
-    # search from the dashboard regen path (a real 8-GW beam search takes
-    # well over a minute - `fpl strategic-plan` stays a manually-run,
-    # opt-in command, same posture as `fpl live-rank`/`fpl season-sim`).
-    strategic = latest_strategic_plan_with_recommendation(conn)
-    strategic_html = ""
-    if strategic is not None:
-        sd = strategic.detail
-        best_path = sd.get("best_path") or {}
-        opening = best_path.get("steps", [{}])[0].get("action", "?") if best_path.get("steps") else "?"
-        differ_note = (
-            f" &mdash; differs from the immediate 1-GW pick" if sd.get("immediate_vs_strategic_differ") else ""
-        )
-        strategic_html = (
-            f"<div class='panel-subtitle' style='margin-top:10px'>Strategic {sd.get('horizon_gw','?')}-GW path "
-            f"({_esc(_relative_time(strategic.created_at))}): GW2 {_esc(opening)}{differ_note}. "
-            f"Run <code>fpl strategic-plan</code> for the full top-5 path comparison.</div>"
-        )
-
-    return (
-        f"<div class='freshness-tag' style='margin-bottom:8px'>Generated {_esc(age)} for GW{detail.get('event', '?')}</div>"
-        + "\n".join(rows) + risk_note + strategic_html
     )
 
 
@@ -3299,16 +3174,10 @@ _CSS = """
   .hero-primary.hero-verdict-review { border-left-color: var(--warn); }
   .hero-gw { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--faint); }
-  .hero-verdict-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .hero-verdict-word { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 2.7rem; font-weight: 800; color: var(--fg);
     line-height: 1; letter-spacing: -0.01em; text-transform: uppercase; }
   .hero-verdict-roll .hero-verdict-word, .hero-verdict-transfer .hero-verdict-word, .hero-verdict-chip .hero-verdict-word { color: var(--accent-2); }
   .hero-verdict-review .hero-verdict-word { color: var(--warn); }
-  .hero-verdict-confidence { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; color: var(--muted); background: transparent; border: 1px solid var(--border);
-    padding: 3px 9px; border-radius: 5px; white-space: nowrap; }
-  .hero-verdict-detail { font-size: 0.92rem; font-weight: 500; color: var(--muted); line-height: 1.45; max-width: 46ch; }
-  .hero-verdict-metrics { display: flex; gap: 22px; margin-top: 2px; }
   .hero-verdict-metric { display: flex; flex-direction: column; gap: 1px; }
   .hero-verdict-metric span { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
   .hero-verdict-metric strong { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--fg); }
@@ -3325,21 +3194,14 @@ _CSS = """
   .hero-action-btn:hover { border-color: var(--accent-2); color: var(--accent-2); }
   .hero-action-primary { background: var(--accent-2); color: #06110b; border-color: var(--accent-2); font-weight: 800; }
   .hero-action-primary:hover { color: #06110b; opacity: 0.9; }
-  .hero-action-ghost { border-color: var(--border); }
   .hero-watch { margin-top: 8px; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
-  .hero-watch-label { display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--faint); margin-bottom: 3px; }
   .hero-support { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-  .hero-metric-sub { font-size: 0.75rem; color: var(--faint); margin-top: 2px; }
   .hero-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; }
-  .hero-metric-label { font-size: 0.75rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em;
-    margin-bottom: 5px; font-weight: 700; }
   .hero-metric-value { font-family: "Oswald", "Titillium Web", system-ui, sans-serif; font-size: 1.2rem; font-weight: 800;
     font-variant-numeric: proportional-nums; }
   .hero-metric-value.accent-green { color: var(--accent-2); }
   .hero-metric-value.accent-pink { color: var(--fpl-pink); }
-  .hero-metric-value-muted { color: var(--muted); font-size: 1.05rem; }
   /* Real Gameweek Command Strip - a single inline status band under the
      tiles, not a 5th/6th/7th card. Flat, ticker-style. */
   .hero-strip { grid-column: 1 / -1; display: flex; align-items: center; gap: 0;
@@ -3349,7 +3211,6 @@ _CSS = """
     border-right: 1px solid var(--gridline); }
   .hero-strip-item:last-child { border-right: none; }
   .hero-strip-item:first-child { padding-left: 0; }
-  .hero-strip-label { color: var(--faint); text-transform: uppercase; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }
   .hero-strip-value { font-weight: 800; font-variant-numeric: tabular-nums; }
   .hero-strip-value.status-ok { color: var(--ok-text); }
   .hero-strip-value.status-bad { color: var(--bad); }
@@ -3755,7 +3616,6 @@ _CSS = """
     padding: 8px 10px; background: var(--surface-2); border-radius: 10px; }
   .fx-side { display: flex; align-items: center; gap: 6px; flex: 1; }
   .fx-side:last-child { flex-direction: row-reverse; text-align: right; }
-  .fx-shirt { width: 26px; height: 26px; object-fit: contain; flex-shrink: 0; }
   .fx-crest { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
   .fx-code { font-weight: 700; font-size: 0.78rem; }
   .fx-mid { flex-shrink: 0; min-width: 84px; text-align: center; }
@@ -3913,21 +3773,14 @@ _CSS = """
   .strategic-current strong { color: var(--fg); letter-spacing: 0.03em; font-size: 0.75rem; }
   .strategic-primary { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 12px;
     background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border); }
-  .strategic-primary-badge { font-size: 0.78rem; padding: 6px 14px; }
-  .strategic-primary-body { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.05rem; color: var(--fg); }
   .strategic-twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
   .strategic-col { background: var(--surface); border-radius: 10px; padding: 8px 12px; }
-  .strategic-col-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--muted); margin-bottom: 3px; }
-  .strategic-col-value { font-size: 0.9rem; font-weight: 700; color: var(--fg); }
   .strategic-horizon-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-bottom: 8px; }
   .strategic-horizon-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.75rem;
     text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; }
   .strategic-horizon-table td { padding: 5px 8px; border-top: 1px solid var(--border); }
-  .strategic-horizon-table tr.strategic-horizon-current td { color: var(--accent-2); font-weight: 700; }
   .strategic-note { font-size: 0.8rem; color: var(--muted); padding: 6px 2px 12px; }
   .strategic-note-differ { color: #ff9f43; }
-  .strategic-note-agree { color: var(--ok-text); }
   .strategic-subrow { font-size: 0.82rem; color: var(--fg); padding: 6px 2px; }
   .strategic-subrow strong { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
   .strategic-subrow-muted { font-size: 0.75rem; color: var(--muted); padding: 3px 2px; }
@@ -3941,7 +3794,6 @@ _CSS = """
      click-handling JS/tests but no longer renders as a boxed card - it's
      just the stat line + track, letting the dots/arrows/labels do the
      work instead of borders. --- */
-  .strategic-path-grid { display: block; }
   .strategic-path-card { background: transparent; border: none; padding: 2px 0 0; font-size: 0.8rem; min-width: 0; }
   .strategic-path-card[hidden] { display: none; }
   .strategic-path-header { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
@@ -3987,14 +3839,10 @@ _CSS = """
   .decision-why-list li { position: relative; padding-left: 20px; font-size: 0.92rem; line-height: 1.5; color: var(--fg); }
   .decision-why-list li::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 8px; height: 8px;
     border-radius: 3px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
-  .confidence-pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
   .confidence-pill { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; font-size: 0.76rem; }
   .confidence-pill span { color: var(--faint); text-transform: uppercase; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }
   .confidence-pill strong { color: var(--fg); font-weight: 800; }
-  .confidence-pill-good strong { color: var(--ok-text); }
-  .confidence-pill-mid strong { color: #d9a441; }
-  .confidence-pill-bad strong { color: var(--fpl-pink); }
   .decision-market-line { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
   .decision-market-line strong { color: var(--faint); font-weight: 800; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.04em; margin-right: 4px; }
   .decision-evidence { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
@@ -4005,7 +3853,6 @@ _CSS = """
     width: 18px; height: 18px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border);
     font-weight: 900; font-size: 0.85rem; color: var(--fg); flex-shrink: 0; }
   .decision-evidence[open] summary::before { content: "−"; }
-  .decision-evidence-body { margin-top: 12px; }
 
   /* --- Decision comparison: ROLL vs BEST TRANSFER vs BEST CHIP @ 3/5/8GW
      (2026-08-27, "personal FPL operating system" pass) - a real, cheap read
@@ -4082,11 +3929,6 @@ _CSS = """
 
   /* --- Squad State Machine (2026-08-27) - the squad as the real
      visualization of the selected strategic path, not a static panel --- */
-  .squad-state-heading { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.78rem; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 8px;
-    padding-top: 14px; border-top: 1px solid var(--border); }
-  .squad-state-switcher-label { font-size: 0.75rem; font-weight: 800; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--faint); margin-bottom: 6px; }
   .squad-state-switcher { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .squad-state-switcher .squad-state-pill-btn { padding: 5px 13px; }
   .squad-state-hint { font-size: 0.76rem; color: var(--faint); margin-bottom: 10px; }
@@ -4099,11 +3941,8 @@ _CSS = """
   .squad-state-pos-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 0;
     border-top: 1px solid var(--border); }
   .squad-state-pos-row:first-of-type { border-top: none; }
-  .squad-state-pos-label { flex-shrink: 0; width: 38px; font-size: 0.75rem; font-weight: 800; color: var(--faint);
-    text-transform: uppercase; letter-spacing: 0.04em; }
   .squad-state-player { font-size: 0.8rem; color: var(--fg); background: var(--surface); border-radius: 5px;
     padding: 3px 9px; }
-  .squad-state-player-in { background: color-mix(in srgb, var(--accent-2) 20%, var(--surface)); color: var(--ok-text); font-weight: 700; }
 
   /* --- Intelligence (2026-08-27) - WHAT CHANGED / WHO BENEFITS / RISK
      MONITOR / WHAT SHOULD I DO DIFFERENTLY, replacing scattered raw panels --- */
@@ -4252,6 +4091,28 @@ _CSS = """
   .price-predict-warn { color: var(--faint); }
   .player-odds-prob { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 700; }
   .player-odds-prob .panel-subtitle { font-weight: 400; margin-left: 4px; }
+
+  /* --- Price History / Points Changes (fpl.page-parity pass) - reuses the
+     price-predict-row/market-section vocabulary above, only genuinely new
+     rules below (search/filter controls, progress bar, squad highlight,
+     news decision-impact tags). --- */
+  .price-row-squad { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .price-predict-net { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 44px; text-align: right; }
+  .price-history-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .price-search-input, .price-filter-select { background: var(--surface-2); border: 1px solid var(--gridline);
+    border-radius: 6px; color: var(--text); font-size: 0.82rem; padding: 6px 10px; }
+  .price-search-input { flex: 1 1 180px; }
+  .price-progress-track { flex-basis: 90px; height: 6px; border-radius: 3px; background: var(--surface-3, var(--surface-2));
+    overflow: hidden; }
+  .price-progress-fill { display: block; height: 100%; border-radius: 3px; }
+  .price-progress-ok { background: var(--ok); }
+  .price-progress-bad { background: var(--bad); }
+  .price-progress-warn { background: var(--faint); }
+  .news-impact { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 2px 7px; border-radius: 10px; }
+  .news-impact-captain { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+  .news-impact-out { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  .news-impact-in { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok-text); }
 
   /* --- Fixture Projections (2026-08-22, replaces bookmaker-odds "Team
      Odds" panel per direct user request - real projected goals + clean

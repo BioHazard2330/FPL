@@ -34,6 +34,7 @@ def test_template_orders_by_ownership_desc(db_conn):
     result = get_template(db_conn, top_n_per_position=2)
 
     assert [p.web_name for p in result] == ["MostPopular", "Popular"]
+    assert result[0].eo_source == "raw" and result[0].margin_of_error_pp is None
 
 
 def test_template_respects_top_n_limit(db_conn):
@@ -86,3 +87,5 @@ def test_template_uses_sample_eo_when_available_even_if_raw_ownership_disagrees(
     assert [p.web_name for p in result] == ["Backup", "MostPopular", "Popular"]
     assert result[0].eo_source == "sampled"
     assert result[0].effective_ownership_percent == 70.0
+    assert result[0].margin_of_error_pp is not None and result[0].margin_of_error_pp > 0
+    assert result[2].eo_source == "sampled" and result[2].margin_of_error_pp is not None

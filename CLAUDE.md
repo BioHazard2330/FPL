@@ -62,7 +62,8 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | Team/player/manager intelligence rollups | `models/team_outlook.py`, `models/team_intelligence.py`, `models/player_intelligence.py`, `models/manager_intelligence.py` |
 | GW lifecycle + autonomous post-GW pipeline | `models/gw_lifecycle.py`, `optimization/post_gw_pipeline.py` |
 | Live rank (honest, degenerate-sample-aware) | `models/live_rank.py` |
-| Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point, `home.py`/`plan.py`/`squad.py`/`intelligence.py`/`market.py`/`opportunity.py`/`fixtures.py` workspaces, `data_payload.py` embedded-JSON snapshot, `legacy.py` not-yet-migrated Advanced/Live/Team-Outlook/Match-Intelligence panels) |
+| Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point, `home.py`/`plan.py`/`squad.py`/`intelligence.py`/`market.py`/`opportunity.py`/`fixtures.py`/`points_changes.py`/`price_history.py`/`template_team.py` workspaces, `data_payload.py` embedded-JSON snapshot, `legacy.py` not-yet-migrated Advanced/Live/Team-Outlook/Match-Intelligence panels) |
+| Post-match Bonus/DefCon revision detection (real snapshot diff, never in-play bonus churn) | `models/points_changes.py` (`detect_points_revisions`), `fpl points-changes` |
 | Calibration / prediction-vs-outcome storage | `models/calibration.py`, `prediction_outcomes` table |
 | Independent external-model benchmark (Solio Analytics) - divergence classification, component attribution, captain/transfer-target cross-check | `ingestion/solio_source.py` (fetch/store, ~4h cadence gate), `models/external_benchmark.py` (comparison engine - never overrides `decision_analysis`'s own verdict), `monitoring/dashboard/benchmark.py` (compressed Advanced-drawer panel) |
 
@@ -121,7 +122,7 @@ Run `fpl --help` for the full, current, real list (curated groups below — do n
 
 - **Sync**: `sync`, `sync-history`, `sync-news`, `sync-live-odds`, `sync-player-odds`, `sync-eo`, `sync-predicted-lineups`, `sync-lineup-probability`, `sync-match`, `sync-elite-panel`, `solio-sync`, `backfill-odds`, `backfill-xg`, `backfill-cross-league`, `repair-understat-players`, `my-team`.
 - **Decision**: `transfer-analysis`, `decision-fusion`, `model-benchmark`, `strategic-plan`, `decision-audit`, `season-sim`, `chips`, `captain`, `transfers`, `rate-team`, `build-team`, `build-squad`.
-- **Intelligence**: `team-outlook`, `team-news`, `manager-changes`, `manager-intelligence`, `player-intelligence`, `match-report`, `match-analyze`, `match-note`, `analysis-queue`, `calibration-report`, `decision-backtest`, `decision-changes`.
+- **Intelligence**: `team-outlook`, `team-news`, `manager-changes`, `manager-intelligence`, `player-intelligence`, `match-report`, `match-analyze`, `match-note`, `analysis-queue`, `calibration-report`, `decision-backtest`, `decision-changes`, `points-changes`.
 - **Live**: `live-bonus`, `live-rank`, `live-watch`, `live-match-poll`, `post-gw-pipeline`.
 - **Ops**: `run-scheduled`, `scheduler-status`, `doctor`, `readiness`, `status`, `source-status`, `storage`, `cleanup`, `backup`/`backups`/`verify-backup`/`restore`, `decisions`, `why`.
 - **Dashboard**: `dashboard [--gw-window N] [--must-include ids] [--must-start ids] [--exclude ids]`.

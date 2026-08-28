@@ -17,7 +17,8 @@ from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.monitoring.dashboard import (
-    benchmark, fixtures, home, injuries, intelligence, live_charts, market, opportunity, plan, player_data, squad,
+    benchmark, fixtures, home, injuries, intelligence, live_charts, market, opportunity, plan, player_data,
+    points_changes, price_history, squad, template_team,
 )
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
@@ -95,6 +96,7 @@ def generate_dashboard_html(
             )
             locked = None
     ta = ca = None
+    cap_id = None
     if locked is not None:
         try:
             ta, ca = _analyze_locked_decisions(conn, locked)
@@ -430,6 +432,8 @@ def generate_dashboard_html(
   <span class="site-nav-sep"></span>
   <a href="#opportunities" class="site-nav-secondary">Opportunities</a>
   <a href="#fixtures" class="site-nav-secondary">Fixtures</a>
+  <a href="#template-team" class="site-nav-secondary">Template</a>
+  <a href="#price-history" class="site-nav-secondary">Prices</a>
   <a href="#advanced" class="site-nav-secondary">Advanced</a>
 </nav>
 
@@ -466,7 +470,7 @@ def generate_dashboard_html(
   <section class="panel panel-news" data-cat="data">
     <h2>FPL Market / Player News <span class="panel-subtitle">journalism, Tier 2-4, filtered to real player/team matches</span>{news_fresh_html}</h2>
     <div class="news-list">
-{_news_html(conn, squad_ids)}
+{_news_html(conn, squad_ids, captain_id=cap_id, ta=ta)}
     </div>
   </section>
 
@@ -479,7 +483,22 @@ def generate_dashboard_html(
     <h2>Expected Data <span class="panel-subtitle">real current-season xG/xA/xGI, total and per-90</span></h2>
 {player_data.render_expected_data_html(conn)}
   </section>
+
+  <section class="panel panel-points-changes" id="points-changes" data-cat="data">
+    <h2>Points Changes <span class="panel-subtitle">post-match revisions to Bonus Points and DefCon</span></h2>
+{points_changes.render_points_changes_html(conn, squad_ids)}
+  </section>
+
+  <section class="panel panel-template-team" id="template-team" data-cat="intelligence">
+    <h2>Template Team <span class="panel-subtitle">highest-owned XI, sampled top-10k-league EO where available</span></h2>
+{template_team.render_template_team_html(conn)}
+  </section>
 </div>
+
+<section class="panel panel-price-history" id="price-history" data-cat="data">
+  <h2>Price History <span class="panel-subtitle">real price-change forecast + confirmed change ledger, league-wide</span></h2>
+{price_history.render_price_history_html(conn, squad_ids)}
+</section>
 
 <section class="panel panel-advanced-hub" id="advanced" data-cat="data">
   <h2>Advanced &amp; System <span class="panel-subtitle">diagnostic detail, from-scratch rebuild comparison, raw feeds, system health - real data</span></h2>
@@ -854,6 +873,18 @@ def generate_dashboard_html(
     }});
   }});
 
+  var viewButtons = document.querySelectorAll('.fdr-view-btn');
+  viewButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      viewButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      var view = btn.getAttribute('data-view');
+      grid.querySelectorAll('.fdr-opp').forEach(function(el) {{
+        el.hidden = el.getAttribute('data-view') !== view;
+      }});
+    }});
+  }});
+
   var filterButtons = document.querySelectorAll('.fdr-filter-btn');
   filterButtons.forEach(function(btn) {{
     btn.addEventListener('click', function() {{
@@ -871,6 +902,34 @@ def generate_dashboard_html(
   // as active while all 8 remain visible until the user clicks something.
   var defaultRange = document.querySelector('.fdr-range-btn.is-active');
   if (defaultRange) defaultRange.click();
+}})();
+
+// Price History: real client-side search/position/direction filter over the
+// one real server-rendered league-wide table (fpl.page-parity pass) - no
+// second query, every row already carries its own data-name/data-position/
+// data-direction attributes.
+(function() {{
+  var wrap = document.getElementById('price-history-rows');
+  var search = document.getElementById('price-search');
+  var posFilter = document.getElementById('price-position-filter');
+  var dirFilter = document.getElementById('price-direction-filter');
+  if (!wrap || !search || !posFilter || !dirFilter) return;
+  var rows = Array.prototype.slice.call(wrap.querySelectorAll('.price-predict-row'));
+
+  function apply() {{
+    var q = search.value.trim().toLowerCase();
+    var pos = posFilter.value;
+    var dir = dirFilter.value;
+    rows.forEach(function(row) {{
+      var matchesName = !q || row.getAttribute('data-name').indexOf(q) !== -1;
+      var matchesPos = pos === 'all' || row.getAttribute('data-position') === pos;
+      var matchesDir = dir === 'all' || row.getAttribute('data-direction') === dir;
+      row.style.display = (matchesName && matchesPos && matchesDir) ? '' : 'none';
+    }});
+  }}
+  search.addEventListener('input', apply);
+  posFilter.addEventListener('change', apply);
+  dirFilter.addEventListener('change', apply);
 }})();
 
 // Plan <-> Squad workspace interactivity (2026-08-27, frontend redesign) -
@@ -1131,9 +1190,9 @@ _CSS_WORKSPACE = """
   /* FIXTURE TOOL - range/metric/sort/filter controls. */
   .fixture-tool-controls { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; }
   .fixture-tool-control-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .fdr-range-btn, .fdr-metric-btn, .fdr-filter-btn { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  .fdr-range-btn, .fdr-metric-btn, .fdr-filter-btn, .fdr-view-btn { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
     background: transparent; color: var(--muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; font-family: inherit; }
-  .fdr-range-btn.is-active, .fdr-metric-btn.is-active, .fdr-filter-btn.is-active { background: var(--accent-2); color: #06110b; border-color: transparent; }
+  .fdr-range-btn.is-active, .fdr-metric-btn.is-active, .fdr-filter-btn.is-active, .fdr-view-btn.is-active { background: var(--accent-2); color: #06110b; border-color: transparent; }
   .fixture-tool-fallback-note { margin-bottom: 8px; }
 
   /* Squad projected-GW shirt tiles (2026-08-28, direct user ask: "more

@@ -19,6 +19,7 @@ class TemplatePlayer:
     ownership_percent: float
     effective_ownership_percent: float | None
     eo_source: str  # "sampled" or "raw"
+    margin_of_error_pp: float | None = None  # only set when eo_source == "sampled"
 
 
 def get_template(conn: sqlite3.Connection, top_n_per_position: int = DEFAULT_TOP_N_PER_POSITION) -> list[TemplatePlayer]:
@@ -37,27 +38,28 @@ def get_template(conn: sqlite3.Connection, top_n_per_position: int = DEFAULT_TOP
         eo = eo_by_player.get(r["id"])
         if eo is not None:
             sort_value = eo.eo_percent
-            eo_percent, eo_source = sort_value, "sampled"
+            eo_percent, eo_source, moe = sort_value, "sampled", eo.margin_of_error_pp
         else:
             # Absent from a non-empty sample means "no measurement was taken for this
             # player", not a measured zero - ~750 sampled managers can't cover every
             # player. Fall back to this row's own raw ownership, exactly as when no
             # sample exists at all, rather than claiming a fabricated sampled 0.0%.
             sort_value = r["selected_by_percent"]
-            eo_percent, eo_source = None, "raw"
-        ranked.append((r["position"], -sort_value, r, eo_percent, eo_source))
+            eo_percent, eo_source, moe = None, "raw", None
+        ranked.append((r["position"], -sort_value, r, eo_percent, eo_source, moe))
 
     ranked.sort(key=lambda t: (t[0], t[1]))
 
     by_position: dict[str, list[TemplatePlayer]] = {}
     result = []
-    for _, _, r, eo_percent, eo_source in ranked:
+    for _, _, r, eo_percent, eo_source, moe in ranked:
         bucket = by_position.setdefault(r["position"], [])
         if len(bucket) < top_n_per_position:
             player = TemplatePlayer(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 ownership_percent=r["selected_by_percent"],
                 effective_ownership_percent=eo_percent, eo_source=eo_source,
+                margin_of_error_pp=moe,
             )
             bucket.append(player)
             result.append(player)

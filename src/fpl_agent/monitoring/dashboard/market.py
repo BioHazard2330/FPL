@@ -2,11 +2,15 @@
 aggregation only, per the direct spec: MODEL / MARKET / DIVERGENCE, PRICE /
 OWNERSHIP / MOMENTUM - never a raw bookmaker-row dump. Reuses the existing,
 already-correct legacy renderers (`_market_divergence_html`/
-`_transfer_momentum_html`/`_price_predictions_html` already compute exactly
-this - model-vs-devigged-consensus, price movement, and transfer momentum as
-a share of all registered managers, which already covers "ownership" in the
-form that's real and available) - this module just gives them the workspace
-framing the new IA needs instead of re-deriving anything."""
+`_transfer_momentum_html` - model-vs-devigged-consensus and transfer
+momentum as a share of all registered managers, which already covers
+"ownership" in the form that's real and available) - this module just gives
+them the workspace framing the new IA needs instead of re-deriving
+anything. Squad-scoped price forecasting used to live here too
+(`_price_predictions_html`) - superseded by the real, league-wide,
+search/filter-capable `price_history.py` panel (dashboard-level, not squad-
+scoped) and removed rather than left as a duplicate, narrower view of the
+same data."""
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.models.fixtures import team_fixture_ticker
 from fpl_agent.monitoring.dashboard.legacy import (
@@ -14,7 +18,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _esc,
     _market_divergence_html,
     _official_badge_url,
-    _price_predictions_html,
     _transfer_momentum_html,
 )
 
@@ -81,18 +84,15 @@ def render_top_transfers_html(conn, direction: str = "in", limit: int = _TOP_TRA
 
 def render_market_workspace(conn, squad_ids: set[int]) -> str:
     divergence = _market_divergence_html(conn, squad_ids)
-    price = _price_predictions_html(conn, squad_ids)
     momentum = _transfer_momentum_html(conn, squad_ids)
     team_odds = render_team_odds_html(conn)
     transfers_in = render_top_transfers_html(conn, "in")
     transfers_out = render_top_transfers_html(conn, "out")
     return f"""<div class="market-section"><h3>Model vs Market <span class="panel-subtitle">DIVERGENCE - real expected-goals model vs devigged bookmaker consensus</span></h3>{divergence}</div>
-<div class="market-grid-2">
-  <div class="market-section"><h3>Price <span class="panel-subtitle">real price-change forecast</span></h3>{price}</div>
-  <div class="market-section"><h3>Ownership / Momentum <span class="panel-subtitle">real net transfers as a share of all registered managers</span></h3>{momentum}</div>
-</div>
+<div class="market-section"><h3>Ownership / Momentum <span class="panel-subtitle">real net transfers as a share of all registered managers</span></h3>{momentum}</div>
 <div class="market-section"><h3>Team Odds <span class="panel-subtitle">league-wide next-fixture clean sheet % / projected goals, ranked</span></h3>{team_odds}</div>
 <div class="market-grid-2">
   <div class="market-section"><h3>Top Transfers In <span class="panel-subtitle">league-wide, real counts this gameweek</span></h3>{transfers_in}</div>
   <div class="market-section"><h3>Top Transfers Out <span class="panel-subtitle">league-wide, real counts this gameweek</span></h3>{transfers_out}</div>
-</div>"""
+</div>
+<div class="panel-subtitle" style="margin-top:10px">Full price-change forecast + confirmed-change ledger: see the <a href="#price-history">Price History</a> section below.</div>"""

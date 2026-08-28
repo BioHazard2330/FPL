@@ -66,9 +66,12 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
             cells.append(
                 f"<div class='fdr-cell fdr-{overall_cls}' data-event='{e.event}' "
                 f"data-fdr-overall='{overall_cls}' data-fdr-attack='{attack_cls}' data-fdr-defence='{defence_cls}' "
+                f"data-goals='{goals_for:.1f}' data-cs='{cs_pct}' "
                 f"title='GW{e.event}: {_esc(r['short_name'])} vs {_esc(e.opponent_short)} {venue_word} - "
                 f"{_esc(_FIXTURE_QUALITY_LABEL[overall_cls])} (xGF {goals_for:.1f}, CS {cs_pct}%)'>"
-                f"<div class='fdr-opp'>{_esc(e.opponent_short)}{'(H)' if e.is_home else '(A)'}</div>"
+                f"<div class='fdr-opp' data-view='fixture'>{_esc(e.opponent_short)}{'(H)' if e.is_home else '(A)'}</div>"
+                f"<div class='fdr-opp' data-view='goals' hidden>{goals_for:.1f}</div>"
+                f"<div class='fdr-opp' data-view='cs' hidden>{cs_pct}%</div>"
                 f"</div>"
             )
         blanks = _RANGE_MAX_GW - len(entries)
@@ -99,6 +102,12 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
     <button type="button" class="fdr-metric-btn is-active" data-metric="overall">Overall</button>
     <button type="button" class="fdr-metric-btn" data-metric="attack">Attack</button>
     <button type="button" class="fdr-metric-btn" data-metric="defence">Defence</button>
+  </div>
+  <div class="fixture-tool-control-group" role="group" aria-label="Cell display">
+    <span class="fdr-sort-label">Show</span>
+    <button type="button" class="fdr-view-btn is-active" data-view="fixture">Fixtures</button>
+    <button type="button" class="fdr-view-btn" data-view="goals">Goals</button>
+    <button type="button" class="fdr-view-btn" data-view="cs">CS%</button>
   </div>
   <div class="fixture-tool-control-group" role="group" aria-label="Sort">
     <span class="fdr-sort-label">Sort</span>

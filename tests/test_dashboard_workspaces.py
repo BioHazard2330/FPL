@@ -4,7 +4,10 @@ new presentation-only functions, separate from the existing end-to-end
 `generate_dashboard_html` coverage in test_dashboard.py/test_dashboard_state.py."""
 from types import SimpleNamespace
 
-from fpl_agent.monitoring.dashboard import data_payload, home, injuries, intelligence, market, plan, player_data, squad
+from fpl_agent.monitoring.dashboard import (
+    data_payload, home, injuries, intelligence, market, plan, player_data, points_changes, price_history, squad,
+    template_team,
+)
 from test_dashboard import _locked_and_decision, _seed
 from test_optimization_squad import _seed as _seed_squad
 
@@ -459,3 +462,49 @@ def test_top_transfers_panel_honest_empty_state(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     result = market.render_top_transfers_html(db_conn, "in")
     assert "No real transfer-momentum data synced yet" in result
+
+
+# --- Template Team / Points Changes / Price History (fpl.page-parity pass) ---
+
+def test_template_team_panel_renders_real_positions(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    for pid, in db_conn.execute("SELECT id FROM players").fetchall():
+        db_conn.execute(
+            "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+            "VALUES (?, 10.0, 't0', NULL)",
+            (pid,),
+        )
+    db_conn.commit()
+    result = template_team.render_template_team_html(db_conn)
+    assert "empty-state" not in result
+    assert "projected-tile" in result
+
+
+def test_points_changes_panel_honest_empty_state_no_finished_gw(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,0,0,1,0,'t0')"
+    )
+    db_conn.commit()
+    result = points_changes.render_points_changes_html(db_conn, set())
+    assert "No finished gameweek yet" in result
+
+
+def test_points_changes_panel_no_revisions_state(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,"
+        "is_current,is_next,updated_at) VALUES (1,'GW1','t0',0,1,0,0,1,'t0')"
+    )
+    db_conn.commit()
+    result = points_changes.render_points_changes_html(db_conn, set())
+    assert "No bonus revisions observed" in result
+    assert "No defensive contribution revisions observed" in result
+
+
+def test_price_history_panel_renders_without_crashing(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    result = price_history.render_price_history_html(db_conn, set())
+    assert "Predicted Price Changes" in result
+    assert "Price Changes History" in result

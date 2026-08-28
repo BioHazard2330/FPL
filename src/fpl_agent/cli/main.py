@@ -4103,6 +4103,30 @@ def decision_changes_cmd():
     click.echo(f"WHY      {change.explanation}")
 
 
+@cli.command("points-changes")
+@click.option("--event", type=int, default=None, help="defaults to the latest finished gameweek")
+def points_changes_cmd(event: int | None):
+    """Post-match Bonus/DefCon revisions (fpl.page-parity item) - real
+    snapshot diff, never in-play bonus churn. See models/points_changes.py."""
+    from fpl_agent.models.points_changes import detect_points_revisions
+
+    conn = get_connection()
+    try:
+        revisions = detect_points_revisions(conn, event=event)
+    finally:
+        conn.close()
+
+    if not revisions:
+        click.echo("no real post-match revisions observed")
+        return
+    for r in revisions:
+        impact = r.new_points - r.old_points
+        click.echo(
+            f"{r.category.upper():<7} {r.web_name:<20} {r.team_short:<4} {r.old_value} -> {r.new_value}"
+            f"  ({'+' if impact >= 0 else ''}{impact} pts, {r.detected_gap_hours}h apart)"
+        )
+
+
 @cli.command()
 @click.argument("decision_id", type=int)
 def why(decision_id: int):
