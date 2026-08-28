@@ -365,12 +365,12 @@ def generate_dashboard_html(
 
     opportunity_board_section_html = f"""<section class="panel panel-opportunity" id="opportunities" data-cat="intelligence">
   <h2>Opportunity Board <span class="panel-subtitle">a real scouting board - breakout, fixture swing, role change, value, trap</span></h2>
-  {opportunity.render_opportunity_workspace(conn, squad_ids, optimizer_considered_ids)}
+  {opportunity.render_opportunity_workspace(conn, squad_ids, optimizer_considered_ids, ta)}
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
   {_live_tracking_html(conn, squad_ids, live_payload)}
-  {live_charts.render_live_charts(conn, my_team_entry_id)}
+  {live_charts.render_live_charts(conn, my_team_entry_id, reference_event)}
   <div class="live-changes-feed-wrap" id="live-changes-feed-wrap" hidden>
     <div class="live-changes-feed-title">LIVE CHANGES</div>
     <ul class="live-changes-feed" id="live-changes-feed"></ul>
@@ -889,6 +889,16 @@ def generate_dashboard_html(
           if (aSquad !== bSquad) return aSquad - bSquad;
           return parseFloat(a.getAttribute('data-avg-fdr')) - parseFloat(b.getAttribute('data-avg-fdr'));
         }}
+        if (mode === 'rotation') {{
+          // Real blank/double-gameweek signal (`data-rotation-rank`,
+          // server-computed from `detect_blank_double_gws` - the same
+          // real detector the chip-timing DP uses) - never a fabricated
+          // per-player rotation-risk score.
+          var aRot = parseInt(a.getAttribute('data-rotation-rank'), 10);
+          var bRot = parseInt(b.getAttribute('data-rotation-rank'), 10);
+          if (aRot !== bRot) return aRot - bRot;
+          return parseFloat(a.getAttribute('data-avg-fdr')) - parseFloat(b.getAttribute('data-avg-fdr'));
+        }}
         return parseFloat(a.getAttribute('data-avg-fdr')) - parseFloat(b.getAttribute('data-avg-fdr'));
       }});
       rows.forEach(function(row) {{ grid.appendChild(row); }});
@@ -963,6 +973,17 @@ def generate_dashboard_html(
   // as active while all 8 remain visible until the user clicks something.
   var defaultRange = document.querySelector('.fdr-range-btn.is-active');
   if (defaultRange) defaultRange.click();
+
+  var resetBtn = document.querySelector('.fdr-reset-btn');
+  if (resetBtn) {{
+    resetBtn.addEventListener('click', function() {{
+      document.querySelector(".fdr-range-btn[data-range='5']").click();
+      document.querySelector(".fdr-metric-btn[data-metric='overall']").click();
+      document.querySelector(".fdr-view-btn[data-view='fixture']").click();
+      document.querySelector(".fdr-sort-btn[data-sort='fdr']").click();
+      document.querySelector(".fdr-filter-btn[data-filter='all']").click();
+    }});
+  }}
 }})();
 
 // Gameweek Projections: real client-side 3/5/8GW range toggle (fpl.page-
@@ -1287,6 +1308,8 @@ _CSS_WORKSPACE = """
   .opp-card-considered { font-size: 0.7rem; margin-top: 6px; font-weight: 600; }
   .opp-card-considered-yes { color: var(--accent); }
   .opp-card-considered-no { color: var(--faint); }
+  .opp-card-squad-impact { font-size: 0.7rem; margin-top: 3px; color: var(--muted); }
+  .opp-card-squad-impact strong { color: var(--fg); }
   .opp-category-more { margin-top: 4px; font-size: 0.76rem; color: var(--muted); cursor: pointer; }
   .opp-category-more[open] summary { margin-bottom: 6px; }
 
@@ -1297,6 +1320,13 @@ _CSS_WORKSPACE = """
     background: transparent; color: var(--muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; font-family: inherit; }
   .fdr-range-btn.is-active, .fdr-metric-btn.is-active, .fdr-filter-btn.is-active, .fdr-view-btn.is-active { background: var(--accent-2); color: #06110b; border-color: transparent; }
   .fixture-tool-fallback-note { margin-bottom: 8px; }
+  .fdr-reset-btn { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent;
+    color: var(--faint); font-size: 0.76rem; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .fdr-reset-btn:hover { color: var(--fg); border-color: var(--fg); }
+  .fdr-rotation-badge { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.03em; padding: 1px 5px;
+    border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+  .fdr-rotation-double { background: rgba(62, 207, 142, 0.18); color: #3ecf8e; }
+  .fdr-rotation-blank { background: rgba(233, 0, 82, 0.16); color: #e90052; }
 
   /* Squad projected-GW shirt tiles (2026-08-28, direct user ask: "more
      football... more crests, player images") - replaces the old plain

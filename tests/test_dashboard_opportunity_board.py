@@ -74,6 +74,35 @@ def test_opportunity_board_renders_a_breakout_card_and_excludes_squad_members(db
     assert "1.20 xP/£m" in result  # real "£" character, never a double-escaped entity
 
 
+def _fake_transfer_option(player_out_name, player_in_id):
+    candidate = SimpleNamespace(player_out_name=player_out_name, player_in_id=player_in_id)
+    return SimpleNamespace(candidate=candidate)
+
+
+def test_opportunity_board_shows_real_squad_impact_when_a_card_is_a_real_transfer_candidate(db_conn, monkeypatch):
+    """fpl.page-parity pass: MY SQUAD IMPACT reuses the SAME real
+    `analyze_transfer_decision` candidates already computed - never a
+    second, invented replacement guess."""
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1)])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+    ta = SimpleNamespace(candidates=[_fake_transfer_option("Tzolis", 1)])
+
+    result = render_opportunity_workspace(db_conn, set(), ta=ta)
+
+    assert "opp-card-squad-impact" in result
+    assert "Would replace" in result and "Tzolis" in result
+
+
+def test_opportunity_board_no_squad_impact_line_without_a_real_transfer_match(db_conn, monkeypatch):
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1)])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+    ta = SimpleNamespace(candidates=[_fake_transfer_option("Someone", player_in_id=999)])  # different player
+
+    result = render_opportunity_workspace(db_conn, set(), ta=ta)
+
+    assert "opp-card-squad-impact" not in result
+
+
 def test_opportunity_board_renders_a_trap_card_with_real_reasons(db_conn, monkeypatch):
     monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [])
     monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [_trap()])

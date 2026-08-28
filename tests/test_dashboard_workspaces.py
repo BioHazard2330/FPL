@@ -5,8 +5,8 @@ new presentation-only functions, separate from the existing end-to-end
 from types import SimpleNamespace
 
 from fpl_agent.monitoring.dashboard import (
-    data_payload, home, injuries, intelligence, market, plan, player_data, points_changes, price_history, squad,
-    template_team,
+    data_payload, fixtures, home, injuries, intelligence, market, plan, player_data, points_changes, price_history,
+    squad, template_team,
 )
 from test_dashboard import _locked_and_decision, _seed
 from test_optimization_squad import _seed as _seed_squad
@@ -573,3 +573,23 @@ def test_price_history_panel_renders_without_crashing(db_conn):
     result = price_history.render_price_history_html(db_conn, set())
     assert "Predicted Price Changes" in result
     assert "Price Changes History" in result
+
+
+# --- Fixture Tool: real Rotation (blank/double-GW) sort (fpl.page-parity pass) ---
+
+def test_fixture_tool_flags_real_blank_and_double_gameweeks(db_conn):
+    from test_fixtures_model import _seed_teams_and_fixtures
+
+    _seed_teams_and_fixtures(db_conn)
+    db_conn.execute("UPDATE events SET is_current=1 WHERE id=10")
+    db_conn.commit()
+
+    result = fixtures.render_fixture_tool_html(db_conn, set())
+
+    assert "fdr-rotation-btn" not in result  # sanity: no stray leftover class name
+    assert "data-rotation=\"double\"" in result
+    assert "data-rotation=\"blank\"" in result
+    assert "DGW" in result
+    assert "BGW" in result
+    assert "Rotation (DGW/BGW)" in result
+    assert "fdr-reset-btn" in result

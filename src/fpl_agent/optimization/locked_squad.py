@@ -38,7 +38,7 @@ from fpl_agent.optimization.build_team import (
     generate_build_team_report,
     resolve_locked_constraints,
 )
-from fpl_agent.optimization.squad import PlayerCandidate, StartingXI, build_player_pool
+from fpl_agent.optimization.squad import PlayerCandidate, StartingXI, build_player_pool_for_ids
 
 
 @dataclass(frozen=True)
@@ -72,8 +72,24 @@ def _xi_from_real_picks(
     run a SECOND, separate `my_team_picks` query here, which could land in
     the gap of a concurrent writer's delete-then-reinsert resync for the
     exact event `get_latest_squad()` had just proven had real rows -
-    diagnosed and logged at the time, not actually fixed until now)."""
-    pool = build_player_pool(conn, n_gw=1)
+    diagnosed and logged at the time, not actually fixed until now).
+
+    Real perf bug found + fixed (fpl.page-parity pass, live-verified against
+    production): this used to call `build_player_pool(conn, n_gw=1)` - a
+    FULL ~600-player candidate scan (real per-player Dixon-Coles/Monte-Carlo
+    xP for every player in the game, ~6.2s measured against production) -
+    just to look up the 15 real picked ids. `get_locked_squad()` (this
+    function's only real caller) sits on the hot path of
+    `monitoring/live_snapshot.py`'s own ~20-25s live-match tick, which that
+    module's own docstring already documents as required to stay cheap
+    ("never runs Dixon-Coles, Monte Carlo... those stay on their own
+    expensive, materiality-gated cadence") - this silently violated that
+    contract every tick. Fixed to `build_player_pool_for_ids`, the already-
+    existing, already-used-elsewhere (`resolve_projected_xi`) cheap
+    counterpart scoped to a fixed known id set - same real per-player xP
+    values (same `expected_points()` call, just for 15 players instead of
+    ~600), measured 237ms against the same production data (~26x faster)."""
+    pool = build_player_pool_for_ids(conn, {row["player_id"] for row in picks}, event)
     by_id = {c.player_id: c for c in pool}
     if not picks:
         # Defensive only - get_locked_squad's real call path never passes an

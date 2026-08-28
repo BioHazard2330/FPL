@@ -38,7 +38,7 @@ def _confidence_label(conn, player_id: int) -> str:
 
 def _card(kind: str, name: str, position: str, price_m: float | None, ownership_pct: float | None,
           key_metric: str, why_now: str, confidence: str, team_code: int | None = None,
-          considered_by_optimizer: bool | None = None) -> str:
+          considered_by_optimizer: bool | None = None, squad_impact: str | None = None) -> str:
     # Real, honest missing-data label (2026-08-29, "final product-completion
     # pass" P1 fix: a bare "?" reads as a broken card, not a real "we don't
     # have this" disclosure).
@@ -59,6 +59,15 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
         cls = "opp-card-considered-yes" if considered_by_optimizer else "opp-card-considered-no"
         label = "Considered by optimizer" if considered_by_optimizer else "Not evaluated by the optimizer"
         considered_html = f"<div class='opp-card-considered {cls}'>{_esc(label)}</div>"
+    # Real "MY SQUAD IMPACT" (fpl.page-parity pass) - only ever the SAME
+    # real transfer candidate `analyze_transfer_decision` already computed
+    # (`ta.candidates`), never a second, invented replacement guess. `None`
+    # (never a fabricated "no impact") when this player genuinely isn't one
+    # of the real candidates the decision layer itself considered as an IN.
+    squad_impact_html = (
+        f"<div class='opp-card-squad-impact'>Would replace <strong>{_esc(squad_impact)}</strong></div>"
+        if squad_impact else ""
+    )
     return (
         f"<div class='opp-card opp-card-{_esc(kind.lower().replace(' ', '-'))}'>"
         f"{shirt_html}"
@@ -69,6 +78,7 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
         f"<div class='opp-card-why'><strong>Why now</strong> {_esc(why_now)}</div>"
         f"<div class='opp-card-confidence opp-confidence-{_esc(confidence.lower())}'>{_esc(confidence)}</div>"
         f"{considered_html}"
+        f"{squad_impact_html}"
         f"</div>"
     )
 
@@ -81,7 +91,7 @@ def _category_block(kind: str, cards: list[str]) -> str:
     return f"<div class='opp-category'>{''.join(visible)}{rest_html}</div>"
 
 
-def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[int] | None = None) -> str:
+def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[int] | None = None, ta=None) -> str:
     breakout_cards, trap_cards, role_cards, swing_cards, value_cards = [], [], [], [], []
 
     breakouts = []
@@ -142,6 +152,16 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
     def _considered(pid: int) -> bool | None:
         return None if considered_ids is None else pid in considered_ids
 
+    # Real "MY SQUAD IMPACT" map (fpl.page-parity pass) - `ta.candidates` are
+    # the SAME real ranked `TransferOption`s `analyze_transfer_decision`
+    # already computed (never re-scanned here); a card whose player IS one
+    # of those real candidate INs gets a real "would replace X" line.
+    impact_by_player: dict[int, str] = {}
+    if ta is not None:
+        for opt in ta.candidates:
+            c = opt.candidate
+            impact_by_player.setdefault(c.player_in_id, c.player_out_name)
+
     for b in breakouts:
         team_code = team_lookup.get(b.player_id, {}).get("team_code")
         breakout_cards.append(_card(
@@ -149,7 +169,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
             f"{b.value_ratio:.2f} xP/£m value ratio",
             "; ".join(b.reasons) if b.reasons else "rising value at low ownership",
             _confidence_label(conn, b.player_id), team_code=team_code,
-            considered_by_optimizer=_considered(b.player_id),
+            considered_by_optimizer=_considered(b.player_id), squad_impact=impact_by_player.get(b.player_id),
         ))
 
     for t in traps:
@@ -159,7 +179,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
             f"{t.eo_source} ownership source",
             "; ".join(t.reasons) if t.reasons else "deteriorating case at high ownership",
             _confidence_label(conn, t.player_id), team_code=team_code,
-            considered_by_optimizer=_considered(t.player_id),
+            considered_by_optimizer=_considered(t.player_id), squad_impact=impact_by_player.get(t.player_id),
         ))
 
     for r in role_rows:
@@ -169,7 +189,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
             f"set-piece role change {_esc(_relative_time(r['detected_at']))}",
             "a detected set-piece duty change - a genuine role signal, not a form blip",
             _confidence_label(conn, r["entity_id"]), team_code=team_code,
-            considered_by_optimizer=_considered(r["entity_id"]),
+            considered_by_optimizer=_considered(r["entity_id"]), squad_impact=impact_by_player.get(r["entity_id"]),
         ))
 
     for r in value_rows:
@@ -179,7 +199,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
             f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m",
             f"price rise {_esc(_relative_time(r['changed_at']))} - real rising demand",
             _confidence_label(conn, r["player_id"]), team_code=team_code,
-            considered_by_optimizer=_considered(r["player_id"]),
+            considered_by_optimizer=_considered(r["player_id"]), squad_impact=impact_by_player.get(r["player_id"]),
         ))
 
     try:

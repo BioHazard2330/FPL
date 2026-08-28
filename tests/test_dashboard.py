@@ -1406,6 +1406,32 @@ def _pitch_test_xi():
     return StartingXI(starting=[played, not_started], bench=[], captain=None, vice_captain=None)
 
 
+def test_pitch_shows_a_real_per_player_football_signal_when_one_exists(db_conn):
+    """fpl.page-parity pass: the Player Inspector drawer gains a real
+    FOOTBALL section, reusing `models.player_intelligence.player_intelligence`'s
+    already-computed current outlook - never a second scan, absent when
+    the player has no real recorded qualitative state."""
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, "
+        "status, source, retrieved_at, confidence) VALUES (1,'fm1','Premier League','2026-08-21T19:00:00Z',1,2,"
+        "'FULL_TIME','fotmob','t0','high')"
+    )
+    db_conn.execute(
+        "INSERT INTO player_qualitative_state (player_id, match_id, role, tactical_signal, fpl_outlook, confidence, generated_at) "
+        "VALUES (1, 1, 'starter', 'attacking', 'genuinely undervalued right now', 'HIGH', 't0')"
+    )
+    db_conn.commit()
+
+    result = _pitch_html_from_xi(db_conn, _pitch_test_xi(), None, None, None, None)
+
+    assert "player-inspector-football" in result
+    assert "genuinely undervalued right now" in result
+    assert "HIGH" in result
+
+
 def test_pitch_shows_actual_points_for_a_finished_fixture_not_projected_xp(db_conn):
     from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
 

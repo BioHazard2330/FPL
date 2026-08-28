@@ -466,6 +466,7 @@ def _player_card(
     play_state: str | None = None, actual_points: float | None = None, live_minutes: int | None = None,
     recent_actual_points: int | None = None, recent_actual_event: int | None = None,
     is_recommended_out: bool = False, out_why: str | None = None,
+    football_signal: tuple[str, str] | None = None,
 ) -> str:
     light, dark = _POSITION_ACCENT.get(c.position, _POSITION_ACCENT["MID"])
     armband = ""
@@ -601,9 +602,23 @@ def _player_card(
         status_word, status_tone = "HOLD", "hold"
         status_why = "No flagged action right now."
 
+    # Real, honest per-player FOOTBALL signal (fpl.page-parity pass,
+    # "Player Inspector... Sections: ... FOOTBALL") - reuses `models.
+    # player_intelligence.player_intelligence`'s already-computed real
+    # current outlook/confidence (the same real per-player match-analyzed
+    # state `models/decision_fusion.py` already reads for the captain
+    # cross-check), fetched once per player by the caller and passed in -
+    # never a second per-card query, absent (not fabricated) when this
+    # player has no real recorded qualitative state yet.
+    football_html = ""
+    if football_signal is not None:
+        outlook, confidence = football_signal
+        football_html = f"<div class='player-inspector-football'><b>Football</b> {_esc(outlook)} <span class='player-inspector-football-conf'>({_esc(confidence)})</span></div>"
+
     inspector_html = f"""<div class="player-inspector-content" hidden>
     <div class="player-inspector-status player-inspector-status-{status_tone}">{_esc(status_word)}</div>
     <div class="player-inspector-why">{_esc(status_why)}</div>
+    {football_html}
     <div class="player-tooltip-row"><span>Price</span><strong>£{c.price_tenths / 10:.1f}m</strong></div>
     <div class="player-tooltip-row"><span>Floor &ndash; Ceiling</span><strong>{c.floor:.1f} &ndash; {c.ceiling:.1f}</strong></div>
     <div class="player-tooltip-row"><span>Confidence</span><strong>{_esc(c.confidence)}</strong></div>
@@ -703,6 +718,18 @@ def _pitch_html_from_xi(
             return None, None
         return stats.get("total_points"), stats.get("minutes")
 
+    football_signal_cache: dict[int, tuple[str, str] | None] = {}
+
+    def _football_signal_for(player_id: int) -> tuple[str, str] | None:
+        if player_id not in football_signal_cache:
+            from fpl_agent.models.player_intelligence import player_intelligence
+            pi = player_intelligence(conn, player_id)
+            football_signal_cache[player_id] = (
+                (pi.current_fpl_outlook, pi.current_confidence or "LOW")
+                if pi.current_fpl_outlook else None
+            )
+        return football_signal_cache[player_id]
+
     by_position: dict[str, list] = {p: [] for p in _POSITION_ORDER}
     for c in xi.starting:
         by_position.setdefault(c.position, []).append(c)
@@ -724,7 +751,8 @@ def _pitch_html_from_xi(
                          actual_points=_actual_and_minutes(c.player_id)[0],
                          live_minutes=_actual_and_minutes(c.player_id)[1],
                          recent_actual_points=recent_points_by_id.get(c.player_id), recent_actual_event=recent_event,
-                         is_recommended_out=c.player_id == recommended_out_id, out_why=out_why)
+                         is_recommended_out=c.player_id == recommended_out_id, out_why=out_why,
+                         football_signal=_football_signal_for(c.player_id))
             for c in players
         )
         rows.append(
@@ -743,7 +771,8 @@ def _pitch_html_from_xi(
                      actual_points=_actual_and_minutes(c.player_id)[0],
                      live_minutes=_actual_and_minutes(c.player_id)[1],
                      recent_actual_points=recent_points_by_id.get(c.player_id), recent_actual_event=recent_event,
-                     is_recommended_out=c.player_id == recommended_out_id, out_why=out_why)
+                     is_recommended_out=c.player_id == recommended_out_id, out_why=out_why,
+                     football_signal=_football_signal_for(c.player_id))
         for i, c in enumerate(xi.bench)
     )
 
@@ -3173,8 +3202,6 @@ _CSS = """
   .gw-badge { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.76rem; font-weight: 800;
     color: var(--bg); background: var(--accent-2); border: 1px solid var(--accent-2);
     padding: 5px 11px; border-radius: 6px; letter-spacing: 0.03em; }
-  .refresh-indicator { display: flex; align-items: center; gap: 7px; font-size: 0.75rem; color: var(--muted);
-    background: transparent; border: 1px solid var(--border); padding: 5px 11px; border-radius: 6px; }
   .btn-refresh { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 700;
     color: var(--fg); background: transparent; border: 1px solid var(--border);
     padding: 5px 12px; border-radius: 6px; text-decoration: none; transition: border-color 0.15s ease, color 0.15s ease; }
@@ -3239,7 +3266,6 @@ _CSS = """
   .hero-action-btn:hover { border-color: var(--accent-2); color: var(--accent-2); }
   .hero-action-primary { background: var(--accent-2); color: #06110b; border-color: var(--accent-2); font-weight: 800; }
   .hero-action-primary:hover { color: #06110b; opacity: 0.9; }
-  .hero-watch { margin-top: 8px; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
   .hero-support { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
   .hero-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; }
@@ -3319,7 +3345,7 @@ _CSS = """
      (grid-column: span 1 each), squeezing the pitch into ~55% of the page
      width. Both now take the FULL row - stacked vertically instead of
      squeezed side-by-side. */
-  .panel-team, .panel-decisions, .panel-compare, .panel-risks { grid-column: 1 / -1; }
+  .panel-compare { grid-column: 1 / -1; }
   .panel-live { grid-column: span 1; }
   .panel:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
   @media (max-width: 1024px) { .panel-grid { columns: 1; } }
@@ -3482,6 +3508,11 @@ _CSS = """
   .player-inspector-status-watch { background: rgba(251,191,36,0.18); color: #d9a441; }
   .player-inspector-status-hold { background: rgba(34,197,94,0.16); color: var(--ok-text); }
   .player-inspector-why { font-size: 0.82rem; color: var(--muted); line-height: 1.45; margin-bottom: 12px; }
+  .player-inspector-football { font-size: 0.8rem; color: var(--muted); margin-bottom: 10px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--gridline); }
+  .player-inspector-football b { color: var(--faint); text-transform: uppercase; font-size: 0.7rem;
+    letter-spacing: 0.03em; margin-right: 5px; }
+  .player-inspector-football-conf { color: var(--faint); font-size: 0.75rem; }
   .player-drawer-backdrop { position: fixed; inset: 0; background: rgba(4,0,8,0.55); backdrop-filter: blur(2px);
     z-index: 90; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
   .player-drawer-backdrop.is-open { opacity: 1; pointer-events: auto; }
@@ -3545,7 +3576,6 @@ _CSS = """
     font-weight: 700; color: #14161a; white-space: nowrap; position: relative; transition: transform 0.12s ease; }
   .fdr-cell:hover { transform: scale(1.06); z-index: 3; }
   .fdr-opp { font-size: 0.75rem; margin-bottom: 1px; }
-  .fdr-stat { font-weight: 500; font-size: 0.75rem; opacity: 0.85; }
   /* Heatmap gradient scale (2026-08-21) instead of flat solid blocks -
      each difficulty tier gets its own gradient so the ticker reads as a
      real intensity heatmap, not five identical color chips. */
@@ -3787,7 +3817,6 @@ _CSS = """
 
   /* --- Risk monitor (2026-08-21) - severity-tiered rows replacing a
      plain bulleted list. --- */
-  .risk-monitor { display: flex; flex-direction: column; gap: 6px; }
   .risk-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; background: var(--surface-2);
     border-radius: 10px; font-size: 0.84rem; }
   .risk-severity { flex-shrink: 0; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
@@ -3818,68 +3847,14 @@ _CSS = """
      dominant multi-GW section: primary ROLL/TRANSFER/REVIEW call, the
      1/3/5/8-GW horizon comparison, real top-N paths with a horizontal
      per-GW timeline, and a chip badge overlay on the winning path. --- */
-  .strategic-current { font-size: 0.8rem; color: var(--muted); padding: 8px 2px; border-bottom: 1px solid var(--border);
-    margin-bottom: 12px; }
-  .strategic-current strong { color: var(--fg); letter-spacing: 0.03em; font-size: 0.75rem; }
-  .strategic-primary { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 12px;
-    background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border); }
-  .strategic-twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
-  .strategic-col { background: var(--surface); border-radius: 10px; padding: 8px 12px; }
-  .strategic-horizon-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-bottom: 8px; }
-  .strategic-horizon-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.75rem;
-    text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; }
-  .strategic-horizon-table td { padding: 5px 8px; border-top: 1px solid var(--border); }
   .strategic-note { font-size: 0.8rem; color: var(--muted); padding: 6px 2px 12px; }
   .strategic-note-differ { color: #ff9f43; }
-  .strategic-subrow { font-size: 0.82rem; color: var(--fg); padding: 6px 2px; }
-  .strategic-subrow strong { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
   .strategic-subrow-muted { font-size: 0.75rem; color: var(--muted); padding: 3px 2px; }
-  .strategic-alt-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .strategic-alt-list li { font-size: 0.78rem; color: var(--muted); padding: 2px 0; }
-  /* --- Strategy Timeline (2026-08-27, "premium product" redesign) - a
-     real horizontal GW-by-GW timeline per path, replacing the old Path
-     1/2/3 card wall (direct spec: "GW2 ROLL -> GW3 TRANSFER -> ... - the
-     user should understand an 8-GW plan in ~5 seconds"). `.strategic-path-
-     card` keeps its own name/data-path/hidden contract for the existing
-     click-handling JS/tests but no longer renders as a boxed card - it's
-     just the stat line + track, letting the dots/arrows/labels do the
-     work instead of borders. --- */
-  .strategic-path-card { background: transparent; border: none; padding: 2px 0 0; font-size: 0.8rem; min-width: 0; }
-  .strategic-path-card[hidden] { display: none; }
-  .strategic-path-header { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
-  .strategic-path-header strong { color: var(--accent-2); text-transform: uppercase; font-size: 0.75rem;
-    letter-spacing: 0.05em; font-weight: 800; }
-  /* Boxy GW tile strip (2026-08-27, rebuilt against fplcopilot.com's real
-     GW-navigator row: a plain line of small bordered squares, no dot/arrow
-     flowchart chrome at all - the flowchart look was exactly the
-     "rectangles and circles" complaint this rebuild exists to fix). */
-  .strategy-timeline-track { display: flex; align-items: stretch; gap: 4px; overflow-x: auto;
-    padding: 2px 2px 10px; }
-  .timeline-arrow { display: none; }
-  .strategic-path-step.timeline-node { display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 2px; background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 6px; padding: 7px 4px; min-width: 66px; flex-shrink: 0; text-align: center; }
-  .timeline-node-dot { display: none; }
-  .strategic-path-step.timeline-node .strategic-path-gw { font-size: 0.75rem; color: var(--faint);
-    text-transform: uppercase; letter-spacing: 0.03em; font-weight: 700; }
-  .strategic-path-step.timeline-node .strategic-path-action { font-size: 0.75rem; color: var(--muted);
-    font-weight: 600; white-space: nowrap; margin-top: 1px; }
   .timeline-node.timeline-node-live { border-color: var(--border); background: var(--surface); }
-  .timeline-node.timeline-node-live .strategic-path-action { color: var(--fg); font-weight: 700; }
   .timeline-node.timeline-node-chip { border-color: var(--accent-2); }
-  .timeline-node.timeline-node-chip .strategic-path-action { color: var(--accent-2); font-weight: 700; }
-  .timeline-node.is-active { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 10%, var(--surface-2)); }
-  .timeline-node.is-active .strategic-path-gw { color: var(--accent-2); }
-  .timeline-node.is-active .strategic-path-action { color: var(--fg); }
-  .strategic-path-step.timeline-node.path-step-btn { cursor: pointer; font-family: inherit; }
-  .strategic-path-step.timeline-node.path-step-btn:hover { border-color: var(--accent-2); }
   .chip-badge { display: block; margin-top: 1px; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.03em;
     padding: 1px 5px; border-radius: 4px; background: var(--accent-2); color: #06110b;
     width: fit-content; margin-inline: auto; }
-  @media (max-width: 640px) {
-    .strategy-timeline-track { padding-bottom: 8px; }
-    .strategic-twocol { grid-template-columns: 1fr; }
-  }
 
   /* --- Decision Card WHY / confidence pills / market line (2026-08-27,
      product design pass, Decision Card redesign section 2) - the headline
@@ -4018,7 +3993,7 @@ _CSS = """
   .opp-card-trap .opp-card-kind { color: var(--fpl-pink); }
   .opp-card-role-change .opp-card-kind { color: #d9a441; }
   .opp-card-fixture-swing .opp-card-kind { color: var(--accent); }
-  .opp-card-price .opp-card-kind { color: var(--ok-text); }
+  .opp-card-value .opp-card-kind { color: var(--ok-text); }
   .opp-card-title { grid-column: 2; font-size: 0.96rem; font-weight: 800; color: var(--fg); }
   .opp-pos { font-size: 0.75rem; font-weight: 700; color: var(--faint); text-transform: uppercase; margin-left: 4px; }
   .opp-card-subtitle { grid-column: 2; font-size: 0.78rem; color: var(--muted); }

@@ -1,10 +1,25 @@
 # Project State
 
-Last updated: 2026-08-29 (final product + decision system completion pass). Read this before
+Last updated: 2026-08-29 (continuation: perf fix + more fpl.page parity). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, continuation: perf fix + more fpl.page parity)
+
+**Real perf bug found + fixed**: `get_locked_squad()` was running a full ~600-player Dixon-
+Coles/Monte-Carlo xP scan on every ~20-25s live-match tick (via `live_snapshot.py`), silently
+violating that module's own "stay cheap" contract - `optimization/locked_squad.py::
+_xi_from_real_picks` now uses `build_player_pool_for_ids` (scoped to the 15 known picks) instead
+of `build_player_pool` (full pool). ~26x faster (6.6s → 223ms for a full `build_live_snapshot()`
+call), measured against production. New: Fixture Tool Rotation sort + Reset (real blank/double-
+GW detector, no fabricated risk model), Opportunity Board "MY SQUAD IMPACT" (reuses `ta.
+candidates`), a real intragame live-rank chart (the decisions journal already logged the time
+series - just needed a reader), Player Inspector FOOTBALL section. Dead-CSS audit round 2 found
+a second real bug (Opportunity Board's Value cards missing their kind-label color - wrong
+selector name). See `docs/history/24-session-2026-08-29-continuation-perf-fix-and-more-parity.md`.
+1219 tests green.
 
 ## Where things stand (updated 2026-08-29, final product + decision system completion pass)
 
