@@ -720,7 +720,28 @@ def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
     itself. Idempotent per (match, phase); a full_time write is refused
     unless the match has genuinely finished. Marks the matching
     analysis-queue job (if one exists - matchday-autonomy pass, 2026-08-22)
-    'done', closing the loop that job's automatic creation started."""
+    'done', closing the loop that job's automatic creation started.
+
+    Real automation-chain closer (2026-08-28, direct user requirement:
+    "when Claude later completes the queued analysis... automatic
+    invalidation -> decision recomputation if material -> strategic plan
+    recomputation if material -> snapshot update -> browser update" - this
+    is the ONLY intentionally manual step in the whole pipeline, so
+    everything downstream of it firing must be automatic the instant it
+    does). `apply_match_analysis` now emits a real `change_events` row for
+    each material (medium+ confidence, non-neutral) finding -
+    `_maybe_trigger_strategic_plan_recompute` (the SAME function
+    `run-scheduled` already uses, unchanged) reads exactly that, so a
+    genuinely material qualitative finding fires the real detached
+    background strategic-plan recompute right now rather than waiting for
+    the next unrelated scheduled tick. The dashboard (which already
+    re-evaluates `analyze_transfer_decision`/`analyze_captain_decision`
+    live on every regen, no beam search needed) and `live_snapshot.json`
+    regenerate right after, so the open browser tab picks up the change on
+    its own next poll/reload - no `fpl dashboard` required by hand. Only
+    runs this extra (real, ~1min) work when at least one material event
+    was actually written - a PRE_MATCH/LIVE/HALFTIME write, or a FULL_TIME
+    write with no material implications, stays cheap exactly as before."""
     import json
 
     with open(payload_path, encoding="utf-8") as f:
@@ -739,12 +760,28 @@ def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
         conn.close()
         raise SystemExit(1)
     mark_job_done_for_match_phase(conn, match["id"], phase.upper())
-    conn.close()
     click.echo(f"phase                  {result['phase']}")
     click.echo(f"observations written   {result['observations_written']}")
     click.echo(f"implications written   {result['implications_written']}")
     click.echo(f"player states written  {result['player_states_written']}")
     click.echo(f"team states written    {result['team_states_written']}")
+    click.echo(f"material change events {result['change_events_written']}")
+
+    if result["change_events_written"] > 0:
+        try:
+            auto_reason = _maybe_trigger_strategic_plan_recompute(conn)
+            if auto_reason:
+                click.echo(f"strategic-plan recompute triggered: {auto_reason}")
+        except Exception as e:
+            click.echo(f"strategic-plan auto-trigger failed (not fatal): {e}", err=True)
+        conn.close()
+        try:
+            _write_dashboard()
+            click.echo("dashboard + live snapshot regenerated")
+        except Exception as e:
+            click.echo(f"dashboard regen failed (not fatal): {e}", err=True)
+    else:
+        conn.close()
 
 
 @cli.command("match-note")
@@ -1229,13 +1266,46 @@ def run_scheduled():
     news/predicted-lineup/lineup-probability/kickoff steps below had a
     chance to write anything, so any change_events those steps produced sat
     undelivered until the NEXT scheduled cycle. One delivery pass at the end
-    now covers everything this single cycle detected."""
+    now covers everything this single cycle detected.
+
+    Real single-instance lock (2026-08-28, direct user audit: "verify the
+    process-lock fix against BOTH FPLAgentLivePoll and FPLAgentSync" -
+    `live-match-poll` already got this 2026-08-29, `run-scheduled` never
+    did). A real, confirmed-possible condition this closes: Task
+    Scheduler's own `FPLAgentSync` trigger can fire again before a slow
+    prior tick (a real network stall, a large backfill) has finished -
+    both processes would then hit the same real `data/fpl.db` concurrently,
+    real wasted duplicate calls against every free third-party source this
+    project polls. Own lock file (`run_scheduled.lock`, distinct from
+    `live_poll.lock`) - the two commands are legitimately allowed to run
+    at the same time as EACH OTHER, only two instances of the SAME command
+    must never overlap. Explicit release on both real early-exit paths
+    below (deferred / sync failed) - even if one were missed, the module's
+    own stale-lock recovery (`scheduler/process_lock.py`) reclaims it
+    automatically on the next tick once this process's own PID has died,
+    so this can never wedge permanently."""
+    from fpl_agent.scheduler.process_lock import acquire_singleton_lock, release_singleton_lock
+
     logger = logging.getLogger("fpl_agent.scheduler")
+    # Computed fresh per call from the module-level DATA_DIR, never a frozen
+    # constant - the same DATA_DIR-captured-at-import-time trap this
+    # project already fixed once for `_dashboard_path()`/`write_live_
+    # snapshot` (a test patching `main_mod.DATA_DIR` must actually redirect
+    # this too, or it silently writes a real lock file into the real
+    # project `data/` dir during a test run).
+    run_scheduled_lock_path = DATA_DIR / "run_scheduled.lock"
+
+    lock = acquire_singleton_lock(run_scheduled_lock_path)
+    if not lock.acquired:
+        logger.info("run-scheduled: %s - exiting cleanly", lock.reason)
+        click.echo(f"run-scheduled: {lock.reason} - exiting cleanly")
+        return
 
     resources = check_resources()
     if resources.defer:
         logger.info("run-scheduled deferred: %s", resources.defer_reason)
         click.echo(f"deferred: {resources.defer_reason}")
+        release_singleton_lock(run_scheduled_lock_path)
         return
 
     # Real, cheap squad scoping for every live-alert step below - see
@@ -1253,6 +1323,7 @@ def run_scheduled():
     except (SourceFetchError, ValidationError) as e:
         logger.error("run-scheduled sync failed: %s", e)
         click.echo(f"sync failed: {e}", err=True)
+        release_singleton_lock(run_scheduled_lock_path)
         raise SystemExit(1)
 
     logger.info(
@@ -1616,6 +1687,8 @@ def run_scheduled():
         logger.info("dashboard regenerated at %s", dashboard_path)
     except Exception:
         logger.exception("dashboard regeneration failed - not fatal to the sync itself")
+
+    release_singleton_lock(run_scheduled_lock_path)
 
 
 def _dashboard_path():
@@ -2068,7 +2141,7 @@ def dashboard(gw_window: int, must_include: str | None, must_start: str | None, 
         exclude_ids=exclude_ids,
     )
     click.echo(f"wrote {path}")
-    click.echo(f"open it in a browser and leave the tab open - it auto-reloads every {_REFRESH_SECONDS // 60}min")
+    click.echo(f"open it in a browser and leave the tab open - it auto-reloads every {_REFRESH_SECONDS}s")
 
 
 @cli.command()

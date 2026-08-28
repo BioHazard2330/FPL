@@ -5,7 +5,7 @@ change this" prose block and the secondary metric strip (vice/squad-value/
 risks/kickoff/optimizer-status moved to the Squad workspace and the
 contextual Live banner, where that detail actually belongs - not dropped,
 just no longer competing with the one thing Home exists to answer)."""
-from fpl_agent.monitoring.dashboard.legacy import _captain_html, _chip_display_name, _esc, _humanize
+from fpl_agent.monitoring.dashboard.legacy import _captain_html, _chip_display_name, _esc, _humanize, _relative_time
 
 
 def _chip_label_from_rec(label: str) -> str:
@@ -127,17 +127,40 @@ def _freshness_html(freshness) -> str:
     return age_bit + stale_bit
 
 
-def _system_live_html() -> str:
-    """Real, always-honest freshness strip (2026-08-29, "master live +
-    strategic-plan correction pass" P0 fix: "live/freshness status is not
-    visible enough"). A static shell only - every value here is populated
-    and kept live by the SAME `live_snapshot.json` poll (`assemble.py`'s own
-    script block) already driving the rank/points tiles/RECOMPUTING banner,
-    never a second, duplicated data source. Starts as an honest "not polled
-    yet" state (`data-live-state="unknown"`) rather than a fabricated
-    number - a real dashboard load with no live match/no snapshot file ever
-    served stays in this state, not silently pretending to be current."""
-    return """<div class="system-live-strip" id="system-live-strip" data-live-state="unknown">
+_NEWS_SOURCE_NAMES = {"bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss"}
+
+
+def _system_live_html(snapshot: dict | None = None) -> str:
+    """Real, always-honest freshness strip. Ages tick from real stored
+    timestamps client-side, seeded two independent ways:
+
+    1. `data-*` attributes on the root `#system-live-strip` element (real
+       ISO timestamps, this function's own output) - read ONCE by a plain
+       inline `<script>` at page load (`assemble.py`'s own script block).
+       Inline script execution is NEVER blocked by the browser, including
+       under a `file://` origin - only `fetch()`/XHR to a sibling file is.
+       This is the fix for a real, direct user report (2026-08-28): a
+       dashboard opened via `file://` (downloaded/copied out of `data/`
+       rather than served over http) showed this strip permanently frozen
+       at placeholder text, because the OLD design relied entirely on a
+       `fetch('live_snapshot.json')` that `file://` blocks outright, with
+       no fallback. Ages now tick for real (a real 1s-interval Date.now()
+       diff against a real stored timestamp) regardless of whether that
+       fetch can ever succeed.
+    2. The existing `live_snapshot.json` poll (unchanged) - when it CAN
+       reach a real server, it overwrites these same stored timestamps
+       with fresher ones on its own faster cadence, exactly as before.
+
+    `snapshot` is the SAME `build_live_snapshot()` object
+    `write_live_snapshot` already writes to disk - `assemble.py` computes
+    it once per regen and passes it in here (cheap - pure DB reads, no
+    Dixon-Coles/Monte Carlo). `None` (e.g. `build_live_snapshot` itself
+    failing) falls back to an honest "not polled yet" shell with no `data-*`
+    timestamps at all - the ticker then has nothing real to compute from
+    and correctly stays at its own honest unknown state, never a fabricated
+    number."""
+    if snapshot is None:
+        return """<div class="system-live-strip" id="system-live-strip" data-live-state="unknown">
   <span class="system-live-dot" id="system-live-dot"></span>
   <span class="system-live-label">SYSTEM LIVE</span>
   <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">not yet polled</b></span>
@@ -147,6 +170,79 @@ def _system_live_html() -> str:
   <span class="system-live-field">News <b id="system-live-news-age">&mdash;</b></span>
   <span class="system-live-field">Projections <b id="system-live-projections-age">&mdash;</b></span>
   <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
+</div>"""
+
+    rec = snapshot.get("recommendation") or {}
+    rank = snapshot.get("rank") or {}
+    cadence = snapshot.get("cadence") or {}
+    rank_cadence = cadence.get("rank") or {}
+    source_freshness = snapshot.get("source_freshness") or []
+
+    from datetime import datetime, timedelta, timezone
+
+    def _iso_or_none(value: str | None) -> str | None:
+        if not value:
+            return None
+        try:
+            ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc).isoformat()
+
+    snapshot_at = _iso_or_none(snapshot.get("generated_at"))
+    decision_at = _iso_or_none(rec.get("computed_at"))
+    decision_status = _esc(rec.get("status") or "UNKNOWN")
+    rank_at = _iso_or_none(rank.get("retrieved_at"))
+    rank_next_due_at = None
+    if rank_at is not None and rank_cadence.get("next_due_floor_minutes") is not None:
+        try:
+            retrieved = datetime.fromisoformat(rank_at)
+            due = retrieved + timedelta(minutes=rank_cadence["next_due_floor_minutes"])
+            rank_next_due_at = due.astimezone(timezone.utc).isoformat()
+        except (ValueError, TypeError):
+            rank_next_due_at = None
+    news_times = [s["last_success"] for s in source_freshness if s.get("source") in _NEWS_SOURCE_NAMES and s.get("last_success")]
+    news_at = _iso_or_none(max(news_times)) if news_times else None
+    projections_at = _iso_or_none((cadence.get("system") or {}).get("last_sync_at"))
+    degraded = [s["source"] for s in source_freshness if s.get("degraded")]
+
+    # Real, immediate-paint text (correct as of THIS regen) - the inline
+    # ticker below overwrites every one of these within its first tick
+    # (runs on `DOMContentLoaded`, always), so this is only ever visibly
+    # shown for the instant before that script block executes.
+    snapshot_age = _relative_time(snapshot.get("generated_at"))
+    decision_age = _relative_time(rec.get("computed_at")) if rec.get("computed_at") else "no decision logged yet"
+    rank_age = _relative_time(rank.get("retrieved_at")) if rank.get("retrieved_at") else "unavailable"
+    news_age = _relative_time(max(news_times)) if news_times else "unavailable"
+    projections_age = _relative_time((cadence.get("system") or {}).get("last_sync_at")) if projections_at else "unavailable"
+    degraded_html = (
+        f"<span class='system-live-field system-live-degraded' id='system-live-degraded'>{len(degraded)} source(s) degraded: {_esc(', '.join(degraded))}</span>"
+        if degraded else "<span class='system-live-field system-live-degraded' id='system-live-degraded' hidden></span>"
+    )
+
+    data_attrs = "".join(
+        f" data-{name}=\"{_esc(value)}\""
+        for name, value in (
+            ("snapshot-at", snapshot_at), ("decision-at", decision_at), ("decision-status", rec.get("status")),
+            ("rank-at", rank_at), ("rank-next-due-at", rank_next_due_at),
+            ("news-at", news_at), ("projections-at", projections_at),
+            ("degraded", ",".join(degraded) if degraded else None),
+        )
+        if value is not None
+    )
+
+    return f"""<div class="system-live-strip" id="system-live-strip" data-live-state="live"{data_attrs}>
+  <span class="system-live-dot" id="system-live-dot"></span>
+  <span class="system-live-label">SYSTEM LIVE</span>
+  <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">{_esc(snapshot_age)}</b></span>
+  <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
+  <span class="system-live-field">Rank <b id="system-live-rank-age">{_esc(rank_age)}</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
+  <span class="system-live-field">Decision <b id="system-live-decision-age">{_esc(decision_age)}</b> &middot; <b id="system-live-decision-status">{decision_status}</b></span>
+  <span class="system-live-field">News <b id="system-live-news-age">{_esc(news_age)}</b></span>
+  <span class="system-live-field">Projections <b id="system-live-projections-age">{_esc(projections_age)}</b></span>
+  {degraded_html}
 </div>"""
 
 
@@ -184,7 +280,7 @@ def _cross_check_html(cross_check) -> str:
 def render_hero(
     *, gw_label_html: str, current_rec: dict | None, ta, ca, ft_value: str, ft_title: str,
     actual_points: float | None, next_xp: float, bank_m: float, captain_name: str,
-    rank_tile_html: str, freshness=None, cross_check=None,
+    rank_tile_html: str, freshness=None, cross_check=None, live_snapshot: dict | None = None,
 ) -> str:
     """The whole first viewport. Six metrics only (direct spec): Actual GW
     points, Next-GW xP, Bank, FT, Captain, Rank - nothing else renders here.
@@ -212,7 +308,7 @@ def render_hero(
     cross_check_html = _cross_check_html(cross_check)
 
     return f"""<section class="home-hero home-hero-{_esc(cls)}" id="home">
-  {_system_live_html()}
+  {_system_live_html(live_snapshot)}
   <div class="home-hero-gw">{gw_label_html}</div>
   <div class="home-hero-action" id="home-action-word">{_esc(word)}</div>
   <div class="home-hero-reason">{_esc(reason)}</div>

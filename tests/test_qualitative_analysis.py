@@ -68,7 +68,7 @@ def test_apply_match_analysis_writes_observations_and_derived_implications(db_co
 
     assert result == {
         "phase": "FULL_TIME", "observations_written": 2, "implications_written": 1,
-        "player_states_written": 1, "team_states_written": 1,
+        "player_states_written": 1, "team_states_written": 1, "change_events_written": 1,
     }
 
     obs = db_conn.execute("SELECT * FROM match_observations WHERE match_id=?", (match_id,)).fetchall()
@@ -83,6 +83,54 @@ def test_apply_match_analysis_writes_observations_and_derived_implications(db_co
     assert len(impl) == 1  # only the player-subject observation, not the team one
     assert impl[0]["direction"] == "POSITIVE"
     assert impl[0]["signal"] == "ROLE"
+
+
+def _obs_payload(subject_id: int, direction: str, confidence: str) -> dict:
+    return {
+        "observations": [{
+            "subject_type": "player", "subject_id": subject_id, "observation_type": "TEST",
+            "observed": "test observation", "fpl_direction": direction, "fpl_signal": "ROLE",
+            "fpl_reason": "test reason", "confidence": confidence,
+        }],
+    }
+
+
+@pytest.mark.parametrize(
+    "direction,confidence,expect_written,expect_severity",
+    [
+        ("POSITIVE", "high", True, "HIGH"),
+        ("NEGATIVE", "high", True, "HIGH"),
+        ("WATCH", "high", True, "HIGH"),
+        ("POSITIVE", "medium", True, "MEDIUM"),
+        ("POSITIVE", "low", False, None),
+        ("NEUTRAL", "high", False, None),
+    ],
+)
+def test_apply_match_analysis_emits_change_event_only_for_material_findings(
+    db_conn, direction, confidence, expect_written, expect_severity,
+):
+    """Real automation-chain closer (2026-08-28, direct user requirement:
+    "apply_match_analysis -> emit material qualitative-change event ->
+    automatic invalidation -> ... recomputation"). Only a genuinely
+    material finding (medium+ confidence, a real non-neutral direction)
+    should ever clear `cli/main.py::_maybe_trigger_strategic_plan_
+    recompute`'s own real HIGH/CRITICAL bar - this proves the gate at the
+    one place that decides it, without needing an LLM or the full
+    background-recompute machinery (already covered elsewhere)."""
+    match_id = _seed_match(db_conn, status="FULL_TIME")
+    result = apply_match_analysis(db_conn, match_id, "FULL_TIME", _obs_payload(1, direction, confidence))
+
+    rows = db_conn.execute(
+        "SELECT entity, entity_id, severity, event_type FROM change_events WHERE entity_id=1 AND event_type='qualitative_analysis'"
+    ).fetchall()
+    if expect_written:
+        assert result["change_events_written"] == 1
+        assert len(rows) == 1
+        assert rows[0]["entity"] == "player"
+        assert rows[0]["severity"] == expect_severity
+    else:
+        assert result["change_events_written"] == 0
+        assert len(rows) == 0
 
 
 def test_apply_match_analysis_full_time_writes_qualitative_state(db_conn):

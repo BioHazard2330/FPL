@@ -214,7 +214,7 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "Chip Strategy" in result
     assert "Latest Recommendations" not in result  # removed 2026-08-21, direct user request
     assert "System health" in result
-    assert f'content="{60}"' in result  # meta-refresh tag present, tightened from 300 to 60s
+    assert f'content="{30}"' in result  # meta-refresh tag present, tightened from 60s to 30s (2026-08-28, more-frequent-updates ask)
 
 
 def test_dashboard_squad_changes_panel_renders_real_change_events(db_conn):

@@ -63,7 +63,7 @@ from fpl_agent.optimization.decision_engine import evaluate_locked_squad
 from fpl_agent.optimization.locked_squad import get_locked_squad
 from fpl_agent.optimization.squad import validate_starting_xi
 
-_REFRESH_SECONDS = 60
+_REFRESH_SECONDS = 30
 
 
 def generate_dashboard_html(
@@ -294,12 +294,32 @@ def generate_dashboard_html(
             conn, list(locked.squad_ids), ca=ca, solio_comparison=solio_cmp, template_players=template_players,
         )
 
+    # Real fix (2026-08-28, direct user report: a dashboard opened via
+    # `file://` - downloaded/copied out of `data/` rather than served over
+    # http - showed the SYSTEM LIVE strip permanently stuck at "not yet
+    # polled"/"unavailable", since `fetch()` is blocked entirely under the
+    # `file://` origin and the strip had no fallback - see
+    # `home._system_live_html`'s own docstring). Building the SAME snapshot
+    # `write_live_snapshot` already writes to disk (cheap - pure DB reads,
+    # no Dixon-Coles/Monte Carlo, see that module's own docstring) lets the
+    # strip start at real, correct-as-of-this-regen values server-side;
+    # non-fatal so a real failure here never breaks the surrounding regen.
+    live_snapshot_for_strip = None
+    try:
+        from fpl_agent.monitoring.live_snapshot import build_live_snapshot
+
+        live_snapshot_for_strip = build_live_snapshot(conn, live_payload)
+    except Exception:
+        logging.getLogger("fpl_agent.dashboard").exception(
+            "build_live_snapshot failed while rendering the SYSTEM LIVE strip - falling back to the unpolled shell"
+        )
+
     home_section_html = home.render_hero(
         gw_label_html=gw_label_html,
         current_rec=current_rec, ta=ta, ca=ca, ft_value=ft_tile_value, ft_title=ft_tile_title,
         actual_points=my_live_score.points if my_live_score is not None else None,
         next_xp=headline_xp, bank_m=bank_m, captain_name=captain_name, rank_tile_html=live_rank_tile_html,
-        freshness=freshness, cross_check=cross_check,
+        freshness=freshness, cross_check=cross_check, live_snapshot=live_snapshot_for_strip,
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
@@ -415,7 +435,7 @@ def generate_dashboard_html(
     # fields on its own cheap ~20s cadence; this meta-refresh becomes a
     # slower catch-all for everything else (squad changes, new decisions),
     # not the primary live-update mechanism anymore.
-    refresh_seconds = 90 if dash_state == "LIVE" else _REFRESH_SECONDS
+    refresh_seconds = 45 if dash_state == "LIVE" else _REFRESH_SECONDS
 
     return f"""<!doctype html>
 <html lang="en">
@@ -597,13 +617,17 @@ def generate_dashboard_html(
 }})();
 
 (function() {{
-  // Real lightweight live-state channel (2026-08-28) - polls the small
-  // live_snapshot.json file monitoring/live_snapshot.py writes on its own
-  // cheap ~20s cadence during a live match, and patches ONLY the rank/
-  // points elements in place - never a full page reload for this. Silent
-  // no-op when the file doesn't exist yet (e.g. no live match this
-  // session) or the fetch fails (file:// origin, offline) - this must
-  // never break the page.
+  // Real lightweight live-state channel (2026-08-28, cadence tightened
+  // 2026-08-28 direct user ask "make updates more frequent" - 20s -> 10s,
+  // still a plain local-file read, zero added network/API cost) - polls
+  // the small live_snapshot.json file monitoring/live_snapshot.py writes,
+  // and patches ONLY the rank/points elements in place - never a full page
+  // reload for this. Silent no-op when the file doesn't exist yet (e.g. no
+  // live match this session) or the fetch fails (file:// origin, offline) -
+  // this must never break the page; the SYSTEM LIVE strip's own real
+  // server-rendered initial values (`home._system_live_html`) cover exactly
+  // this case instead of staying stuck at a placeholder forever.
+  var POLL_INTERVAL_MS = 10000;
   var lastVersion = null;
   // Real, honest freshness strip state (2026-08-29, "master live +
   // strategic-plan correction pass" P0 fix) - every stored value here is a
@@ -615,6 +639,30 @@ def generate_dashboard_html(
     snapshotAt: null, decisionAt: null, rankAt: null, degraded: [], prevRank: null,
     rankNextDueAt: null, decisionStatus: null, newsAt: null, projectionsAt: null,
   }};
+  // Real fix (2026-08-28, direct user report: a dashboard opened via
+  // `file://` - downloaded/copied out of `data/` rather than served over
+  // http - showed this strip permanently frozen at placeholder text,
+  // because `fetch()` is blocked entirely under the `file://` origin and
+  // `liveState` above only ever got populated inside `applySnapshot`,
+  // itself only ever called from a successful fetch). Seeds `liveState`
+  // from the real `data-*` timestamps `home._system_live_html` already
+  // rendered onto `#system-live-strip` server-side - plain DOM attribute
+  // reads, never blocked by `file://` (only `fetch()`/XHR to a sibling
+  // file is) - so the 1s ticker below has real values to animate from
+  // literally the first tick, with or without the poll ever succeeding.
+  (function seedLiveStateFromServerRender() {{
+    var strip = document.getElementById('system-live-strip');
+    if (!strip) return;
+    var d = strip.dataset;
+    if (d.snapshotAt) liveState.snapshotAt = Date.parse(d.snapshotAt);
+    if (d.decisionAt) liveState.decisionAt = Date.parse(d.decisionAt);
+    if (d.decisionStatus) liveState.decisionStatus = d.decisionStatus;
+    if (d.rankAt) liveState.rankAt = Date.parse(d.rankAt);
+    if (d.rankNextDueAt) liveState.rankNextDueAt = Date.parse(d.rankNextDueAt);
+    if (d.newsAt) liveState.newsAt = Date.parse(d.newsAt);
+    if (d.projectionsAt) liveState.projectionsAt = Date.parse(d.projectionsAt);
+    if (d.degraded) liveState.degraded = d.degraded.split(',');
+  }})();
   // Real news-source names this project already tags in `source_freshness`
   // (same set `assemble.py`'s server-rendered News panel freshness tag
   // already uses) - picking the most recent among them client-side avoids
@@ -682,13 +730,15 @@ def generate_dashboard_html(
   // time the NEXT poll() call will fire and recomputes the remaining time
   // from that real timestamp every tick, so the display self-corrects
   // even if a tick was skipped or delayed.
-  var nextPollAt = Date.now() + 20000;
+  var nextPollAt = Date.now() + POLL_INTERVAL_MS;
   function tickNextCheck() {{
     var el = document.getElementById('system-live-next-check');
     if (!el) return;
     var remaining = Math.max(0, Math.round((nextPollAt - Date.now()) / 1000));
     el.textContent = remaining + 's';
   }}
+  tickLiveStrip();
+  tickNextCheck();
   setInterval(function() {{ tickLiveStrip(); tickNextCheck(); }}, 1000);
 
   function applySnapshot(snap) {{
@@ -730,7 +780,7 @@ def generate_dashboard_html(
     if (snap.recommendation && snap.recommendation.status) {{
       liveState.decisionStatus = snap.recommendation.status;
     }}
-    nextPollAt = Date.now() + 20000;
+    nextPollAt = Date.now() + POLL_INTERVAL_MS;
     tickLiveStrip();
     if (snap.version === lastVersion) return;
     lastVersion = snap.version;
@@ -863,7 +913,7 @@ def generate_dashboard_html(
       .catch(function() {{ /* no snapshot yet, or not served over http - silent */ }});
   }}
   poll();
-  setInterval(poll, 20000);
+  setInterval(poll, POLL_INTERVAL_MS);
 }})();
 
 (function() {{

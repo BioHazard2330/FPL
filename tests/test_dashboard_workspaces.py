@@ -115,9 +115,9 @@ def test_render_hero_forces_recomputing_word_when_stale():
 
 
 def test_render_hero_includes_the_system_live_strip_shell():
-    """The strip is a static shell only - real values are populated
-    entirely client-side by the live_snapshot.json poll - so this just
-    checks the real hook ids exist for that JS to find."""
+    """No `live_snapshot` passed (e.g. `build_live_snapshot` itself failed) -
+    real hook ids still exist for the client JS poll to find, and the strip
+    honestly shows "not polled yet" rather than a fabricated value."""
     result = home.render_hero(
         gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
         actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
@@ -129,6 +129,39 @@ def test_render_hero_includes_the_system_live_strip_shell():
     ):
         assert f'id="{expected_id}"' in result, f"missing {expected_id}"
     assert 'data-live-state="unknown"' in result
+
+
+def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_snapshot_given():
+    """Real fix (2026-08-28, direct user report: a dashboard opened via
+    `file://` - downloaded/copied out of `data/` - showed this strip stuck
+    at "not yet polled"/"unavailable" forever, since `fetch()` is blocked
+    under the `file://` origin). When `assemble.py` passes the same
+    snapshot `write_live_snapshot` already computes, the strip must render
+    real values server-side instead of the placeholder shell - the client
+    poll (when it can reach a real server) then layers faster updates on
+    top unchanged."""
+    snapshot = {
+        "generated_at": "2026-08-28T12:00:00+00:00",
+        "recommendation": {"computed_at": "2026-08-28T06:00:00+00:00", "status": "CURRENT"},
+        "rank": {"retrieved_at": "2026-08-28T11:30:00+00:00"},
+        "cadence": {
+            "system": {"last_sync_at": "2026-08-28T11:50:00+00:00"},
+            "rank": {"next_due_floor_minutes": 15},
+        },
+        "source_freshness": [
+            {"source": "bbc_sport_rss", "last_success": "2026-08-28T11:00:00+00:00", "degraded": False},
+            {"source": "odds_api", "last_success": "2026-08-27T00:00:00+00:00", "degraded": True},
+        ],
+    }
+    result = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
+        live_snapshot=snapshot,
+    )
+    assert 'data-live-state="live"' in result
+    assert "not yet polled" not in result
+    assert ">CURRENT<" in result
+    assert "1 source(s) degraded: odds_api" in result
 
 
 class _FakePlayer:

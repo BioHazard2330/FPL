@@ -8,6 +8,30 @@ separation and phase-gating are code invariants, not just prose discipline.
 """
 from datetime import datetime, timezone
 
+from fpl_agent.ingestion.change_detection import record_event
+
+# Real automation-chain closer (2026-08-28, direct user requirement:
+# "when Claude later processes the queue: apply_match_analysis -> emit
+# material qualitative-change event -> automatic invalidation -> decision
+# recomputation if material -> strategic plan recomputation if material ->
+# snapshot update -> browser update"). Everything downstream of this
+# already exists and is real (`cli/main.py::_maybe_trigger_strategic_plan_
+# recompute` fires on any HIGH/CRITICAL `change_events` row for a squad
+# player, `evaluate_locked_squad`/`analyze_transfer_decision` already read
+# live DB state every regen) - the one real, confirmed gap was that
+# `apply_match_analysis` never wrote a `change_events` row at all, so a
+# qualitative finding could never clear that gate no matter how confident
+# or significant. `high` confidence maps to HIGH severity (clears the same
+# real bar `change_detection.py`'s own injury/status detector uses) -
+# `medium` is recorded as a real, visible event but stays below that bar
+# (this project's own standing "not from tiny samples" rule, same posture
+# `decision_fusion.py`'s PERSISTENT_TREND gate already applies to a single
+# qualitative observation) - `low` is real evidence but not material,
+# never written as a change event (still fully queryable via
+# `player_fpl_implications` either way, nothing is lost).
+_QUALITATIVE_SEVERITY = {"high": "HIGH", "medium": "MEDIUM"}
+_MATERIAL_DIRECTIONS = {"POSITIVE", "NEGATIVE", "WATCH"}
+
 VALID_PHASES = {"PRE_MATCH", "LIVE", "HALFTIME", "FULL_TIME"}
 VALID_CONFIDENCE = {"low", "medium", "high"}
 VALID_DIRECTIONS = {"POSITIVE", "NEUTRAL", "NEGATIVE", "WATCH"}
@@ -86,6 +110,7 @@ def apply_match_analysis(conn, match_id: int, phase: str, payload: dict, analysi
         )
 
     implications_written = 0
+    change_events_written = 0
     for obs in observations:
         if obs["subject_type"] == "player" and obs.get("fpl_direction"):
             conn.execute(
@@ -96,6 +121,15 @@ def apply_match_analysis(conn, match_id: int, phase: str, payload: dict, analysi
                  obs.get("confidence", "low"), now, phase, obs.get("evidence_ref"), analysis_version),
             )
             implications_written += 1
+            severity = _QUALITATIVE_SEVERITY.get(obs.get("confidence", "low"))
+            if severity is not None and obs["fpl_direction"] in _MATERIAL_DIRECTIONS:
+                record_event(
+                    conn, event_type="qualitative_analysis", entity="player", entity_id=obs["subject_id"],
+                    old_value=None, new_value=obs["fpl_direction"], detected_at=now,
+                    source="qualitative_analysis", confidence=obs.get("confidence", "low"), severity=severity,
+                    fpl_impact=obs.get("fpl_reason"),
+                )
+                change_events_written += 1
 
     if payload.get("headline") or payload.get("uncertainties"):
         conn.execute(
@@ -144,6 +178,7 @@ def apply_match_analysis(conn, match_id: int, phase: str, payload: dict, analysi
         "implications_written": implications_written,
         "player_states_written": player_states_written,
         "team_states_written": team_states_written,
+        "change_events_written": change_events_written,
     }
 
 
