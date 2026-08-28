@@ -112,6 +112,27 @@ def _freshness_html(freshness) -> str:
     return age_bit + stale_bit
 
 
+def _system_live_html() -> str:
+    """Real, always-honest freshness strip (2026-08-29, "master live +
+    strategic-plan correction pass" P0 fix: "live/freshness status is not
+    visible enough"). A static shell only - every value here is populated
+    and kept live by the SAME `live_snapshot.json` poll (`assemble.py`'s own
+    script block) already driving the rank/points tiles/RECOMPUTING banner,
+    never a second, duplicated data source. Starts as an honest "not polled
+    yet" state (`data-live-state="unknown"`) rather than a fabricated
+    number - a real dashboard load with no live match/no snapshot file ever
+    served stays in this state, not silently pretending to be current."""
+    return """<div class="system-live-strip" id="system-live-strip" data-live-state="unknown">
+  <span class="system-live-dot" id="system-live-dot"></span>
+  <span class="system-live-label">SYSTEM LIVE</span>
+  <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">not yet polled</b></span>
+  <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
+  <span class="system-live-field">Rank <b id="system-live-rank-age">&mdash;</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
+  <span class="system-live-field">Decision <b id="system-live-decision-age">&mdash;</b> &middot; <b id="system-live-decision-status">&mdash;</b></span>
+  <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
+</div>"""
+
+
 def render_hero(
     *, gw_label_html: str, current_rec: dict | None, ta, ca, ft_value: str, ft_title: str,
     actual_points: float | None, next_xp: float, bank_m: float, captain_name: str,
@@ -142,10 +163,11 @@ def render_hero(
     captain_verdict_html = f"<div class='home-hero-captain-verdict'>{captain_verdict}</div>" if captain_verdict else ""
 
     return f"""<section class="home-hero home-hero-{_esc(cls)}" id="home">
+  {_system_live_html()}
   <div class="home-hero-gw">{gw_label_html}</div>
-  <div class="home-hero-action">{_esc(word)}</div>
+  <div class="home-hero-action" id="home-action-word">{_esc(word)}</div>
   <div class="home-hero-reason">{_esc(reason)}</div>
-  {freshness_html}
+  <div id="home-freshness-block">{freshness_html}</div>
   {captain_verdict_html}
   <div class="home-hero-metrics">
     {actual_tile}

@@ -1,9 +1,150 @@
 # Project State
 
-Last updated: 2026-08-29. Read this before resuming work — it's the current, load-bearing snapshot,
-kept lean on purpose. **Don't add session narrative here** — a new capability/architecture change gets
-one short factual entry; the story of how it was built, bugs found, and live-verification detail goes
-in `docs/history/` (one new dated file per session, indexed in `docs/history/README.md`).
+Last updated: 2026-08-29 (master live + strategic-plan correction pass). Read this before resuming
+work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add session narrative
+here** — a new capability/architecture change gets one short factual entry; the story of how it was
+built, bugs found, and live-verification detail goes in `docs/history/` (one new dated file per
+session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, master live + strategic-plan correction pass)
+
+**Real, confirmed root-cause bug found + fixed: `decision: null` in the dashboard's own
+`workspace-data` JSON.** A `fpl strategic-plan --no-current-action` search-diagnostic run (the
+beam-width 5/10/20/50 experiment, CLAUDE.md's own known-blockers entry) had become the LATEST
+`strategic_plan` decision in production (decision #115) - every consumer that blindly trusted "the
+single latest strategic_plan decision" (dashboard primary verdict, workspace JSON, live snapshot
+freshness/change-explanation, adversarial-audit cross-check) inherited its real, honest
+`current_recommendation: null` and silently went blank. Fixed with one shared helper,
+`optimization/strategic_planner.py::latest_strategic_plan_with_recommendation`/
+`strategic_plan_decisions_with_recommendation` - skips past any incomplete decision to the latest
+genuinely COMPLETE one, wired into all 6 real call sites (`legacy.py` x2, `live_snapshot.py`,
+`adversarial_audit.py`, `decision_change.py`, plus a new self-healing auto-trigger condition in
+`cli/main.py::_maybe_trigger_strategic_plan_recompute`). Live-verified: the rendered dashboard's
+`workspace-data` JSON now carries a real, non-null `decision` object (decision #102, PLAY WILDCARD,
+path_total=628.55) instead of `null`.
+
+**Real, confirmed root-cause bug found + fixed: a wildcard/freehit step carried NO squad
+information at all.** `optimization/transfers.py::TransferSequenceStep` had no field for the
+optimizer's own real rebuilt squad - `chip_gw_marginal_value` (`chips.py`) always computed a real,
+legal, budget-respecting rebuild via `optimise_squad`, but discarded it on the way out for display
+purposes (only `new_squad_ids`, which is `None` for freehit by design - a one-GW rental that must
+NOT persist - was ever threaded through, and even that never reached the STEP itself). The
+dashboard's own squad-state reconstruction (`_squad_state_by_event`) replayed `player_out_id`/
+`player_in_id` pairs, which a chip step never has, so it silently carried the PREVIOUS gw's squad
+forward and displayed it as the wildcard's own team. Fixed: `TransferSequenceStep.resulting_squad_ids`
+(always populated - roll/transfer/chip alike) and `StartingActionOption.starting_squad_ids` (the
+real per-GW DISPLAY squad, distinct from `resulting_squad_ids` for freehit specifically) now carry
+the optimizer's real rebuild end to end - `chips.py`, `transfers.py` (`search_transfer_sequences`,
+`compare_starting_actions`, `_synthetic_sequence_from_option`, `path_detail`), `legacy.py::
+_squad_state_by_event` (now reads the real field directly, replay logic kept only as a fallback for
+a decision logged before this field existed). Also added `ChipStepResult.rebuild_failed` - a
+wildcard/freehit branch whose rebuild genuinely fails (infeasible budget/constraints) is now SKIPPED
+entirely, never offered as "PLAY WILDCARD" with the current squad silently relabeled (direct user
+instruction). Live-verified in the real rendered browser: clicking the GW2 WILDCARD timeline node
+shows a genuinely different 15-man squad (Kinsky/Ajer/Ballard/Calafiori/Maguire.../B.Fernandes
+captain, 47.4 projected pts) from the current squad; clicking GW3's transfer node shows "OUT Ajayi —
+2.2 xP / IN Guéhi — 6.8 xP / Net player projection: +4.7 xP" and a DIFFERENT GKP than GW2 (real
+per-GW XI re-resolution, not carried forward).
+
+**Real per-player xP now shown on every future-GW tile** (`squad.py::_projected_shirt_tile`, reuses
+`resolve_projected_xi`'s already-computed per-player median, zero new computation) and a real OUT/IN
+xP + net-delta line on every transfer step (reuses `build_player_pool_for_ids` with the same shared
+`xp_cache`, since the OUT player may not be in the resulting squad).
+
+**Real path-score traceability**: `TransferSequenceStep.gw_ev` (post-hit-cost, same convention
+`StartingActionOption.starting_gw_value` already used) is now populated at every branch -
+`sum(step.gw_ev for step in steps) == path_total` exactly, a real invariant now covered by
+`test_path_total_equals_sum_of_step_gw_ev` against the actual joint search output (not a
+hand-constructed fixture).
+
+**Real, always-honest "SYSTEM LIVE" freshness strip** (`home.py::_system_live_html`, CSS in
+`assemble.py`) - a static shell populated and kept live entirely by the SAME `live_snapshot.json`
+poll already driving the rank/points tiles: real snapshot age, decision age, rank age, and a
+degraded-source count, all ticking client-side off REAL stored timestamps (`Date.now() - stored`),
+never a fabricated counter. Also added a real rank Δ badge (diff between two real observed polls,
+blank until a second real observation exists this session - never a fake Δ0). **Real, disclosed
+scope limit**: only snapshot/decision/rank age are wired into the strip; bonus/DEFCON/squad/
+per-source next-due countdowns (the full "central freshness registry" ask) are NOT built this pass -
+`source_freshness` is already in the snapshot JSON (2026-08-28) but not yet surfaced per-source in
+this strip. A full per-source `next_due` also isn't derivable cleanly from `config/freshness.yaml`
+today (semantic categories like `fixtures`/`price`, not 1:1 with real `source_health.source_name`
+values) - a real, scoped follow-up, not attempted this pass.
+
+**Real operational finding, not fixed (blocked by this session's own safety tooling)**: while
+live-verifying against the real production machine, found `FPLAgentLivePoll`'s registered process
+had been running continuously since well before this session's fixes landed (a long-lived Python
+process holds its imports in memory - editing `.py` files on disk doesn't affect an already-running
+interpreter). Restarted the scheduled task via `Stop-ScheduledTask`/`Start-ScheduledTask`
+(succeeded), but the OLD process didn't actually terminate and a NEW one now runs alongside it -
+attempting to `Stop-Process -Force` the stale PIDs was blocked by this session's own auto-mode
+safety classifier. Both share the same `data/live_snapshot.json` file (each write is atomic, so no
+corruption risk, just "whichever wrote last wins" each cycle) - real, honest, user-visible
+consequence: the SYSTEM LIVE strip's Decision/Rank fields showed "no decision logged yet"/
+"unavailable" during verification even though the underlying code is fixed and independently
+verified correct (a direct, controlled `write_live_snapshot` call in this same session produced the
+correct non-null values). **Action needed from the user**: end the stale `fpl.exe live-match-poll`
+process (Task Manager, or simplest - a laptop reboot) so only the current-code instance remains.
+
+**Not attempted this pass, honestly disclosed**: a persistent "LIVE CHANGES" feed strip (P0 ask);
+intragame (sub-GW) time-series storage for the live charts to work mid-match before 2 completed GWs
+exist (P0 ask - the two existing charts still correctly gate on `my_team_gw_summary`, which is only
+per-finished-GW); per-source next-due countdowns beyond snapshot/decision/rank; real descriptive
+path names beyond "Path N" (P1); a from-scratch restart/overnight verification (partially covered by
+the Task Scheduler stop/start above, not a full laptop-off-to-on cycle). Each is real, scoped,
+comparable in size to its own session - not attempted rather than rushed.
+
+## Where things stand (updated 2026-08-29, live product loop completion pass)
+
+Extended `monitoring/live_snapshot.py` to real full coverage per the "one live authoritative
+snapshot" audit: `gw` (lifecycle event/state), `squad` (every squad player's slot/captain/vice/xp/
+availability classification in one array, reusing `models.availability.classify`), `match_events`
+(goals/assists/red cards, sharing one `compute_live_bonus` call with the existing `bonus_defcon`
+block rather than a second live-payload pass), and `source_freshness` (every `source_health` row
+with a plain `failure_count>0` degraded flag). `models/decision_change.py`'s
+`DecisionChangeExplanation` gained a real `impact` field (new `path_total` minus old, both real
+full-horizon EV) — `fpl decision-changes` now prints OLD/NEW/TRIGGER/IMPACT/TIME, not just three
+of the four. Browser-side: the existing 20s `live_snapshot.json` poll (2026-08-28) now also patches
+the Home hero's RECOMPUTING banner/action-word in place the moment a real HIGH-severity change
+lands, reusing the server's own `home-hero-stale-banner` CSS class rather than inventing new visual
+design — live-verified this doesn't regress the two staleness-banner dashboard tests (fixed a real
+test-precision gap those tests had: a bare `"RECOMPUTING"` substring check now also matches the
+always-shipped poll script's own JS string, so both tests were tightened to check for the actual
+server-rendered `<div class='home-hero-stale-banner'>` tag instead). Bonus/DEFCON/squad/match-events/
+source-freshness are in the snapshot but NOT yet browser-patched — real, disclosed, scoped follow-up
+(the full-regen/meta-refresh cadence already covers them correctly, just not sub-20s).
+
+Built real, data-driven **live charts** (`monitoring/dashboard/live_charts.py`): rank trajectory +
+cumulative GW points, both single-sourced from `my_team_gw_summary` (real official per-GW FPL data,
+no new ingestion), inline SVG, wired into the existing `#live` panel. Deliberately NOT built this
+pass (data sources identified, not implemented): squad contribution / captain contribution / actual-
+vs-expected — all three need a `prediction_outcomes` + `my_team_picks.is_captain` join that wasn't
+built and verified this session; shipping 2 solid charts beats 5 unverified ones.
+
+**Understat repair prioritization, quantified not guessed** (per-season real query against
+`player_match_stats_history`): 2021-22 7855/10485 unresolved, 2022-23 7333/11345, 2023-24
+6767/11384, 2024-25 5774/11567, 2025-26 2617/11490 (down from 4222, the one season already
+repaired 2026-08-28). Real reason 2025-26 stays highest-value and the other four stay
+deprioritized: `_hierarchical_prior_rates`/`_hierarchical_share_prior` (the live model's own
+shrinkage-prior fallback) only ever reads the single most-recent prior season — 2021-22 through
+2024-25 currently have ZERO measured effect on live projections, and only matter for a future
+multi-season-pooling change (real, deferred, see CLAUDE.md's own bonus-regression follow-up note)
+or a from-scratch historical backtest of that specific season. Not re-run this pass (would mostly
+re-fetch matches already confirmed genuinely unresolvable — players long removed from the live
+roster — near-zero new yield); real next action is a fresh `fpl repair-understat-players --season
+2025-26` batch to chase the remaining 2617, not the older seasons.
+
+**Decision-outcome backtest (`fpl decision-backtest`), verified not rebuilt**: already preserves
+every real deadline-freeze snapshot (`record_decision_snapshot`, idempotent per event/season/kind)
+and already auto-reveals on GW finish (post-GW pipeline). `n<5` already reports as "not enough real
+samples to claim statistical significance" alongside the real row, never blocking/hiding output —
+matches this pass's ask exactly, no code change needed.
+
+**Assist/bonus correlation — backlog item added, not rewritten** (per the standing "quantify before
+rewriting" rule): the measured 7% same-team assist-draw violation rate (2026-08-28) still hasn't been
+checked against whether it actually flips a real captain/transfer/BB/FH/TC decision anywhere in
+production — a real, scoped, next-session question (does the 7% correlation gap ever move a decision
+past its materiality bar, or is it noise the decision layer already absorbs) rather than a modeling
+rewrite.
 
 ## Where things stand (updated 2026-08-28, decision-outcome backtest + Understat repair + live-state completion pass)
 
@@ -150,7 +291,7 @@ Summarized: Dixon-Coles team-strength ridge (`_RIDGE_LAMBDA=2.5`, fixes a real s
 3. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
 4. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.
 5. **Surface sampled-EO margin of error** in the dashboard/CLI (currently derived, never printed).
-6. **Decision-outcome calibration** — capture recommended-action-taken vs rejected-alternative's real outcome per completed GW (`models/calibration.py`/`prediction_outcomes` exist for projected-vs-actual already); needs a season with completed GWs to have real observations.
+6. **Decision-outcome calibration - done 2026-08-28**: `models/decision_calibration.py`, `fpl decision-backtest` - real deadline-freeze capture + auto-reveal on GW finish, first real GW2 sample captured (pre-deadline, not yet revealed). Still real, scoped work: squad/captain-contribution + actual-vs-expected live charts (data sources identified 2026-08-29 - `prediction_outcomes` + `my_team_picks.is_captain` - not yet built); assist/bonus's 7% correlation gap's real decision-impact (does it ever flip a captain/transfer/BB/FH/TC call, or is it noise the decision layer already absorbs) - not yet checked.
 7. **Frontend redesign Phase 2 - done 2026-08-28** (see `docs/history/14-session-2026-08-28-frontend-redesign-phase2.md`): Intelligence workspace now a real league-wide team-signal briefing (`intelligence.py`, calls `team_outlook` across every real team, not just the squad's), Opportunity workspace redesigned into a real scouting board with real confidence per card and a 1-visible-plus-details-for-more cap per category (`opportunity.py`), Market workspace re-framed (`market.py`), Fixture Tool gets real range/metric(overall-attack-defence)/sort/filter controls (`fixtures.py`, reuses the already-built `models.fixtures.fixture_difficulty` - honestly discloses the current preseason attack/defence-strength-not-yet-published fallback). `legacy.py`'s now-fully-superseded orchestrators (`_intelligence_summary_html`/`_opportunity_board_html`/`_market_summary_html`/`_fixture_ticker_html`) deleted, not left dead.
 8. **Frontend redesign Phase 3, partially done 2026-08-28**: Squad's projected-GW previews now use real shirt tiles grouped by position (was plain text rows) - see `docs/history/15-session-2026-08-28-visual-density-and-accuracy-audit.md`. Still not done: the `monitoring/dashboard/` module split (legacy.py is still ~4500 lines, mostly Advanced-drawer/Live/Team-Outlook/Match-Intelligence renderers). Fixture Tool's Attack/Defence metrics will start genuinely differentiating from Overall automatically once FPL publishes real attack/defence strength ratings (no code change needed, just currently coincide via an honest, disclosed fallback).
 9. **Data sourcing investigation, done 2026-08-28** (see same history file): elevenify.com and Spreadex - the two sources fpl.page itself credits for its projections - are both confirmed NOT viable as automated backend sources for this project (elevenify: single-person Substack, no API/feed, subscription-gated; Spreadex: licensed spread-betting operator, no stable public market data without an account). This project's own Tier-1/2 pipeline (official FPL API, Understat, the-odds-api, BBC/Sky RSS, FotMob) remains the real, disclosed, automatable one - genuinely different methodology from fpl.page's, not a lesser one.

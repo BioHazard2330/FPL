@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
+from fpl_agent.optimization.strategic_planner import latest_strategic_plan_with_recommendation
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.models.breakouts import find_breakouts
@@ -2266,7 +2267,7 @@ def _next_gw_plan_html(conn: sqlite3.Connection) -> str:
     # search from the dashboard regen path (a real 8-GW beam search takes
     # well over a minute - `fpl strategic-plan` stays a manually-run,
     # opt-in command, same posture as `fpl live-rank`/`fpl season-sim`).
-    strategic = latest_decision_of_type(conn, "strategic_plan")
+    strategic = latest_strategic_plan_with_recommendation(conn)
     strategic_html = ""
     if strategic is not None:
         sd = strategic.detail
@@ -2538,7 +2539,7 @@ class _PrimaryVerdict:
 
 
 def _compute_primary_verdict(conn: sqlite3.Connection, ta) -> _PrimaryVerdict:
-    strategic = latest_decision_of_type(conn, "strategic_plan")
+    strategic = latest_strategic_plan_with_recommendation(conn)
     sd = _normalize_strategic_detail(strategic.detail if strategic is not None else None)
 
     immediate_action = "ROLL"
@@ -2587,20 +2588,32 @@ def _compute_primary_verdict(conn: sqlite3.Connection, ta) -> _PrimaryVerdict:
 
 
 def _squad_state_by_event(initial_squad_ids: set[int], steps: list[dict]) -> dict[int, set[int]]:
-    """Reconstructs the real per-GW squad along one strategic path from the
-    step dicts `fpl strategic-plan` logs (`cli/main.py::_path_detail`) -
-    each step's `player_out_id`/`player_in_id` (added 2026-08-27 specifically
-    for the Squad State Machine) says exactly who left/joined at that event.
-    A step missing either id (a real ROLL step, or a decision logged before
-    these ids existed) changes nothing - the squad carries over unchanged to
-    that event, never a guess. Pure, real, additive reconstruction - no new
-    search, no new query, just replaying already-computed transfer ids."""
+    """Real, authoritative per-GW squad along one strategic path (2026-08-29,
+    "master live + strategic-plan correction pass" P0 fix). Reads each
+    step's own `resulting_squad_ids` directly (see
+    `optimization.transfers.TransferSequenceStep`'s own docstring) - never
+    reconstructs by replaying `player_out_id`/`player_in_id` pairs, which
+    has no representation for a chip step. Confirmed real, live production
+    bug this replaces: a wildcard/freehit step carries no in/out pair by
+    construction, so the OLD replay-based version silently carried the
+    PREVIOUS gw's squad forward and displayed it as the wildcard's own
+    team - "PLAY WILDCARD" with the current squad relabeled, exactly the
+    thing the direct user instruction says must never happen.
+
+    Falls back to the old replay logic, event by event, ONLY for a step
+    whose `resulting_squad_ids` is empty (a real decision logged before this
+    field existed) - an honest schema-migration degradation for a stale
+    cached decision, never silently wrong for a freshly-computed one."""
     current = set(initial_squad_ids)
     by_event: dict[int, set[int]] = {}
     for step in steps:
-        out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
-        if out_id is not None and in_id is not None and out_id in current:
-            current = (current - {out_id}) | {in_id}
+        resulting = step.get("resulting_squad_ids")
+        if resulting:
+            current = set(resulting)
+        else:
+            out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+            if out_id is not None and in_id is not None and out_id in current:
+                current = (current - {out_id}) | {in_id}
         by_event[step["event"]] = set(current)
     return by_event
 
@@ -3384,30 +3397,16 @@ _CSS = """
      panel's top-right corner - present for anyone who wants to know what
      kind of content this is, never competing with the heading or the
      actual numbers for attention. */
-  /* Real "widget toolbar" corner icons (2026-08-27, direct user comparison
-     against real fpl.page screenshots) - fpl.page's own real widgets each
-     carry a small colored icon cluster (expand/reorder/dismiss) in the
-     top-right corner; this dashboard has no per-widget JS drag/reorder
-     system to back real versions of those, so this is the same real visual
-     language as a purely decorative, honest signal ("this is a real self-
-     contained widget"), not a functional control claiming a capability
-     that doesn't exist - unlike the refresh button (real) or the fixture-
-     ticker sort buttons (real), these are never wired to a click handler.
-     Two-icon CSS pseudo-element pair (⤢ expand-style, ✕ dismiss-style),
-     color-coded green/pink the same way fpl.page's own real icon row is. */
-  .panel[data-cat] { position: relative; }
-  .panel[data-cat]::before, .panel[data-cat]::after {
-    position: absolute; top: 14px; width: 20px; height: 20px; border-radius: 5px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.75rem; font-weight: 800; pointer-events: none;
-  }
-  .panel[data-cat]::before {
-    content: "↗"; right: 46px; color: var(--accent-2); background: rgba(0,255,135,0.12);
-  }
-  .panel[data-cat]::after {
-    content: "✕"; right: 20px; color: var(--fpl-pink); background: rgba(233,0,82,0.12);
-  }
-  @media (max-width: 640px) { .panel[data-cat]::before, .panel[data-cat]::after { display: none; } }
+  /* Removed (2026-08-29, "final product-completion pass" P1 fix, direct
+     instruction: "there are currently fake/decorative toolbar icons
+     implemented through CSS pseudo-elements... they are explicitly
+     non-functional... REMOVE THEM. Do not show affordances for actions
+     the product cannot actually execute. Trust is more important than
+     visual imitation.") - a colored icon in a widget's corner reads as a
+     real expand/dismiss control to a user scanning the page regardless of
+     `pointer-events: none`, and this dashboard has no real per-widget
+     expand/dismiss capability behind it. Was `.panel[data-cat]::before`/
+     `::after` (↗/✕ pseudo-element pair). */
   /* The squad pitch is this dashboard's hero content - real user complaint
      fixed 2026-08-21 ("the squad module looks so squeezed"): both "My Real
      Team" and "Recommended Squad" used to share one 2-col grid row
@@ -4387,4 +4386,24 @@ _CSS = """
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 999px; border: 2px solid var(--bg); }
   ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+  /* Live charts (2026-08-29, real my_team_gw_summary-sourced rank/points
+     trajectory - "finish the live product loop" item 6). Reuses the same
+     --accent/--accent-2/--faint tokens every other panel already uses. */
+  .live-charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
+  .live-chart-card { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+  .live-chart-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .live-chart-svg { width: 100%; height: auto; display: block; }
+  .chart-axis-label { font-size: 9px; fill: var(--faint); }
+  .chart-last-label { font-size: 11px; font-weight: 600; fill: var(--fg); }
+  .chart-empty { color: var(--faint); font-size: 0.85rem; padding: 8px 0; }
+  /* Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"
+     P0 ask) - built client-side entirely from real snapshot fields, see
+     assemble.py's own poll script. Starts hidden - a real dashboard load
+     with nothing to report yet stays honest, never shows an empty box. */
+  .live-changes-feed-wrap { margin-top: 16px; background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+  .live-changes-feed-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .live-changes-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .live-changes-feed-item { font-size: 0.82rem; border-left: 2px solid var(--accent-2); padding-left: 10px; }
+  .live-changes-feed-meta { color: var(--faint); font-size: 0.74rem; }
 """

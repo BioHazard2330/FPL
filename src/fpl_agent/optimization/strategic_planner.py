@@ -170,6 +170,63 @@ class CurrentRecommendation:
     starting_action_options: tuple[StartingActionOption, ...]
 
 
+_DECISION_SCAN_LIMIT = 30  # generous - real production strategic_plan cadence rarely logs more than a handful/day even during search-diagnostics
+
+
+def strategic_plan_decisions_with_recommendation(
+    conn: sqlite3.Connection, limit: int = 1, scan_limit: int = _DECISION_SCAN_LIMIT,
+) -> list:
+    """Real fix for a confirmed production bug (2026-08-29, "master live +
+    strategic-plan correction pass"): a `fpl strategic-plan --no-current-
+    action` run (used for internal search-width diagnostics, e.g. the beam-
+    width 5/10/20/50 experiment documented in CLAUDE.md) is a REAL, useful
+    decision for inspecting raw beam paths, but it never computes
+    `current_recommendation` - its own `detail['current_recommendation']` is
+    a real, honest `None`. Every consumer that blindly took "the single
+    latest `strategic_plan` decision" as authoritative (the dashboard's
+    primary verdict, the embedded workspace JSON's `decision` object, the
+    live snapshot's freshness/change-explanation, the adversarial audit's
+    cross-check) inherited that `None` and silently went blank/quiet -
+    confirmed live against production: a real `--no-current-action`
+    diagnostic run sat as the latest `strategic_plan` row, so the
+    dashboard's `workspace-data` JSON exposed `"decision": null` even
+    though an earlier, real, complete decision existed.
+
+    This is the one place that fix lives: skip past any `strategic_plan`
+    decision whose own `current_recommendation` is `None` (an incomplete/
+    diagnostic run) to find the latest one that's genuinely COMPLETE - not
+    just patch a `current_recommendation` from one decision onto a
+    DIFFERENT decision's paths/chip_schedule (that would reintroduce the
+    exact "mismatched combo" bug this same pass fixes elsewhere - the
+    decision object is treated as atomic, never Frankensteined). Every
+    caller that reads "the authoritative current strategic plan" (dashboard
+    primary verdict, workspace JSON, live snapshot, adversarial-audit
+    cross-check, decision-change diff) goes through this, never a raw
+    `latest_decision_of_type(conn, "strategic_plan")`.
+
+    `scan_limit` bounds a bad run of many consecutive diagnostic
+    invocations from becoming an unbounded query - if none of the last
+    `scan_limit` real rows are complete, this returns an empty list rather
+    than scanning the entire decisions table, which is itself real, honest
+    information (no valid decision exists), not a bug to work around by
+    scanning forever."""
+    from fpl_agent.database.decisions import list_decisions_of_type
+
+    complete = [
+        d for d in list_decisions_of_type(conn, "strategic_plan", limit=scan_limit)
+        if d.detail.get("current_recommendation") is not None
+    ]
+    return complete[:limit]
+
+
+def latest_strategic_plan_with_recommendation(conn: sqlite3.Connection):
+    """Single-result convenience wrapper - see
+    `strategic_plan_decisions_with_recommendation`'s own docstring for why
+    this is never just `latest_decision_of_type(conn, 'strategic_plan')`."""
+    rows = strategic_plan_decisions_with_recommendation(conn, limit=1)
+    return rows[0] if rows else None
+
+
 def synthesize_current_recommendation(
     conn: sqlite3.Connection,
     squad_ids: list[int],

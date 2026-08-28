@@ -39,7 +39,10 @@ def _confidence_label(conn, player_id: int) -> str:
 def _card(kind: str, name: str, position: str, price_m: float | None, ownership_pct: float | None,
           key_metric: str, why_now: str, confidence: str, team_code: int | None = None,
           considered_by_optimizer: bool | None = None) -> str:
-    price_bit = f"£{price_m:.1f}m" if price_m is not None else "?"
+    # Real, honest missing-data label (2026-08-29, "final product-completion
+    # pass" P1 fix: a bare "?" reads as a broken card, not a real "we don't
+    # have this" disclosure).
+    price_bit = f"£{price_m:.1f}m" if price_m is not None else "Price unavailable"
     own_bit = f"{ownership_pct:.1f}% owned" if ownership_pct is not None else ""
     shirt_html = (
         f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' "

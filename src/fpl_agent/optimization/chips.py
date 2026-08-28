@@ -228,10 +228,36 @@ class ChipStepResult:
     """Single-GW marginal value of playing one chip at one event, for the joint
     beam search. `new_squad_ids`/`new_bank_tenths` are only set for a
     permanent squad change (wildcard) - freehit's rebuild is a one-GW rental,
-    so the trajectory keeps its real squad/bank for the following step."""
+    so the trajectory keeps its real squad/bank for the following step.
+
+    `chip_step_squad_ids` (2026-08-29, "master live + strategic-plan
+    correction pass" P0 fix) is a REAL, DISCLOSED gap this closes: this is
+    the squad the optimizer actually rebuilt FOR THIS GW, always set on a
+    successful wildcard/freehit rebuild (unlike `new_squad_ids`, which is
+    deliberately `None` for freehit so the trajectory reverts next step -
+    that's about whether the rebuild PERSISTS, not whether one happened).
+    Before this field existed, `search_transfer_sequences` had nowhere to
+    put "the real rebuilt 15" for display, so a wildcard/freehit step was
+    persisted with no squad information at all - confirmed live in
+    production: the dashboard's own squad-state reconstruction (which
+    replays `player_out_id`/`player_in_id` pairs) had nothing to replay for
+    a chip step, so it silently carried the PREVIOUS gw's squad forward and
+    displayed it as if it were the wildcard's own team - never a fabrication
+    inside this module (the real rebuild was always computed correctly, see
+    `rebuild_failed` below), but a real information-loss bug on the way out.
+
+    `rebuild_failed` (new) is the explicit, honest "the optimizer could not
+    produce a valid legal squad for this chip at this event" signal - the
+    caller (`search_transfer_sequences`) must SKIP this chip as a candidate
+    branch when true, never fall back to silently offering "PLAY WILDCARD"
+    with the current squad relabeled - matching the direct user instruction
+    ("never reuse the current squad and label it wildcard; if the optimizer
+    cannot produce a valid wildcard squad, show REVIEW/INSUFFICIENT DATA")."""
     marginal_value: float
     new_squad_ids: tuple[int, ...] | None
     new_bank_tenths: int | None
+    chip_step_squad_ids: tuple[int, ...] | None = None
+    rebuild_failed: bool = False
 
 
 # Deliberately separate from _squad_rebuild_cache/_cached_optimise_squad above:
@@ -301,14 +327,17 @@ def chip_gw_marginal_value(
         budget_tenths = sum(r["value_tenths"] for r in rows) + bank_tenths
         rebuilt = _rebuild_squad_for_chip(conn, window_gw, budget_tenths)
         if rebuilt.status != "Optimal" or not rebuilt.squad:
-            return ChipStepResult(0.0, None, None)
+            # Real, honest failure - never silently offer this chip with the
+            # current squad relabeled as the rebuild (see this dataclass's
+            # own docstring). The caller must skip this branch entirely.
+            return ChipStepResult(0.0, None, None, chip_step_squad_ids=None, rebuild_failed=True)
         rebuilt_ids = tuple(c.player_id for c in rebuilt.squad)
         current_ev = sum(expected_points(conn, pid, n_gw=1, from_event=event).median for pid in squad_ids)
         rebuilt_ev = sum(expected_points(conn, pid, n_gw=1, from_event=event).median for pid in rebuilt_ids)
         marginal = round(rebuilt_ev - current_ev, 2)
         if chip_name == "wildcard":
-            return ChipStepResult(marginal, rebuilt_ids, budget_tenths - rebuilt.total_cost_tenths)
-        return ChipStepResult(marginal, None, None)
+            return ChipStepResult(marginal, rebuilt_ids, budget_tenths - rebuilt.total_cost_tenths, chip_step_squad_ids=rebuilt_ids)
+        return ChipStepResult(marginal, None, None, chip_step_squad_ids=rebuilt_ids)
 
     return ChipStepResult(0.0, None, None)
 

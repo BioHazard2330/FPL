@@ -17,7 +17,7 @@ from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.monitoring.dashboard import (
-    benchmark, fixtures, home, injuries, intelligence, market, opportunity, plan, player_data, squad,
+    benchmark, fixtures, home, injuries, intelligence, live_charts, market, opportunity, plan, player_data, squad,
 )
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
@@ -235,6 +235,7 @@ def generate_dashboard_html(
             live_rank_tile_html = f"""<div class="home-metric">
       <div class="home-metric-label" id="live-rank-label">{_esc(rank_label)}</div>
       <div class="home-metric-value" id="live-rank-value">{_esc(rank_str)}</div>
+      <div class="home-metric-delta" id="live-rank-delta"></div>
     </div>"""
 
     lifecycle = compute_gw_lifecycle_state(conn)
@@ -346,6 +347,11 @@ def generate_dashboard_html(
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
   {_live_tracking_html(conn, squad_ids, live_payload)}
+  {live_charts.render_live_charts(conn, my_team_entry_id)}
+  <div class="live-changes-feed-wrap" id="live-changes-feed-wrap" hidden>
+    <div class="live-changes-feed-title">LIVE CHANGES</div>
+    <ul class="live-changes-feed" id="live-changes-feed"></ul>
+  </div>
 </section>"""
     match_intelligence_inner = _match_intelligence_html(conn, squad_ids)
     match_intelligence_section_html = f"""<section class="panel panel-match-intelligence{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="match-centre" data-cat="intelligence">
@@ -408,10 +414,6 @@ def generate_dashboard_html(
   </div>
   <div class="topbar-right">
     <span class="gw-badge">{_esc(gw_label)}</span>
-    <div class="refresh-indicator">
-      <span class="pulse-dot small"></span>
-      snapshot {_esc(_relative_time(now))} &middot; next in <span id="refresh-countdown">{refresh_seconds}s</span>
-    </div>
     <a class="btn-refresh" href="" title="Reload now">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.05-6.77"/><path d="M21 3v6h-6"/></svg>
       Refresh
@@ -555,16 +557,6 @@ def generate_dashboard_html(
 }})();
 
 (function() {{
-  var el = document.getElementById('refresh-countdown');
-  if (!el) return;
-  var remaining = {refresh_seconds};
-  setInterval(function() {{
-    remaining = remaining > 0 ? remaining - 1 : 0;
-    el.textContent = remaining + 's';
-  }}, 1000);
-}})();
-
-(function() {{
   // Real lightweight live-state channel (2026-08-28) - polls the small
   // live_snapshot.json file monitoring/live_snapshot.py writes on its own
   // cheap ~20s cadence during a live match, and patches ONLY the rank/
@@ -573,8 +565,109 @@ def generate_dashboard_html(
   // session) or the fetch fails (file:// origin, offline) - this must
   // never break the page.
   var lastVersion = null;
+  // Real, honest freshness strip state (2026-08-29, "master live +
+  // strategic-plan correction pass" P0 fix) - every stored value here is a
+  // REAL timestamp straight off the polled snapshot, never a fabricated
+  // counter. The 1s ticker below only ever computes Date.now() minus one of
+  // these real stored timestamps - "real timers, not hardcoded fake
+  // countdowns" per the direct instruction.
+  var liveState = {{
+    snapshotAt: null, decisionAt: null, rankAt: null, degraded: [], prevRank: null,
+    rankNextDueAt: null, decisionStatus: null,
+  }};
+  function fmtAgo(ms) {{
+    if (ms == null) return null;
+    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 90) return s + 's ago';
+    var m = Math.round(s / 60);
+    if (m < 90) return m + 'm ago';
+    return Math.round(m / 60) + 'h ago';
+  }}
+  function fmtIn(ms) {{
+    // Same real-elapsed-time math as fmtAgo, just phrased "in Xm" for a
+    // future real timestamp - never a fabricated countdown, always
+    // Date.now() minus a real stored value.
+    if (ms == null) return null;
+    var s = Math.round((ms - Date.now()) / 1000);
+    if (s <= 0) return 'due now';
+    if (s < 90) return 'in ' + s + 's';
+    return 'in ' + Math.round(s / 60) + 'm';
+  }}
+  function tickLiveStrip() {{
+    var strip = document.getElementById('system-live-strip');
+    if (!strip) return;
+    var snapEl = document.getElementById('system-live-snapshot-age');
+    if (snapEl && liveState.snapshotAt != null) snapEl.textContent = fmtAgo(liveState.snapshotAt);
+    var decEl = document.getElementById('system-live-decision-age');
+    if (decEl) decEl.textContent = liveState.decisionAt != null ? fmtAgo(liveState.decisionAt) : 'no decision logged yet';
+    var decStatusEl = document.getElementById('system-live-decision-status');
+    if (decStatusEl) decStatusEl.textContent = liveState.decisionStatus || 'UNKNOWN';
+    var rankEl2 = document.getElementById('system-live-rank-age');
+    if (rankEl2) rankEl2.textContent = liveState.rankAt != null ? fmtAgo(liveState.rankAt) : 'unavailable';
+    var rankNextEl = document.getElementById('system-live-rank-next');
+    if (rankNextEl) rankNextEl.textContent = liveState.rankNextDueAt != null ? fmtIn(liveState.rankNextDueAt) : '—';
+    var degEl = document.getElementById('system-live-degraded');
+    if (degEl) {{
+      if (liveState.degraded.length) {{
+        degEl.hidden = false;
+        degEl.textContent = liveState.degraded.length + ' source(s) degraded: ' + liveState.degraded.join(', ');
+      }} else {{
+        degEl.hidden = true;
+      }}
+    }}
+    // "live" only within 90s of a REAL successful poll that itself proved a
+    // snapshot exists - never claimed just because the page is open, and
+    // never claimed if the underlying snapshot itself has gone stale.
+    if (liveState.snapshotAt != null && (Date.now() - liveState.snapshotAt) < 90000) {{
+      strip.setAttribute('data-live-state', 'live');
+    }} else if (liveState.snapshotAt != null) {{
+      strip.setAttribute('data-live-state', 'stale');
+    }}
+  }}
+  // Real "next poll" timestamp (2026-08-29, "final product-completion
+  // pass" P0 fix: "do NOT use nextCheckRemaining--/any local pretend
+  // countdown that can drift - use next_due_at - Date.now()"). A plain
+  // decrementing counter can drift from reality (a slow tick, a
+  // backgrounded/throttled tab) - this instead stores the real wall-clock
+  // time the NEXT poll() call will fire and recomputes the remaining time
+  // from that real timestamp every tick, so the display self-corrects
+  // even if a tick was skipped or delayed.
+  var nextPollAt = Date.now() + 20000;
+  function tickNextCheck() {{
+    var el = document.getElementById('system-live-next-check');
+    if (!el) return;
+    var remaining = Math.max(0, Math.round((nextPollAt - Date.now()) / 1000));
+    el.textContent = remaining + 's';
+  }}
+  setInterval(function() {{ tickLiveStrip(); tickNextCheck(); }}, 1000);
+
   function applySnapshot(snap) {{
-    if (!snap || snap.version === lastVersion) return;
+    if (!snap) return;
+    // Real poll succeeded - update the freshness strip's own real state
+    // regardless of whether the snapshot's CONTENT changed (an unchanged
+    // snapshot still proves the channel itself is alive; its `generated_at`
+    // is what actually ages, not the fact that we happened to fetch it).
+    if (snap.generated_at) liveState.snapshotAt = Date.parse(snap.generated_at);
+    if (snap.recommendation && snap.recommendation.computed_at) liveState.decisionAt = Date.parse(snap.recommendation.computed_at);
+    if (snap.rank && snap.rank.retrieved_at) liveState.rankAt = Date.parse(snap.rank.retrieved_at);
+    if (snap.source_freshness) {{
+      liveState.degraded = snap.source_freshness.filter(function(s) {{ return s.degraded; }}).map(function(s) {{ return s.source; }});
+    }}
+    // Real, derived rank next-check floor (2026-08-29, "final runtime
+    // reliability pass" P0 ask) - `snap.cadence.rank.next_due_floor_minutes`
+    // is a real value computed server-side from `scheduler.cadence.
+    // recommended_cadence` (the SAME function `run_scheduled` itself uses
+    // to decide its own real interval), applied to the real observed
+    // `rankAt` timestamp - never a fixed/invented number.
+    if (snap.cadence && snap.cadence.rank && liveState.rankAt != null) {{
+      liveState.rankNextDueAt = liveState.rankAt + snap.cadence.rank.next_due_floor_minutes * 60000;
+    }}
+    if (snap.recommendation && snap.recommendation.status) {{
+      liveState.decisionStatus = snap.recommendation.status;
+    }}
+    nextPollAt = Date.now() + 20000;
+    tickLiveStrip();
+    if (snap.version === lastVersion) return;
     lastVersion = snap.version;
     if (snap.rank) {{
       var rankEl = document.getElementById('live-rank-value');
@@ -582,12 +675,106 @@ def generate_dashboard_html(
         var prefix = snap.rank.source === 'livefpl' ? '' : '~';
         rankEl.textContent = prefix + snap.rank.estimated_rank.toLocaleString();
         rankEl.classList.remove('home-metric-value-muted');
+        // Real "Δ since previous snapshot" (P0 live-rank ask) - a plain
+        // diff between two real observed values across polls, never a
+        // fabricated trend. Only shown once a genuine PRIOR real
+        // observation exists this session (first poll after page load has
+        // nothing real to diff against, so it stays blank rather than
+        // showing a meaningless Δ0 that isn't actually "since" anything).
+        var deltaEl = document.getElementById('live-rank-delta');
+        if (deltaEl) {{
+          if (liveState.prevRank != null && liveState.prevRank !== snap.rank.estimated_rank) {{
+            var delta = snap.rank.estimated_rank - liveState.prevRank;
+            deltaEl.textContent = (delta < 0 ? '▲ ' : '▼ ') + Math.abs(delta).toLocaleString();
+            deltaEl.className = 'home-metric-delta ' + (delta < 0 ? 'home-metric-delta-good' : 'home-metric-delta-bad');
+          }}
+          liveState.prevRank = snap.rank.estimated_rank;
+        }}
       }}
     }}
     if (snap.points && snap.points.points != null) {{
       var ptsEl = document.getElementById('live-points-value');
       if (ptsEl) ptsEl.textContent = Math.round(snap.points.points);
     }}
+    // Real recommendation-staleness propagation (P0 "decision change" ask) -
+    // reuses the SAME 'home-hero-stale-banner' CSS class the server-rendered
+    // page already defines (no new visual design, just an earlier real
+    // disclosure than waiting for the next full regen/meta-refresh).
+    if (snap.recommendation && snap.recommendation.is_stale === true) {{
+      var actionEl = document.getElementById('home-action-word');
+      if (actionEl && actionEl.textContent !== 'RECOMPUTING') actionEl.textContent = 'RECOMPUTING';
+      var freshBlock = document.getElementById('home-freshness-block');
+      if (freshBlock && freshBlock.dataset.staleShown !== '1') {{
+        var reasonText = snap.recommendation.stale_reason || 'input changed';
+        var banner = document.createElement('div');
+        banner.className = 'home-hero-stale-banner';
+        banner.textContent = 'RECOMPUTING — a real change since this was computed (' + reasonText +
+          ') may affect this recommendation. Run fpl strategic-plan again.';
+        freshBlock.appendChild(banner);
+        freshBlock.dataset.staleShown = '1';
+      }}
+    }}
+    pushLiveChanges(snap);
+  }}
+  // Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"
+  // P0 ask) - built ENTIRELY from real snapshot fields (recent squad
+  // `change_events`, the real decision-change explanation, live match
+  // events/bonus/DEFCON deltas), accumulated client-side across polls
+  // (the snapshot itself only ever carries the CURRENT state, not a
+  // history - a real feed needs this session's own accumulated real
+  // observations, never a fabricated backlog). Deduplicated by a stable
+  // key per entry so the same real event is never listed twice.
+  var seenFeedKeys = {{}};
+  var lastBonus = {{}};
+  function feedTime(iso) {{
+    var d = iso ? new Date(iso) : new Date();
+    var hh = d.getHours().toString().padStart(2, '0');
+    var mm = d.getMinutes().toString().padStart(2, '0');
+    return hh + ':' + mm;
+  }}
+  function addFeedEntry(key, html) {{
+    if (seenFeedKeys[key]) return;
+    seenFeedKeys[key] = true;
+    var wrap = document.getElementById('live-changes-feed-wrap');
+    var list = document.getElementById('live-changes-feed');
+    if (!wrap || !list) return;
+    wrap.hidden = false;
+    var li = document.createElement('li');
+    li.className = 'live-changes-feed-item';
+    li.innerHTML = html;
+    list.insertBefore(li, list.firstChild);
+    while (list.children.length > 8) list.removeChild(list.lastChild);
+  }}
+  function pushLiveChanges(snap) {{
+    if (snap.recent_changes) {{
+      snap.recent_changes.forEach(function(c) {{
+        var key = 'chg:' + c.entity_id + ':' + c.detected_at;
+        addFeedEntry(key,
+          '<b>' + feedTime(c.detected_at) + '</b> ' + (c.web_name || 'player') + ' ' +
+          c.event_type + ' (' + c.old_value + ' → ' + c.new_value + ')');
+      }});
+    }}
+    if (snap.recommendation && snap.recommendation.last_change) {{
+      var ch = snap.recommendation.last_change;
+      var key = 'dec:' + ch.changed_at;
+      var impactText = ch.impact != null ? (ch.impact >= 0 ? '+' : '') + ch.impact + ' pts' : 'unknown';
+      addFeedEntry(key,
+        '<b>' + feedTime(ch.changed_at) + '</b> ' + ch.old_label + ' → ' + ch.new_label +
+        '<br><span class="live-changes-feed-meta">Trigger: ' + (ch.trigger || 'no single recorded trigger') +
+        ' &middot; Impact: ' + impactText + '</span>');
+    }}
+    (snap.match_events || []).forEach(function(e) {{
+      var key = 'evt:' + e.player_id + ':' + e.kind + ':' + e.count;
+      addFeedEntry(key, '<b>' + feedTime(snap.generated_at) + '</b> ' + e.web_name + ' - ' + e.kind + ' (x' + e.count + ')');
+    }});
+    (snap.bonus_defcon || []).forEach(function(b) {{
+      var prev = lastBonus[b.player_id];
+      if (prev !== undefined && prev !== b.provisional_bonus) {{
+        addFeedEntry('bonus:' + b.player_id + ':' + b.provisional_bonus,
+          '<b>' + feedTime(snap.generated_at) + '</b> ' + b.web_name + ' provisional bonus now +' + b.provisional_bonus);
+      }}
+      lastBonus[b.player_id] = b.provisional_bonus;
+    }});
   }}
   function poll() {{
     fetch('live_snapshot.json', {{cache: 'no-store'}})
@@ -812,6 +999,19 @@ _CSS_WORKSPACE = """
      age/version caption always, escalating to an explicit amber banner only
      when a real material change has been recorded since this decision was
      computed. Never CSS-only - `home.py::_freshness_html` decides content. */
+  /* Real, always-honest freshness strip (2026-08-29, "master live +
+     strategic-plan correction pass" P0 fix). `data-live-state` toggles the
+     dot color - "unknown" (no snapshot polled yet, grey), "live" (snapshot
+     age < 60s, green), "stale" (>=60s since the last real poll, amber) -
+     never a fabricated "live" state, see the poll script's own comment. */
+  .system-live-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+    font-size: 0.74rem; color: var(--faint); margin-bottom: 14px; }
+  .system-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
+  .system-live-strip[data-live-state="live"] .system-live-dot { background: #3ecf8e; }
+  .system-live-strip[data-live-state="stale"] .system-live-dot { background: #f0c419; }
+  .system-live-label { font-weight: 800; letter-spacing: 0.06em; color: var(--fg); font-size: 0.72rem; }
+  .system-live-field b { color: var(--fg); font-weight: 600; }
+  .system-live-degraded { color: #f0c419; }
   .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
   .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
     background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
@@ -820,6 +1020,13 @@ _CSS_WORKSPACE = """
   .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }
   .home-metric-value-muted { opacity: 0.55; font-size: 1.05rem; }
+  /* Real rank delta (2026-08-29, P0 live-rank ask: "Δ since previous
+     snapshot") - populated client-side only, from two real observed
+     values (see the poll script). Green = rank improved (numerically
+     lower), amber = worsened. */
+  .home-metric-delta { font-size: 0.75rem; margin-top: 2px; font-weight: 700; }
+  .home-metric-delta-good { color: #3ecf8e; }
+  .home-metric-delta-bad { color: #f0c419; }
   .home-hero-actions { display: flex; gap: 10px; margin-top: 24px; }
   .home-action-btn { padding: 9px 18px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); color: #fff;
     text-decoration: none; font-weight: 600; font-size: 0.9rem; }
@@ -837,6 +1044,19 @@ _CSS_WORKSPACE = """
   .path-box.is-active.path-box-tied,
   .path-box.is-active.path-box-tied .path-box-score,
   .path-box.is-active.path-box-tied .path-box-sub { background: var(--surface); border: 2px solid var(--accent-2); color: var(--fg); }
+  /* Real strategy-family grouping (2026-08-29, "final product-completion
+     pass" P0 fix) - collapses paths that share the exact same real
+     descriptor (chip+timing+transfer-count) under one primary tab, so the
+     user sees genuinely different strategic choices, not near-duplicate
+     beam-search tail variants presented as separate philosophies. */
+  .path-family-group { display: flex; flex-direction: column; }
+  .path-family-more { margin-top: 4px; }
+  .path-family-more summary { cursor: pointer; font-size: 0.72rem; color: var(--faint); padding: 4px 2px; list-style: none; }
+  .path-family-more summary::-webkit-details-marker { display: none; }
+  .path-family-more summary::before { content: "+ "; }
+  .path-family-more[open] summary::before { content: "− "; }
+  .path-family-members { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .path-box-family-member { padding: 8px 10px; opacity: 0.85; }
   .path-box.is-active.path-box-tied .path-box-sub { color: var(--accent-2); }
   .path-box-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 0.75rem; opacity: 0.75; }
   .plan-path-grid { margin-top: 16px; }
@@ -929,6 +1149,10 @@ _CSS_WORKSPACE = """
   .projected-tile-shirt { width: 48px; height: 48px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
   .projected-tile-name { margin-top: 4px; font-size: 0.75rem; font-weight: 600; text-align: center;
     line-height: 1.2; word-break: break-word; max-width: 100%; }
+  /* Real per-player xP on every future-GW tile (2026-08-29, "master live +
+     strategic-plan correction pass" P0 fix). */
+  .projected-tile-xp { font-size: 0.68rem; color: var(--faint); margin-top: 1px; }
+  .squad-state-net { font-size: 0.8rem; font-weight: 700; color: var(--accent); margin: -4px 0 8px; }
   .projected-tile-in { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid var(--accent); }
   .projected-tile-in-badge { position: absolute; top: -2px; right: 2px; background: var(--accent); color: #06110b;
     font-size: 0.62rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }

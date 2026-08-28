@@ -42,7 +42,6 @@ import dataclasses
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.database.decisions import latest_decision_of_type
 from fpl_agent.ingestion.cross_league_source import get_cross_league_prior
 from fpl_agent.models.breakouts import find_breakouts
 from fpl_agent.models.differentials import find_differentials
@@ -59,7 +58,7 @@ from fpl_agent.optimization.decision_analysis import (
     _TRANSFER_DELTA_THRESHOLD,
 )
 from fpl_agent.optimization.locked_squad import LockedSquadState
-from fpl_agent.optimization.strategic_planner import _opening_action_label
+from fpl_agent.optimization.strategic_planner import _opening_action_label, latest_strategic_plan_with_recommendation
 from fpl_agent.optimization.transfers import HIT_COST, compare_starting_actions, search_transfer_sequences
 
 # Matches build_strategic_plan's own default main-search beam width - the
@@ -209,7 +208,7 @@ def cross_check_against_strategic_plan(conn: sqlite3.Connection, action_audit: "
     differently under independent random tie-breaking, etc.) and must never
     be silently swallowed. A disagreement surfacing now is real information,
     not a known artifact to explain away."""
-    strategic = latest_decision_of_type(conn, "strategic_plan")
+    strategic = latest_strategic_plan_with_recommendation(conn)
     if strategic is None or not action_audit:
         return None
     cr = (strategic.detail or {}).get("current_recommendation")

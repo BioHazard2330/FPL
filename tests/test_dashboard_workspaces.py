@@ -111,6 +111,23 @@ def test_render_hero_forces_recomputing_word_when_stale():
     assert ">TRANSFER<" not in result
 
 
+def test_render_hero_includes_the_system_live_strip_shell():
+    """The strip is a static shell only - real values are populated
+    entirely client-side by the live_snapshot.json poll - so this just
+    checks the real hook ids exist for that JS to find."""
+    result = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
+    )
+    for expected_id in (
+        "system-live-strip", "system-live-snapshot-age", "system-live-next-check",
+        "system-live-rank-age", "system-live-rank-next",
+        "system-live-decision-age", "system-live-decision-status", "system-live-degraded",
+    ):
+        assert f'id="{expected_id}"' in result, f"missing {expected_id}"
+    assert 'data-live-state="unknown"' in result
+
+
 class _FakePlayer:
     def __init__(self, web_name, median):
         self.web_name = web_name
@@ -342,6 +359,15 @@ def test_projected_shirt_tile_marks_the_incoming_player():
 
     not_in = squad._projected_shirt_tile(p, is_in=False)
     assert "projected-tile-in" not in not_in
+
+
+def test_projected_shirt_tile_shows_real_player_xp():
+    p = _fake_player(1, "Rice")
+    with_xp = squad._projected_shirt_tile(p, is_in=False, xp=7.3)
+    assert "7.3 xP" in with_xp
+
+    without_xp = squad._projected_shirt_tile(p, is_in=False)
+    assert "&mdash; xP" in without_xp  # honest, never a fabricated number
 
 
 def test_projected_squad_html_shows_transfer_and_grouped_tiles():

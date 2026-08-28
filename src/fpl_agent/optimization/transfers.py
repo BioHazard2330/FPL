@@ -206,6 +206,25 @@ class TransferSequenceStep:
     player_in_name: str | None
     uses_hit: bool
     chip_played: str | None = None  # "wildcard"/"freehit"/"bboost"/"3xc", or None for a plain roll/transfer step
+    # Real, per-step authoritative 15-player squad AT THIS EVENT (2026-08-29,
+    # "master live + strategic-plan correction pass" P0 fix) - always
+    # populated (roll: unchanged; transfer: post-swap; chip: the real
+    # rebuilt squad for wildcard/freehit, or unchanged for bboost/3xc).
+    # Every consumer that needs "what is my squad at future GW N" must read
+    # THIS field directly - never replay player_out_id/player_in_id pairs to
+    # reconstruct it (that reconstruction has no representation for a
+    # wildcard/freehit step, which is the real bug this field closes: a
+    # chip step carries no in/out pair by construction, so a replay-based
+    # reconstruction silently carried the PREVIOUS gw's squad forward and
+    # displayed it as the "wildcard" team).
+    resulting_squad_ids: tuple[int, ...] = ()
+    # Real, per-step POST-hit-cost EV contribution (2026-08-29, "master live
+    # + strategic-plan correction pass" P0 fix: "path score must be
+    # traceable - no unexplained totals"). Same convention `StartingActionOption.
+    # starting_gw_value` already established (post-hit-cost, this GW's own
+    # real net contribution) - `sum(step.gw_ev for step in steps)` equals
+    # the sequence's own real `total_net_ev` exactly.
+    gw_ev: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -373,15 +392,19 @@ def search_transfer_sequences(
 
         for state in states:
             # Option 1: roll - no transfer this GW
+            roll_gw_ev = _squad_gw_ev(conn, state.squad_ids, event, cache)
             next_states.append(_BeamState(
                 squad_ids=state.squad_ids,
                 free_transfers=min(state.free_transfers + 1, max_banked),
                 bank_tenths=state.bank_tenths,
-                cumulative_ev=state.cumulative_ev + _squad_gw_ev(conn, state.squad_ids, event, cache),
+                cumulative_ev=state.cumulative_ev + roll_gw_ev,
                 hit_cost_total=state.hit_cost_total,
                 tiebreak_adjustment=state.tiebreak_adjustment,
                 chips_used=state.chips_used,
-                steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False),),
+                steps=state.steps + (TransferSequenceStep(
+                    event, None, None, None, None, False,
+                    resulting_squad_ids=state.squad_ids, gw_ev=round(roll_gw_ev, 2),
+                ),),
             ))
 
             # Option 2: single transfer this GW, for each current squad player
@@ -426,6 +449,7 @@ def search_transfer_sequences(
                         steps=state.steps + (TransferSequenceStep(
                             event, player_out_id, cand.player_out_name,
                             cand.player_in_id, cand.player_in_name, is_hit,
+                            resulting_squad_ids=new_squad, gw_ev=round(gw_ev - hit_cost, 2),
                         ),),
                     ))
 
@@ -448,9 +472,20 @@ def search_transfer_sequences(
                     conn, state.squad_ids, event, w.name,
                     bank_tenths=state.bank_tenths, remaining_horizon_gw=remaining_horizon,
                 )
+                if chip_result.rebuild_failed:
+                    # Real, direct user instruction: never offer a wildcard/
+                    # freehit branch whose squad rebuild genuinely failed -
+                    # that would let the beam pick "PLAY WILDCARD" with the
+                    # CURRENT squad silently relabeled as the rebuild. Skip
+                    # this candidate entirely rather than degrade it.
+                    continue
                 step_ev = base_gw_ev + chip_result.marginal_value
                 new_squad = chip_result.new_squad_ids if chip_result.new_squad_ids is not None else state.squad_ids
                 new_bank = chip_result.new_bank_tenths if chip_result.new_bank_tenths is not None else state.bank_tenths
+                # The squad to DISPLAY for this one GW - the real rebuilt
+                # squad for wildcard/freehit (chip_step_squad_ids), or the
+                # unchanged squad for bboost/3xc (which never rebuild).
+                step_squad = chip_result.chip_step_squad_ids if chip_result.chip_step_squad_ids is not None else state.squad_ids
 
                 next_states.append(_BeamState(
                     squad_ids=new_squad,
@@ -462,7 +497,10 @@ def search_transfer_sequences(
                     hit_cost_total=state.hit_cost_total,
                     tiebreak_adjustment=state.tiebreak_adjustment,
                     chips_used=state.chips_used | {w.name},
-                    steps=state.steps + (TransferSequenceStep(event, None, None, None, None, False, chip_played=w.name),),
+                    steps=state.steps + (TransferSequenceStep(
+                        event, None, None, None, None, False, chip_played=w.name,
+                        resulting_squad_ids=step_squad, gw_ev=round(step_ev, 2),
+                    ),),
                 ))
 
         next_states.sort(key=lambda s: s.cumulative_ev - s.hit_cost_total + s.tiebreak_adjustment, reverse=True)
@@ -509,6 +547,17 @@ class StartingActionOption:
     resulting_free_transfers: int = 0
     resulting_bank_tenths: int = 0
     resulting_used_chip_names: frozenset[str] = frozenset()
+    # Real, per-GW DISPLAY squad (2026-08-29, "master live + strategic-plan
+    # correction pass" P0 fix) - identical to `resulting_squad_ids` for
+    # roll/transfer, but genuinely different for freehit: `resulting_
+    # squad_ids` deliberately reverts to the CURRENT squad for freehit (it's
+    # a one-GW rental, so the NEXT gw's continuation search must start from
+    # the real unchanged squad) while `starting_squad_ids` carries the real
+    # rebuilt freehit team FOR THIS GW - the thing a user actually wants to
+    # see when they click "PLAY FREEHIT" on the timeline. Every renderer of
+    # "what does my squad look like at the starting GW of this path" must
+    # read this field, never `resulting_squad_ids`.
+    starting_squad_ids: tuple[int, ...] = ()
 
 
 def compare_starting_actions(
@@ -572,6 +621,7 @@ def compare_starting_actions(
         path_total=round(roll_ev + (roll_cont.total_net_ev if roll_cont else 0.0), 2),
         best_continuation=roll_cont,
         starting_gw_value=roll_ev, resulting_squad_ids=tuple(squad_ids),
+        starting_squad_ids=tuple(squad_ids),
         resulting_free_transfers=roll_ft, resulting_bank_tenths=bank_tenths,
         resulting_used_chip_names=used_chip_names,
     ))
@@ -599,6 +649,7 @@ def compare_starting_actions(
             path_total=round(gw_ev - hit_cost + (cont.total_net_ev if cont else 0.0), 2),
             best_continuation=cont,
             starting_gw_value=gw_ev - hit_cost, resulting_squad_ids=new_squad,
+            starting_squad_ids=new_squad,
             resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
             resulting_used_chip_names=used_chip_names,
         ))
@@ -616,8 +667,19 @@ def compare_starting_actions(
             conn, tuple(squad_ids), start_event, w.name,
             bank_tenths=bank_tenths, remaining_horizon_gw=horizon_gw,
         )
+        if chip_result.rebuild_failed:
+            # Real, direct user instruction: never offer PLAY WILDCARD/
+            # FREEHIT as a starting action whose squad rebuild genuinely
+            # failed - that would surface the CURRENT squad relabeled as
+            # the rebuild in the dashboard's own primary decision surface.
+            continue
         new_squad = chip_result.new_squad_ids if chip_result.new_squad_ids is not None else tuple(squad_ids)
         new_bank = chip_result.new_bank_tenths if chip_result.new_bank_tenths is not None else bank_tenths
+        # The real squad to DISPLAY for this starting GW - wildcard AND
+        # freehit both rebuild one, even though only wildcard's PERSISTS
+        # into `new_squad`/the continuation (see StartingActionOption.
+        # starting_squad_ids's own docstring for why these two differ).
+        display_squad = chip_result.chip_step_squad_ids if chip_result.chip_step_squad_ids is not None else tuple(squad_ids)
         next_ft = min(free_transfers + 1, max_banked)
         cont = _continue(new_squad, next_ft, new_bank, used_chip_names | {w.name})
         options.append(StartingActionOption(
@@ -626,6 +688,7 @@ def compare_starting_actions(
             path_total=round(base_gw_ev + chip_result.marginal_value + (cont.total_net_ev if cont else 0.0), 2),
             best_continuation=cont,
             starting_gw_value=base_gw_ev + chip_result.marginal_value, resulting_squad_ids=new_squad,
+            starting_squad_ids=display_squad,
             resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
             resulting_used_chip_names=used_chip_names | {w.name},
         ))
@@ -739,6 +802,24 @@ def path_detail(p, *, roll_total: float | None = None, leader_total: float | Non
                 # guessing ids back out of names.
                 "player_out_id": s.player_out_id,
                 "player_in_id": s.player_in_id,
+                # Real, authoritative per-step 15-player squad (2026-08-29,
+                # "master live + strategic-plan correction pass" P0 fix) -
+                # see TransferSequenceStep's own docstring. Every consumer
+                # that needs "what is my squad at future GW N" reads THIS
+                # list directly, never a player_out/player_in replay (which
+                # has no representation for a wildcard/freehit step). A
+                # decision logged before this field existed has an empty
+                # list here - degrades honestly, same posture as the
+                # player_out_id/player_in_id comment above.
+                "resulting_squad_ids": sorted(s.resulting_squad_ids),
+                # Real, authoritative per-step EV contribution (2026-08-29,
+                # "master live + strategic-plan correction pass" P0 fix:
+                # "path score must be traceable"). Post-hit-cost - the SAME
+                # search-computed number that fed the sequence's own
+                # `total_net_ev` (never a second, independently-recomputed
+                # display value) - `sum(step["gw_ev"] for step in steps)`
+                # equals `path_total` exactly for a freshly-computed path.
+                "gw_ev": s.gw_ev,
             }
             for s in p.steps
         ],
@@ -763,6 +844,14 @@ def _synthetic_sequence_from_option(o: StartingActionOption, start_event: int) -
         player_out_id=o.player_out_id, player_out_name=o.player_out_name,
         player_in_id=o.player_in_id, player_in_name=o.player_in_name,
         uses_hit=o.uses_hit, chip_played=o.chip_name,
+        # Real fix (2026-08-29): `o.starting_squad_ids` - the real display
+        # squad for this GW, NOT `o.resulting_squad_ids` (which reverts to
+        # the current squad for a freehit continuation). Without this, the
+        # starting step of every path built via `build_diverse_paths` (the
+        # real production path, current_rec != None) carried an EMPTY
+        # `resulting_squad_ids` - confirmed live: a wildcard/freehit step
+        # here had no squad information at all until this fix.
+        resulting_squad_ids=o.starting_squad_ids, gw_ev=round(o.starting_gw_value, 2),
     )
     cont = o.best_continuation
     steps = (starting_step,) + (cont.steps if cont is not None else ())

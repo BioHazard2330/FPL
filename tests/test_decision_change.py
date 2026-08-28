@@ -2,8 +2,11 @@ from fpl_agent.database.decisions import log_decision
 from fpl_agent.models.decision_change import latest_recommendation_change
 
 
-def _log_plan(conn, label, verdict="ACT", created_at=None):
-    detail = {"current_recommendation": {"label": label, "verdict": verdict}}
+def _log_plan(conn, label, verdict="ACT", created_at=None, path_total=None):
+    rec = {"label": label, "verdict": verdict}
+    if path_total is not None:
+        rec["path_total"] = path_total
+    detail = {"current_recommendation": rec}
     decision_id = log_decision(conn, "strategic_plan", summary=label, detail=detail)
     if created_at:
         conn.execute("UPDATE decisions SET created_at=? WHERE id=?", (created_at, decision_id))
@@ -61,3 +64,21 @@ def test_real_change_with_no_single_recorded_trigger(db_conn):
     assert change is not None
     assert change.trigger is None
     assert "no single HIGH-severity trigger" in change.explanation
+
+
+def test_impact_is_the_real_path_total_delta_when_both_are_recorded(db_conn):
+    _log_plan(db_conn, "ROLL", created_at="2026-08-27T10:00:00Z", path_total=611.55)
+    _log_plan(db_conn, "PLAY WILDCARD", created_at="2026-08-27T11:00:00Z", path_total=642.10)
+
+    change = latest_recommendation_change(db_conn, squad_ids=set())
+
+    assert change.impact == 30.55
+
+
+def test_impact_is_none_when_a_path_total_is_missing(db_conn):
+    _log_plan(db_conn, "ROLL", created_at="2026-08-27T10:00:00Z")  # no path_total (older-style decision)
+    _log_plan(db_conn, "PLAY WILDCARD", created_at="2026-08-27T11:00:00Z", path_total=642.10)
+
+    change = latest_recommendation_change(db_conn, squad_ids=set())
+
+    assert change.impact is None

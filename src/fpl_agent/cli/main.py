@@ -1921,6 +1921,25 @@ def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
     last = latest_decision_of_type(conn, "strategic_plan")
     if last is None:
         reason = "no strategic_plan decision has ever been logged"
+    elif "current_recommendation" in last.detail and last.detail["current_recommendation"] is None:
+        # Real self-healing fix (2026-08-29, "master live + strategic-plan
+        # correction pass") - confirmed live: a `fpl strategic-plan --no-
+        # current-action` search-diagnostic run (real, useful for inspecting
+        # raw beam paths - see the search-width experiment in CLAUDE.md) can
+        # become the latest `strategic_plan` row without ever computing
+        # `current_recommendation`, leaving the dashboard's authoritative
+        # decision null until a human remembers to re-run the CLI with the
+        # flag on. This subprocess always runs plain `fpl strategic-plan`
+        # (no flags below), which computes it by default - so treating "the
+        # latest decision is incomplete" as its own trigger reason makes this
+        # self-heal on the next scheduled cycle instead of staying stuck.
+        # Checked via real KEY PRESENCE (not `.get(...) is None`) - an older
+        # decision logged before this field existed at all has no key, and
+        # must degrade to the squad_ids/change_events checks below, same
+        # "missing field is not a signal" posture this function already
+        # applies to `squad_ids` a few lines down - never a false trigger
+        # just because a real historical row predates a schema addition.
+        reason = "the last strategic_plan decision has no current_recommendation (a --no-current-action diagnostic run)"
     else:
         # Real "squad changed outside the model" check (2026-08-29) - a
         # transfer made directly in the official FPL app or a chip played by
@@ -2507,7 +2526,26 @@ def live_match_poll_cmd(interval: int, max_hours: float):
     FotMob for a match that hasn't started) and stops entirely once nothing
     tracked remains not-FULL_TIME (a real FULL_TIME triggers one final sync
     - the qualitative Slice A2 analysis itself stays a separate, deliberate
-    skill invocation once `fpl match-report` shows FULL_TIME, unchanged)."""
+    skill invocation once `fpl match-report` shows FULL_TIME, unchanged).
+
+    Real single-instance lock (2026-08-29, "final runtime reliability pass"
+    P0 ask) - a real confirmed production condition this closes: restarting
+    the `FPLAgentLivePoll` Task Scheduler registration can leave an OLD,
+    already-running instance alive alongside a NEW one (a long-lived
+    process holds its own imports in memory; Task Scheduler's own Stop
+    action doesn't guarantee the process tree actually dies). A second
+    instance exits cleanly (exit code 0, not an error) rather than running
+    alongside the first and racing it for the same `live_snapshot.json`
+    file. See `scheduler/process_lock.py` for the real stale-lock recovery
+    logic (a lock left by a genuinely dead PID - a crash, a kill - is
+    reclaimed automatically on the next start, never needs a human to
+    delete the file by hand)."""
+    from fpl_agent.scheduler.process_lock import acquire_singleton_lock, release_singleton_lock
+
+    lock = acquire_singleton_lock()
+    if not lock.acquired:
+        click.echo(f"live-match-poll: {lock.reason} - exiting cleanly")
+        return
     conn = get_connection()
     # Resolved once, not re-resolved every tick - matches run_scheduled's own
     # pattern (2026-08-22, automation-lifecycle pass). Threaded into every
@@ -2667,6 +2705,7 @@ def live_match_poll_cmd(interval: int, max_hours: float):
         click.echo("\nstopped")
     finally:
         conn.close()
+        release_singleton_lock()
 
 
 @cli.command()
@@ -4059,6 +4098,7 @@ def decision_changes_cmd():
     click.echo(f"OLD      {change.old_verdict}: {change.old_label}")
     click.echo(f"NEW      {change.new_verdict}: {change.new_label}")
     click.echo(f"TRIGGER  {change.trigger or 'no single HIGH-severity event recorded'}")
+    click.echo(f"IMPACT   {'+' if change.impact is not None and change.impact >= 0 else ''}{change.impact} pts (full-horizon path total)" if change.impact is not None else "IMPACT   unknown (one of the two path totals wasn't recorded)")
     click.echo(f"TIME     {change.changed_at}")
     click.echo(f"WHY      {change.explanation}")
 

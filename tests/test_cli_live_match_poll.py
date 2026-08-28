@@ -1,12 +1,29 @@
 import copy
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from click.testing import CliRunner
 
 import fpl_agent.ingestion.fotmob_source as fotmob_mod
+import fpl_agent.scheduler.process_lock as process_lock_mod
 from fpl_agent.cli.main import cli
 from fpl_agent.ingestion.fotmob_source import FotMobFetchError
 from test_fotmob_source import _DETAILS_PAYLOAD, _seed, _seed_match_intelligence_row
+
+
+@pytest.fixture(autouse=True)
+def _isolated_live_poll_lock(tmp_path, monkeypatch):
+    """Real safety fix, not incidental: this file's tests invoke the actual
+    `live-match-poll` CLI command, which now acquires a real singleton
+    lock (`scheduler/process_lock.py`, 2026-08-29). Without this, tests
+    would read/write the REAL production `data/live_poll.lock` file - on
+    this project's own real dev machine that file can be actively held by
+    a genuinely running `FPLAgentLivePoll` scheduled task, so an
+    unisolated test run could either spuriously fail (a real live lock
+    blocking a `--interval` test that expects success) or, worse, race a
+    real production process. Every test in this file gets its own
+    per-test tmp_path lock file instead."""
+    monkeypatch.setattr(process_lock_mod, "DEFAULT_LOCK_PATH", tmp_path / "live_poll.lock")
 
 
 def _live_payload(minute=17, home_score=0, away_score=0):
@@ -89,6 +106,47 @@ def test_full_time_stops_the_poller(db_conn, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "FULL_TIME" in result.output
     assert "no tracked match left to poll" in result.output
+
+
+def test_second_instance_exits_cleanly_when_a_real_live_lock_is_held(db_conn, monkeypatch):
+    """Direct P0 acceptance test: "two instances must never run
+    simultaneously... second instance exits cleanly." A DIFFERENT pid than
+    this test's own (the lock code correctly treats a lock file matching
+    its own pid as self-owned/reclaimable, not "someone else holds it" -
+    so a genuine other-holder simulation needs a different pid + a
+    monkeypatched liveness check, same real seam
+    `test_process_lock.py::test_acquire_fails_when_a_real_live_process_
+    holds_the_lock` already uses)."""
+    import os
+
+    other_pid = os.getpid() + 1
+    process_lock_mod.DEFAULT_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    process_lock_mod.DEFAULT_LOCK_PATH.write_text(f"{other_pid}\nreal\n", encoding="utf-8")
+    monkeypatch.setattr(process_lock_mod, "_pid_is_alive", lambda pid: True)
+
+    result = CliRunner().invoke(cli, ["live-match-poll", "--interval", "20"])
+
+    assert result.exit_code == 0, result.output
+    assert "already running" in result.output
+    # Must never overwrite the still-live holder's real lock.
+    assert process_lock_mod.DEFAULT_LOCK_PATH.read_text().splitlines()[0] == str(other_pid)
+
+
+def test_stale_lock_from_a_crashed_prior_run_is_reclaimed_by_the_real_cli(db_conn, monkeypatch):
+    """Direct P0 acceptance test: "test stale-lock recovery after process
+    crash/restart", exercised through the actual CLI command, not just the
+    lock module in isolation."""
+    kickoff = datetime.now(timezone.utc) + timedelta(minutes=30)
+    _seed_match_intelligence_row(db_conn, "PRE_MATCH", kickoff)
+    _stub(monkeypatch, _DETAILS_PAYLOAD)
+    process_lock_mod.DEFAULT_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    process_lock_mod.DEFAULT_LOCK_PATH.write_text("999999999\nstale\n", encoding="utf-8")  # a real, guaranteed-dead pid
+
+    result, calls = _run_with_sleep_limit(monkeypatch, ["live-match-poll", "--interval", "20"])
+
+    assert result.exit_code == 0, result.output
+    assert "already running" not in result.output
+    assert calls["intervals"] == [80]  # the real poll loop actually ran
 
 
 def test_fotmob_failure_shows_delayed_state_and_backs_off(db_conn, monkeypatch):

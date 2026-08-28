@@ -562,6 +562,74 @@ def test_joint_search_can_choose_wildcard_over_a_plain_transfer(db_conn, monkeyp
     )
 
 
+def test_wildcard_step_carries_a_real_rebuilt_squad_different_from_current(db_conn, monkeypatch):
+    """Direct P0 acceptance test (2026-08-29, "master live + strategic-plan
+    correction pass"): "wildcard generates a different legal 15-player
+    squad where appropriate" - never the current squad relabeled. Confirmed
+    real production bug this guards against: a wildcard `TransferSequenceStep`
+    used to carry NO squad information at all (`resulting_squad_ids` empty),
+    so the dashboard's own reconstruction silently displayed the PREVIOUS
+    gw's (here, the current) squad as if it were the wildcard's own team."""
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1, beam_width=8,
+    )
+    best = sequences[0]
+    wildcard_step = next(st for st in best.steps if st.chip_played == "wildcard")
+
+    assert wildcard_step.resulting_squad_ids, "wildcard step must carry a real, non-empty rebuilt squad"
+    assert len(wildcard_step.resulting_squad_ids) == 15, "a legal FPL squad is always exactly 15 players"
+    assert set(wildcard_step.resulting_squad_ids) != set(_WEAK_SQUAD_IDS), (
+        "the wildcard rebuild must be a genuinely different squad, never the current one relabeled"
+    )
+
+
+def test_wildcard_rebuild_failure_is_never_offered_as_a_candidate(db_conn, monkeypatch):
+    """Direct user instruction: "if the optimizer cannot produce a valid
+    wildcard squad, show REVIEW/INSUFFICIENT DATA - never reuse the current
+    squad and label it wildcard." Simulates a real rebuild failure
+    (`optimise_squad` returning a non-Optimal status, e.g. genuinely
+    infeasible budget/constraints) and asserts the wildcard branch never
+    reaches the beam's surviving candidates at all."""
+    from fpl_agent.optimization import chips as chips_mod
+
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+    monkeypatch.setattr(
+        chips_mod, "_rebuild_squad_for_chip",
+        lambda conn, window_gw, budget_tenths: SimpleNamespace(status="Infeasible", squad=[], total_cost_tenths=0),
+    )
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1, beam_width=8,
+    )
+
+    assert not any(st.chip_played == "wildcard" for seq in sequences for st in seq.steps), (
+        "a failed wildcard rebuild must never appear as a candidate path"
+    )
+
+
+def test_path_total_equals_sum_of_step_gw_ev(db_conn, monkeypatch):
+    """Direct P0 acceptance test: "path score must be traceable - path
+    total must equal the sum of its underlying GW states... no unexplained
+    totals." Real invariant over the actual joint search output, not a
+    hand-constructed fixture."""
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    sequences = search_transfer_sequences(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1, beam_width=8,
+    )
+
+    for seq in sequences:
+        assert round(sum(st.gw_ev for st in seq.steps), 2) == seq.total_net_ev, (
+            f"path_total ({seq.total_net_ev}) must equal the sum of its own steps' gw_ev "
+            f"({[st.gw_ev for st in seq.steps]})"
+        )
+
+
 def test_joint_search_excludes_an_already_used_chip(db_conn, monkeypatch):
     """used_chip_names must stop the joint beam from ever offering a chip the
     user has already burned this season - same real-history-driven exclusion
@@ -637,6 +705,38 @@ def test_compare_starting_actions_surfaces_a_legal_chip_option(db_conn, monkeypa
         "the wildcard rebuild should dominate every single-swap alternative here, same as the "
         "joint search's own winning path in test_joint_search_can_choose_wildcard_over_a_plain_transfer"
     )
+    wildcard_opt = next(o for o in chip_options if o.chip_name == "wildcard")
+    assert len(wildcard_opt.starting_squad_ids) == 15
+    assert set(wildcard_opt.starting_squad_ids) != set(_WEAK_SQUAD_IDS), (
+        "starting_squad_ids (the real DISPLAY squad for this GW) must be the genuine rebuild, "
+        "never the current squad relabeled"
+    )
+
+
+def test_build_diverse_paths_wildcard_starting_step_carries_the_real_rebuilt_squad(db_conn, monkeypatch):
+    """The real PRODUCTION path (2026-08-29, "master live + strategic-plan
+    correction pass" P0 fix): `build_diverse_paths`/`path_detail` is what
+    `fpl strategic-plan`'s default `--current-action` run actually persists
+    to the decisions journal and the dashboard reads - confirmed live in
+    production this was the exact broken path (a real logged decision's
+    wildcard step serialized with no squad information at all, `_synthetic_
+    sequence_from_option`'s starting_step never threading `resulting_
+    squad_ids` through). This test exercises that real path end to end."""
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions, path_detail
+
+    xp_map = _seed_wildcard_pool(db_conn)
+    _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=_WEAK_SQUAD_IDS, free_transfers=1, bank_tenths=300, horizon_gw=1,
+    )
+    paths = build_diverse_paths(options, start_event=1, conn=db_conn, full_horizon_gw=1, checkpoints=())
+    wildcard_path = next(p for p in paths if p["steps"][0]["chip_played"] == "wildcard")
+    step0 = wildcard_path["steps"][0]
+
+    assert len(step0["resulting_squad_ids"]) == 15
+    assert set(step0["resulting_squad_ids"]) != set(_WEAK_SQUAD_IDS)
+    assert round(sum(s["gw_ev"] for s in wildcard_path["steps"]), 2) == wildcard_path["path_total"]
 
 
 # --- build_diverse_paths (2026-08-29, P0 audit: "strategic paths must be

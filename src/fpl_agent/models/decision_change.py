@@ -26,20 +26,25 @@ class DecisionChangeExplanation:
     changed_at: str  # the NEW decision's created_at
     trigger: str | None  # a real change_events summary, or None if no single HIGH-severity event explains it
     explanation: str  # one concise, human-composed line - never backend prose
+    impact: float | None  # new path_total minus old path_total (both full-horizon EV, same units) - None if either is missing
 
 
 def latest_recommendation_change(
     conn: sqlite3.Connection, squad_ids: set[int] | None = None,
 ) -> DecisionChangeExplanation | None:
-    """`None` when fewer than two real `strategic_plan` decisions exist yet,
-    either is missing a real `current_recommendation` (an older decision
-    logged before that field existed, or a genuine no-data REVIEW state), or
-    the two labels are actually identical (nothing to explain - the common
-    case on most regens)."""
-    from fpl_agent.database.decisions import list_decisions_of_type
+    """`None` when fewer than two real, COMPLETE `strategic_plan` decisions
+    exist yet (a decision missing `current_recommendation` - e.g. a
+    `--no-current-action` search-diagnostic run, see
+    `strategic_planner.strategic_plan_decisions_with_recommendation`'s own
+    docstring for the real production bug this guards against - is skipped
+    entirely rather than compared, so a diagnostic run sitting between two
+    real decisions can never masquerade as "no change" or corrupt the diff),
+    or the two labels are actually identical (nothing to explain - the
+    common case on most regens)."""
     from fpl_agent.models.decision_freshness import has_material_change_since
+    from fpl_agent.optimization.strategic_planner import strategic_plan_decisions_with_recommendation
 
-    recent = list_decisions_of_type(conn, "strategic_plan", limit=2)
+    recent = strategic_plan_decisions_with_recommendation(conn, limit=2)
     if len(recent) < 2:
         return None
     newest, previous = recent[0], recent[1]
@@ -68,8 +73,12 @@ def latest_recommendation_change(
         trigger = None
         explanation = f"{old_rec['label']} -> {new_rec['label']} (real projection/candidate-pool change since the last run, no single HIGH-severity trigger recorded)"
 
+    old_total = old_rec.get("path_total")
+    new_total = new_rec.get("path_total")
+    impact = round(new_total - old_total, 2) if old_total is not None and new_total is not None else None
+
     return DecisionChangeExplanation(
         old_label=old_rec["label"], new_label=new_rec["label"],
         old_verdict=old_rec["verdict"], new_verdict=new_rec["verdict"],
-        changed_at=newest.created_at, trigger=trigger, explanation=explanation,
+        changed_at=newest.created_at, trigger=trigger, explanation=explanation, impact=impact,
     )

@@ -1,7 +1,13 @@
 from types import SimpleNamespace
 
 import fpl_agent.optimization.strategic_planner as sp_mod
-from fpl_agent.optimization.strategic_planner import build_strategic_plan, synthesize_current_recommendation
+from fpl_agent.database.decisions import log_decision
+from fpl_agent.optimization.strategic_planner import (
+    build_strategic_plan,
+    latest_strategic_plan_with_recommendation,
+    strategic_plan_decisions_with_recommendation,
+    synthesize_current_recommendation,
+)
 from fpl_agent.optimization.transfers import StartingActionOption, TransferSequence, TransferSequenceStep
 
 
@@ -166,3 +172,43 @@ def test_synthesize_current_recommendation_handles_no_options(monkeypatch):
 
     assert rec.verdict == "REVIEW"
     assert rec.label == "ROLL"
+
+
+def _log_plan(conn, current_recommendation=..., **extra_detail):
+    """`...` (the default) omits the key entirely (real old-schema row);
+    pass `None` explicitly to simulate a real `--no-current-action` run."""
+    detail = dict(extra_detail)
+    if current_recommendation is not ...:
+        detail["current_recommendation"] = current_recommendation
+    return log_decision(conn, "strategic_plan", summary="test", detail=detail)
+
+
+def test_latest_strategic_plan_with_recommendation_skips_a_no_current_action_run(db_conn):
+    """Real production bug (2026-08-29): a `--no-current-action` search-
+    diagnostic run can become the latest `strategic_plan` decision without
+    ever computing `current_recommendation` - every consumer of "the
+    authoritative current plan" must skip it, not surface a null decision."""
+    _log_plan(db_conn, current_recommendation={"label": "ROLL", "verdict": "ACT", "path_total": 100.0})
+    _log_plan(db_conn, current_recommendation=None)  # the diagnostic run, logged AFTER the real one
+
+    latest = latest_strategic_plan_with_recommendation(db_conn)
+
+    assert latest is not None
+    assert latest.detail["current_recommendation"]["label"] == "ROLL"
+
+
+def test_latest_strategic_plan_with_recommendation_none_when_nothing_complete_exists(db_conn):
+    _log_plan(db_conn, current_recommendation=None)
+    _log_plan(db_conn)  # old-schema row, key entirely absent
+
+    assert latest_strategic_plan_with_recommendation(db_conn) is None
+
+
+def test_strategic_plan_decisions_with_recommendation_returns_the_real_two_most_recent_complete_ones(db_conn):
+    _log_plan(db_conn, current_recommendation={"label": "ROLL", "verdict": "ACT", "path_total": 1.0})
+    _log_plan(db_conn, current_recommendation=None)  # diagnostic run sandwiched in between
+    _log_plan(db_conn, current_recommendation={"label": "PLAY WILDCARD", "verdict": "ACT", "path_total": 2.0})
+
+    rows = strategic_plan_decisions_with_recommendation(db_conn, limit=2)
+
+    assert [r.detail["current_recommendation"]["label"] for r in rows] == ["PLAY WILDCARD", "ROLL"]

@@ -24,10 +24,16 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _official_shirt_url,
     _squad_state_by_event,
 )
-from fpl_agent.optimization.squad import resolve_projected_xi
+from fpl_agent.optimization.squad import build_player_pool_for_ids, resolve_projected_xi
 
 
-def _projected_shirt_tile(player: dict, *, is_in: bool, is_captain: bool = False, is_vice: bool = False) -> str:
+def _projected_shirt_tile(player: dict, *, is_in: bool, xp: float | None = None, is_captain: bool = False, is_vice: bool = False) -> str:
+    """`xp` (2026-08-29, "master live + strategic-plan correction pass" P0
+    fix: "player-level xP on the future plan is missing") is the real
+    per-player projection `resolve_projected_xi` already computed for THIS
+    specific future GW/squad state - rendered on every tile, not just the
+    team total, so a user can see WHO is driving that total, not just the
+    number itself. `None` (never fabricated) renders as an honest em-dash."""
     shirt_url = _official_shirt_url(player["team_code"], is_gkp=(player["position"] == "GKP"), size=66)
     in_marker = "<span class='projected-tile-in-badge' title='Transferred in'>IN</span>" if is_in else ""
     cap_marker = (
@@ -35,14 +41,16 @@ def _projected_shirt_tile(player: dict, *, is_in: bool, is_captain: bool = False
         else "<span class='projected-tile-cap-badge projected-tile-vice-badge' title='Vice-captain'>V</span>" if is_vice
         else ""
     )
+    xp_text = f"{xp:.1f}" if xp is not None else "&mdash;"
     return f"""<div class="projected-tile{' projected-tile-in' if is_in else ''}">
   {in_marker}{cap_marker}
   <img class="projected-tile-shirt" src="{_esc(shirt_url)}" loading="lazy" alt="{_esc(player['team_short'])} shirt">
   <div class="projected-tile-name">{_esc(player['web_name'])}</div>
+  <div class="projected-tile-xp">{xp_text} xP</div>
 </div>"""
 
 
-def _projected_squad_html(lookup: dict[int, dict], xi, step: dict) -> str:
+def _projected_squad_html(lookup: dict[int, dict], xi, step: dict, out_xp: float | None = None, in_xp: float | None = None) -> str:
     """Real shirt-tile grid for a projected future GW (2026-08-28, direct
     user ask: "more football on the dashboard... more crests, player
     images"), now grouped by real STARTING XI vs BENCH with real
@@ -70,9 +78,24 @@ def _projected_squad_html(lookup: dict[int, dict], xi, step: dict) -> str:
         out_name = out_p["web_name"] if out_p else step.get("action", "?").split(" -> ")[0]
         in_name = in_p["web_name"] if in_p else step.get("action", "?").split(" -> ")[-1]
         hit_bit = " (HIT)" if step.get("uses_hit") else ""
+        # Real per-player xP on the transfer itself (2026-08-29, "master
+        # live + strategic-plan correction pass" P0 fix: "no generic
+        # 'transfer improves squad' text"). `out_xp`/`in_xp` are the same
+        # real per-event projections `resolve_projected_xi` uses for this
+        # GW's squad, resolved for the specific OUT/IN player (who may not
+        # be in the resulting squad, so the XI's own candidates can't be
+        # reused directly) - never fabricated, `None` renders honestly.
+        out_xp_text = f" &mdash; {out_xp:.1f} xP" if out_xp is not None else ""
+        in_xp_text = f" &mdash; {in_xp:.1f} xP" if in_xp is not None else ""
+        net_line = ""
+        if out_xp is not None and in_xp is not None:
+            net = in_xp - out_xp
+            net_line = f"<div class='squad-state-net'>Net player projection: {net:+.1f} xP</div>"
         transfer_line = (
-            "<div class='squad-state-transfer'><span class='squad-state-out'>OUT " + _esc(out_name) + "</span> "
-            "<span class='squad-state-in'>IN " + _esc(in_name) + "</span>" + hit_bit + "</div>"
+            "<div class='squad-state-transfer'>"
+            "<span class='squad-state-out'>OUT " + _esc(out_name) + out_xp_text + "</span> "
+            "<span class='squad-state-in'>IN " + _esc(in_name) + in_xp_text + "</span>" + hit_bit +
+            "</div>" + net_line
         )
     else:
         transfer_line = "<div class='squad-state-transfer squad-state-roll'>ROLL - no transfer this GW</div>"
@@ -87,7 +110,7 @@ def _projected_squad_html(lookup: dict[int, dict], xi, step: dict) -> str:
         if p is None:
             return ""
         return _projected_shirt_tile(
-            p, is_in=(candidate.player_id == in_id),
+            p, xp=candidate.median, is_in=(candidate.player_id == in_id),
             is_captain=(candidate.player_id == captain_id), is_vice=(candidate.player_id == vice_id),
         )
 
@@ -154,7 +177,19 @@ def render_squad_workspace(
                 event = step["event"]
                 squad_here = by_event.get(event, set(locked.squad_ids))
                 xi = resolve_projected_xi(conn, squad_here, event, xp_cache=xp_cache)
-                body = _projected_squad_html(lookup, xi, step)
+                out_xp = in_xp = None
+                out_id, in_id = step.get("player_out_id"), step.get("player_in_id")
+                if out_id is not None and in_id is not None:
+                    # Real per-player xP for the OUT/IN pair specifically -
+                    # the OUT player may not be in `squad_here` (they left),
+                    # so `xi`'s own candidates can't be reused for them.
+                    # Shares `xp_cache` with `resolve_projected_xi` above -
+                    # same real (player_id, event) cache key, no duplicate
+                    # `expected_points` computation.
+                    transfer_pool = build_player_pool_for_ids(conn, {out_id, in_id}, event, xp_cache=xp_cache)
+                    by_id = {c.player_id: c.median for c in transfer_pool}
+                    out_xp, in_xp = by_id.get(out_id), by_id.get(in_id)
+                body = _projected_squad_html(lookup, xi, step, out_xp=out_xp, in_xp=in_xp)
                 blocks.append(
                     f"<div class='squad-state-block' data-path='{i}' data-event='{event}' hidden>{body}</div>"
                 )

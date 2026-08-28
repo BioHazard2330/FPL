@@ -1651,6 +1651,55 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
     assert "TOP TIER" in result  # never crown Path 1 "BEST" alone when tied
 
 
+def test_plan_workspace_groups_same_descriptor_paths_into_one_family(db_conn):
+    """Direct P0 acceptance test (2026-08-29, "final product-completion
+    pass"): "collapse duplicate strategy paths into strategy families."
+    Real production finding this fixes: 3 of 5 real logged paths shared the
+    exact same `path_descriptor` ("Wildcard at GW3 + 5 transfers") - a real
+    near-duplicate beam-search tail variant, not 3 genuine alternatives.
+    Only ONE primary tab per distinct descriptor should render directly in
+    the tab row; the rest collapse into a real `<details>` disclosure that
+    still keeps every path's own full data intact (never destroyed)."""
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+
+    def _wc3_path(total):
+        return {
+            "total_net_ev": total, "path_total": total, "delta_vs_roll": total - 10, "delta_vs_leader": total - 12.06,
+            "final_free_transfers": 1, "final_bank_tenths": 5,
+            "steps": [
+                {"event": 3, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False},
+            ],
+        }
+
+    log_decision(
+        db_conn, "strategic_plan", "test",
+        {
+            "horizon_gw": 8, "note": "test", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [], "best_path": _wc3_path(12.06),
+            "paths": [_wc3_path(12.06), _wc3_path(11.99), _wc3_path(11.95)],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
+
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
+
+    # Exactly one primary tab (Path 1) directly in the tab row - the other
+    # two are real siblings inside the family-disclosure, not separate
+    # top-level tabs.
+    assert result.count("class='path-family-group'") == 1
+    assert "2 more optimizer paths statistically indistinguishable" in result
+    assert "path-family-more" in result
+    # Real data for every path must still be present, never destroyed.
+    assert "data-path='1'" in result and "data-path='2'" in result and "data-path='3'" in result
+
+
 def test_plan_workspace_renders_per_path_horizon_breakdown(db_conn):
     """Real P0 fix (2026-08-29): every path shows a real 3/5/8GW breakdown,
     not just its single requested-horizon total - `horizon_breakdown` is
@@ -1941,7 +1990,7 @@ def test_current_fpl_state_shows_recomputing_when_a_real_change_postdates_the_de
 
     result = generate_dashboard_html(db_conn)
 
-    assert "RECOMPUTING" in result
+    assert "home-hero-stale-banner" in result
     assert "status_change" in result
 
 
@@ -1958,5 +2007,11 @@ def test_current_fpl_state_shows_no_stale_banner_when_nothing_material_changed(d
 
     result = generate_dashboard_html(db_conn)
 
-    assert "RECOMPUTING" not in result
+    # A bare "RECOMPUTING" substring check would also match the always-shipped
+    # live_snapshot.json poll script (2026-08-29 live-propagation pass) - it
+    # references the word for the CLIENT-SIDE stale-banner patch, unconditionally
+    # present in every page regardless of whether this decision is actually
+    # stale. The real, precise signal is the server-rendered banner class itself,
+    # which `home.py::_freshness_html` only ever emits when `is_stale` is True.
+    assert "<div class='home-hero-stale-banner'>" not in result
     assert "ROLL" in result

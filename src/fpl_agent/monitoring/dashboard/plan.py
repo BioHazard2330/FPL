@@ -76,6 +76,27 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
         tied = [i for i, p in enumerate(paths, 1) if p.get("path_total") is not None and abs(p["path_total"] - leader_total) / abs(leader_total) < 0.05]
     is_tied_group = len(tied) >= 2
 
+    # Real strategy-family grouping (2026-08-29, "final product-completion
+    # pass" P0 fix: "the current optimizer exposes five paths, but several
+    # are effectively the same strategic idea... do NOT waste the primary
+    # interface showing these as if they are three major strategic
+    # philosophies"). Groups by `path_descriptor` - already-real, already-
+    # computed (chip+timing+transfer-count) - never a new clustering model.
+    # Confirmed live: 3 of 5 real production paths shared the exact
+    # descriptor "Wildcard at GW3 + 5 transfers", differing only in WHICH
+    # later transfers happen (the beam's own documented "near-duplicate
+    # tail variant" property, see CLAUDE.md's search-width experiment
+    # note) - genuinely the same strategic idea, not 3 real alternatives.
+    # The full path data/cards for every path are kept, never destroyed -
+    # additional family members are one real click away, not deleted.
+    descriptors = [path_descriptor(p) for p in paths]
+    family_of: dict[int, list[int]] = {}
+    seen_desc: dict[str, int] = {}
+    for idx, desc in enumerate(descriptors, 1):
+        primary = seen_desc.setdefault(desc, idx)
+        family_of.setdefault(primary, []).append(idx)
+    primary_indices = list(family_of.keys())
+
     cards, tabs = [], []
     for i, p in enumerate(paths, 1):
         is_first = i == 1
@@ -87,7 +108,7 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
         score_bit = f"{p['path_total']:+.1f}" if p.get("path_total") is not None else "?"
         delta_bit = f"{p['delta_vs_roll']:+.1f} vs roll" if p.get("delta_vs_roll") is not None else ""
 
-        tabs.append(
+        tab_html = (
             f"<button type='button' class='path-tab-btn path-box{' is-active' if is_first else ''}{' path-box-tied' if in_tied_group else ''}' data-path='{i}'>"
             f"<span class='path-box-label'>Path {i}{f' &middot; {_esc(rank_label)}' if rank_label else ''}</span>"
             f"<span class='path-box-score'>{_esc(score_bit)}</span>"
@@ -96,6 +117,27 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
             f"<span class='path-box-descriptor'>{_esc(descriptor)}</span></span>"
             "</button>"
         )
+        if i in primary_indices:
+            siblings = family_of[i][1:]
+            if siblings:
+                sibling_tabs = []
+                for sib in siblings:
+                    sd_p, sd_conf = paths[sib - 1], path_confidence(conn, paths[sib - 1])
+                    sd_conf_label = _CONFIDENCE_LABEL.get(sd_conf, "-") if sd_conf else "-"
+                    sd_score = f"{sd_p['path_total']:+.1f}" if sd_p.get("path_total") is not None else "?"
+                    sibling_tabs.append(
+                        f"<button type='button' class='path-tab-btn path-box path-box-family-member' data-path='{sib}'>"
+                        f"<span class='path-box-label'>Path {sib}</span>"
+                        f"<span class='path-box-score'>{_esc(sd_score)}</span>"
+                        f"<span class='path-box-meta'><span class='path-box-confidence'>{_esc(sd_conf_label)} confidence</span></span>"
+                        "</button>"
+                    )
+                tab_html += (
+                    f"<details class='path-family-more'><summary>{len(siblings)} more optimizer path"
+                    f"{'s' if len(siblings) != 1 else ''} statistically indistinguishable from this strategy</summary>"
+                    f"<div class='path-family-members'>{''.join(sibling_tabs)}</div></details>"
+                )
+            tabs.append(f"<div class='path-family-group'>{tab_html}</div>")
 
         steps = p.get("steps") or []
         chip_steps_this_path = [s for s in steps if s.get("chip_played")]

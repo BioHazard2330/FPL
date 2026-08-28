@@ -2,6 +2,8 @@ import json
 
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.monitoring.live_snapshot import build_live_snapshot, write_live_snapshot
+from fpl_agent.optimization.locked_squad import LockedSquadState
+from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 
 
 def _seed_event(conn, event_id=2, is_next=1, deadline_epoch=99999999999):
@@ -69,3 +71,173 @@ def test_write_live_snapshot_never_fabricates_points_without_a_locked_squad(db_c
     _seed_event(db_conn)
     snap = build_live_snapshot(db_conn, live_payload={"elements": []})
     assert snap["points"] is None
+
+
+def _seed_player(conn, player_id, web_name="Salah", status="a", team_id=1, element_type=3):
+    conn.execute(
+        "INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?, 't0')",
+        (team_id, team_id, f"Team{team_id}", f"T{team_id}"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (?,?,?,?, 't0')",
+        (element_type, "Midfielder", "MID", "Midfielders"),
+    )
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        "VALUES (?,?,?,?,?,?,0,'t0')",
+        (player_id, player_id, web_name, team_id, element_type, status),
+    )
+    conn.commit()
+
+
+def _fake_locked_squad(event, starting_ids, bench_ids=(), captain_id=None, vice_id=None):
+    def cand(pid):
+        return PlayerCandidate(
+            player_id=pid, web_name=f"P{pid}", position="MID", team_id=1, team_short="T1",
+            price_tenths=80, xp=5.5, median=5.5, floor=2.0, ceiling=9.0, confidence="high", expected_minutes=90.0,
+        )
+
+    starting = [cand(pid) for pid in starting_ids]
+    bench = [cand(pid) for pid in bench_ids]
+    xi = StartingXI(
+        starting=starting, bench=bench,
+        captain=next((c for c in starting if c.player_id == captain_id), None),
+        vice_captain=next((c for c in starting if c.player_id == vice_id), None),
+    )
+    return LockedSquadState(
+        source="synced_real", event=event, squad_ids=frozenset(list(starting_ids) + list(bench_ids)),
+        xi=xi, bank_tenths=10, squad_value_tenths=1000, decision_id=None, free_transfers=1,
+    )
+
+
+def test_squad_block_reports_slot_captain_and_availability(db_conn, monkeypatch):
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    _seed_player(db_conn, 1, web_name="Haaland", status="a")
+    _seed_player(db_conn, 2, web_name="Salah", status="i")
+    locked = _fake_locked_squad(2, starting_ids=[1], bench_ids=[2], captain_id=1)
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: locked)
+
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    squad = {row["player_id"]: row for row in snap["squad"]}
+    assert squad[1]["slot"] == "starting"
+    assert squad[1]["is_captain"] is True
+    assert squad[1]["xp"] == 5.5
+    assert squad[2]["slot"] == "bench"
+    # A confirmed-injured player must never be silently reported as fine.
+    assert squad[2]["classification"] in ("CONFIRMED UNAVAILABLE", "LIKELY UNAVAILABLE", "DOUBTFUL")
+
+
+def test_squad_block_empty_without_a_locked_squad(db_conn, monkeypatch):
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: None)
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    assert snap["squad"] == []
+
+
+def test_match_events_and_bonus_defcon_share_one_live_bonus_computation(db_conn, monkeypatch):
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    _seed_player(db_conn, 1, web_name="Haaland")
+    locked = _fake_locked_squad(2, starting_ids=[1])
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: locked)
+
+    live_payload = {
+        "elements": [
+            {
+                "id": 1,
+                "stats": {"minutes": 90, "goals_scored": 2, "assists": 1, "bps": 40, "bonus": 0, "red_cards": 0},
+                "explain": [{"fixture": 100}],
+            }
+        ]
+    }
+    snap = build_live_snapshot(db_conn, live_payload=live_payload)
+    assert snap["bonus_defcon"][0]["player_id"] == 1
+    events = {(e["player_id"], e["kind"]): e["count"] for e in snap["match_events"]}
+    assert events[(1, "goal")] == 2
+    assert events[(1, "assist")] == 1
+
+
+def test_source_freshness_block_flags_degraded_sources(db_conn):
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO source_health (source_name, last_success, last_failure, failure_count) "
+        "VALUES ('odds_api', 't1', 't2', 16)"
+    )
+    conn.execute(
+        "INSERT INTO source_health (source_name, last_success, failure_count) "
+        "VALUES ('fpl_api_bootstrap', 't1', 0)"
+    )
+    conn.commit()
+    _seed_event(conn)
+    snap = build_live_snapshot(conn, live_payload=None)
+    by_name = {r["source"]: r for r in snap["source_freshness"]}
+    assert by_name["odds_api"]["degraded"] is True
+    assert by_name["fpl_api_bootstrap"]["degraded"] is False
+
+
+def test_gw_block_reports_real_lifecycle_state(db_conn):
+    _seed_event(db_conn)
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    assert snap["gw"]["event"] == 2
+    # No fixtures seeded for GW2 -> lifecycle can't classify, honest None/UNKNOWN, never fabricated.
+    assert snap["gw"]["state"] in (None, "UNKNOWN")
+
+
+def test_cadence_block_reports_real_derived_interval_and_last_sync(db_conn):
+    _seed_event(db_conn)
+    db_conn.execute(
+        "INSERT INTO source_health (source_name, last_success, failure_count) "
+        "VALUES ('fpl_api_bootstrap', '2026-08-29T10:00:00+00:00', 0)"
+    )
+    db_conn.commit()
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    cadence = snap["cadence"]
+    assert cadence["system"]["last_sync_at"] == "2026-08-29T10:00:00+00:00"
+    assert cadence["system"]["interval_minutes"] > 0
+    assert cadence["system"]["reason"]  # a real, non-empty explanation, never blank
+    assert cadence["rank"]["next_due_floor_minutes"] >= 5  # LiveFPL's own real minimum
+
+
+def test_decision_status_is_recomputing_while_a_real_auto_trigger_lock_is_fresh(db_conn):
+    from datetime import datetime, timezone
+
+    from fpl_agent.monitoring.live_snapshot import _decision_status
+
+    now = datetime.now(timezone.utc).isoformat()
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('strategic_plan_auto_started_at', ?, ?)",
+        (now, now),
+    )
+    db_conn.commit()
+    assert _decision_status(db_conn, is_stale=False) == "RECOMPUTING"
+
+
+def test_decision_status_ignores_a_stale_abandoned_recompute_lock(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.monitoring.live_snapshot import _decision_status
+
+    old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('strategic_plan_auto_started_at', ?, ?)",
+        (old, old),
+    )
+    db_conn.commit()
+    # A 30min-old lock is a real, abandoned/crashed prior run - must fall
+    # back to the real freshness signal, never claim RECOMPUTING forever.
+    assert _decision_status(db_conn, is_stale=False) == "CURRENT"
+    assert _decision_status(db_conn, is_stale=True) == "STALE"
+
+
+def test_decision_status_current_and_stale_without_any_lock(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _decision_status
+
+    assert _decision_status(db_conn, is_stale=False) == "CURRENT"
+    assert _decision_status(db_conn, is_stale=True) == "STALE"
+    assert _decision_status(db_conn, is_stale=None) == "UNKNOWN"
