@@ -550,6 +550,51 @@ def test_dashboard_live_tracking_shows_defcon_progress_for_a_def(db_conn):
     assert "12/10" in result
 
 
+def test_dashboard_live_tracking_row_has_stable_ids_for_browser_patching(db_conn):
+    """Real fix (2026-08-28, direct user ask: "the Live Tracking table
+    should patch player rows from the live snapshot instead of waiting for
+    a full reload") - the browser's own `patchLiveRows(snap)` (assemble.py)
+    targets these exact ids (`live-row-points-<id>`, `live-row-status-<id>`,
+    etc) and the row's own `data-player-id` attribute. This proves the
+    server-rendered markup actually carries every hook the JS patch depends
+    on, and that the initial (pre-poll) render already shows the real
+    per-player points/captain marker - not just a placeholder waiting for
+    the first poll."""
+    from fpl_agent.monitoring.dashboard.legacy import _live_tracking_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (1,'Gameweek 1','2026-08-21T17:30:00Z',1, 0,0,0,1,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 1, ?)", (now,),
+    )
+    db_conn.commit()
+
+    live_payload = {
+        "elements": [
+            {"id": 10, "stats": {"minutes": 60, "bps": 25, "goals_scored": 1, "assists": 0, "total_points": 8},
+             "explain": [{"fixture": 1}]},
+        ]
+    }
+    by_player = ({"player_id": 10, "points": 16, "multiplier": 2, "play_state": "live"},)
+
+    result = _live_tracking_html(db_conn, {10}, live_payload, captain_id=10, by_player=by_player)
+
+    assert "data-player-id='10'" in result
+    assert "id='live-row-points-10'" in result
+    assert "id='live-row-status-10'" in result
+    assert "id='live-row-minutes-10'" in result
+    assert "id='live-row-goals-10'" in result
+    assert "id='live-row-bonus-10'" in result
+    assert "id='live-row-confirmed-10'" in result
+    assert "16 pts" in result  # the passed-in by_player value, not a re-derived one
+    assert "(C)" in result and "captain-name" in result
+
+
 def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
     """GKP is never DEFCON-eligible (defcon_threshold is None) - the panel
     must not fabricate a "0/None" or any other progress badge for one.

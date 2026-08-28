@@ -389,7 +389,7 @@ def generate_dashboard_html(
 </section>"""
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
-  {_live_tracking_html(conn, squad_ids, live_payload)}
+  {_live_tracking_html(conn, squad_ids, live_payload, captain_id=(locked.xi.captain.player_id if locked is not None and locked.xi.captain else None), by_player=(my_live_score.by_player if my_live_score is not None else None))}
   {live_charts.render_live_charts(conn, my_team_entry_id, reference_event)}
   <div class="live-changes-feed-wrap" id="live-changes-feed-wrap" hidden>
     <div class="live-changes-feed-title">LIVE CHANGES</div>
@@ -829,7 +829,80 @@ def generate_dashboard_html(
         freshBlock.dataset.staleShown = '1';
       }}
     }}
+    patchLiveRows(snap);
     pushLiveChanges(snap);
+  }}
+  // Real Live Tracking row patching (2026-08-28, direct user ask: "the
+  // Live Tracking table should patch from the live snapshot instead of
+  // waiting for a full reload"). Uses ONLY the existing canonical snapshot
+  // (`snap.points.by_player`, `snap.bonus_defcon`, `snap.match_events`) -
+  // no second live-data path, no new fetch. Every field is set-if-changed
+  // (a plain string compare before writing textContent/className) so a
+  // player with no new data this poll leaves their row completely
+  // untouched, never a full-page reload and never a full-panel re-render.
+  function _setText(id, text) {{
+    var el = document.getElementById(id);
+    if (el && el.textContent !== text) el.textContent = text;
+  }}
+  function patchLiveRows(snap) {{
+    var pointsByPlayer = {{}};
+    if (snap.points && snap.points.by_player) {{
+      snap.points.by_player.forEach(function(p) {{ pointsByPlayer[p.player_id] = p; }});
+    }}
+    var eventsByPlayer = {{}};
+    (snap.match_events || []).forEach(function(e) {{
+      if (!eventsByPlayer[e.player_id]) eventsByPlayer[e.player_id] = {{}};
+      eventsByPlayer[e.player_id][e.kind] = e.count;
+    }});
+    (snap.bonus_defcon || []).forEach(function(b) {{
+      var pid = b.player_id;
+      var row = document.querySelector("[data-player-id='" + pid + "']");
+      if (!row) return;  // this player isn't in the currently-rendered Live Tracking panel - nothing to patch
+      var p = pointsByPlayer[pid];
+      var finished = p ? p.play_state === 'played' : null;
+
+      if (p && p.points != null) _setText('live-row-points-' + pid, p.points + ' pts');
+
+      var statusEl = document.getElementById('live-row-status-' + pid);
+      if (statusEl && finished != null) {{
+        var wantFt = finished;
+        var isFt = statusEl.classList.contains('fx-badge-ft');
+        if (wantFt !== isFt) {{
+          statusEl.className = wantFt ? 'fx-badge fx-badge-ft' : 'pulse-dot small';
+          statusEl.textContent = wantFt ? 'FT' : '';
+          statusEl.id = 'live-row-status-' + pid;
+        }}
+      }}
+
+      _setText('live-row-minutes-' + pid, b.minutes + '′' + (finished ? ' final' : ''));
+
+      var ev = eventsByPlayer[pid] || {{}};
+      _setText('live-row-goals-' + pid, (ev.goal || 0) + 'G ' + (ev.assist || 0) + 'A');
+
+      var defconEl = document.getElementById('live-row-defcon-' + pid);
+      if (defconEl && b.defcon_threshold != null) {{
+        var label = b.defcon_reached ? 'DEFCON +2' : (finished ? 'DefCon (final)' : 'DefCon');
+        var text = label + ' ' + b.defensive_contribution + '/' + b.defcon_threshold;
+        if (defconEl.textContent !== text) defconEl.textContent = text;
+        var wantCls = 'live-stat ' + (b.defcon_reached ? 'defcon-reached' : 'defcon-progress');
+        if (defconEl.className !== wantCls) defconEl.className = wantCls;
+      }}
+
+      _setText('live-row-bonus-' + pid, '+' + b.provisional_bonus);
+
+      var confirmedEl = document.getElementById('live-row-confirmed-' + pid);
+      if (confirmedEl) {{
+        var confirmedHtml;
+        if (b.confirmed_bonus != null) {{
+          confirmedHtml = "<span class='bonus-confirmed'>" + b.confirmed_bonus + " confirmed</span>";
+        }} else if (finished) {{
+          confirmedHtml = "<span class='bonus-provisional'>bonus not yet confirmed by FPL</span>";
+        }} else {{
+          confirmedHtml = "<span class='bonus-provisional'>provisional</span>";
+        }}
+        if (confirmedEl.innerHTML !== confirmedHtml) confirmedEl.innerHTML = confirmedHtml;
+      }}
+    }});
   }}
   // Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"
   // P0 ask) - built ENTIRELY from real snapshot fields (recent squad

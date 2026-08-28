@@ -1170,7 +1170,10 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
     return _LiveWindow(state, event, next_kickoff, "\n".join(lines), any_in_progress)
 
 
-def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payload: dict | None) -> str:
+def _live_tracking_html(
+    conn: sqlite3.Connection, squad_ids: set[int], live_payload: dict | None, captain_id: int | None = None,
+    by_player: tuple[dict, ...] | None = None,
+) -> str:
     window = _squad_live_window(conn, squad_ids)
 
     if window.state == "unknown":
@@ -1206,6 +1209,22 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
         # after full-time is real and honest (FPL hasn't finalized bonus
         # yet) - labelled as such, never fabricated as confirmed.
         play_states = _player_play_states(conn, [r.player_id for r in squad_rows], window.event)
+        # Real per-player live points (2026-08-28, direct user ask: "patch
+        # the Live Tracking row from the live snapshot") - prefers the
+        # already-computed `by_player` breakdown (the SAME real facts
+        # `monitoring.live_snapshot.build_live_snapshot`'s `points.
+        # by_player` writes, single source of truth for both the initial
+        # server render and the browser's own live patch below); falls back
+        # to reading `total_points` straight off this function's own
+        # `live_payload` param when no `by_player` was passed (e.g. a
+        # caller/test that only wants the bonus/DEFCON row shape) - same
+        # real source FPL's own live endpoint already provides, never a
+        # third heuristic.
+        if by_player is not None:
+            points_by_id = {p["player_id"]: p["points"] for p in by_player}
+        else:
+            stats_by_id = {e["id"]: e.get("stats", {}) for e in (live_payload.get("elements") or []) if "id" in e}
+            points_by_id = {pid: stats_by_id.get(pid, {}).get("total_points") for pid in squad_ids}
         lines = []
         for r in squad_rows:
             finished = play_states.get(r.player_id) == "played"
@@ -1230,21 +1249,27 @@ def _live_tracking_html(conn: sqlite3.Connection, squad_ids: set[int], live_payl
                 else:
                     defcon_label = "DefCon"
                 defcon_html = (
-                    f"<span class='live-stat {defcon_cls}'>{_esc(defcon_label)} "
+                    f"<span class='live-stat {defcon_cls}' id='live-row-defcon-{r.player_id}'>{_esc(defcon_label)} "
                     f"{r.defensive_contribution}/{r.defcon_threshold}</span>"
                 )
             status_dot = (
-                "<span class='fx-badge fx-badge-ft' style='margin-right:2px'>FT</span>" if finished
-                else "<span class='pulse-dot small'></span>"
+                f"<span class='fx-badge fx-badge-ft' id='live-row-status-{r.player_id}' style='margin-right:2px'>FT</span>" if finished
+                else f"<span class='pulse-dot small' id='live-row-status-{r.player_id}'></span>"
             )
+            is_captain = captain_id is not None and r.player_id == captain_id
+            name_html = f"<strong class='captain-name'>{_esc(r.web_name)} (C)</strong>" if is_captain else f"<strong>{_esc(r.web_name)}</strong>"
+            pts = points_by_id.get(r.player_id)
+            points_html = f"<span class='live-stat' id='live-row-points-{r.player_id}'>{pts if pts is not None else '&mdash;'} pts</span>"
             lines.append(
-                f"<div class='live-row'>{status_dot}"
-                f"<strong>{_esc(r.web_name)}</strong>"
-                f"<span class='live-stat'>{r.minutes}&prime;{' final' if finished else ''}</span>"
-                f"<span class='live-stat'>{r.goals_scored}G {r.assists}A</span>"
-                f"<span class='live-stat'>BPS {r.bps}</span>"
+                f"<div class='live-row' data-player-id='{r.player_id}'>{status_dot}"
+                f"{name_html}"
+                f"{points_html}"
+                f"<span class='live-stat' id='live-row-minutes-{r.player_id}'>{r.minutes}&prime;{' final' if finished else ''}</span>"
+                f"<span class='live-stat' id='live-row-goals-{r.player_id}'>{r.goals_scored}G {r.assists}A</span>"
+                f"<span class='live-stat' id='live-row-bps-{r.player_id}'>BPS {r.bps}</span>"
                 f"{defcon_html}"
-                f"<span class='bonus-badge'>+{r.provisional_bonus}</span>{confirmed}</div>"
+                f"<span class='bonus-badge' id='live-row-bonus-{r.player_id}'>+{r.provisional_bonus}</span>"
+                f"<span id='live-row-confirmed-{r.player_id}'>{confirmed}</span></div>"
             )
         return "<div class='live-active'>" + "\n".join(lines) + "</div>"
 
@@ -2252,6 +2277,15 @@ class _MyLiveScore:
     live: int
     yet_to_play: int
     bench: int
+    # Real per-player breakdown (2026-08-28, direct user ask: "the Live
+    # Tracking table should patch from the live snapshot, not wait for a
+    # full reload") - the SAME real facts this function already computes
+    # to derive the aggregate `points`/`captain_points` above
+    # (`stats_by_id` off the already-fetched `live_payload`, `picks`' own
+    # real multiplier per player), just not previously exposed per-player.
+    # Defaulted so every pre-existing construction site (this module's own
+    # aggregate-only callers, test fixtures) keeps working unchanged.
+    by_player: tuple[dict, ...] = ()
 
 
 def _compute_my_live_score(conn: sqlite3.Connection, locked, live_payload: dict | None, event: int | None) -> "_MyLiveScore | None":
@@ -2299,11 +2333,35 @@ def _compute_my_live_score(conn: sqlite3.Connection, locked, live_payload: dict 
     cap_play_state = None
     if cap is not None:
         cap_play_state = _player_play_states(conn, [cap.player_id], event).get(cap.player_id)
+
+    # Real per-player breakdown - every real squad player (starting XI +
+    # bench, matching `_live_tracking_html`'s own `squad_ids` scope, not
+    # just the starters `points`/`picks` above already cover), not a second
+    # heuristic: `multiplier` is the SAME real `picks` value already
+    # resolved above (real synced multiplier, or the same real captain=2x/
+    # starter=1x/bench=0x fallback `points` itself uses) - a bench player
+    # not present in `picks` (the non-synced fallback only enumerates
+    # starters) genuinely has multiplier 0, same real "doesn't count
+    # toward your score" fact the aggregate already reflects.
+    multiplier_by_id = dict(picks)
+    all_squad_ids = list(locked.squad_ids)
+    play_state_by_id = _player_play_states(conn, all_squad_ids, event)
+    by_player = tuple(
+        {
+            "player_id": pid,
+            "points": stats_by_id.get(pid, {}).get("total_points", 0),
+            "multiplier": multiplier_by_id.get(pid, 0),
+            "play_state": play_state_by_id.get(pid, "yet_to_play"),
+        }
+        for pid in all_squad_ids
+    )
+
     return _MyLiveScore(
         points=points, captain_points=cap_points, captain_name=cap.web_name if cap else None,
         captain_play_state=cap_play_state,
         played=status["played"], live=status["live"], yet_to_play=status["yet_to_play"],
         bench=len(locked.xi.bench),
+        by_player=by_player,
     )
 
 

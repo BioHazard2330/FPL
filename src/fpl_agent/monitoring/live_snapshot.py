@@ -58,6 +58,7 @@ def _bonus_defcon_block(live_bonus_rows: list, squad_ids: frozenset[int]) -> lis
             "player_id": r.player_id, "web_name": r.web_name, "minutes": r.minutes,
             "provisional_bonus": r.provisional_bonus, "confirmed_bonus": r.confirmed_bonus,
             "defensive_contribution": r.defensive_contribution, "defcon_reached": r.defcon_reached,
+            "defcon_threshold": r.defcon_threshold,
         }
         for r in live_bonus_rows if r.player_id in squad_ids
     ]
@@ -325,6 +326,12 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
             "live": my_live_score.live,
             "yet_to_play": my_live_score.yet_to_play,
             "bench": my_live_score.bench,
+            # Real per-player live points/multiplier/play-state (2026-08-28,
+            # direct user ask: "the Live Tracking table should patch from
+            # the live snapshot") - the browser needs this to patch each
+            # squad player's own row, not just the squad-wide aggregate
+            # above. See `_MyLiveScore.by_player`'s own docstring.
+            "by_player": list(my_live_score.by_player),
         }
 
     return {

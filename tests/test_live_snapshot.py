@@ -91,7 +91,7 @@ def _seed_player(conn, player_id, web_name="Salah", status="a", team_id=1, eleme
     conn.commit()
 
 
-def _fake_locked_squad(event, starting_ids, bench_ids=(), captain_id=None, vice_id=None):
+def _fake_locked_squad(event, starting_ids, bench_ids=(), captain_id=None, vice_id=None, source="synced_real"):
     def cand(pid):
         return PlayerCandidate(
             player_id=pid, web_name=f"P{pid}", position="MID", team_id=1, team_short="T1",
@@ -106,7 +106,7 @@ def _fake_locked_squad(event, starting_ids, bench_ids=(), captain_id=None, vice_
         vice_captain=next((c for c in starting if c.player_id == vice_id), None),
     )
     return LockedSquadState(
-        source="synced_real", event=event, squad_ids=frozenset(list(starting_ids) + list(bench_ids)),
+        source=source, event=event, squad_ids=frozenset(list(starting_ids) + list(bench_ids)),
         xi=xi, bank_tenths=10, squad_value_tenths=1000, decision_id=None, free_transfers=1,
     )
 
@@ -161,6 +161,44 @@ def test_match_events_and_bonus_defcon_share_one_live_bonus_computation(db_conn,
     events = {(e["player_id"], e["kind"]): e["count"] for e in snap["match_events"]}
     assert events[(1, "goal")] == 2
     assert events[(1, "assist")] == 1
+
+
+def test_points_block_carries_real_per_player_points_and_multiplier(db_conn, monkeypatch):
+    """Real fix (2026-08-28, direct user ask: "the Live Tracking table
+    should patch player rows from the live snapshot instead of waiting for
+    a full reload") - the browser needs a per-player breakdown to patch
+    each row; this is the canonical snapshot's own source of that data
+    (`_MyLiveScore.by_player`, single computation, no second live-data
+    path). Captain gets the real 2x multiplier, a plain starter gets 1x, a
+    bench player (not in the fallback `picks` list at all) gets 0x -
+    matches the SAME real semantics `points`/`captain_points` above it
+    already use, just exposed per-player instead of only aggregated."""
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    _seed_player(db_conn, 1, web_name="Haaland")
+    _seed_player(db_conn, 2, web_name="Salah")
+    _seed_player(db_conn, 3, web_name="Sub", team_id=1)
+    locked = _fake_locked_squad(2, starting_ids=[1, 2], bench_ids=[3], captain_id=1, source="locked_decision")
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: locked)
+
+    live_payload = {
+        "elements": [
+            {"id": 1, "stats": {"minutes": 90, "goals_scored": 2, "assists": 0, "bps": 40, "bonus": 0, "total_points": 12}, "explain": [{"fixture": 100}]},
+            {"id": 2, "stats": {"minutes": 90, "goals_scored": 0, "assists": 1, "bps": 20, "bonus": 0, "total_points": 6}, "explain": [{"fixture": 100}]},
+            {"id": 3, "stats": {"minutes": 0, "goals_scored": 0, "assists": 0, "bps": 0, "bonus": 0, "total_points": 0}, "explain": []},
+        ]
+    }
+    snap = build_live_snapshot(db_conn, live_payload=live_payload)
+    by_player = {p["player_id"]: p for p in snap["points"]["by_player"]}
+
+    assert by_player[1]["points"] == 12
+    assert by_player[1]["multiplier"] == 2  # real captain multiplier
+    assert by_player[2]["points"] == 6
+    assert by_player[2]["multiplier"] == 1
+    assert by_player[3]["points"] == 0
+    assert by_player[3]["multiplier"] == 0  # a bench player scores nothing toward the squad, real fact
+    assert by_player[3]["play_state"] == "yet_to_play"
 
 
 def test_source_freshness_block_flags_degraded_sources(db_conn):
