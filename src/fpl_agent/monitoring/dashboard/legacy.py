@@ -3421,6 +3421,15 @@ _CSS = """
     --ok-text: #00ff87; --accent: #00ff87; --accent-2: #00ff87;
     --fpl-purple: #37003c; --fpl-pink: #e90052;
     --pitch-1: #0d3320; --pitch-2: #114228;
+    /* Type scale (2026-08-29 forensic redesign pass) - a real, bounded fix
+       for this file's own confirmed problem (dozens of near-duplicate ad
+       hoc rem sizes, 0.62rem to 2.1rem, scattered with no shared scale).
+       Not a mechanical file-wide rename (too large a blast radius to
+       verify visually in one pass) - applied to the panels actively
+       touched this pass; the remaining scattered literals are a real,
+       disclosed follow-up, not silently left inconsistent by accident. */
+    --fs-2xs: 0.68rem; --fs-xs: 0.75rem; --fs-sm: 0.85rem; --fs-base: 0.95rem;
+    --fs-md: 1.1rem; --fs-lg: 1.5rem; --fs-xl: 2rem;
   }
   @media (prefers-color-scheme: light) {
     :root {
@@ -3472,9 +3481,19 @@ _CSS = """
   .btn-refresh svg { width: 13px; height: 13px; }
 
   /* --- Sticky section nav --- */
+  /* Right-edge fade (2026-08-29) - real, disclosed gap on a narrow viewport
+     (tablet/mobile): this nav is intentionally horizontally-scrollable
+     (see the CSS comment lower in this file re: fpl.page's own button-nav
+     serving a different structural role) but had zero visual affordance
+     that more tabs exist off-screen - a plain mask-image fade, degrades
+     harmlessly (no mask support = no fade, nav still fully usable) rather
+     than a JS scroll-shadow toggle this static single-file dashboard has
+     no runtime for. */
   .site-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 2px; overflow-x: auto;
     background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px);
-    border: 1px solid var(--border); border-radius: 8px; padding: 4px; margin-bottom: 18px; }
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px; margin-bottom: 18px;
+    mask-image: linear-gradient(to right, black calc(100% - 22px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 22px), transparent 100%); }
   .site-nav a { flex-shrink: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.03em; color: var(--muted); text-decoration: none; padding: 7px 12px; border-radius: 5px;
     transition: background 0.15s ease, color 0.15s ease; }
@@ -4386,43 +4405,49 @@ _CSS = """
      resolve to the identical hex in dark mode - confirmed by reading
      :root directly - so a home-vs-away comparison needs its own two real
      colours, not that pair). --- */
-  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; margin-top: 14px; }
-  .match-centre-card { background: var(--surface); border-radius: 12px; padding: 18px;
-    --mc-home: #00ff87; --mc-away: #04c8ff; }
-  .match-centre-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-bottom: 16px; }
-  .mc-team { display: flex; align-items: center; gap: 8px; }
+  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 20px; margin-top: 14px; }
+  .match-centre-card { background: var(--surface); border-radius: 12px; padding: 20px 22px;
+    border: 1px solid var(--gridline); --mc-home: #00ff87; --mc-away: #04c8ff; }
+  .match-centre-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+    padding-bottom: 16px; margin-bottom: 18px; border-bottom: 1px solid var(--gridline); }
+  .mc-team { display: flex; align-items: center; gap: 10px; }
   .mc-team-away { justify-content: flex-end; text-align: right; flex-direction: row-reverse; }
   /* Real text-monogram badge (2026-08-29) - not an official crest, see
      match_centre.py::_team_badge_html's own docstring: the real PL badge
      CDN was live-tested and confirmed to 403 a plain cross-origin `<img>`
-     load, so this is an honest, zero-dependency substitute instead. */
-  .mc-badge { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex;
-    align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 800;
-    letter-spacing: 0.02em; background: var(--surface-2); border: 1.5px solid var(--gridline); }
-  .mc-badge-home { color: var(--mc-home); border-color: rgba(0,255,135,0.4); }
-  .mc-badge-away { color: var(--mc-away); border-color: rgba(4,200,255,0.4); }
-  .match-centre-team { font-weight: 700; font-size: 0.95rem; }
-  .mc-score-block { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-  .match-centre-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 2.1rem;
+     load, so this is an honest, zero-dependency substitute instead. Given
+     a soft team-colour tint (not just an outline) in the redesign pass so
+     it reads as a real badge at a glance, not a stray initial. */
+  .mc-badge { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; display: flex;
+    align-items: center; justify-content: center; font-size: var(--fs-2xs); font-weight: 800;
+    letter-spacing: 0.02em; border: 1.5px solid var(--gridline); }
+  .mc-badge-home { color: #06331f; background: var(--mc-home); border-color: transparent; }
+  .mc-badge-away { color: #062733; background: var(--mc-away); border-color: transparent; }
+  .match-centre-team { font-weight: 700; font-size: var(--fs-base); }
+  .mc-score-block { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .match-centre-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: var(--fs-xl);
     color: var(--fg); line-height: 1; letter-spacing: 0.02em; }
-  .match-centre-minute { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  .match-centre-minute { font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
     color: #3ecf8e; padding: 2px 10px; border-radius: 99px; background: rgba(62, 207, 142, 0.16); }
   .match-centre-header .squad-badge { grid-column: 1 / -1; justify-self: center; margin-top: 8px; }
-  .match-centre-section-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--faint); font-weight: 700; margin: 18px 0 8px; }
-  .match-centre-chart { background: var(--surface-2); border-radius: 8px; padding: 10px; }
+  .match-centre-section-title { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--faint); font-weight: 700; margin: 20px 0 10px; }
+  .match-centre-chart { background: var(--surface-2); border-radius: 8px; padding: 12px; }
 
   /* Real proportional home-vs-away stat bars (2026-08-29 redesign - a bare
      "9 ... Shots ... 18" pair with no bar, this dashboard's own confirmed
-     first-pass mistake, communicates nothing at a glance). */
-  .mc-stat-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 10px; padding: 6px 0; }
-  .mc-stat-val { font-weight: 700; font-size: 0.85rem; color: var(--fg); font-variant-numeric: tabular-nums; text-align: center; }
-  .mc-stat-bar { position: relative; height: 20px; border-radius: 4px; overflow: hidden; background: var(--surface); display: flex; }
-  .mc-stat-bar-home { background: var(--mc-home); opacity: 0.85; height: 100%; }
-  .mc-stat-bar-away { background: var(--mc-away); opacity: 0.85; height: 100%; }
+     first-pass mistake, communicates nothing at a glance). Pill-shaped,
+     more vertical breathing room, and a muted (not neon-opaque) fill in
+     this forensic pass - the original full-opacity block read as a game
+     progress bar, not a professional stat comparison. */
+  .mc-stat-row { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 12px; padding: 7px 0; }
+  .mc-stat-val { font-weight: 700; font-size: var(--fs-sm); color: var(--fg); font-variant-numeric: tabular-nums; text-align: center; }
+  .mc-stat-bar { position: relative; height: 16px; border-radius: 99px; overflow: hidden; background: var(--surface-2); display: flex; }
+  .mc-stat-bar-home { background: var(--mc-home); opacity: 0.65; height: 100%; }
+  .mc-stat-bar-away { background: var(--mc-away); opacity: 0.65; height: 100%; }
   .mc-stat-bar .match-centre-section-title { display: none; }
   .mc-stat-label { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1;
-    font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg);
+    font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg);
     text-shadow: 0 0 6px var(--surface-2), 0 0 3px var(--surface-2); white-space: nowrap; margin: 0; }
 
   /* Momentum - a real per-minute filled area chart (home pressure above
@@ -4459,16 +4484,16 @@ _CSS = """
 
   /* My players in this match - compact rows, FOOTBALL evidence kept
      visually distinct from FPL scoring (which lives in Live Tracking). */
-  .match-player-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0;
-    border-top: 1px solid var(--gridline); font-size: 0.85rem; }
+  .match-player-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 0;
+    border-top: 1px solid var(--gridline); font-size: var(--fs-sm); }
   .match-player-row:first-of-type { border-top: none; }
   .match-player-name { font-weight: 700; min-width: 90px; }
-  .match-player-status { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  .match-player-status { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: var(--faint); }
   .match-player-minutes { color: var(--muted); font-variant-numeric: tabular-nums; }
   .match-player-rating { font-weight: 700; color: #0a0a0b; background: #ffd400; padding: 1px 7px;
-    border-radius: 5px; font-size: 0.78rem; }
-  .match-player-football { color: var(--muted); font-size: 0.8rem; }
+    border-radius: 5px; font-size: var(--fs-xs); }
+  .match-player-football { color: var(--muted); font-size: var(--fs-xs); }
 
   /* Real per-event-type colour in the Match Feed (2026-08-29 redesign) -
      the first pass rendered every event type in the same flat grey badge. */

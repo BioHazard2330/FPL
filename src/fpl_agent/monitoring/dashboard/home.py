@@ -211,16 +211,30 @@ def _system_live_html(snapshot: dict | None = None) -> str:
     and correctly stays at its own honest unknown state, never a fabricated
     number."""
     if snapshot is None:
+        # Real visual redesign (2026-08-29, forensic fpl.page-referenced
+        # pass, direct user complaint: "looks like a generated engineering
+        # dashboard") - a wall of 7 raw telemetry fields on one line, ahead
+        # of any real content, is exactly the tell fpl.page's own primary
+        # UI never has (it shows one small "updated Xs ago", nothing more,
+        # anywhere real users look). The same real fields still exist -
+        # every one of these ids is still real and still ticks - just moved
+        # into a collapsed `<details>` so the PRIMARY glance is one honest
+        # status line, matching a real product's "last updated" pattern.
         return """<div class="system-live-strip" id="system-live-strip" data-live-state="unknown">
   <span class="system-live-dot" id="system-live-dot"></span>
-  <span class="system-live-label">SYSTEM LIVE</span>
-  <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">not yet polled</b></span>
-  <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
-  <span class="system-live-field">Rank <b id="system-live-rank-age">&mdash;</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
-  <span class="system-live-field">Decision <b id="system-live-decision-status">&mdash;</b> &middot; <span id="system-live-decision-age">&mdash;</span></span>
-  <span class="system-live-field">News <b id="system-live-news-age">&mdash;</b></span>
-  <span class="system-live-field">Projections <b id="system-live-projections-age">&mdash;</b></span>
-  <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
+  <span class="system-live-primary"><b id="system-live-decision-status">Unknown</b>
+    <span id="system-live-decision-age">no decision logged yet</span></span>
+  <details class="system-live-more">
+    <summary>Live details</summary>
+    <div class="system-live-more-grid">
+      <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">not yet polled</b></span>
+      <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
+      <span class="system-live-field">Rank <b id="system-live-rank-age">&mdash;</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
+      <span class="system-live-field">News <b id="system-live-news-age">&mdash;</b></span>
+      <span class="system-live-field">Projections <b id="system-live-projections-age">&mdash;</b></span>
+      <span class="system-live-field system-live-degraded" id="system-live-degraded" hidden></span>
+    </div>
+  </details>
 </div>"""
 
     rec = snapshot.get("recommendation") or {}
@@ -301,14 +315,19 @@ def _system_live_html(snapshot: dict | None = None) -> str:
 
     return f"""<div class="system-live-strip" id="system-live-strip" data-live-state="live"{data_attrs}>
   <span class="system-live-dot" id="system-live-dot"></span>
-  <span class="system-live-label">SYSTEM LIVE</span>
-  <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">{_esc(snapshot_age)}</b></span>
-  <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
-  <span class="system-live-field">Rank <b id="system-live-rank-age">{_esc(rank_age)}</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
-  <span class="system-live-field">Decision <b id="system-live-decision-status">{_esc(decision_status_label)}</b> &middot; <span id="system-live-decision-age">{_esc(decision_detail)}</span></span>
-  <span class="system-live-field">News <b id="system-live-news-age">{_esc(news_age)}</b></span>
-  <span class="system-live-field">Projections <b id="system-live-projections-age">{_esc(projections_age)}</b></span>
-  {degraded_html}
+  <span class="system-live-primary"><b id="system-live-decision-status">{_esc(decision_status_label)}</b>
+    <span id="system-live-decision-age">{_esc(decision_detail)}</span></span>
+  <details class="system-live-more">
+    <summary>Live details</summary>
+    <div class="system-live-more-grid">
+      <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">{_esc(snapshot_age)}</b></span>
+      <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
+      <span class="system-live-field">Rank <b id="system-live-rank-age">{_esc(rank_age)}</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
+      <span class="system-live-field">News <b id="system-live-news-age">{_esc(news_age)}</b></span>
+      <span class="system-live-field">Projections <b id="system-live-projections-age">{_esc(projections_age)}</b></span>
+      {degraded_html}
+    </div>
+  </details>
 </div>"""
 
 

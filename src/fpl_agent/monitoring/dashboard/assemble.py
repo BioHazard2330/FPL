@@ -1599,21 +1599,43 @@ _CSS_WORKSPACE = """
      dot color - "unknown" (no snapshot polled yet, grey), "live" (snapshot
      age < 60s, green), "stale" (>=60s since the last real poll, amber) -
      never a fabricated "live" state, see the poll script's own comment. */
-  /* Real legibility fix (2026-08-29, direct user complaint: "text too
-     small everywhere" on Home) - this strip crams 7 real fields onto one
-     row; 0.74rem read as genuinely tiny alongside the rest of the hero. */
-  .system-live-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
-    font-size: 0.8rem; color: var(--faint); margin-bottom: 16px; }
+  /* Real visual redesign (2026-08-29, forensic fpl.page-referenced pass,
+     direct user complaint: "looks like a generated engineering dashboard
+     rather than a polished professional FPL application"). The old strip
+     put 7 raw telemetry fields (Snapshot/Next check/Rank/Decision/News/
+     Projections/Data health) on ONE line, ahead of any real content - no
+     real consumer product does this (fpl.page's own primary UI shows one
+     small "updated Xs ago", nothing more). Every real field/id here is
+     UNCHANGED and still ticks from the same real stored timestamps - only
+     the visual weight changed: one honest, calm status line up front, the
+     rest behind a real `<details>` disclosure (zero new JS). */
+  .system-live-strip { display: flex; align-items: center; gap: 10px; font-size: 0.85rem;
+    color: var(--muted); margin-bottom: 18px; }
   .system-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
   .system-live-strip[data-live-state="live"] .system-live-dot { background: #3ecf8e; }
   .system-live-strip[data-live-state="stale"] .system-live-dot { background: #f0c419; }
-  .system-live-label { font-weight: 800; letter-spacing: 0.06em; color: var(--fg); font-size: 0.72rem; }
+  .system-live-primary b { color: var(--fg); font-weight: 700; }
+  .system-live-primary span { color: var(--faint); margin-left: 4px; }
+  .system-live-more { position: relative; margin-left: auto; font-size: 0.76rem; }
+  .system-live-more summary { cursor: pointer; list-style: none; color: var(--faint); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; padding: 4px 0; }
+  .system-live-more summary::-webkit-details-marker { display: none; }
+  .system-live-more summary:hover { color: var(--muted); }
+  .system-live-more[open] summary { color: var(--fg); }
+  .system-live-more-grid { position: absolute; right: 0; top: 100%; z-index: 30; margin-top: 6px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 260px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+  .system-live-field { white-space: nowrap; color: var(--muted); }
   .system-live-field b { color: var(--fg); font-weight: 600; }
   .system-live-degraded { color: #f0c419; }
-  .system-live-degraded summary { cursor: pointer; list-style: none; }
+  .system-live-degraded summary { cursor: pointer; list-style: none; color: #f0c419; text-transform: none;
+    letter-spacing: normal; font-size: inherit; font-weight: 600; padding: 0; }
   .system-live-degraded summary::-webkit-details-marker { display: none; }
   .system-live-degraded-list { margin: 6px 0 0; padding-left: 16px; color: var(--muted); font-size: 0.72rem; }
   .system-live-degraded-raw { color: var(--faint); }
+  @media (max-width: 480px) {
+    .system-live-more-grid { left: 0; right: 0; min-width: 0; }
+  }
   .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
   .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
     background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
@@ -1621,8 +1643,8 @@ _CSS_WORKSPACE = """
   /* --- MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
      pass) - compact, semantic-color-only, never a fourth wall of cards. --- */
   .cross-check-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .cross-check-tag { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
-    padding: 3px 9px; border-radius: 5px; border: 1px solid transparent; }
+  .cross-check-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 4px 11px; border-radius: 6px; border: 1px solid transparent; }
   .cross-check-ok { background: rgba(62, 207, 142, 0.14); color: #3ecf8e; border-color: rgba(62, 207, 142, 0.35); }
   .cross-check-bad { background: rgba(233, 0, 82, 0.14); color: #e90052; border-color: rgba(233, 0, 82, 0.35); }
   .cross-check-warn { background: rgba(240, 196, 25, 0.14); color: #f0c419; border-color: rgba(240, 196, 25, 0.35); }
@@ -1635,10 +1657,16 @@ _CSS_WORKSPACE = """
   .template-overlap { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--gridline); }
   .template-overlap-stat { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
   .projected-pos-row-squad .projected-pos-label { color: var(--accent-2); }
-  .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-top: 22px; }
-  .home-metric-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
-  .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.5rem; margin-top: 2px; }
-  .home-metric-value-muted { opacity: 0.55; font-size: 1.05rem; }
+  /* Real visual redesign (2026-08-29, forensic fpl.page-referenced pass) -
+     a real divider separates this from the reason/evidence text above it
+     (matches fpl.page's own clear internal section breaks inside one
+     card), and bigger, bolder numbers carry real visual weight the way
+     fpl.page's own data rows do. */
+  .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 16px 32px; margin-top: 20px; padding-top: 18px;
+    border-top: 1px solid var(--gridline); }
+  .home-metric-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
+  .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.75rem; margin-top: 3px; }
+  .home-metric-value-muted { opacity: 0.55; font-size: 1.15rem; }
   .home-metric-sub { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.85rem; font-weight: 600;
     color: var(--accent-2); margin-left: 4px; }
   /* Real rank delta (2026-08-29, P0 live-rank ask: "Δ since previous

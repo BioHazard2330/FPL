@@ -1,10 +1,41 @@
 # Project State
 
-Last updated: 2026-08-29 (continuation: remaining limitations closed). Read this before
+Last updated: 2026-08-29 (forensic visual/product redesign pass). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, forensic visual/product redesign pass)
+
+Direct user instruction: backend is functionally complete, no more
+architecture - a pure CSS/markup pass against `https://fpl.page/` as
+reference. System Live strip collapsed into a compact status line + a
+`<details>` disclosure for the previously-cramped telemetry row (all
+existing element ids preserved for the JS poll loop); hero-metric/cross-
+check-pill sizing polished. New `--fs-2xs`..`--fs-xl` type-scale tokens in
+`legacy.py`'s `:root` (a bounded fix, applied to Match Centre this pass -
+NOT a whole-file mechanical rename, real disclosed follow-up). Match
+Centre re-audited live via the project's own flip-a-finished-match-to-LIVE
+technique: card border/divider, team-colour-filled badges (was outline-
+only), pill-shaped muted stat bars (was opaque neon blocks) - momentum
+chart/shot map re-verified already solid from an earlier pass, untouched.
+Nav bar (intentionally horizontally-scrollable below ~900px) gained a
+right-edge fade so users know more tabs exist off-screen - the one real
+finding from a 1440/1024/768/390 responsive sweep. Real bug hunt during
+the Match Centre re-audit turned up two false alarms (stale pre-fix
+Substitution event descriptions on an old match, fixed by a real re-sync
+rather than a code change; a name that looked encoding-mangled in the
+terminal but was confirmed correct UTF-8 - a codepage artifact, not a
+storage bug) - full account: `docs/history/32-session-2026-08-29-forensic-
+visual-redesign.md`.
+
+**Genuinely still open** (real, disclosed): the type-scale tokens aren't
+applied file-wide yet - most panels outside Match Centre still use ad hoc
+rem literals; a real, larger, unattempted follow-up. No GW was genuinely
+LIVE at any point this session (all real fixtures today are PRE_MATCH) -
+Match Centre verification used the same disclosed temporary-flip
+technique as prior sessions, not a real live end-to-end render.
 
 ## Where things stand (updated 2026-08-29, live architecture rebuild - milestones 4-6)
 
