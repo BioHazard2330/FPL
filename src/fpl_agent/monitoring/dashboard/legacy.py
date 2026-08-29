@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
-from fpl_agent.optimization.strategic_planner import latest_strategic_plan_with_recommendation
+from fpl_agent.models.decision_hysteresis import stable_current_recommendation
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.models.breakouts import find_breakouts
@@ -2704,7 +2704,16 @@ class _PrimaryVerdict:
 
 
 def _compute_primary_verdict(conn: sqlite3.Connection, ta) -> _PrimaryVerdict:
-    strategic = latest_strategic_plan_with_recommendation(conn)
+    # Real decision hysteresis (2026-08-29, "live architecture rebuild"
+    # milestone 4) - this is the ONE real place spec section 11's "don't
+    # flip-flop on noise" concern actually lives (the dashboard's own
+    # single authoritative "what should I do right now" answer). Every
+    # other consumer of "the latest strategic_plan decision"
+    # (`live_snapshot.py`'s freshness check, `adversarial_audit.py`'s
+    # cross-check) deliberately keeps reading the raw, unfiltered latest
+    # decision - see `decision_hysteresis.py`'s own module docstring for
+    # why those two are NOT routed through this same hysteresis.
+    strategic = stable_current_recommendation(conn)
     sd = _normalize_strategic_detail(strategic.detail if strategic is not None else None)
 
     immediate_action = "ROLL"
