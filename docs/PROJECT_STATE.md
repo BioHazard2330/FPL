@@ -6,6 +6,27 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, live command centre pass)
+
+Real bug found + fixed: the browser's "Next check" live-poll countdown
+could reach 0s and freeze there forever (`nextPollAt` only advanced on a
+successful poll; any failed/absent fetch - common outside a live match -
+froze it). Readable "Data health · N issue(s)" replaces the old raw
+`"N source(s) degraded: fpl_api_my_team, livefpl, ..."` dump (technical
+names now only on click/expand). Real chart-legibility fix (`live_charts.py`/
+`legacy.py` CSS) - charts could render as small as ~70-90px tall at a narrow
+grid column; now floor at 240px with a wider minimum column. Real
+flat-vs-gradient design contradiction fixed on the Home hero (was a purple
+gradient despite the header's own "flat, no gradient" rebuild). Real FotMob
+xG/xA/shots/key-passes (already fetched, never displayed) now shown on
+squad players' live match rows; new compact real MATCH STATS panel
+(possession/shots/xG/corners, `team_match_state`). 1245 tests green,
+live-verified against the real production dashboard. Full account:
+`docs/history/26-session-2026-08-29-live-command-centre-pass.md`. No GW was
+actually live during this session - the countdown/patch-in-place mechanics
+were verified against the live-poll channel's real behavior, not against a
+genuinely advancing match.
+
 ## Where things stand (updated 2026-08-29, continuation: remaining limitations closed)
 
 Real captain-contribution + starting-XI actual-vs-expected charts (per-finished-GW grain, real
