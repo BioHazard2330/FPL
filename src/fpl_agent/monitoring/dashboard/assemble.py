@@ -1233,23 +1233,42 @@ def generate_dashboard_html(
   // case today - it's a new, separate, optional process, not yet wired
   // into the Task Scheduler), `EventSource` fails silently and retries in
   // the background on its own native schedule; nothing else on this page
-  // is affected. Only the `snapshot` channel is wired this pass - it
-  // reuses `applySnapshot` directly (that function's own version guard
-  // already makes an out-of-order or duplicate push a safe no-op), so a
-  // real live_snapshot.json write reaches this page within about one
-  // tailer poll cycle (~1.5s) instead of waiting up to the 10s poll
-  // interval. `match_event`/`change_event` channel messages are received
-  // by `live-server` and broadcast, but not yet rendered here - a real,
-  // disclosed follow-up (they'd need their own dedup-key scheme reconciled
-  // with `pushLiveChanges`'s existing one to avoid a double-counted feed
-  // entry when both the SSE push and the next poll describe the same
-  // real incident).
+  // is affected.
+  //
+  // `snapshot` reuses `applySnapshot` directly (that function's own
+  // version guard already makes an out-of-order or duplicate push a safe
+  // no-op) - a real live_snapshot.json write reaches this page in ~1.5s
+  // instead of waiting up to the 10s poll interval.
+  //
+  // `change_event` (milestone 5) reuses the EXACT SAME real dedup key
+  // `pushLiveChanges` already uses for the identical real `change_events`
+  // row ('chg:'+entity_id+':'+detected_at) - the SSE push and the next
+  // poll cycle describing the SAME real row therefore genuinely dedup via
+  // the existing `seenFeedKeys` set, never a double-counted feed entry.
+  //
+  // `match_event` (milestone 5) is real FotMob per-incident detail (a
+  // richer, more specific description than the FPL-live-bonus-derived
+  // cumulative goal/assist counts the poll's own `pushLiveChanges`
+  // already shows) - genuinely additive, not a duplicate of that, keyed
+  // by the real `match_events.id` so a later poll cycle can never
+  // reintroduce the same real row twice either.
   try {{
     var liveSource = new EventSource('http://127.0.0.1:8877/events');
     liveSource.onmessage = function(ev) {{
       var msg;
       try {{ msg = JSON.parse(ev.data); }} catch (e) {{ return; }}
-      if (msg.channel === 'snapshot' && msg.snapshot) applySnapshot(msg.snapshot);
+      if (msg.channel === 'snapshot' && msg.snapshot) {{
+        applySnapshot(msg.snapshot);
+      }} else if (msg.channel === 'change_event') {{
+        var key = 'chg:' + msg.entity_id + ':' + msg.detected_at;
+        addFeedEntry(key, '<b>' + feedTime(msg.detected_at) + '</b> ' + humanizeChangeEvent({{
+          web_name: msg.web_name, event_type: msg.event_type, old_value: msg.old_value, new_value: msg.new_value,
+        }}));
+      }} else if (msg.channel === 'match_event') {{
+        var meKey = 'me:' + msg.id;
+        var label = (msg.event_type || '').replace(/_/g, ' ');
+        addFeedEntry(meKey, '<b>' + feedTime() + '</b> ' + (msg.description || (msg.web_name || 'Unknown') + ' ' + label));
+      }}
     }};
     liveSource.onerror = function() {{ /* real, expected when live-server isn't running - EventSource retries natively */ }};
   }} catch (e) {{ /* EventSource unsupported/blocked - the poll fallback above is unaffected */ }}

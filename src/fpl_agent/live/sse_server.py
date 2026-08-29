@@ -119,22 +119,29 @@ class DbTailer:
         for r in rows:
             self._last_match_event_id = r["id"]
             self.broadcaster.broadcast({
-                "channel": "match_event", "match_id": r["match_id"], "event_type": r["event_type"],
+                "channel": "match_event", "id": r["id"], "match_id": r["match_id"], "event_type": r["event_type"],
                 "minute": r["minute"], "description": r["description"],
                 "player_id": r["player_id"], "web_name": r["web_name"],
             })
 
     def _poll_change_events(self) -> None:
+        # Real LEFT JOIN onto players (2026-08-29, milestone 5) - the SAME
+        # real join `live_snapshot.py::_recent_changes_block` already uses
+        # for the poll-based feed, so the browser's `humanizeChangeEvent`
+        # can render a real player name here too, not just "player 123".
+        # `NULL` for a non-player entity (e.g. a real `fixture` kickoff
+        # reminder) - never fabricated.
         rows = self.conn.execute(
-            "SELECT id, event_type, entity, entity_id, old_value, new_value, severity, detected_at "
-            "FROM change_events WHERE id > ? ORDER BY id", (self._last_change_event_id,),
+            "SELECT ce.id, ce.event_type, ce.entity, ce.entity_id, ce.old_value, ce.new_value, ce.severity, "
+            "ce.detected_at, p.web_name FROM change_events ce LEFT JOIN players p ON p.id = ce.entity_id "
+            "WHERE ce.id > ? ORDER BY ce.id", (self._last_change_event_id,),
         ).fetchall()
         for r in rows:
             self._last_change_event_id = r["id"]
             self.broadcaster.broadcast({
                 "channel": "change_event", "event_type": r["event_type"], "entity": r["entity"],
                 "entity_id": r["entity_id"], "old_value": r["old_value"], "new_value": r["new_value"],
-                "severity": r["severity"], "detected_at": r["detected_at"],
+                "severity": r["severity"], "detected_at": r["detected_at"], "web_name": r["web_name"],
             })
 
     def _poll_snapshot(self) -> None:

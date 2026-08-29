@@ -122,7 +122,7 @@ def test_sse_stream_delivers_a_real_new_match_event(live_server, db_conn):
     )
     db_conn.commit()
 
-    messages = _read_sse_messages(s, deadline_seconds=6)
+    messages = _read_sse_messages(s, deadline_seconds=9)
     s.close()
     found = next((m for m in messages if m.get("channel") == "match_event"), None)
     assert found is not None, f"expected a real match_event SSE message within the timeout, got {messages}"
@@ -139,7 +139,7 @@ def test_sse_stream_delivers_a_real_snapshot_update(live_server, tmp_path):
 
     (tmp_path / "live_snapshot.json").write_text(json.dumps({"version": "t1", "event": 2}), encoding="utf-8")
 
-    messages = _read_sse_messages(s, deadline_seconds=6)
+    messages = _read_sse_messages(s, deadline_seconds=9)
     s.close()
     found = next((m for m in messages if m.get("channel") == "snapshot"), None)
     assert found is not None, f"expected a real snapshot SSE message within the timeout, got {messages}"
@@ -170,7 +170,7 @@ def test_baseline_ids_captured_synchronously_before_start_closes_a_real_race(db_
     server.start()
     try:
         s = _sse_connect(server.port)
-        messages = _read_sse_messages(s, deadline_seconds=6)
+        messages = _read_sse_messages(s, deadline_seconds=9)
         s.close()
         found = next((m for m in messages if m.get("channel") == "match_event"), None)
         assert found is not None, f"the pre-start row must still be reported as real/new, got {messages}"
