@@ -4,7 +4,7 @@ Real, league-wide (not squad-scoped) availability data - reuses
 `models.availability.list_availability`, already real and already tested,
 just never surfaced as its own dashboard panel before this."""
 from fpl_agent.models.availability import list_availability
-from fpl_agent.monitoring.dashboard.legacy import _bulk_player_lookup, _esc, _official_badge_url, _relative_time
+from fpl_agent.monitoring.dashboard.legacy import _bulk_player_lookup, _crest_html, _esc, _relative_time
 
 _SEVERITY_CLASS = {
     "CONFIRMED UNAVAILABLE": "action", "LIKELY UNAVAILABLE": "action",
@@ -21,10 +21,7 @@ def render_injuries_html(conn, limit: int = 20) -> str:
     rows = []
     for a in availabilities:
         info = lookup.get(a.player_id)
-        badge_html = (
-            f"<img class='injury-badge' src='{_esc(_official_badge_url(info['team_code']))}' loading='lazy' alt=''>"
-            if info else ""
-        )
+        badge_html = _crest_html(info["team_code"], a.team, css_class="injury-badge") if info else ""
         chance = a.chance_of_playing_this_round
         chance_bit = f"{chance}% chance of playing" if chance is not None else _esc(a.classification)
         sev_cls = _SEVERITY_CLASS.get(a.classification, "monitor")

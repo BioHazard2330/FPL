@@ -179,6 +179,40 @@ def test_baseline_ids_captured_synchronously_before_start_closes_a_real_race(db_
         server.stop()
 
 
+def test_sse_stream_delivers_a_real_match_fragment_on_snapshot_change(live_server, tmp_path, db_conn):
+    """Real fix (2026-08-29, forensic product redesign - direct spec: "do
+    not leave the momentum graph/shot map frozen until full dashboard
+    regeneration... use incremental client-side updates from the canonical
+    live state"). A real `live_snapshot.json` write whose `active_matches`
+    entry matches the exact shape `_active_matches_block` produces gets
+    re-rendered server-side (the SAME real `_match_card_html` function the
+    initial page uses) and pushed as a `match_fragment` message - proves
+    the browser can receive an updated chart without waiting for the next
+    full dashboard regen."""
+    _seed_minimal_match(db_conn)
+    s = _sse_connect(live_server.port)
+
+    snapshot = {
+        "version": "t1",
+        "active_matches": [{
+            "match_id": 500, "fotmob_match_id": "500", "status": "LIVE",
+            "home_team_id": 1, "away_team_id": 1, "home_short": "ARS", "away_short": "ARS",
+            "home_score": 1, "away_score": 0, "live_minute": "42",
+            "is_squad_match": False, "team_stats": {"home": None, "away": None},
+            "momentum": [], "shots": [], "my_players": [],
+        }],
+    }
+    (tmp_path / "live_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+    messages = _read_sse_messages(s, deadline_seconds=9)
+    s.close()
+    found = next((m for m in messages if m.get("channel") == "match_fragment"), None)
+    assert found is not None, f"expected a real match_fragment SSE message within the timeout, got {messages}"
+    assert found["match_id"] == 500
+    assert "1 - 0" in found["html"]
+    assert 'data-match-card="500"' in found["html"]
+
+
 def test_broadcaster_client_count_reflects_real_connections(live_server):
     assert live_server.broadcaster.client_count == 0
     s = _sse_connect(live_server.port)

@@ -1,4 +1,4 @@
-from fpl_agent.models.team_outlook import squad_team_outlooks, team_outlook
+from fpl_agent.models.team_outlook import all_team_outlooks, squad_team_outlooks, team_outlook
 
 
 def _seed_team(conn, team_id, short_name, market_team_id=None):
@@ -66,3 +66,21 @@ def test_squad_team_outlooks_covers_every_distinct_team_once(db_conn):
 
     assert {o.team_id for o in outlooks} == {1, 2}
     assert len(outlooks) == 2
+
+
+def test_all_team_outlooks_covers_every_real_team_not_just_the_squad(db_conn):
+    """Real product-redesign requirement (2026-08-29): the league-wide
+    Team Outlook board must show every real tracked club, not only the
+    ones a locked squad happens to touch - a real squad with players on
+    only 2 of 3 seeded teams must still see all 3 real teams here."""
+    _seed_team(db_conn, team_id=1, short_name="Team A", market_team_id=1)
+    _seed_team(db_conn, team_id=2, short_name="Team B", market_team_id=2)
+    _seed_team(db_conn, team_id=3, short_name="Team C", market_team_id=3)
+    _seed_player(db_conn, pid=1, team_id=1)
+    _seed_player(db_conn, pid=2, team_id=2)
+    db_conn.commit()
+
+    outlooks = all_team_outlooks(db_conn)
+
+    assert {o.team_id for o in outlooks} == {1, 2, 3}
+    assert len(outlooks) == 3

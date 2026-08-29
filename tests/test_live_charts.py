@@ -25,11 +25,33 @@ def test_render_live_charts_shows_honest_empty_state_with_fewer_than_two_gws(db_
 
 
 def test_render_live_charts_draws_real_polylines_for_two_plus_gws(db_conn):
+    """Real Chart.js rewrite (2026-08-29, direct harsh user correction: the
+    hand-rolled SVG "looks terrible"): each real chart is now a `<canvas>`
+    with a real embedded data payload - Chart.js itself draws the line
+    client-side. This proves the real series data is correct, not the
+    (now client-side) drawing."""
     _seed_gw_summary(db_conn, 1, [(1, 60, 500000), (2, 75, 300000)])
     result = render_live_charts(db_conn, 1)
-    assert result.count("<polyline") == 2
+    assert result.count("<canvas") == 2
     # Cumulative points must actually cumulate, not just show event 2's own 75.
     assert "135" in result  # 60 + 75
+
+
+def test_rank_chart_marks_real_best_worst_and_start_points(db_conn):
+    """Real product-redesign requirement: "the rank chart must communicate
+    current rank, starting rank, best rank, worst rank" - a bare polyline
+    doesn't. 4 real GWs where start/best/worst/current all land on 4
+    genuinely distinct real points. The real best/worst/start dataIndex
+    values are computed server-side (`_single_chart_html`) and embedded in
+    the payload - a real Chart.js plugin (assemble.py's `fplMarkerPlugin`)
+    draws them client-side from these same real indices."""
+    _seed_gw_summary(db_conn, 1, [(1, 60, 500000), (2, 75, 150000), (3, 50, 900000), (4, 65, 300000)])
+    result = render_live_charts(db_conn, 1)
+
+    assert "&quot;best&quot;: 1" in result
+    assert "&quot;worst&quot;: 2" in result
+    assert "&quot;start&quot;: 0" in result
+    assert "500000.0" in result and "150000.0" in result and "900000.0" in result and "300000.0" in result
 
 
 def test_render_live_charts_never_fabricates_a_row_for_a_different_entry(db_conn):
@@ -70,7 +92,7 @@ def test_intragame_rank_chart_draws_real_samples_for_the_current_event(db_conn):
 
     result = render_intragame_rank_chart(db_conn, 2)
 
-    assert "<polyline" in result
+    assert "live-chart-canvas" in result
     assert "2 real samples" in result
 
 
@@ -111,7 +133,7 @@ def test_intragame_points_chart_draws_real_samples_and_never_leaks_another_event
 
     result = render_intragame_points_chart(db_conn, 2)
 
-    assert "<polyline" in result
+    assert "live-chart-canvas" in result
     assert "2 real samples" in result
     assert "Captain points" in result  # both samples have a real captain value -> the dual-line overlay renders
     assert "999" not in result  # the other event's real sample never leaks in
@@ -126,7 +148,7 @@ def test_intragame_points_chart_omits_captain_line_when_a_sample_has_no_real_cap
 
     result = render_intragame_points_chart(db_conn, 2)
 
-    assert "<polyline" in result
+    assert "live-chart-canvas" in result
     assert "Captain points" not in result
 
 

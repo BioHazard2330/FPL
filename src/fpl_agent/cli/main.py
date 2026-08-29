@@ -264,6 +264,29 @@ def sync_eo(event: int, sample_size: int, force: bool):
     click.echo(f"managers failed  {result['managers_failed']}")
 
 
+@cli.command("sync-crests")
+@click.option("--force", is_flag=True, help="re-fetch every team's crest even if already cached")
+def sync_crests_cmd(force: bool):
+    """Real, one-time-per-team crest fetch (2026-08-29 forensic product
+    redesign) - caches each real official PL badge to data/crests/ via a
+    plain server-side request (no browser Referer, no 403 - see
+    ingestion/crest_assets.py's own docstring for why the earlier
+    text-monogram substitute existed and why this is the real fix).
+    Dashboard rendering only ever reads this cache - re-run this after a
+    club rebrand, not on any normal schedule."""
+    from fpl_agent.ingestion.crest_assets import sync_team_crests
+
+    conn = get_connection()
+    try:
+        result = sync_team_crests(conn, force=force)
+    finally:
+        conn.close()
+    click.echo(f"fetched  {result['fetched']}")
+    click.echo(f"skipped  {result['skipped']} (already cached)")
+    click.echo(f"failed   {result['failed']}")
+    click.echo(f"total    {result['total']} real teams")
+
+
 @cli.command("sync-elite-panel")
 @click.option("--season", required=True, help="e.g. 2026-27 - the season whose CURRENT standings to snapshot")
 @click.option("--target-size", default=1000, type=int, help="real top-N finishers to capture")

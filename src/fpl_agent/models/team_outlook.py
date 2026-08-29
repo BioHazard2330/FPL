@@ -92,6 +92,21 @@ def team_outlook(conn, team_id: int, news_limit: int = 5) -> TeamOutlook:
     )
 
 
+def all_team_outlooks(conn) -> list[TeamOutlook]:
+    """One TeamOutlook per real Premier League team (2026-08-29 forensic
+    product redesign - direct spec: "do not present all 20 clubs as a thin
+    generic table... the user should feel that they are looking at the
+    Premier League, not a database table"). Reuses the exact same real
+    per-team `team_outlook()` this module already had for the squad-scoped
+    version - no new computation, just no longer filtered down to the
+    teams a locked squad happens to touch. Sorted alphabetically by name -
+    unlike the squad-scoped view (which prioritizes churn/volatility for a
+    short, must-read list), a full 20-team board is a real reference table
+    a user scans by team name, not a ranked top-N."""
+    team_ids = [r["id"] for r in conn.execute("SELECT id FROM teams ORDER BY name").fetchall()]
+    return [team_outlook(conn, tid) for tid in team_ids]
+
+
 def squad_team_outlooks(conn, player_ids: list[int]) -> list[TeamOutlook]:
     """One TeamOutlook per distinct team represented in a squad - the actual
     "before every gameweek, check every team my squad touches" workflow,

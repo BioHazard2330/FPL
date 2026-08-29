@@ -24,7 +24,7 @@ markup, reusing their well-established visual language for this same real
 data."""
 import sqlite3
 
-from fpl_agent.monitoring.dashboard.legacy import _esc, _match_feed_html
+from fpl_agent.monitoring.dashboard.legacy import _crest_html, _esc, _humanize, _match_feed_html, _relative_time
 from fpl_agent.monitoring.live_snapshot import _active_matches_block
 
 _MOMENTUM_W, _MOMENTUM_H = 700, 240
@@ -44,14 +44,16 @@ _OUTCOME_LABEL = {
 _EVENT_TYPE_CLASS = {"Goal": "goal", "Substitution": "sub", "Card": "card", "Shot": "shot"}
 
 
-def _momentum_svg(match_id: int, momentum: list[dict]) -> str:
+def _momentum_svg(conn: sqlite3.Connection, match_id: int, momentum: list[dict], home_team_id: int | None) -> str:
     """Real per-minute momentum, drawn as a filled two-tone area (home
     pressure above the zero line, away pressure below) - FotMob's own
     -100..100 scale, never interpolated beyond the real per-minute samples
     it supplies. Real minute gridlines (0/15/30/45/60/75/90, clipped to
-    whatever minutes actually exist) replace the first version's bare,
-    unlabelled line - a direct fix for "what am I supposed to make of
-    this" (a chart with no axis genuinely communicates nothing)."""
+    whatever minutes actually exist), a distinct half-time divider at 45',
+    and real goal markers (2026-08-29 forensic product redesign - direct
+    spec: "half-time divider... goals... major events") pulled straight
+    from the same `match_events` table the Match Feed already reads -
+    never a second event source."""
     if len(momentum) < 2:
         return "<div class='chart-empty'>Momentum unavailable from the current FotMob payload for this match yet.</div>"
     max_minute = max(m["minute"] for m in momentum)
@@ -80,9 +82,21 @@ def _momentum_svg(match_id: int, momentum: list[dict]) -> str:
     if max_minute > 90 and max_minute not in grid_minutes:
         grid_minutes.append(max_minute)
     gridlines = "".join(
-        f"<line x1='{x_at(gm):.1f}' y1='{top_y}' x2='{x_at(gm):.1f}' y2='{bottom_y}' class='match-momentum-grid' />"
+        f"<line x1='{x_at(gm):.1f}' y1='{top_y}' x2='{x_at(gm):.1f}' y2='{bottom_y}' "
+        f"class='match-momentum-grid{' match-momentum-ht' if gm == 45 else ''}' />"
         f"<text x='{x_at(gm):.1f}' y='{_MOMENTUM_H - 4}' text-anchor='middle' class='chart-axis-label'>{gm}'</text>"
         for gm in grid_minutes
+    )
+    goal_rows = conn.execute(
+        "SELECT minute, team_id, description FROM match_events WHERE match_id=? AND event_type='Goal' "
+        "AND minute IS NOT NULL ORDER BY minute", (match_id,),
+    ).fetchall()
+    goal_markers = "".join(
+        f"<g class='match-momentum-goal{' match-momentum-goal-home' if g['team_id'] == home_team_id else ' match-momentum-goal-away'}'>"
+        f"<line x1='{x_at(g['minute']):.1f}' y1='{top_y}' x2='{x_at(g['minute']):.1f}' y2='{bottom_y}' />"
+        f"<circle cx='{x_at(g['minute']):.1f}' cy='{top_y if g['team_id'] == home_team_id else bottom_y}' r='4' />"
+        f"<title>{_esc(g['description'] or 'Goal')}</title></g>"
+        for g in goal_rows if g["minute"] <= max_minute
     )
     return f"""<svg class="match-momentum-svg" data-match-momentum="{match_id}" viewBox="0 0 {_MOMENTUM_W} {_MOMENTUM_H}"
     preserveAspectRatio="none" role="img" aria-label="Match momentum, minute {momentum[0]['minute']} to {momentum[-1]['minute']}">
@@ -92,6 +106,7 @@ def _momentum_svg(match_id: int, momentum: list[dict]) -> str:
   <line x1="0" y1="{mid_y}" x2="{_MOMENTUM_W}" y2="{mid_y}" class="match-momentum-mid" />
   <polyline points="{line_points}" fill="none" class="match-momentum-line" stroke-width="2" stroke-linejoin="round" />
   <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4.5" class="match-momentum-dot" />
+  {goal_markers}
 </svg>"""
 
 
@@ -175,7 +190,8 @@ def _team_stats_rows_html(home_stats: dict | None, away_stats: dict | None) -> s
     fields = (
         ("Possession", "possession_pct", "{:.0f}%"), ("Shots", "shots", "{:.0f}"),
         ("On target", "shots_on_target", "{:.0f}"), ("xG", "xg", "{:.2f}"),
-        ("Big chances", "big_chances", "{:.0f}"), ("Corners", "corners", "{:.0f}"),
+        ("Big chances", "big_chances", "{:.0f}"), ("Chances created", "chances_created", "{:.0f}"),
+        ("Corners", "corners", "{:.0f}"),
     )
     rows = "".join(
         _stat_bar_row_html(label, key, home_stats.get(key), away_stats.get(key), fmt)
@@ -214,25 +230,74 @@ def _my_players_row_html(p: dict) -> str:
 </div>"""
 
 
-def _team_badge_html(short_name: str, side: str) -> str:
-    """A real text-monogram badge, not an official crest - the real
-    `resources.premierleague.com` badge CDN (already used elsewhere in
-    this dashboard) was live-tested this pass and confirmed to return a
-    real, repeatable 403 for a plain cross-origin `<img>` load (it
-    enforces a `Referer: premierleague.com` a page served from this
-    project's own dashboard can never supply) - shipping it here would
-    have meant a silently-missing image, not a real improvement. This is
-    honest about what it is (initials, not a crest) and has zero external
-    dependency."""
+def _team_badge_html(team_code: int | None, short_name: str, side: str) -> str:
+    """Real official crest via the cached same-origin path, or an honest
+    monogram fallback (2026-08-29 forensic redesign - see
+    `legacy.py::_crest_html`'s own docstring for the real fix: the CDN
+    only 403s a browser's cross-origin fetch, a server-side one - run
+    once via `fpl sync-crests` - succeeds and is cached locally)."""
+    if team_code is not None:
+        return _crest_html(team_code, short_name, css_class=f"mc-badge mc-badge-{side}")
     initials = "".join(w[0] for w in short_name.split()[:2]).upper() or short_name[:2].upper()
     return f"<span class='mc-badge mc-badge-{side}'>{_esc(initials)}</span>"
+
+
+def _match_analysis_html(conn: sqlite3.Connection, match_id: int) -> str:
+    """Real qualitative analysis (headline + evidence bullets + queued-job
+    state) folded into this SAME match's card (2026-08-29 forensic product
+    redesign). Previously a second, fully independent panel ("Match
+    Intelligence") rendered its own separate live score/stats/feed block
+    for the exact same match this Match Centre card already covers - two
+    disconnected representations of one real match, the concrete
+    "no separate stale representations" violation the redesign spec named.
+    Real, honest, and USUALLY EMPTY during LIVE/HALFTIME - qualitative
+    analysis is a real post-FULL_TIME queued step (`maybe_enqueue_analysis`,
+    the "one human-in-the-loop step" this project's own architecture
+    deliberately keeps off the unattended daemon), not fabricated early to
+    fill space."""
+    summary = conn.execute(
+        "SELECT * FROM match_analysis_summary WHERE match_id=? "
+        "ORDER BY (phase='FULL_TIME') DESC, generated_at DESC LIMIT 1",
+        (match_id,),
+    ).fetchone()
+    pending_job = conn.execute(
+        "SELECT phase, created_at FROM qualitative_analysis_jobs WHERE match_id=? "
+        "AND status IN ('pending','processing') ORDER BY created_at DESC LIMIT 1",
+        (match_id,),
+    ).fetchone()
+    if summary and summary["headline"]:
+        provisional = "" if summary["phase"] == "FULL_TIME" else "<span class='outlook-chip outlook-alert'>PROVISIONAL</span>"
+        verdict = f"{provisional}{_esc(_humanize(summary['headline']))}"
+    elif pending_job is not None:
+        verdict = (
+            f"<span class='outlook-chip outlook-alert'>QUALITATIVE ANALYSIS &middot; PENDING</span> "
+            f"queued {_esc(_relative_time(pending_job['created_at']))} - will process automatically "
+            f"next time Claude Code opens"
+        )
+    else:
+        return ""
+    impl_rows = conn.execute(
+        "SELECT * FROM player_fpl_implications WHERE match_id=? LIMIT 5", (match_id,)
+    ).fetchall()
+    impl_bullets_html = "".join(
+        f"<div class='outlook-news'><span class='outlook-chip'>{_esc(i['direction'])}/{_esc(i['signal'])}</span> "
+        f"{_esc(i['reason'] or '')}</div>"
+        for i in impl_rows
+    )
+    impl_html = (
+        f"<details class='match-intel-evidence'><summary>Evidence ({len(impl_rows)})</summary>{impl_bullets_html}</details>"
+        if impl_bullets_html else ""
+    )
+    return f"""<div class="match-centre-section-title">Analysis</div>
+  <div class="outlook-churn">{verdict}</div>
+  {impl_html}"""
 
 
 def _match_card_html(conn: sqlite3.Connection, m: dict) -> str:
     status_label = "HT" if m["status"] == "HALFTIME" else (m["live_minute"] or "LIVE")
     squad_badge = "<span class='outlook-chip squad-badge'>YOUR SQUAD</span>" if m["is_squad_match"] else ""
     stats_html = _team_stats_rows_html(m["team_stats"].get("home"), m["team_stats"].get("away"))
-    momentum_html = _momentum_svg(m["match_id"], m["momentum"])
+    momentum_html = _momentum_svg(conn, m["match_id"], m["momentum"], m["home_team_id"])
     shot_map_html = _shot_map_svg(
         m["match_id"], m["shots"], home_team_id=m["home_team_id"],
         home_short=m["home_short"], away_short=m["away_short"],
@@ -242,8 +307,9 @@ def _match_card_html(conn: sqlite3.Connection, m: dict) -> str:
         f"<div class='match-centre-section-title'>My players in this match</div>{my_players_html}"
         if my_players_html else ""
     )
-    home_crest = _team_badge_html(m["home_short"], "home")
-    away_crest = _team_badge_html(m["away_short"], "away")
+    analysis_html = _match_analysis_html(conn, m["match_id"])
+    home_crest = _team_badge_html(m.get("home_code"), m["home_short"], "home")
+    away_crest = _team_badge_html(m.get("away_code"), m["away_short"], "away")
     return f"""<div class="match-centre-card" data-match-card="{m['match_id']}" data-fotmob-id="{_esc(m['fotmob_match_id'])}">
   <div class="match-centre-header">
     <div class="mc-team mc-team-home">{home_crest}<span class="match-centre-team">{_esc(m['home_short'])}</span></div>
@@ -262,22 +328,29 @@ def _match_card_html(conn: sqlite3.Connection, m: dict) -> str:
   {my_players_block}
   <div class="match-centre-section-title">Match feed</div>
   {_match_feed_html(conn, m['match_id'], limit=10)}
+  {analysis_html}
 </div>"""
 
 
 def render_match_centre(conn: sqlite3.Connection, squad_ids: frozenset[int]) -> str:
     """`''` when no match is genuinely LIVE/HALFTIME right now - a real
     empty section, never a placeholder card (matches the rest of this
-    dashboard's "no fabricated live state" rule). Capped to the 3 most
-    relevant matches (squad matches always sort first, per
-    `_active_matches_block`'s own docstring) - a full 10-fixture gameweek
-    showing every match with equal visual weight is exactly the "don't
-    waste the primary live area" anti-pattern the spec calls out."""
+    dashboard's "no fabricated live state" rule). Real product-redesign
+    fix (2026-08-29): no longer capped to 3 matches - a genuinely
+    concurrent live slate (up to a full 10-fixture gameweek kicking off
+    together) must ALL be visible here, not just the first 3 encountered;
+    squad-relevant matches still sort first (`_active_matches_block`'s own
+    ordering), so nothing about visual priority is lost by removing the
+    cap. Also folds in the real qualitative analysis for a match (headline/
+    evidence, see `_match_analysis_html`) - previously rendered a second
+    time by a fully separate "Match Intelligence" panel for the exact same
+    match; that duplication is retired, this card is now the single real
+    representation of a live match."""
     matches = _active_matches_block(conn, squad_ids)
     if not matches:
         return ""
-    cards = "".join(_match_card_html(conn, m) for m in matches[:3])
+    cards = "".join(_match_card_html(conn, m) for m in matches)
     return f"""<section class="panel panel-match-centre" id="live-match-centre" data-cat="data">
-  <h2>Match Centre <span class="panel-subtitle">real live score, stats, momentum, and shot data for active matches</span></h2>
+  <h2>Live Football <span class="panel-subtitle">real live score, stats, momentum, shot data, and analysis for every active match</span></h2>
   <div class="match-centre-grid">{cards}</div>
 </section>"""

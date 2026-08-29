@@ -148,6 +148,47 @@ _SOURCE_IMPACT = {
 }
 _SOURCE_IMPACT_HIDDEN = {"windows_toast_alerts", "telegram_alerts", "discord_alerts"}
 
+# Real severity classification (2026-08-29, forensic product redesign -
+# direct spec: "do not present non-critical infrastructure failures as if
+# the entire dashboard is broken... classify health as HEALTHY/DEGRADED
+# BUT NON-CRITICAL/DEGRADED/CRITICAL"). Grounded in this project's OWN
+# already-documented decision-engine architecture (CLAUDE.md's own "Data-
+# source rules"/"Decision-engine rules" sections), not a new invented
+# heuristic: Tier 1 official FPL data is what `locked_squad`/
+# `decision_analysis` directly depend on (a real gap here is a real
+# problem); Understat/FotMob/predicted-lineups feed the model with an
+# established real fallback (shrinkage priors, cold-start handling) if
+# briefly stale; odds/elite-panel/rank-sampling/start-percent are
+# explicitly documented as a comparison/informational layer that "never
+# overrides the primary recommendation" - a real gap there is real, but
+# never changes what the dashboard is telling the user to do today.
+_SOURCE_CRITICALITY = {
+    "fpl_api_bootstrap": "critical", "fpl_api_fixtures": "critical", "fpl_api_my_team": "critical",
+    "understat": "degraded", "understat_cross_league": "degraded", "fotmob": "degraded",
+    "fantasyfootballscout_team_news": "degraded",
+    "livefpl": "non_critical", "odds_api": "non_critical", "odds_api_player_props": "non_critical",
+    "football_data": "non_critical", "fpl_elite_panel": "non_critical", "fpl_live_rank_sample": "non_critical",
+    "fantasyfootballpundit_start_percent": "non_critical",
+}
+_CRITICALITY_RANK = {"critical": 3, "degraded": 2, "non_critical": 1}
+_CRITICALITY_LABEL = {"critical": "CRITICAL", "degraded": "DEGRADED", "non_critical": "DEGRADED (non-critical)"}
+_CRITICALITY_DOT = {"critical": "bad", "degraded": "warn", "non_critical": "ok"}
+_CRITICALITY_EXPLANATION = {
+    "critical": "may directly affect today's squad/transfer/captain recommendation",
+    "degraded": "the model falls back to its existing prior/cold-start handling - a real but bounded effect",
+    "non_critical": "comparison/informational only - no current FPL decision is affected",
+}
+
+
+def _source_criticality(name: str) -> str:
+    if name in _SOURCE_CRITICALITY:
+        return _SOURCE_CRITICALITY[name]
+    if name.startswith("fpl_api_event_live_"):
+        return "degraded"
+    if name.startswith("football_data_"):
+        return "non_critical"
+    return "non_critical"  # honest default for an unclassified source - never assumed critical without a real reason
+
 
 def _readable_source_impact(name: str) -> str:
     if name in _SOURCE_IMPACT:
@@ -161,22 +202,31 @@ def _readable_source_impact(name: str) -> str:
 
 def _degraded_health_html(degraded: list[str]) -> str:
     """Real, readable "Data health" summary (2026-08-29) - never a raw
-    connector-name dump in primary UI. Collapsed `<details>` (zero new JS,
+    connector-name dump in primary UI, and never one flat "N issues" count
+    that reads as equally severe regardless of what actually failed. The
+    overall label shown is the WORST real tier among the sources actually
+    degraded right now (critical > degraded > non_critical) - a single
+    non-critical connector (e.g. player odds) never visually reads as if
+    the whole dashboard were broken. Collapsed `<details>` (zero new JS,
     same disclosure pattern already used elsewhere in this dashboard) -
-    the plain-English impact leads, the raw technical name stays available
-    but only on click/expand, matching the "Advanced/System" disclosure
-    rule for internal names."""
+    each item states plainly what real capability is affected and whether
+    it changes today's recommendation."""
     visible = [s for s in degraded if s not in _SOURCE_IMPACT_HIDDEN]
     if not visible:
         return "<span class='system-live-field system-live-degraded' id='system-live-degraded' hidden></span>"
+    tiers = [_source_criticality(s) for s in visible]
+    worst = max(tiers, key=lambda t: _CRITICALITY_RANK[t])
     n = len(visible)
     items = "".join(
-        f"<li>{_esc(_readable_source_impact(s))} <span class='system-live-degraded-raw'>({_esc(s)})</span></li>"
-        for s in visible
+        f"<li><span class='dot dot-{_CRITICALITY_DOT[tier]}'></span>{_esc(_readable_source_impact(s))} "
+        f"&mdash; {_esc(_CRITICALITY_EXPLANATION[tier])} "
+        f"<span class='system-live-degraded-raw'>({_esc(s)})</span></li>"
+        for s, tier in zip(visible, tiers)
     )
     return (
         f"<span class='system-live-field system-live-degraded' id='system-live-degraded'>"
-        f"<details><summary>Data health &middot; {n} issue{'s' if n != 1 else ''}</summary>"
+        f"<details><summary><span class='dot dot-{_CRITICALITY_DOT[worst]}'></span>"
+        f"Data health &middot; {_esc(_CRITICALITY_LABEL[worst])} ({n} source{'s' if n != 1 else ''})</summary>"
         f"<ul class='system-live-degraded-list'>{items}</ul></details></span>"
     )
 
@@ -300,6 +350,18 @@ def _system_live_html(snapshot: dict | None = None) -> str:
     projections_age = _relative_time((cadence.get("system") or {}).get("last_sync_at")) if projections_at else "unavailable"
     degraded_html = _degraded_health_html(degraded)
 
+    # Real "is the football feed live?" field (2026-08-29 forensic product
+    # redesign - direct spec: "SYSTEM LIVE should answer: is the football
+    # feed live? is FPL data live?"). `active_matches` is the SAME real
+    # list `monitoring/dashboard/match_centre.py`'s Live Football surface
+    # is built from (`live_snapshot.py::_active_matches_block`) - a plain
+    # count of it, never a second live-detection heuristic.
+    active_match_count = len(snapshot.get("active_matches") or [])
+    football_live_html = (
+        f"<span class='system-live-field'>Football <b class='system-live-football-live'>{active_match_count} match{'es' if active_match_count != 1 else ''} live</b></span>"
+        if active_match_count else "<span class='system-live-field'>Football <b>no match live</b></span>"
+    )
+
     data_attrs = "".join(
         f" data-{name}=\"{_esc(value)}\""
         for name, value in (
@@ -322,6 +384,7 @@ def _system_live_html(snapshot: dict | None = None) -> str:
     <div class="system-live-more-grid">
       <span class="system-live-field">Snapshot <b id="system-live-snapshot-age">{_esc(snapshot_age)}</b></span>
       <span class="system-live-field">Next check <b id="system-live-next-check">&mdash;</b></span>
+      {football_live_html}
       <span class="system-live-field">Rank <b id="system-live-rank-age">{_esc(rank_age)}</b> &middot; next <b id="system-live-rank-next">&mdash;</b></span>
       <span class="system-live-field">News <b id="system-live-news-age">{_esc(news_age)}</b></span>
       <span class="system-live-field">Projections <b id="system-live-projections-age">{_esc(projections_age)}</b></span>

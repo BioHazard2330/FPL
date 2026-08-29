@@ -165,12 +165,66 @@ def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_sna
     # an explicit "computed Xh ago" detail, not just the raw status word.
     assert ">Current<" in result
     assert "computed" in result
-    # Real readable "Data health" summary (2026-08-29 fix) - never a raw
-    # connector-name dump in primary UI; the plain-English impact leads,
-    # the raw name only appears inside the collapsed detail.
-    assert "Data health &middot; 1 issue" in result
+    # Real readable, severity-classified "Data health" summary (2026-08-29
+    # forensic redesign) - never a raw connector-name dump, and never one
+    # flat "N issues" count regardless of severity. odds_api is real,
+    # documented comparison-layer-only data (CLAUDE.md's own "never
+    # overrides the primary recommendation" rule) - classified non_critical,
+    # not CRITICAL.
+    assert "Data health &middot; DEGRADED (non-critical)" in result
     assert "Match odds" in result
     assert "(odds_api)" in result
+    assert "no current FPL decision is affected" in result
+
+
+def test_degraded_health_html_shows_worst_real_tier_not_a_flat_count():
+    """Real product-redesign requirement (2026-08-29): "only elevate a
+    health problem visually when it materially affects a user's FPL
+    decision" - a real CRITICAL source (fpl_api_bootstrap, core Tier 1
+    data `locked_squad`/`decision_analysis` directly depend on) degraded
+    alongside a real non-critical one (fpl_elite_panel, informational
+    only) must show CRITICAL overall, not an undifferentiated count, and
+    the non-critical item's own line must still honestly say it doesn't
+    affect today's decision."""
+    result = home._degraded_health_html(["fpl_api_bootstrap", "fpl_elite_panel"])
+
+    assert "Data health &middot; CRITICAL" in result
+    assert "may directly affect today" in result and "squad/transfer/captain recommendation" in result
+    assert "no current FPL decision is affected" in result
+
+
+def test_degraded_health_html_all_non_critical_never_reads_as_critical():
+    result = home._degraded_health_html(["odds_api_player_props"])
+
+    assert "Data health &middot; DEGRADED (non-critical)" in result
+    assert "CRITICAL" not in result.split("Data health")[1].split("</summary>")[0]
+
+
+def test_system_live_shows_real_football_live_count():
+    """Real product-redesign requirement (2026-08-29): SYSTEM LIVE must
+    answer "is the football feed live?" - a plain count of the SAME real
+    `active_matches` list Live Football is built from, never a second
+    live-detection heuristic."""
+    snapshot = {
+        "generated_at": "2026-08-28T12:00:00+00:00",
+        "recommendation": {"computed_at": "2026-08-28T06:00:00+00:00", "status": "CURRENT"},
+        "rank": {}, "cadence": {"system": {}, "rank": {}}, "source_freshness": [],
+        "active_matches": [{"match_id": 1}, {"match_id": 2}],
+    }
+    result = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
+        live_snapshot=snapshot,
+    )
+    assert "2 matches live" in result
+
+    snapshot["active_matches"] = []
+    result_idle = home.render_hero(
+        gw_label_html="GW3", current_rec=None, ta=None, ca=None, ft_value="1", ft_title="",
+        actual_points=None, next_xp=50.0, bank_m=0.5, captain_name="Test", rank_tile_html="",
+        live_snapshot=snapshot,
+    )
+    assert "no match live" in result_idle
 
 
 def test_render_hero_shows_real_live_captain_points_when_available():

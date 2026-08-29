@@ -81,6 +81,7 @@ class LiveBonusRow:
     defensive_contribution: int = 0  # real FPL-computed raw CBIT(DEF)/CBIRT(MID/FWD) count THIS match
     defcon_threshold: int | None = None  # DEFCON_THRESHOLDS[position] - None for GKP (not eligible)
     defcon_reached: bool = False  # defensive_contribution >= defcon_threshold this match
+    team_code: int | None = None  # real FPL team code (2026-08-29 forensic redesign - Live Tracking crest ask)
 
 
 def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[LiveBonusRow]:
@@ -106,10 +107,10 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
     - the exact same caveat diff_live_rows already documents for goals/
     assists/red_cards on a double gameweek."""
     player_rows = {
-        r["id"]: (r["web_name"], r["position"])
+        r["id"]: (r["web_name"], r["position"], r["team_code"])
         for r in conn.execute(
-            "SELECT p.id AS id, p.web_name AS web_name, et.singular_name_short AS position "
-            "FROM players p JOIN element_types et ON et.id = p.element_type"
+            "SELECT p.id AS id, p.web_name AS web_name, et.singular_name_short AS position, t.code AS team_code "
+            "FROM players p JOIN element_types et ON et.id = p.element_type LEFT JOIN teams t ON t.id = p.team_id"
         ).fetchall()
     }
 
@@ -132,7 +133,7 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
         for entry, provisional in zip(entries, bonus_list):
             player_id = entry["player_id"]
             stats = entry["stats"]
-            web_name, position = player_rows.get(player_id, (f"#{player_id}", ""))
+            web_name, position, team_code = player_rows.get(player_id, (f"#{player_id}", "", None))
             defensive_contribution = stats.get("defensive_contribution", 0) or 0
             defcon_threshold = DEFCON_THRESHOLDS.get(position)
             rows.append(LiveBonusRow(
@@ -150,6 +151,7 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
                 defensive_contribution=defensive_contribution,
                 defcon_threshold=defcon_threshold,
                 defcon_reached=defcon_threshold is not None and defensive_contribution >= defcon_threshold,
+                team_code=team_code,
             ))
 
     rows.sort(key=lambda r: (r.fixture_id, -r.bps))

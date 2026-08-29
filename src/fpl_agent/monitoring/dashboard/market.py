@@ -15,9 +15,9 @@ from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.models.fixtures import team_fixture_ticker
 from fpl_agent.monitoring.dashboard.legacy import (
     _cached_fixture_goals_for,
+    _crest_html,
     _esc,
     _market_divergence_html,
-    _official_badge_url,
     _transfer_momentum_html,
 )
 
@@ -47,7 +47,7 @@ def render_team_odds_html(conn) -> str:
         return "<div class='empty-state'>No real upcoming fixtures to rank yet.</div>"
     entries.sort(key=lambda x: -x[0])
     rows = "".join(
-        f"<tr><td class='xdata-player'><img class='injury-badge' src='{_esc(_official_badge_url(t['code']))}' loading='lazy' alt=''>"
+        f"<tr><td class='xdata-player'>{_crest_html(t['code'], t['short_name'], css_class='injury-badge')}"
         f"{_esc(t['short_name'])} <span class='fx-teams'>vs {_esc(opp)} {'(H)' if is_home else '(A)'}</span></td>"
         f"<td>{cs*100:.0f}%</td><td>{gf:.1f}</td></tr>"
         for cs, gf, t, opp, is_home in entries[:_TEAM_ODDS_LIMIT]
@@ -74,7 +74,7 @@ def render_top_transfers_html(conn, direction: str = "in", limit: int = _TOP_TRA
         return "<div class='empty-state'>No real transfer-momentum data synced yet.</div>"
     momentum_cls = "momentum-ok" if direction == "in" else "momentum-bad"
     body = "".join(
-        f"<div class='momentum-row'><span class='momentum-name'><img class='injury-badge' src='{_esc(_official_badge_url(r['team_code']))}' loading='lazy' alt=''>"
+        f"<div class='momentum-row'><span class='momentum-name'>{_crest_html(r['team_code'], r['team_short'], css_class='injury-badge')}"
         f"<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team_short'])}</span></span>"
         f"<span class='{momentum_cls}'>{r['n']:,}</span></div>"
         for r in rows if r["n"]

@@ -67,6 +67,8 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | Post-match Bonus/DefCon revision detection (real snapshot diff, never in-play bonus churn) + real GW-lock status (fpl.page's own published "locked 1h after full time" rule) | `models/points_changes.py` (`detect_points_revisions`, `is_gw_locked`), `fpl points-changes` |
 | Lightweight live-state channel (rank/points/squad/bonus-defcon/points-changes/decision-freshness/source-freshness/active-matches, browser-patched every ~10s, no full regen) | `monitoring/live_snapshot.py` (`build_live_snapshot`, `_active_matches_block`) |
 | Real live Match Centre (score/team-stats/momentum-chart/shot-map/my-players for a genuinely LIVE/HALFTIME match), real FotMob momentum/shot-map parsing | `monitoring/dashboard/match_centre.py`, `models/match_intelligence.py` (`parse_momentum`, `parse_shot_map`), migration 0035 |
+| Real club crest caching (server-side fetch, browser-safe same-origin serve) - `fpl sync-crests` | `ingestion/crest_assets.py` (`sync_team_crests`, `cached_crest_relpath`), `monitoring/dashboard/legacy.py::_crest_html` (the one real render call site every dashboard panel shares) |
+| Real Chart.js-rendered live charts (rank/points/captain/actual-vs-expected) - series computed server-side, drawn client-side | `monitoring/dashboard/live_charts.py`, `data/vendor/chart.umd.js` (vendored, MIT), `assemble.py`'s `fplMarkerPlugin` (real best/worst/start markers) |
 | Calibration / prediction-vs-outcome storage | `models/calibration.py`, `prediction_outcomes` table |
 | Independent external-model benchmark (Solio Analytics) - divergence classification, component attribution, captain/transfer-target cross-check | `ingestion/solio_source.py` (fetch/store, ~4h cadence gate), `models/external_benchmark.py` (comparison engine - never overrides `decision_analysis`'s own verdict), `monitoring/dashboard/benchmark.py` (compressed Advanced-drawer panel) |
 
@@ -123,7 +125,7 @@ Check `fpl scheduler-status` / `Get-ScheduledTask` to confirm both tasks are reg
 
 Run `fpl --help` for the full, current, real list (curated groups below — do not let this list drift from `fpl --help`, it is the ground truth):
 
-- **Sync**: `sync`, `sync-history`, `sync-news`, `sync-live-odds`, `sync-player-odds`, `sync-eo`, `sync-predicted-lineups`, `sync-lineup-probability`, `sync-match`, `sync-elite-panel`, `solio-sync`, `backfill-odds`, `backfill-xg`, `backfill-cross-league`, `repair-understat-players`, `my-team`.
+- **Sync**: `sync`, `sync-history`, `sync-news`, `sync-live-odds`, `sync-player-odds`, `sync-eo`, `sync-predicted-lineups`, `sync-lineup-probability`, `sync-match`, `sync-crests`, `sync-elite-panel`, `solio-sync`, `backfill-odds`, `backfill-xg`, `backfill-cross-league`, `repair-understat-players`, `my-team`.
 - **Decision**: `transfer-analysis`, `decision-fusion`, `model-benchmark`, `strategic-plan`, `decision-audit`, `season-sim`, `chips`, `captain`, `transfers`, `rate-team`, `build-team`, `build-squad`.
 - **Intelligence**: `team-outlook`, `team-news`, `manager-changes`, `manager-intelligence`, `player-intelligence`, `match-report`, `match-analyze`, `match-note`, `analysis-queue`, `calibration-report`, `decision-backtest`, `decision-changes`, `points-changes`.
 - **Live**: `live-bonus`, `live-rank`, `live-watch`, `live-match-poll`, `post-gw-pipeline`.

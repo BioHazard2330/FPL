@@ -4,32 +4,30 @@ graphs"). Every series here reads real, already-ingested Tier 1 data - no
 new ingestion, no synthetic points, no smoothing/interpolation that would
 misrepresent a real gap.
 
+Rendering rewritten 2026-08-29 (forensic product redesign - direct, harsh
+user correction: the previous hand-rolled SVG polylines "look absolutely
+terrible... like a kid made it"). Now emits a `<canvas>` + a real JSON data
+payload; a real, well-known, MIT-licensed charting library (Chart.js
+4.4.9, vendored once to `data/vendor/chart.umd.js` - see assemble.py's own
+script-tag comment for why it's local, not a live CDN dependency) renders
+it client-side. This module's job stays exactly what it always was - real
+series computation, zero client-side re-derivation - only the drawing
+layer changed.
+
 Scope: rank trajectory + cumulative GW points, both single-source from
 `my_team_gw_summary` (real official FPL per-GW summary, one row per
 finished event - `ingestion/my_team.py`), a genuinely intragame live-rank
 chart (`render_intragame_rank_chart` - no new storage, reuses the decision
 journal's own already-append-only `live_rank` rows), per-finished-GW
 captain contribution + actual-vs-expected (real joins over
-`prediction_outcomes`/`my_team_picks`, no new storage), and (2026-08-28,
-direct user requirement: "store intragame snapshots... charts should
-become populated during the real GW, do not wait for it to finish")
+`prediction_outcomes`/`my_team_picks`, no new storage), and
 `render_intragame_points_chart` - the sibling live chart for squad/captain
 points, same real append-only-journal reuse pattern the rank chart already
-proved out (`monitoring/live_snapshot.py::_maybe_log_intragame_points_sample`
-writes one throttled real row - at most 1/60s - per live `build_live_
-snapshot` call, under a new `live_points_sample` decision type; no new
-table/migration)."""
+proved out (`monitoring/live_snapshot.py::_maybe_log_intragame_points_sample`)."""
+import html
+import json
 import sqlite3
 from dataclasses import dataclass
-
-# Real fix (2026-08-29, "live command centre" pass, direct user acceptance
-# failure: "charts are rendered so small they are difficult to interpret").
-# `_H` raised from 160 - the SVG's own `preserveAspectRatio="none"` already
-# stretches to fill its CSS box (see `.live-chart-svg`'s real `min-height`
-# floor in `legacy.py`'s stylesheet), so a taller intrinsic ratio here means
-# less stretch is needed to clear that floor at typical real card widths.
-_W, _H = 600, 220
-_PAD_L, _PAD_R, _PAD_T, _PAD_B = 44, 12, 12, 22
 
 
 @dataclass(frozen=True)
@@ -112,104 +110,66 @@ def _actual_vs_expected_series(conn: sqlite3.Connection, entry_id: int) -> tuple
     return ChartSeries(events=events, values=actual_values), ChartSeries(events=events, values=expected_values)
 
 
-def _dual_line_chart(
-    series_a: ChartSeries, label_a: str, color_var_a: str,
-    series_b: ChartSeries, label_b: str, color_var_b: str, *, value_fmt: str = "float",
+def _payload_attr(payload: dict) -> str:
+    """Real, safe JSON-in-HTML-attribute encoding - `json.dumps` can emit a
+    literal `"` that would break out of the attribute; `html.escape`
+    (quote=True) neutralizes it the same way every other user-facing string
+    in this file already gets escaped via `_esc` elsewhere in the package."""
+    return html.escape(json.dumps(payload), quote=True)
+
+
+def _single_chart_html(
+    labels: list[str], values: list[float], *, color_var: str, invert_y: bool = False,
+    value_fmt: str = "float", best_worst: bool = False, aria_label: str = "",
 ) -> str:
-    """Two real polylines sharing one axis (actual vs expected) - same real
-    per-point math as `_svg_line_chart`, extended for a second series over
-    the SAME real x-positions (both series are already aligned by event by
-    the caller). Honest empty state below 2 real shared points, same rule
-    every other chart here applies."""
-    if len(series_a.values) < 2 or len(series_a.values) != len(series_b.values):
+    """Real Chart.js line chart (2026-08-29 rewrite - see this module's own
+    docstring for why). `invert_y=True` reverses the y-axis natively via
+    Chart.js's own `reverse` scale option - a real rank chart genuinely
+    reads as "up" when rank improves. `best_worst=True` marks the real
+    best/worst/start points via a real custom Chart.js plugin
+    (`fplMarkerPlugin` in assemble.py's script block) - never a second,
+    divergent computation from the client-side JS: the marker INDICES are
+    computed here in Python from the exact same real `values` list, only
+    the drawing happens client-side."""
+    if len(values) < 2:
+        return "<div class='chart-empty'>Not enough real data yet - needs 2+ real data points.</div>"
+    markers = None
+    if best_worst:
+        n = len(values)
+        best_i = min(range(n), key=lambda i: values[i]) if invert_y else max(range(n), key=lambda i: values[i])
+        worst_i = max(range(n), key=lambda i: values[i]) if invert_y else min(range(n), key=lambda i: values[i])
+        markers = {"best": best_i if best_i != n - 1 else None,
+                   "worst": worst_i if worst_i != n - 1 and worst_i != best_i else None,
+                   "start": 0 if 0 not in (best_i, worst_i, n - 1) else None}
+    payload = {
+        "kind": "single", "labels": labels, "values": values, "colorVar": color_var,
+        "invertY": invert_y, "valueFmt": value_fmt, "markers": markers,
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap'><canvas class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></canvas></div>"
+    )
+
+
+def _dual_chart_html(
+    labels: list[str], values_a: list[float], label_a: str, color_var_a: str,
+    values_b: list[float], label_b: str, color_var_b: str, *, value_fmt: str = "float", aria_label: str = "",
+) -> str:
+    if len(values_a) < 2 or len(values_a) != len(values_b):
         return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks with a real recorded prediction.</div>"
-
-    all_values = series_a.values + series_b.values
-    lo, hi = min(all_values), max(all_values)
-    span = (hi - lo) or 1.0
-    n = len(series_a.values)
-    plot_w = _W - _PAD_L - _PAD_R
-    plot_h = _H - _PAD_T - _PAD_B
-
-    def x_at(i: int) -> float:
-        return _PAD_L + (i / (n - 1)) * plot_w
-
-    def y_at(v: float) -> float:
-        return _PAD_T + (1 - (v - lo) / span) * plot_h
-
-    def fmt(v: float) -> str:
-        return f"{v:,.0f}" if value_fmt == "int" else f"{v:.1f}"
-
-    def polyline(series: ChartSeries, color_var: str) -> str:
-        pts = " ".join(f"{x_at(i):.1f},{y_at(v):.1f}" for i, v in enumerate(series.values))
-        last_x, last_y = x_at(n - 1), y_at(series.values[-1])
-        return (
-            f"<polyline points='{pts}' fill='none' stroke='var({color_var})' stroke-width='2' "
-            f"stroke-linejoin='round' stroke-linecap='round' />"
-            f"<circle cx='{last_x:.1f}' cy='{last_y:.1f}' r='3.5' fill='var({color_var})' />"
-        )
-
-    hi_label, lo_label = fmt(hi), fmt(lo)
-    start_x_label, end_x_label = f"GW{series_a.events[0]}", f"GW{series_a.events[-1]}"
-
-    return f"""<svg class="live-chart-svg" viewBox="0 0 {_W} {_H}" preserveAspectRatio="none" role="img"
-    aria-label="{label_a} vs {label_b}, {start_x_label} to {end_x_label}">
-  <text x="{_PAD_L}" y="10" class="chart-axis-label">{hi_label}</text>
-  <text x="{_PAD_L}" y="{_H - 4}" class="chart-axis-label">{lo_label}</text>
-  {polyline(series_a, color_var_a)}
-  {polyline(series_b, color_var_b)}
-  <text x="{_PAD_L}" y="{_H - _PAD_B + 16}" class="chart-axis-label">{start_x_label}</text>
-  <text x="{_W - _PAD_R}" y="{_H - _PAD_B + 16}" text-anchor="end" class="chart-axis-label">{end_x_label}</text>
-</svg>
-<div class="live-chart-legend">
-  <span class="live-chart-legend-item"><span class="live-chart-legend-dot" style="background:var({color_var_a})"></span>{label_a}</span>
-  <span class="live-chart-legend-item"><span class="live-chart-legend-dot" style="background:var({color_var_b})"></span>{label_b}</span>
-</div>"""
+    payload = {
+        "kind": "dual", "labels": labels, "valueFmt": value_fmt,
+        "seriesA": {"label": label_a, "values": values_a, "colorVar": color_var_a},
+        "seriesB": {"label": label_b, "values": values_b, "colorVar": color_var_b},
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap'><canvas class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></canvas></div>"
+    )
 
 
-def _svg_line_chart(series: ChartSeries, *, invert_y: bool, color_var: str, value_fmt: str,
-                     x_labels: tuple[str, str] | None = None, aria_label: str | None = None) -> str:
-    """A plain SVG polyline over `series` - `invert_y=True` for rank (lower
-    is better, so the chart should read as "up" when rank improves, matching
-    every real rank tile elsewhere in this dashboard). Returns an honest
-    empty-state message instead of an empty/misleading chart when there are
-    fewer than 2 real points to draw a trend from."""
-    if len(series.values) < 2:
-        return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks.</div>"
-
-    lo, hi = min(series.values), max(series.values)
-    span = (hi - lo) or 1.0
-    n = len(series.values)
-    plot_w = _W - _PAD_L - _PAD_R
-    plot_h = _H - _PAD_T - _PAD_B
-
-    def x_at(i: int) -> float:
-        return _PAD_L + (i / (n - 1)) * plot_w
-
-    def y_at(v: float) -> float:
-        frac = (v - lo) / span
-        if invert_y:
-            frac = 1 - frac
-        return _PAD_T + (1 - frac) * plot_h
-
-    points = " ".join(f"{x_at(i):.1f},{y_at(v):.1f}" for i, v in enumerate(series.values))
-    last_x, last_y = x_at(n - 1), y_at(series.values[-1])
-    hi_label = f"{hi:,.0f}" if value_fmt == "int" else f"{hi:.1f}"
-    lo_label = f"{lo:,.0f}" if value_fmt == "int" else f"{lo:.1f}"
-    last_label = f"{series.values[-1]:,.0f}" if value_fmt == "int" else f"{series.values[-1]:.1f}"
-    start_x_label, end_x_label = x_labels if x_labels is not None else (f"GW{series.events[0]}", f"GW{series.events[-1]}")
-    label = aria_label or f"{'Rank' if invert_y else 'Points'} trajectory, {start_x_label} to {end_x_label}"
-
-    return f"""<svg class="live-chart-svg" viewBox="0 0 {_W} {_H}" preserveAspectRatio="none" role="img"
-    aria-label="{label}">
-  <text x="{_PAD_L}" y="10" class="chart-axis-label">{hi_label if not invert_y else lo_label}</text>
-  <text x="{_PAD_L}" y="{_H - 4}" class="chart-axis-label">{lo_label if not invert_y else hi_label}</text>
-  <polyline points="{points}" fill="none" stroke="var({color_var})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-  <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="3.5" fill="var({color_var})" />
-  <text x="{last_x:.1f}" y="{max(last_y - 8, 10):.1f}" text-anchor="end" class="chart-last-label">{last_label}</text>
-  <text x="{_PAD_L}" y="{_H - _PAD_B + 16}" class="chart-axis-label">{start_x_label}</text>
-  <text x="{_W - _PAD_R}" y="{_H - _PAD_B + 16}" text-anchor="end" class="chart-axis-label">{end_x_label}</text>
-</svg>"""
+def _esc_attr(text: str) -> str:
+    return html.escape(text, quote=True)
 
 
 _INTRAGAME_RANK_SAMPLE_LIMIT = 100  # generous real cap - at a real ~5min cadence this covers well over 8h of one live GW
@@ -259,14 +219,14 @@ def render_intragame_rank_chart(conn: sqlite3.Connection, event: int | None) -> 
     series, timestamps = _intragame_rank_series(conn, event)
     if len(series.values) < 2:
         return ""
-    svg = _svg_line_chart(
-        series, invert_y=True, color_var="--accent-2", value_fmt="int",
-        x_labels=(_time_label(timestamps[0]), _time_label(timestamps[-1])),
-        aria_label=f"Live rank during GW{event}, {_time_label(timestamps[0])} to {_time_label(timestamps[-1])}",
+    labels = [_time_label(t) for t in timestamps]
+    chart = _single_chart_html(
+        labels, series.values, color_var="--accent-2", invert_y=True, value_fmt="int", best_worst=True,
+        aria_label=f"Live rank during GW{event}, {labels[0]} to {labels[-1]}",
     )
     return f"""<div class="live-chart-card">
     <div class="live-chart-title">Live rank this gameweek <span class="panel-subtitle">{len(series.values)} real samples</span></div>
-    {svg}
+    {chart}
   </div>"""
 
 
@@ -315,20 +275,20 @@ def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None) -
     points_series, timestamps, captain_series = _intragame_points_series(conn, event)
     if len(points_series.values) < 2:
         return ""
-    x_labels = (_time_label(timestamps[0]), _time_label(timestamps[-1]))
+    labels = [_time_label(t) for t in timestamps]
     if len(captain_series.values) == len(points_series.values):
-        svg = _dual_line_chart(
-            points_series, "Squad points", "--accent",
-            captain_series, "Captain points", "--accent-2", value_fmt="int",
+        chart = _dual_chart_html(
+            labels, points_series.values, "Squad points", "--accent",
+            captain_series.values, "Captain points", "--accent-2", value_fmt="int",
         )
     else:
-        svg = _svg_line_chart(
-            points_series, invert_y=False, color_var="--accent", value_fmt="int", x_labels=x_labels,
-            aria_label=f"Live squad points during GW{event}, {x_labels[0]} to {x_labels[1]}",
+        chart = _single_chart_html(
+            labels, points_series.values, color_var="--accent", value_fmt="int",
+            aria_label=f"Live squad points during GW{event}, {labels[0]} to {labels[-1]}",
         )
     return f"""<div class="live-chart-card">
     <div class="live-chart-title">Live squad points this gameweek <span class="panel-subtitle">{len(points_series.values)} real samples</span></div>
-    {svg}
+    {chart}
   </div>"""
 
 
@@ -346,36 +306,40 @@ def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: in
 
     rank_series = _rank_series(conn, entry_id)
     points_series = _cumulative_points_series(conn, entry_id)
-    rank_svg = _svg_line_chart(rank_series, invert_y=True, color_var="--accent-2", value_fmt="int")
-    points_svg = _svg_line_chart(points_series, invert_y=False, color_var="--accent", value_fmt="int")
+    rank_labels = [f"GW{e}" for e in rank_series.events]
+    points_labels = [f"GW{e}" for e in points_series.events]
+    rank_chart = _single_chart_html(rank_labels, rank_series.values, color_var="--accent-2", invert_y=True, value_fmt="int", best_worst=True)
+    points_chart = _single_chart_html(points_labels, points_series.values, color_var="--accent", value_fmt="int")
 
     captain_series = _captain_contribution_series(conn, entry_id)
-    captain_svg = _svg_line_chart(
-        captain_series, invert_y=False, color_var="--accent-2", value_fmt="int",
-        aria_label=f"Captain contribution, GW{captain_series.events[0]} to GW{captain_series.events[-1]}" if captain_series.events else None,
+    captain_labels = [f"GW{e}" for e in captain_series.events]
+    captain_chart = _single_chart_html(
+        captain_labels, captain_series.values, color_var="--accent-2", value_fmt="int",
+        aria_label=f"Captain contribution, GW{captain_series.events[0]} to GW{captain_series.events[-1]}" if captain_series.events else "",
     )
 
     actual_series, expected_series = _actual_vs_expected_series(conn, entry_id)
-    actual_vs_expected_svg = _dual_line_chart(
-        actual_series, "Actual", "--accent", expected_series, "Expected", "--faint", value_fmt="int",
+    avse_labels = [f"GW{e}" for e in actual_series.events]
+    actual_vs_expected_chart = _dual_chart_html(
+        avse_labels, actual_series.values, "Actual", "--accent", expected_series.values, "Expected", "--faint", value_fmt="int",
     )
 
     return f"""<div class="live-charts-grid">
   {intragame_html}
   <div class="live-chart-card">
     <div class="live-chart-title">Rank trajectory <span class="panel-subtitle">your real overall rank at the end of each finished GW</span></div>
-    {rank_svg}
+    {rank_chart}
   </div>
   <div class="live-chart-card">
     <div class="live-chart-title">Cumulative GW points <span class="panel-subtitle">real official FPL points, running total across the season</span></div>
-    {points_svg}
+    {points_chart}
   </div>
   <div class="live-chart-card">
     <div class="live-chart-title">Captain contribution <span class="panel-subtitle">real points from your real captain pick each GW</span></div>
-    {captain_svg}
+    {captain_chart}
   </div>
   <div class="live-chart-card">
     <div class="live-chart-title">Starting XI: actual vs expected <span class="panel-subtitle">GWs with a real recorded pre-deadline prediction only</span></div>
-    {actual_vs_expected_svg}
+    {actual_vs_expected_chart}
   </div>
 </div>"""

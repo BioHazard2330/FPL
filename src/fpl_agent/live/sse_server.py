@@ -156,6 +156,38 @@ class DbTailer:
         except (OSError, ValueError):
             return  # real, transient - a write in progress; the next tick re-reads
         self.broadcaster.broadcast({"channel": "snapshot", "snapshot": data})
+        self._broadcast_match_fragments(data)
+
+    def _broadcast_match_fragments(self, data: dict) -> None:
+        """Real fix (2026-08-29, forensic product redesign - direct spec:
+        "do NOT leave the momentum graph/shot map frozen until full
+        dashboard regeneration... use incremental client-side updates from
+        the canonical live state"). `live_snapshot.json`'s own
+        `active_matches` array (already broadcast above, raw) carries
+        EXACTLY the same dict shape `match_centre.py::_match_card_html`
+        renders from - re-rendering it here and pushing the resulting HTML
+        means the browser gets a real, already-correct card fragment
+        straight from the SAME Python function that builds the initial
+        page, never a second (JS-reimplemented, and therefore divergence-
+        prone) rendering path. Cheap: pure string formatting plus one
+        already-small `match_events` LIMIT 10 read per match, at the same
+        ~1.5s tailer cadence this class already runs at."""
+        matches = data.get("active_matches") or []
+        if not matches:
+            return
+        try:
+            from fpl_agent.monitoring.dashboard.match_centre import _match_card_html
+        except ImportError:
+            return  # defensive only - never lets a rendering-layer import error kill the tailer loop
+        for m in matches:
+            try:
+                html = _match_card_html(self.conn, m)
+            except Exception:
+                _logger.exception("live-server: failed to render match fragment for match_id=%s", m.get("match_id"))
+                continue
+            self.broadcaster.broadcast({
+                "channel": "match_fragment", "match_id": m.get("match_id"), "html": html,
+            })
 
 
 def run_tailer_loop(tailer: DbTailer, stop_event: threading.Event, interval: float = _POLL_INTERVAL_SECONDS) -> None:

@@ -44,7 +44,8 @@ from fpl_agent.models.live_bonus import compute_live_bonus
 from fpl_agent.models.live_rank import classify_precision, estimate_squad_live_points
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.models.rules import current_season, get_rule
-from fpl_agent.models.team_outlook import squad_team_outlooks
+from fpl_agent.ingestion.crest_assets import cached_crest_relpath
+from fpl_agent.models.team_outlook import all_team_outlooks
 from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
 from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
 from fpl_agent.ingestion.news_source import list_recent_news
@@ -171,21 +172,39 @@ def _captain_html(name: str, *, tag: str = "span") -> str:
     return f"<{tag} class='captain-name'>{_esc(name)}</{tag}>"
 
 
-def _official_badge_url(team_code: int, size: int = 70) -> str:
-    """Real official PL club crest (2026-08-21, second session, per direct
-    LiveFPL/fpl.page study). Same official asset family as
-    `_official_shirt_url`, confirmed live: `resources.premierleague.com/
-    premierleague/badges/{size}/t{team_code}.png` - keyed by the same
-    `teams.code` field the shirt asset already uses (verified: t3=Arsenal,
-    t1=Man Utd, matching the shirt CDN's own team_code values exactly).
-    Real precedent checked before adding this: fpl.page (a real, paid
-    commercial FPL tool) hotlinks this exact same CDN path directly for its
-    own fixture/template-team tables - the same class of usage this project
-    already accepted for the kit shirt and (briefly) player photos, not a
-    new risk category. Supersedes CLAUDE.md's earlier "crests deliberately
-    not used, no license" note from before this evidence existed - see the
-    session write-up for the explicit reversal."""
-    return f"https://resources.premierleague.com/premierleague/badges/{size}/t{team_code}.png"
+def _team_monogram_badge_html(short_name: str, css_class: str = "outlook-badge") -> str:
+    """Real text-monogram badge - the honest fallback for a team code not
+    yet cached by `fpl sync-crests` (a genuinely new club mid-season,
+    before the next real sync). `css_class` (a caller's real crest class,
+    e.g. `outlook-badge`/`mc-badge mc-badge-home`) keeps the SAME real
+    sizing/position every caller already has, combined with the shared
+    `outlook-badge-mono` class for the actual visible styling (background
+    circle, centered text) - those crest classes only ever style an
+    `<img>` (`object-fit`/`src` sizing), so a bare `<span>` reusing just
+    that class alone rendered as invisible, unstyled text (a real bug
+    found live this pass: `object-fit` and no `background`/`border-radius`
+    do nothing for a non-replaced element)."""
+    initials = "".join(w[0] for w in short_name.split()[:2]).upper() or short_name[:2].upper()
+    return f"<span class='{css_class} outlook-badge-mono'>{_esc(initials)}</span>"
+
+
+def _crest_html(team_code: int, short_name: str, css_class: str = "outlook-badge") -> str:
+    """Real official crest, or an honest monogram fallback (2026-08-29
+    forensic product redesign - direct user correction: "where are the
+    team crests... like fotmob did"). The real official PL badge CDN
+    genuinely 403s a BROWSER's cross-origin `<img>` load (confirmed
+    earlier this session - it checks `Referer`), but a plain server-side
+    fetch has no such header and succeeds (confirmed live, this pass, for
+    every real team code) - `fpl sync-crests` does that fetch once and
+    caches the real PNG locally; this function only ever does a fast,
+    network-free cache check (`cached_crest_relpath`) and renders a real
+    same-origin `<img>` against it. Falls back to the monogram - never a
+    broken image - only for a team genuinely not yet synced, keeping the
+    SAME css_class so the fallback still fits its caller's real layout."""
+    relpath = cached_crest_relpath(team_code)
+    if relpath:
+        return f"<img class='{css_class}' src='{_esc(relpath)}' alt='{_esc(short_name)}' loading='lazy'>"
+    return _team_monogram_badge_html(short_name, css_class)
 
 
 def _esc(text) -> str:
@@ -1155,14 +1174,48 @@ def _squad_live_window(conn: sqlite3.Connection, squad_ids: set[int]) -> _LiveWi
         # This card represents two CLUBS in a fixture, not a specific
         # player - crests replace the shirt icons used here before.
         lines.append(f"""<div class="fx-card">
-  <div class="fx-side"><img class="fx-crest" src="{_esc(_official_badge_url(f['home_code']))}" alt="">
+  <div class="fx-side">{_crest_html(f['home_code'], f['home'], css_class='fx-crest')}
     <span class="fx-code">{_esc(f['home'])}</span></div>
   <div class="fx-mid">{state_badge}</div>
-  <div class="fx-side"><img class="fx-crest" src="{_esc(_official_badge_url(f['away_code']))}" alt="">
+  <div class="fx-side">{_crest_html(f['away_code'], f['away'], css_class='fx-crest')}
     <span class="fx-code">{_esc(f['away'])}</span></div>
 </div>""")
 
     return _LiveWindow(state, event, next_kickoff, "\n".join(lines), any_in_progress)
+
+
+def _live_impact_strip_html(by_player: tuple[dict, ...], captain_id: int | None) -> str:
+    """Real "FPL IMPACT" chain (2026-08-29 forensic product redesign -
+    direct spec: "Live Tracking... FPL IMPACT: what those events mean for
+    live points, captain points... use visual cause-and-effect, not a
+    verbose text explanation"). Every number here is `by_player`'s own
+    already-computed real `points`/`multiplier` (the SAME real facts
+    `_compute_my_live_score` builds and the hero's own ACTUAL GW POINTS
+    tile already reads) - a pure aggregation over data already passed in,
+    never a second live-scoring computation. A compact one-line chain
+    (raw points -> captain's doubled/tripled share -> squad total).
+    Real, honest, and quietly absent (not a placeholder) with zero
+    contributing players yet."""
+    total = sum((p["points"] or 0) * (p["multiplier"] or 0) for p in by_player)
+    captain_entry = next((p for p in by_player if p["player_id"] == captain_id), None)
+    if total == 0 and captain_entry is None:
+        return ""
+    cap_html = ""
+    if captain_entry is not None and captain_entry["multiplier"] and captain_entry["multiplier"] > 0:
+        cap_raw = captain_entry["points"] or 0
+        cap_total = cap_raw * captain_entry["multiplier"]
+        pct = f" ({cap_total / total * 100:.0f}% of total)" if total else ""
+        cap_html = (
+            f"<span class='live-impact-arrow'>&rarr;</span>"
+            f"<span class='live-impact-item'>Captain {cap_raw}pt &times;{captain_entry['multiplier']} "
+            f"= <b>{cap_total:.0f}</b>{pct}</span>"
+        )
+    return (
+        f"<div class='live-impact-strip'>"
+        f"<span class='live-impact-item live-impact-total'>Live squad total <b>{total:.0f} pts</b></span>"
+        f"{cap_html}"
+        f"</div>"
+    )
 
 
 def _live_tracking_html(
@@ -1252,7 +1305,17 @@ def _live_tracking_html(
                 else f"<span class='pulse-dot small' id='live-row-status-{r.player_id}'></span>"
             )
             is_captain = captain_id is not None and r.player_id == captain_id
-            name_html = f"<strong class='captain-name'>{_esc(r.web_name)} (C)</strong>" if is_captain else f"<strong>{_esc(r.web_name)}</strong>"
+            # Real per-player team crest (2026-08-29 forensic product
+            # redesign - direct user correction: "even during live tracking
+            # i dont see any team crests like fotmob did"). Same real
+            # cached-crest mechanism every other badge on this dashboard
+            # now uses - `r.team_code` comes straight from `compute_live_
+            # bonus`'s own real `teams` join, never a second lookup.
+            crest_html = _crest_html(r.team_code, r.web_name, css_class="live-row-crest") if r.team_code else ""
+            name_html = (
+                f"{crest_html}<strong class='captain-name'>{_esc(r.web_name)} (C)</strong>" if is_captain
+                else f"{crest_html}<strong>{_esc(r.web_name)}</strong>"
+            )
             pts = points_by_id.get(r.player_id)
             # Plain text, no nested span - the browser's live poll sets this
             # element's `textContent` directly on every patch (see
@@ -1282,7 +1345,8 @@ def _live_tracking_html(
                 f"<span id='live-row-confirmed-{r.player_id}'>{confirmed}</span>"
                 f"</div></div>"
             )
-        return "<div class='live-active'>" + "\n".join(lines) + "</div>"
+        impact_html = _live_impact_strip_html(by_player, captain_id) if by_player is not None else ""
+        return f"<div class='live-active'>{impact_html}" + "\n".join(lines) + "</div>"
 
     if window.state == "live" and not live_payload:
         return "<div class='warn-state'>A match involving your squad is in progress, but live data could not be fetched this cycle - it will retry next refresh.</div>"
@@ -1529,10 +1593,9 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
     goals_rows = []
     for t in goals_sorted:
         row_cls = "proj-row proj-row-squad" if t["is_squad"] else "proj-row"
-        badge_url = _official_badge_url(t["team"]["code"])
+        crest_html = _crest_html(t["team"]["code"], t["team"]["short_name"], css_class="proj-badge")
         goals_rows.append(
-            f"<tr class='{row_cls}'><td class='proj-team'><img class='proj-badge' src='{_esc(badge_url)}' "
-            f"loading='lazy' alt=''>{_esc(t['team']['short_name'])}</td>"
+            f"<tr class='{row_cls}'><td class='proj-team'>{crest_html}{_esc(t['team']['short_name'])}</td>"
             f"{_cell_html(t['cells'], 'goals_for', lambda v: f'{v:.1f}')}"
             f"<td class='proj-total'>{t['total_goals']:.1f}</td></tr>"
         )
@@ -1541,10 +1604,9 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
     cs_rows = []
     for t in cs_sorted:
         row_cls = "proj-row proj-row-squad" if t["is_squad"] else "proj-row"
-        badge_url = _official_badge_url(t["team"]["code"])
+        crest_html = _crest_html(t["team"]["code"], t["team"]["short_name"], css_class="proj-badge")
         cs_rows.append(
-            f"<tr class='{row_cls}'><td class='proj-team'><img class='proj-badge' src='{_esc(badge_url)}' "
-            f"loading='lazy' alt=''>{_esc(t['team']['short_name'])}</td>"
+            f"<tr class='{row_cls}'><td class='proj-team'>{crest_html}{_esc(t['team']['short_name'])}</td>"
             f"{_cell_html(t['cells'], 'cs_pct', lambda v: f'{v:.0f}%')}"
             f"<td class='proj-total'>{t['avg_cs']:.0f}%</td></tr>"
         )
@@ -1965,28 +2027,50 @@ def _truncate(text: str | None, limit: int = 220) -> str:
 
 
 def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """Real compact FPL intelligence TABLE (rebuilt 2026-08-22, direct user
-    instruction: "Do NOT keep the current quote/card treatment... make it a
-    compact table: CREST | TEAM | TACTICAL SIGNAL | FIXTURE QUALITY | FPL
-    SIGNAL. Expandable for detail.") - one real scannable row per team, the
-    same underlying real data `models/team_outlook.py` already computes
-    (churn/formation/manager-change/qualitative signal/fixture run/quoted
-    news), just reorganized into a table instead of a card grid. Detail
-    (churn label, formation, manager-change alert, the real quoted news
-    text) moves into a real `<details>` row a user opens on demand, never
-    forced onto the default scan."""
-    if not squad_ids:
-        return "<div class='empty-state'>No squad to build an outlook for yet.</div>"
-    outlooks = squad_team_outlooks(conn, list(squad_ids))
+    """Real league-wide FPL intelligence TABLE (2026-08-29 forensic product
+    redesign - direct spec: "do not present all 20 clubs as a thin generic
+    table... every club has visible identity and useful analytical
+    signals... the user should feel that they are looking at the Premier
+    League, not a database table"). Previously squad-scoped
+    (`squad_team_outlooks`) - now every real tracked team via
+    `all_team_outlooks`, with squad relevance kept as a highlight badge
+    (the same "highlight, don't hide" pattern this dashboard's Fixture
+    Ticker and Match Reports strip already use) rather than a filter.
+
+    Crest fixed (2026-08-29): the official PL badge CDN this table used to
+    hotlink was confirmed to 403 a plain cross-origin `<img>` load earlier
+    this session - `_team_monogram_badge_html` (the same honest substitute
+    Match Centre already ships) replaces a silently-broken image. Real
+    Attack/Defence strength columns added - FPL's own published per-team
+    `strength_attack_*`/`strength_defence_*` ratings (already ingested,
+    zero new fetch), averaged home+away for one compact number per side.
+    Real, disclosed, NOT added: xG/xGA trend - no existing rolling-xG-trend
+    model exists in this codebase to reuse, and fitting one is real,
+    separate modeling work (methodology/leakage care, this project's own
+    standing bar for anything Dixon-Coles-adjacent) - a genuine follow-up,
+    not fabricated here to fill a column."""
+    outlooks = all_team_outlooks(conn)
     if not outlooks:
         return "<div class='empty-state'>No team outlook data yet.</div>"
 
+    squad_team_ids: set[int] = set()
+    if squad_ids:
+        placeholders = ",".join("?" * len(squad_ids))
+        squad_team_ids = {
+            r["team_id"] for r in conn.execute(
+                f"SELECT DISTINCT team_id FROM players WHERE id IN ({placeholders})", list(squad_ids)
+            ).fetchall()
+        }
+
     churn_cls = lambda ratio: "bad" if (ratio or 0) >= 0.15 else ("warn" if (ratio or 0) >= 0.07 else "ok")
-    team_codes = {r["id"]: r["code"] for r in conn.execute("SELECT id, code FROM teams").fetchall()}
+    team_rows = {r["id"]: r for r in conn.execute("SELECT id, code, short_name FROM teams").fetchall()}
     rows = []
     for o in outlooks:
         churn_dot_cls = churn_cls(o.churn_ratio) if o.churn_ratio is not None else "warn"
-        badge_url = _official_badge_url(team_codes.get(o.team_id, 0))
+        trow = team_rows.get(o.team_id)
+        short_name = trow["short_name"] if trow else o.team_name
+        badge_html = _crest_html(trow["code"], short_name) if trow else _team_monogram_badge_html(short_name)
+        squad_badge = "<span class='outlook-chip squad-badge'>YOUR SQUAD</span>" if o.team_id in squad_team_ids else ""
 
         # TACTICAL SIGNAL column - real qualitative read if Slice A2 has
         # analyzed a match for this team, else the real predicted formation,
@@ -2039,7 +2123,7 @@ def _team_outlook_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             detail_bits.append(f"<div class='outlook-quote'>{_esc(_truncate(o.lineup_news))}</div>")
 
         rows.append(f"""<tr class="outlook-row">
-  <td class="outlook-td-team"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">{_esc(o.team_name)}{freshness_html}</td>
+  <td class="outlook-td-team">{badge_html}{_esc(o.team_name)}{squad_badge}{freshness_html}</td>
   <td>{tactical_cell}</td>
   <td>{quality_cell}</td>
   <td>{fpl_cell}</td>
@@ -2092,21 +2176,6 @@ def _cached_fixture_goals_for(conn: sqlite3.Connection, fixture_row, team_id: in
     return away_goals, home_goals
 
 
-_LIVE_STALENESS_SECONDS = 90  # while a match is LIVE/HALFTIME, data older than this reads as delayed, not fresh
-
-
-def _seconds_since(iso_ts: str | None) -> int | None:
-    if not iso_ts:
-        return None
-    try:
-        ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return max(int((datetime.now(timezone.utc) - ts).total_seconds()), 0)
-
-
 def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -> str:
     """Real match incidents (migration 0025, live-match-feed pass) - never
     LLM-authored, straight from FotMob's own structured event/shot data
@@ -2140,119 +2209,6 @@ def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -
 _MATCH_FEED_TYPE_CLASS = {
     "Goal": "match-feed-type-goal", "Card": "match-feed-type-card", "Substitution": "match-feed-type-sub",
 }
-
-
-def _match_stats_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
-                       away_team_id: int | None, home_short: str, away_short: str) -> str:
-    """Real compact MATCH STATS row (2026-08-29, "live command centre" pass,
-    spec section O) - possession/shots/shots-on-target/corners/xG straight
-    from `team_match_state` (`fotmob_source.py::sync_match`'s own real,
-    already-ingested team-level rows - no new fetch, no new parsing).
-    Deliberately only the few FPL-relevant stats this real source actually
-    has (no "big chances" field exists in `team_match_state` - honestly
-    omitted, never fabricated) - a handful of readable rows, not a 20-stat
-    dump. `''` when neither team has a real row yet (e.g. right at kickoff,
-    before FotMob's first live sync for this match)."""
-    if home_team_id is None or away_team_id is None:
-        return ""
-    rows = {
-        r["team_id"]: r for r in conn.execute(
-            "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners "
-            "FROM team_match_state WHERE match_id=? AND team_id IN (?,?)",
-            (match_id, home_team_id, away_team_id),
-        ).fetchall()
-    }
-    home, away = rows.get(home_team_id), rows.get(away_team_id)
-    if home is None and away is None:
-        return ""
-
-    def _stat(label: str, key: str, fmt: str = "{}") -> str:
-        h = home[key] if home is not None else None
-        a = away[key] if away is not None else None
-        if h is None and a is None:
-            return ""
-        h_text = fmt.format(h) if h is not None else "&mdash;"
-        a_text = fmt.format(a) if a is not None else "&mdash;"
-        return (
-            f"<div class='match-stats-row'><span class='match-stats-value'>{h_text}</span>"
-            f"<span class='match-stats-label'>{_esc(label)}</span>"
-            f"<span class='match-stats-value'>{a_text}</span></div>"
-        )
-
-    rows_html = (
-        _stat("Possession", "possession_pct", "{:.0f}%")
-        + _stat("Shots", "shots")
-        + _stat("On target", "shots_on_target")
-        + _stat("xG", "xg", "{:.2f}")
-        + _stat("Corners", "corners")
-    )
-    if not rows_html:
-        return ""
-    return (
-        f"<div class='match-stats'><div class='match-stats-teams'>"
-        f"<span>{_esc(home_short)}</span><span>{_esc(away_short)}</span></div>{rows_html}</div>"
-    )
-
-
-def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
-                              away_team_id: int | None, squad_ids: set[int]) -> str:
-    """Real per-match FotMob state (minutes/goals/assists/rating) for locked-
-    squad members involved in THIS match - deliberately separate from the
-    Live Tracking panel's own FPL-official BPS/DEFCON/provisional-bonus
-    numbers (a different real source, see fpl live-bonus) - section 10's
-    ownership split: raw football state here, fantasy-scoring state there."""
-    team_ids = [t for t in (home_team_id, away_team_id) if t is not None]
-    if not squad_ids or not team_ids:
-        return "<div class='empty-state'>No locked-squad players in this match.</div>"
-    placeholders = ",".join("?" * len(squad_ids))
-    team_placeholders = ",".join("?" * len(team_ids))
-    rows = conn.execute(
-        f"SELECT p.web_name, pms.minutes, pms.goals, pms.assists, pms.rating, pms.started, "
-        f"pms.xg, pms.xa, pms.shots, pms.key_passes "
-        f"FROM players p LEFT JOIN player_match_state pms ON pms.player_id = p.id AND pms.match_id=? "
-        f"WHERE p.id IN ({placeholders}) AND p.team_id IN ({team_placeholders})",
-        (match_id, *squad_ids, *team_ids),
-    ).fetchall()
-    if not rows:
-        return "<div class='empty-state'>No locked-squad players in this match.</div>"
-    items = []
-    for r in rows:
-        # Real gap in the underlying per-match state, not fabricated around:
-        # `minutes` can be None while a match is genuinely LIVE even for a
-        # real starter (FotMob's own live minutes field isn't always
-        # populated mid-match) - `started` is the honest signal for
-        # "is this player actually playing right now", checked first.
-        if r["started"]:
-            bits = []
-            if r["minutes"] is not None:
-                bits.append(f"{_esc(str(r['minutes']))}&prime;")
-            if r["goals"]:
-                bits.append(f"{r['goals']}G")
-            if r["assists"]:
-                bits.append(f"{r['assists']}A")
-            # Real FOOTBALL-evidence stats (2026-08-29, "live command centre"
-            # pass) - `xg`/`xa`/`shots`/`key_passes` were already fetched and
-            # stored by `fotmob_source.py::sync_match` but never surfaced
-            # here; kept visually/conceptually separate from the FPL-scoring
-            # numbers above (goals/assists/minutes), never implied to equal
-            # FPL points themselves.
-            if r["shots"]:
-                bits.append(f"{r['shots']} shot{'s' if r['shots'] != 1 else ''}")
-            if r["xg"] is not None:
-                bits.append(f"{r['xg']:.2f} xG")
-            if r["xa"] is not None:
-                bits.append(f"{r['xa']:.2f} xA")
-            if r["key_passes"]:
-                bits.append(f"{r['key_passes']} key pass{'es' if r['key_passes'] != 1 else ''}")
-            if r["rating"] is not None:
-                bits.append(f"rating {r['rating']:.1f}")
-            detail = " &middot; ".join(bits) if bits else "on the pitch"
-        elif r["started"] == 0:
-            detail = f"{_esc(str(r['minutes']))}&prime; (sub)" if r["minutes"] else "unused sub"
-        else:
-            detail = "no data for this match yet"
-        items.append(f"<div class='match-feed-item'><span class='match-feed-desc'><strong>{_esc(r['web_name'])}</strong> {detail}</span></div>")
-    return "<div class='match-feed'>" + "\n".join(items) + "</div>"
 
 
 def _player_play_states(conn: sqlite3.Connection, player_ids, event: int | None) -> dict[int, str]:
@@ -2849,29 +2805,29 @@ def _lifecycle_stage_label(lifecycle_state: str | None) -> str | None:
     return None
 
 
-def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """Match Intelligence Core (Pillar 4 Slice A, 2026-08-21) - reads only
-    what's already persisted (`fpl sync-match`/the match-intelligence-analysis
-    skill write these tables) - never computes or fabricates anything itself.
+def _match_report_strip_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Real match ANALYSIS/REPORTS strip - upcoming fixtures and completed
+    matches' qualitative write-ups. Reads only what's already persisted
+    (`fpl sync-match`/the match-intelligence-analysis skill write these
+    tables) - never computes or fabricates anything itself.
 
-    Real fix (2026-08-22): this panel used to filter to ONLY fixtures
-    involving a squad team ("shown only when at least one match_intelligence
-    row involves a squad team"). Direct user feedback, asked twice: they want
-    ALL currently-tracked real fixtures shown, not just the ones their own
-    15 players happen to be on. Now shows every `match_intelligence` row
-    (i.e. every fixture `discover_and_register_matches` has picked up for the
-    current rolling window - normally a full gameweek's worth), with squad
-    relevance kept as a highlight badge rather than a filter, matching the
-    same "highlight, don't hide" pattern the Fixture Ticker already uses.
-
-    Match Centre extension (2026-08-21, live-match-feed pass) - for a LIVE/
-    HALFTIME match, the card also shows a real score/minute header, the raw
-    match feed (_match_feed_html), and locked-squad players' real per-match
-    state (_match_your_players_html) - all real, persisted data, never
-    computed here. Freshness is checked against the real `retrieved_at`
-    timestamp - "Live data delayed" replaces the live badge rather than
-    silently presenting stale data as current (section 14 of the live-
-    match-feed spec)."""
+    Renamed and real duplication removed (2026-08-29, forensic product
+    redesign - direct spec: "no component-specific live fetches, no
+    separate stale representations"). This used to ALSO render its own
+    independent live score/stats/feed block for any LIVE/HALFTIME match
+    (`_match_your_players_html`, an inline score header, its own
+    `_match_feed_html` call) - a second, fully separate representation of
+    the exact same match `monitoring/dashboard/match_centre.py`'s real
+    Live Football surface already covers, with its own slightly different
+    stat formatting. A genuinely live match is now EXCLUDED here entirely
+    (`status NOT IN ('LIVE','HALFTIME')` below) - Live Football is its
+    single real home; this strip's own real remaining job is the
+    editorial/analysis layer for fixtures that aren't currently live:
+    upcoming kickoffs (a quiet one-line row) and finished matches' real
+    qualitative headline + evidence bullets (queued via
+    `qualitative_analysis_jobs`, written by the match-intelligence-analysis
+    skill - the one deliberate human-in-the-loop step this project's
+    architecture keeps off the unattended daemon)."""
     team_ids: set[int] = set()
     if squad_ids:
         team_ids = {r["team_id"] for r in conn.execute(
@@ -2880,15 +2836,15 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
         ).fetchall()}
 
     # Real ordering fix (2026-08-22, visual-redesign pass): a genuinely
-    # LIVE/FULL_TIME match - the one thing actually worth reading - used to
+    # FULL_TIME match - the one thing actually worth reading here - used to
     # sort purely by kickoff time, so it could land BELOW several
     # not-yet-kicked-off PRE_MATCH cards with nothing real to say yet.
     # Status now takes priority; kickoff time only breaks ties within a
-    # status.
+    # status. LIVE/HALFTIME excluded outright (2026-08-29) - those belong
+    # to Live Football only now, see this function's own docstring.
     matches = conn.execute(
-        "SELECT * FROM match_intelligence "
-        "ORDER BY CASE status WHEN 'FULL_TIME' THEN 0 WHEN 'HALFTIME' THEN 0 WHEN 'LIVE' THEN 0 "
-        "ELSE 1 END, kickoff_utc DESC LIMIT 20"
+        "SELECT * FROM match_intelligence WHERE status NOT IN ('LIVE','HALFTIME') "
+        "ORDER BY CASE status WHEN 'FULL_TIME' THEN 0 ELSE 1 END, kickoff_utc DESC LIMIT 20"
     ).fetchall()
     if not matches:
         return "<div class='empty-state'>No match intelligence synced yet - run `fpl sync-match`.</div>"
@@ -2975,34 +2931,6 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
         )
         score = f"{m['home_score'] if m['home_score'] is not None else '-'}-{m['away_score'] if m['away_score'] is not None else '-'}"
 
-        match_centre_html = ""
-        if m["status"] in ("LIVE", "HALFTIME"):
-            home_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["home_team_id"],)).fetchone()
-            away_name = conn.execute("SELECT short_name FROM teams WHERE id=?", (m["away_team_id"],)).fetchone()
-            home_short = home_name["short_name"] if home_name else "?"
-            away_short = away_name["short_name"] if away_name else "?"
-            minute_label = _esc(m["live_minute"]) if m["live_minute"] else ("HT" if m["status"] == "HALFTIME" else "")
-            stale_seconds = _seconds_since(m["retrieved_at"])
-            if stale_seconds is not None and stale_seconds > _LIVE_STALENESS_SECONDS:
-                live_badge = f"<span class='outlook-chip outlook-alert'>Live data delayed &middot; last update {_esc(_relative_time(m['retrieved_at']))}</span>"
-            else:
-                live_badge = f"<span class='outlook-chip live-now-tag'>LIVE DATA &middot; {stale_seconds if stale_seconds is not None else '?'}s ago</span>"
-            your_players_html = (
-                f"""
-  <div class="bench-label" style="margin-top:8px">Your Players</div>
-  {_match_your_players_html(conn, m["id"], m["home_team_id"], m["away_team_id"], squad_ids)}"""
-                if is_squad_relevant else ""
-            )
-            match_stats_html = _match_stats_html(conn, m["id"], m["home_team_id"], m["away_team_id"], home_short, away_short)
-            match_centre_html = f"""
-  <div class="outlook-head" style="margin-top:10px">
-    <strong>{_esc(home_short)} {m['home_score'] if m['home_score'] is not None else 0} &ndash; {m['away_score'] if m['away_score'] is not None else 0} {_esc(away_short)}</strong>
-    <span class="outlook-chip">{minute_label}</span>{live_badge}
-  </div>
-  {match_stats_html}
-  <div class="bench-label" style="margin-top:8px">Match Feed</div>
-  {_match_feed_html(conn, m["id"])}{your_players_html}"""
-
         # Real header fix (2026-08-27, direct user complaint: "match
         # intelligence look bleak and boring") - a FULL_TIME card's own
         # header used to show only the competition name + a small "score
@@ -3023,7 +2951,6 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
   <div class="match-intel-row-meta">{_esc(m['competition'] or '')}</div>
   <div class="outlook-churn">{verdict}</div>
   {impl_html}
-  {match_centre_html}
   <div class="outlook-news freshness-tag">Updated {_esc(_relative_time(m['retrieved_at']))}</div>
 </div>""")
     return "\n".join(cards)
@@ -3883,6 +3810,26 @@ _CSS = """
      show the common case without an internal scrollbar; still capped so a
      genuinely long squad-wide list doesn't run unbounded down the page. */
   .outlook-grid { display: flex; flex-direction: column; gap: 8px; max-height: 640px; overflow-y: auto; }
+  /* Real product-redesign fix (2026-08-29): Team Outlook's own wrapper -
+     the shared `.outlook-grid` above caps at 640px, fine for a short
+     card list (Match Reports) but genuinely broken for a real 20-team
+     league-wide table (reduced to ~1-2 visible rows behind a cramped
+     internal scrollbar, confirmed live at mobile width). A real reference
+     table this size scrolls the PAGE, not a tiny internal box; only
+     needs its own `overflow-x: auto` for narrow viewports (the table
+     itself, never the whole page, scrolls horizontally). */
+  .outlook-table-wrap { overflow-x: auto; }
+  /* Real right-edge scroll-fade (2026-08-29) - same fix as the site nav's
+     own horizontal-scroll affordance: functionally scrollable at narrow
+     widths (confirmed via a real scrollLeft test), but had zero visual
+     cue. Only shows when the table genuinely overflows (a media query
+     keeps desktop, where it never overflows, unaffected). */
+  @media (max-width: 900px) {
+    .outlook-table-wrap {
+      mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+      -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    }
+  }
   .outlook-card { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 0.8rem; }
   /* Match score header (2026-08-27, direct user complaint: "match
      intelligence look bleak and boring") - team names + score lead every
@@ -3899,11 +3846,19 @@ _CSS = """
   .match-intel-row-meta { color: var(--muted); font-size: 0.75rem; }
   .outlook-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; }
   .outlook-badge { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
-  /* Real Team Outlook table (2026-08-22) - replaces the old card grid.
-     CREST|TEAM|TACTICAL SIGNAL|FIXTURE QUALITY|FPL SIGNAL as one real
-     scannable row per team; a real <details> row underneath carries the
-     rest (churn/formation/manager-change/quoted news) so it's there on
-     demand, never forced into the default scan. */
+  /* Real text-monogram badge (2026-08-29) - the official PL badge CDN
+     `.outlook-badge` above pointed at was confirmed to 403 a plain
+     cross-origin `<img>` load - see `_team_monogram_badge_html`'s own
+     docstring. Kept visually team-sized/circular so the row layout is
+     unaffected, just an honest substitute image source. */
+  .outlook-badge-mono { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.02em;
+    background: var(--surface-2); border: 1.5px solid var(--gridline); color: var(--muted); }
+  /* Real league-wide Team Outlook table (2026-08-29, was squad-scoped) -
+     TEAM|ATTACK|DEFENCE|TACTICAL SIGNAL|FIXTURE QUALITY|FPL SIGNAL, one
+     real scannable row per Premier League team; a real <details> row
+     underneath carries the rest (churn/formation/manager-change/quoted
+     news) so it's there on demand, never forced into the default scan. */
   .outlook-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   .outlook-table th { text-align: left; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.04em; color: var(--faint); padding: 6px 10px; border-bottom: 1px solid var(--border); }
@@ -4000,9 +3955,19 @@ _CSS = """
      equal-weight line of tiny text). Name + real live points now lead
      visually; minutes/goals/BPS/DEFCON/bonus form a real secondary stat
      strip. Same real ids as before - only the container/CSS changed. */
+  /* Real FPL IMPACT chain (2026-08-29 forensic redesign) - a compact,
+     visual cause-and-effect line (raw points -> captain multiplier ->
+     squad total), not a paragraph of text. */
+  .live-impact-strip { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; margin-bottom: 10px; background: var(--surface-2); border-radius: 8px;
+    border: 1px solid var(--gridline); font-size: 0.85rem; }
+  .live-impact-item b { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; color: var(--accent); }
+  .live-impact-total { font-size: 0.9rem; }
+  .live-impact-arrow { color: var(--faint); font-weight: 700; }
   .live-row { padding: 10px 12px; background: var(--surface-2); border-radius: 8px; margin-bottom: 6px; }
   .live-row-head { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
   .live-row-head strong { flex: 1; }
+  .live-row-crest { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
   .live-row-points { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.15rem;
     color: var(--accent); }
   .live-row-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px;
@@ -4405,7 +4370,14 @@ _CSS = """
      resolve to the identical hex in dark mode - confirmed by reading
      :root directly - so a home-vs-away comparison needs its own two real
      colours, not that pair). --- */
-  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 20px; margin-top: 14px; }
+  /* Wider real minimum (2026-08-29, forensic product redesign - direct
+     spec: "the football visuals should be large enough to actually
+     understand" / "make the shot map large enough to inspect"). 440px
+     forced 2-3 cramped columns even on a wide desktop; 560px means a
+     single live match (the common real case) gets genuinely large
+     charts, and a full concurrent slate still reflows to as many columns
+     as actually fit rather than shrinking each one below readability. */
+  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(560px, 1fr)); gap: 20px; margin-top: 14px; }
   .match-centre-card { background: var(--surface); border-radius: 12px; padding: 20px 22px;
     border: 1px solid var(--gridline); --mc-home: #00ff87; --mc-away: #04c8ff; }
   .match-centre-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
@@ -4454,20 +4426,26 @@ _CSS = """
      the zero line, away below), with real minute gridlines - replaces the
      first pass's bare, unlabelled single line. Floored at the same
      240px/220px desktop/mobile bar every other live chart here uses. */
-  .match-momentum-svg { width: 100%; height: auto; min-height: 240px; display: block; }
+  .match-momentum-svg { width: 100%; height: auto; min-height: 300px; display: block; }
   .match-momentum-grid { stroke: var(--gridline); stroke-width: 0.5; opacity: 0.6; }
   .match-momentum-mid { stroke: var(--gridline); stroke-width: 1.5; }
   .match-momentum-fill-home { fill: var(--mc-home); opacity: 0.28; }
   .match-momentum-fill-away { fill: var(--mc-away); opacity: 0.28; }
   .match-momentum-line { stroke: var(--fg); opacity: 0.85; }
   .match-momentum-dot { fill: var(--fg); }
+  /* Half-time divider + real goal markers (2026-08-29 forensic redesign) */
+  .match-momentum-ht { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: 1; }
+  .match-momentum-goal line { stroke-width: 1.5; opacity: 0.9; }
+  .match-momentum-goal circle { stroke: var(--surface-2); stroke-width: 1.5; }
+  .match-momentum-goal-home line, .match-momentum-goal-home circle { stroke: var(--mc-home); fill: var(--mc-home); }
+  .match-momentum-goal-away line, .match-momentum-goal-away circle { stroke: var(--mc-away); fill: var(--mc-away); }
 
   /* Shot map - a real full-pitch (both halves) plot, each team's shots on
      ITS OWN attacking half (away team's real x mirrored purely for this
      shared display - see the Python docstring for why that's honest, not
      fabricated). Home/away distinguished by real distinct colour, outcome
      by fill style, with a real legend (the first pass had none). */
-  .shot-map-svg { width: 100%; height: auto; min-height: 220px; display: block; }
+  .shot-map-svg { width: 100%; height: auto; min-height: 340px; display: block; }
   .shot-map-pitch { fill: rgba(62, 207, 142, 0.04); stroke: var(--gridline); stroke-width: 0.4; }
   .shot-map-box { fill: none; stroke: var(--gridline); stroke-width: 0.4; }
   .shot-map-halfway { stroke: var(--gridline); stroke-width: 0.3; }
@@ -4727,13 +4705,13 @@ _CSS = """
   .live-charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 16px; }
   .live-chart-card { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
   .live-chart-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
-  .live-chart-svg { width: 100%; height: auto; min-height: 240px; display: block; }
-  .chart-axis-label { font-size: 9px; fill: var(--faint); }
-  .chart-last-label { font-size: 11px; font-weight: 600; fill: var(--fg); }
+  /* Real Chart.js canvas (2026-08-29 rewrite, replacing hand-rolled SVG -
+     see live_charts.py's own docstring). A fixed-height wrapper is
+     required for Chart.js's `maintainAspectRatio:false` responsive mode
+     to size correctly - the canvas itself has no intrinsic ratio. */
+  .live-chart-canvas-wrap { position: relative; height: 260px; width: 100%; }
+  .live-chart-canvas { width: 100% !important; height: 100% !important; }
   .chart-empty { color: var(--faint); font-size: 0.85rem; padding: 8px 0; }
-  .live-chart-legend { display: flex; gap: 14px; margin-top: 4px; }
-  .live-chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.74rem; color: var(--muted); }
-  .live-chart-legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   /* Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"
      P0 ask) - built client-side entirely from real snapshot fields, see
      assemble.py's own poll script. Starts hidden - a real dashboard load

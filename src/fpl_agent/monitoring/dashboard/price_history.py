@@ -16,7 +16,7 @@ see dead-code cleanup pass; fully replaced, not left duplicated)."""
 import sqlite3
 
 from fpl_agent.models.price_forecast import RISE_THRESHOLD, classify_price_change
-from fpl_agent.monitoring.dashboard.legacy import _esc, _official_badge_url
+from fpl_agent.monitoring.dashboard.legacy import _crest_html, _esc
 
 _HISTORY_LIMIT = 20
 
@@ -49,7 +49,7 @@ def _forecast_table_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
         net = (r["transfers_in_event"] or 0) - (r["transfers_out_event"] or 0)
         progress_pct = min(100.0, abs(forecast.momentum_ratio) / RISE_THRESHOLD * 100.0) if RISE_THRESHOLD else 0.0
         squad_cls = " price-row-squad" if r["id"] in squad_ids else ""
-        badge = f"<img class='injury-badge' src='{_esc(_official_badge_url(r['team_code']))}' loading='lazy' alt=''>"
+        badge = _crest_html(r["team_code"], r["team"], css_class="injury-badge")
         rows_html.append(f"""<tr class="price-table-row{squad_cls}" data-position="{_esc(r['position'])}" data-team="{_esc(r['team'])}" data-name="{_esc(r['web_name'].lower())}" data-direction="{_esc(forecast.direction)}">
   <td><span class="xdata-player">{badge}<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])} &bull; {_esc(r['position'])}</span></span></td>
   <td>{price}</td>
@@ -104,7 +104,7 @@ def _change_ledger_html(conn: sqlite3.Connection, limit: int = _HISTORY_LIMIT) -
         delta = r["new_tenths"] - r["old_tenths"]
         cls = "price-predict-ok" if delta > 0 else "price-predict-bad"
         arrow = "&#9650;" if delta > 0 else "&#9660;"
-        badge = f"<img class='injury-badge' src='{_esc(_official_badge_url(r['team_code']))}' loading='lazy' alt=''>"
+        badge = _crest_html(r["team_code"], r["team"], css_class="injury-badge")
         lines.append(f"""<div class="price-predict-row">
   <span class="price-predict-name">{badge}<strong>{_esc(r['web_name'])}</strong> <span class='fx-teams'>{_esc(r['team'])}</span></span>
   <span class="price-predict-price">£{r['old_tenths']/10:.1f}m &rarr; £{r['new_tenths']/10:.1f}m</span>

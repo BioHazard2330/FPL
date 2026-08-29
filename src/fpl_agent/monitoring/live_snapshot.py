@@ -207,13 +207,29 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
             r["team_id"]: {
                 "possession_pct": r["possession_pct"], "shots": r["shots"], "shots_on_target": r["shots_on_target"],
                 "xg": r["xg"], "corners": r["corners"], "big_chances": r["big_chances"],
-                "big_chances_missed": r["big_chances_missed"],
+                "big_chances_missed": r["big_chances_missed"], "chances_created": None,
             }
             for r in conn.execute(
                 "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners, big_chances, big_chances_missed "
                 "FROM team_match_state WHERE match_id=?", (m["id"],),
             ).fetchall()
         }
+        # Real team-level "chances created" (2026-08-29 forensic product
+        # redesign - direct spec ask) - NOT a new fetch: `player_match_state.
+        # key_passes` is already real, already-ingested per-player FotMob
+        # data (shown per-player in Match Centre's own "My players" rows
+        # since an earlier pass) - this is a pure aggregation over rows
+        # that already exist, never a fabricated or guessed field. FotMob's
+        # real xGOT is deliberately NOT added here - unlike key_passes,
+        # nothing in this codebase has ever confirmed its exact raw stat
+        # title against a real live payload; a real, scoped, disclosed
+        # follow-up, not a guessed title-string match.
+        for r in conn.execute(
+            "SELECT team_id, SUM(key_passes) AS total FROM player_match_state "
+            "WHERE match_id=? AND team_id IS NOT NULL GROUP BY team_id", (m["id"],),
+        ).fetchall():
+            if r["team_id"] in team_stats and r["total"] is not None:
+                team_stats[r["team_id"]]["chances_created"] = int(r["total"])
         momentum = [
             {"minute": r["minute"], "value": r["value"]}
             for r in conn.execute(

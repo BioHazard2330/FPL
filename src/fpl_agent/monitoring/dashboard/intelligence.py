@@ -10,9 +10,9 @@ same data source, wider real call."""
 from fpl_agent.models.qualitative_trends import SignalTrend
 from fpl_agent.models.team_outlook import team_outlook
 from fpl_agent.monitoring.dashboard.legacy import (
+    _crest_html,
     _do_differently_html,
     _esc,
-    _official_badge_url,
     _price_changes_html,
     _risk_monitor_html,
     _squad_changes_html,
@@ -65,9 +65,9 @@ def _team_signal_card(conn, outlook, *, in_squad: bool, team_code: int = 0) -> s
     if outlook.lineup_news:
         detail_bits.append(f"<div class='outlook-quote'>{_esc(outlook.lineup_news[:220])}</div>")
 
-    badge_url = _official_badge_url(team_code)
+    crest_html = _crest_html(team_code, outlook.team_name, css_class="outlook-badge")
     return f"""<div class="intel-team-card">
-  <div class="intel-card-head"><img class="outlook-badge" src="{_esc(badge_url)}" alt="">
+  <div class="intel-card-head">{crest_html}
     <span class="intel-card-team">{_esc(outlook.team_name.upper())}{arrow}</span>{squad_tag}</div>
   <div class="intel-card-why">{_esc(why or 'Real qualitative signal recorded')}</div>
   {f"<div class='intel-card-evidence'>{_esc(evidence)}</div>" if evidence else ""}

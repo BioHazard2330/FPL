@@ -140,10 +140,10 @@ def test_match_intelligence_and_team_outlook_promoted_when_live(db_conn):
 
     # Real, live promotion: both cards move up next to Live Tracking/AI
     # Decisions instead of sitting below the fixture ticker.
-    assert result.index('id="match-centre"') < result.index('id="fixtures"')
+    assert result.index('id="match-reports"') < result.index('id="fixtures"')
     assert result.index('id="football-intelligence"') < result.index('id="fixtures"')
     # Never rendered twice.
-    assert result.count('id="match-centre"') == 1
+    assert result.count('id="match-reports"') == 1
     assert result.count('id="football-intelligence"') == 1
 
 
@@ -153,7 +153,7 @@ def test_match_intelligence_and_team_outlook_stay_put_when_pre_deadline(db_conn)
     result = generate_dashboard_html(db_conn)
 
     # Original position: inside the fixed Intelligence grid, after fixtures.
-    assert result.index('id="fixtures"') < result.index('id="match-centre"')
+    assert result.index('id="fixtures"') < result.index('id="match-reports"')
     assert result.index('id="fixtures"') < result.index('id="football-intelligence"')
 
 
@@ -166,7 +166,7 @@ def test_panels_carry_a_real_data_intelligence_decision_category(db_conn):
     assert 'id="plan" data-cat="decision"' in result
     assert 'id="intelligence-summary" data-cat="intelligence"' in result
     assert 'id="football-intelligence" data-cat="intelligence"' in result
-    assert 'id="match-centre" data-cat="intelligence"' in result
+    assert 'id="match-reports" data-cat="intelligence"' in result
 
 
 def test_squad_live_window_treats_match_intelligence_full_time_as_finished(db_conn):

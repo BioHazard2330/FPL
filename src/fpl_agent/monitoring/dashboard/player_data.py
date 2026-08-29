@@ -10,7 +10,7 @@ deliberately NOT shown - it's a team-defensive stat that needs match-
 participation-weighted team xG-against, not a column this table carries
 per player; omitted rather than faked from a different season's number."""
 from fpl_agent.models.rules import current_season
-from fpl_agent.monitoring.dashboard.legacy import _esc, _official_badge_url
+from fpl_agent.monitoring.dashboard.legacy import _crest_html, _esc
 
 
 def render_expected_data_html(conn, limit: int = 15) -> str:
@@ -34,7 +34,7 @@ def render_expected_data_html(conn, limit: int = 15) -> str:
     for r in rows:
         p90 = 90 / r["minutes"]
         xgi = r["xg"] + r["xa"]
-        badge_html = f"<img class='injury-badge' src='{_esc(_official_badge_url(r['team_code']))}' loading='lazy' alt=''>"
+        badge_html = _crest_html(r["team_code"], r["team_short"], css_class="injury-badge")
         body_rows.append(
             f"<tr><td class='xdata-player'>{badge_html}{_esc(r['web_name'])} <span class='fx-teams'>{_esc(r['team_short'])}</span></td>"
             f"<td>{r['xg']:.1f}</td><td>{r['xa']:.1f}</td><td>{xgi:.1f}</td>"

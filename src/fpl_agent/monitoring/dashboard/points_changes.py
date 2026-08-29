@@ -4,7 +4,7 @@ are visually flagged (real decision relevance: a revision on your own
 player changes their actual total points), everyone else shown for
 league-wide context, matching fpl.page's own scope (not squad-only)."""
 from fpl_agent.models.points_changes import detect_points_revisions, is_gw_locked
-from fpl_agent.monitoring.dashboard.legacy import _esc, _official_badge_url
+from fpl_agent.monitoring.dashboard.legacy import _crest_html, _esc
 
 
 def _team_code_for(conn, team_short: str) -> int | None:
@@ -16,7 +16,7 @@ def _revision_row_html(conn, r, squad_ids: set[int], team_code_cache: dict[str, 
     if r.team_short not in team_code_cache:
         team_code_cache[r.team_short] = _team_code_for(conn, r.team_short)
     code = team_code_cache[r.team_short]
-    badge = f"<img class='injury-badge' src='{_esc(_official_badge_url(code))}' loading='lazy' alt=''>" if code else ""
+    badge = _crest_html(code, r.team_short, css_class="injury-badge") if code else ""
     squad_cls = " price-row-squad" if r.player_id in squad_ids else ""
     delta_points = r.new_points - r.old_points
     delta_cls = "price-predict-ok" if delta_points > 0 else "price-predict-bad" if delta_points < 0 else "price-predict-warn"

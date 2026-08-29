@@ -1,10 +1,36 @@
 # Project State
 
-Last updated: 2026-08-29 (forensic visual/product redesign pass). Read this before
+Last updated: 2026-08-29 (visual-quality correction pass). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, visual-quality correction pass)
+
+Direct, harsh follow-up correction after the forensic redesign pass below.
+Real crest fix (not a substitute): the official PL badge CDN only 403s a
+BROWSER's cross-origin `<img>` (checks `Referer`) - a server-side fetch
+succeeds. `fpl sync-crests` (`ingestion/crest_assets.py`) fetches each
+real team's crest once and caches it to `data/crests/`; dashboard
+rendering (`legacy.py::_crest_html`) only ever does a fast, network-free
+cache read - wired into every crest call site dashboard-wide (Team
+Outlook, Match Centre, Fixture Ticker, Market, Opportunity Board, Expected
+Data, Points Changes, Price History, Injuries, and Live Tracking rows,
+which previously showed no team identity at all). Team Outlook's Attack/
+Defence columns removed (FPL's own strength data is genuinely unpublished
+this early - a dash on every row read as broken, not honest). Rank/
+points/captain/actual-vs-expected charts rewritten from hand-rolled SVG to
+real Chart.js 4.4.9 (vendored locally to `data/vendor/`, MIT license, no
+live CDN dependency). Full account: `docs/history/33-session-2026-08-29-
+visual-quality-correction.md`.
+
+**Genuinely still open**: `fpl sync-crests` is manual, not scheduled -
+re-run it if a club rebrands mid-season. Momentum/shot-map charts stay
+SVG (a pitch-relative scatter doesn't fit a generic line-chart library).
+A pre-existing `.fdr-badge` CSS class-name collision (crest image vs.
+difficulty-pill) found again, not fixed. Type-scale tokens (`--fs-*`)
+still only applied to Match Centre, not file-wide.
 
 ## Where things stand (updated 2026-08-29, forensic visual/product redesign pass)
 

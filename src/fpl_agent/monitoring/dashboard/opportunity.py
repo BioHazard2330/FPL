@@ -18,9 +18,9 @@ from fpl_agent.models.projection_confidence import assess_projection_confidence
 from fpl_agent.models.traps import find_traps
 from fpl_agent.monitoring.dashboard.legacy import (
     _bulk_player_lookup,
+    _crest_html,
     _esc,
     _fixture_quality,
-    _official_badge_url,
     _official_shirt_url,
     _relative_time,
 )
@@ -221,7 +221,7 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
         for avg, short_name, label in swings[:_MAX_PER_CATEGORY]:
             team_id = next((t["id"] for t in team_rows if t["short_name"] == short_name), None)
             badge_html = (
-                f"<img class='opp-card-shirt opp-card-badge' src='{_esc(_official_badge_url(team_codes[team_id]))}' loading='lazy' alt=''>"
+                _crest_html(team_codes[team_id], short_name, css_class="opp-card-shirt opp-card-badge")
                 if team_id is not None else ""
             )
             swing_cards.append(

@@ -19,9 +19,9 @@ from fpl_agent.models.fixtures import detect_blank_double_gws, fixture_difficult
 from fpl_agent.monitoring.dashboard.legacy import (
     _FIXTURE_QUALITY_LABEL,
     _cached_fixture_goals_for,
+    _crest_html,
     _esc,
     _fdr_class,
-    _official_badge_url,
 )
 
 _RANGE_MAX_GW = 8
@@ -97,7 +97,7 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
         cells.append(f"<div class='fdr-cell fdr-blank' data-event='' data-fdr-overall='blank' data-fdr-attack='blank' data-fdr-defence='blank'>-</div>" * blanks)
         row_cls = "fdr-row fdr-row-squad" if r["id"] in squad_team_ids else "fdr-row"
         avg_fdr = sum(e.difficulty for e in entries) / len(entries) if entries else 5.0
-        badge_url = _official_badge_url(r["code"])
+        crest_html = _crest_html(r["code"], r["short_name"], css_class="fdr-badge")
         rotation = anomalies_by_team.get(r["id"], "")
         rotation_rank = 0 if rotation else 1  # doubles/blanks both surface first - both need real planning attention
         rotation_badge = (
@@ -105,7 +105,7 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
             if rotation else ""
         )
         rows_html.append(f"""<div class="{row_cls}" data-avg-fdr="{avg_fdr:.2f}" data-team-name="{_esc(r['short_name'])}" data-in-squad="{'1' if r['id'] in squad_team_ids else '0'}" data-rotation="{rotation}" data-rotation-rank="{rotation_rank}">
-  <div class="fdr-team"><img class="fdr-badge" src="{_esc(badge_url)}" loading="lazy" alt="">{_esc(r['short_name'])}{rotation_badge}</div>
+  <div class="fdr-team">{crest_html}{_esc(r['short_name'])}{rotation_badge}</div>
   <div class="fdr-cells">{''.join(cells)}</div>
 </div>""")
 

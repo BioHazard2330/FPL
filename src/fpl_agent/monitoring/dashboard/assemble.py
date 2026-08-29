@@ -40,7 +40,7 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _humanize,
     _lifecycle_stage_label,
     _live_tracking_html,
-    _match_intelligence_html,
+    _match_report_strip_html,
     _model_football_conflict_html,
     _news_html,
     _pitch_html,
@@ -403,17 +403,17 @@ def generate_dashboard_html(
     <ul class="live-changes-feed" id="live-changes-feed"></ul>
   </div>
 </section>"""
-    match_intelligence_inner = _match_intelligence_html(conn, squad_ids)
-    match_intelligence_section_html = f"""<section class="panel panel-match-intelligence{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="match-centre" data-cat="intelligence">
-  <h2>Match Intelligence <span class="panel-subtitle">FotMob, structured observed/inferred/FPL layers</span></h2>
+    match_report_inner = _match_report_strip_html(conn, squad_ids)
+    match_report_section_html = f"""<section class="panel panel-match-intelligence" id="match-reports" data-cat="intelligence">
+  <h2>Match Reports <span class="panel-subtitle">upcoming fixtures + qualitative analysis for finished matches - genuinely live matches are in Live Football above</span></h2>
   <div class="outlook-grid">
-{match_intelligence_inner}
+{match_report_inner}
   </div>
 </section>"""
     team_outlook_inner = _team_outlook_html(conn, squad_ids)
     team_outlook_section_html = f"""<section class="panel panel-outlook" id="football-intelligence" data-cat="intelligence">
   <h2>Team Outlook <span class="panel-subtitle">churn, manager news, formation, tactical signal - Tier 1 + 2-4 + qualitative</span></h2>
-  <div class="outlook-grid">
+  <div class="outlook-table-wrap">
 {team_outlook_inner}
   </div>
 </section>"""
@@ -432,11 +432,11 @@ def generate_dashboard_html(
     match_centre_section_html = match_centre.render_match_centre(conn, squad_ids)
 
     if dash_state == "LIVE":
-        panel_order = [live_section_html, match_intelligence_section_html,
+        panel_order = [live_section_html, match_report_section_html,
                         team_outlook_section_html, intelligence_summary_section_html,
                         opportunity_board_section_html, market_summary_section_html]
     elif dash_state == "POST_MATCH":
-        panel_order = [live_section_html, match_intelligence_section_html, team_outlook_section_html,
+        panel_order = [live_section_html, match_report_section_html, team_outlook_section_html,
                         intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html, compare_panel]
     else:
         panel_order = [intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html, live_section_html]
@@ -470,6 +470,15 @@ def generate_dashboard_html(
 {_CSS}
 {_CSS_WORKSPACE}
 </style>
+<!-- Real Chart.js (v4.4.9, MIT license), vendored locally (2026-08-29
+     forensic redesign - direct user correction: hand-rolled SVG charts
+     "look terrible... like a kid made it"). Downloaded once to
+     data/vendor/chart.umd.js and served same-origin - never a live CDN
+     dependency, works offline like every other asset here. If this file
+     is ever missing (a copy of dashboard.html moved without its data/
+     folder), the chart <canvas> elements simply stay blank - real,
+     honest degradation, not a broken-image-style failure. -->
+<script src="vendor/chart.umd.js"></script>
 </head>
 <body class="state-{_esc(dash_state.lower())}">
 <header class="topbar">
@@ -518,7 +527,7 @@ def generate_dashboard_html(
 </section>
 
 {"" if match_intelligence_promoted else team_outlook_section_html}
-{"" if match_intelligence_promoted else match_intelligence_section_html}
+{"" if match_intelligence_promoted else match_report_section_html}
 
 <div class="panel-grid" id="market-detail">
   <section class="panel panel-fixture-projections" data-cat="data">
@@ -642,6 +651,124 @@ def generate_dashboard_html(
 }})();
 
 (function() {{
+  // Real Chart.js rendering (2026-08-29 forensic product redesign - direct,
+  // harsh user correction: the previous hand-rolled SVG line charts "look
+  // absolutely terrible... like a kid made it"). Each `.live-chart-canvas`
+  // carries its own real, already-computed data payload (`live_charts.py`'s
+  // own docstring explains why the SERIES math stays server-side, unchanged -
+  // only the drawing moved to a real, well-known charting library). No-op
+  // entirely if Chart.js failed to load (e.g. a copy of dashboard.html moved
+  // without its data/vendor/ folder) - real, honest degradation.
+  if (typeof Chart === 'undefined') return;
+  var rootStyle = getComputedStyle(document.documentElement);
+  function cssVar(name) {{ return rootStyle.getPropertyValue(name).trim() || '#00ff87'; }}
+  function withAlpha(hex, alpha) {{
+    hex = hex.replace('#', '');
+    if (hex.length === 3) {{ hex = hex.split('').map(function(c) {{ return c + c; }}).join(''); }}
+    var r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return 'rgba(0,255,135,' + alpha + ')';
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+  }}
+  function fmtVal(v, valueFmt) {{
+    return valueFmt === 'int' ? Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toFixed(1);
+  }}
+  // Real best/worst/start markers (2026-08-29) - a custom Chart.js plugin,
+  // not the separate chartjs-plugin-annotation package (avoids a second
+  // vendored dependency for three dots + labels). `markers` (best/worst/
+  // start dataIndex, or null) come straight from `_single_chart_html`'s own
+  // real computation over the exact same values already plotted - this
+  // plugin only draws, never recomputes.
+  var fplMarkerPlugin = {{
+    id: 'fplMarkers',
+    afterDatasetsDraw: function(chart) {{
+      var markers = chart.$fplMarkers;
+      if (!markers) return;
+      var meta = chart.getDatasetMeta(0);
+      var ctx = chart.ctx;
+      var defs = [
+        {{ key: 'best', color: cssVar('--ok'), label: 'Best' }},
+        {{ key: 'worst', color: cssVar('--bad'), label: 'Worst' }},
+        {{ key: 'start', color: cssVar('--faint'), label: 'Start' }},
+      ];
+      defs.forEach(function(d) {{
+        var idx = markers[d.key];
+        if (idx === null || idx === undefined) return;
+        var pt = meta.data[idx];
+        if (!pt) return;
+        var x = pt.x, y = pt.y;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = d.color;
+        ctx.fill();
+        ctx.strokeStyle = cssVar('--surface');
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        var label = d.label + ' ' + fmtVal(chart.data.datasets[0].data[idx], chart.$fplValueFmt);
+        ctx.font = '700 10px Inter, sans-serif';
+        ctx.fillStyle = d.color;
+        var top = y < chart.chartArea.top + 20;
+        ctx.textAlign = x < chart.chartArea.left + 30 ? 'left' : (x > chart.chartArea.right - 30 ? 'right' : 'center');
+        ctx.fillText(label, x, top ? y + 16 : y - 8);
+        ctx.restore();
+      }});
+    }},
+  }};
+  Chart.register(fplMarkerPlugin);
+
+  var baseOptions = {{
+    responsive: true, maintainAspectRatio: false,
+    interaction: {{ mode: 'index', intersect: false }},
+    plugins: {{
+      legend: {{ display: false, labels: {{ color: cssVar('--muted'), boxWidth: 10, font: {{ size: 11 }} }} }},
+      tooltip: {{
+        backgroundColor: cssVar('--surface-2'), titleColor: cssVar('--fg'), bodyColor: cssVar('--fg'),
+        borderColor: cssVar('--gridline'), borderWidth: 1, padding: 8, displayColors: true,
+      }},
+    }},
+    scales: {{
+      x: {{ grid: {{ color: cssVar('--gridline') }}, ticks: {{ color: cssVar('--faint'), font: {{ size: 10 }}, maxRotation: 0 }} }},
+      y: {{ grid: {{ color: cssVar('--gridline') }}, ticks: {{ color: cssVar('--faint'), font: {{ size: 10 }} }} }},
+    }},
+  }};
+
+  document.querySelectorAll('.live-chart-canvas').forEach(function(canvas) {{
+    var payload;
+    try {{ payload = JSON.parse(canvas.dataset.chart); }} catch (e) {{ return; }}
+    var ctx = canvas.getContext('2d');
+    var valueFmt = payload.valueFmt || 'float';
+    var opts = JSON.parse(JSON.stringify(baseOptions));
+    opts.scales.y.reverse = !!payload.invertY;
+    opts.scales.y.ticks.callback = function(v) {{ return fmtVal(v, valueFmt); }};
+    opts.plugins.tooltip.callbacks = {{
+      label: function(item) {{ return item.dataset.label + ': ' + fmtVal(item.parsed.y, valueFmt); }},
+    }};
+
+    var datasets;
+    if (payload.kind === 'dual') {{
+      opts.plugins.legend.display = true;
+      datasets = [payload.seriesA, payload.seriesB].map(function(s) {{
+        var color = cssVar(s.colorVar);
+        return {{
+          label: s.label, data: s.values, borderColor: color, backgroundColor: withAlpha(color, 0.12),
+          fill: false, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+        }};
+      }});
+    }} else {{
+      var color = cssVar(payload.colorVar);
+      datasets = [{{
+        label: 'Value', data: payload.values, borderColor: color, backgroundColor: withAlpha(color, 0.18),
+        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2.5,
+      }}];
+    }}
+
+    var chart = new Chart(ctx, {{ type: 'line', data: {{ labels: payload.labels, datasets: datasets }}, options: opts, plugins: [fplMarkerPlugin] }});
+    chart.$fplMarkers = payload.markers || null;
+    chart.$fplValueFmt = valueFmt;
+  }});
+}})();
+
+(function() {{
   // Real lightweight live-state channel (2026-08-28, cadence tightened
   // 2026-08-28 direct user ask "make updates more frequent" - 20s -> 10s,
   // still a plain local-file read, zero added network/API cost) - polls
@@ -690,6 +817,31 @@ def generate_dashboard_html(
     if (name.indexOf('fpl_api_event_live_') === 0) return 'Live match data';
     if (name.indexOf('football_data_') === 0) return 'Fixture results';
     return name.replace(/_/g, ' ');
+  }}
+  // Real severity classification (2026-08-29 forensic redesign) - mirrors
+  // `home.py::_SOURCE_CRITICALITY` exactly, same reasoning: only a real
+  // Tier 1 gap can actually change today's recommendation; the rest is a
+  // real but bounded (model fallback) or purely informational effect.
+  var SOURCE_CRITICALITY = {{
+    fpl_api_bootstrap: 'critical', fpl_api_fixtures: 'critical', fpl_api_my_team: 'critical',
+    understat: 'degraded', understat_cross_league: 'degraded', fotmob: 'degraded',
+    fantasyfootballscout_team_news: 'degraded',
+    livefpl: 'non_critical', odds_api: 'non_critical', odds_api_player_props: 'non_critical',
+    football_data: 'non_critical', fpl_elite_panel: 'non_critical', fpl_live_rank_sample: 'non_critical',
+    fantasyfootballpundit_start_percent: 'non_critical',
+  }};
+  var CRITICALITY_RANK = {{critical: 3, degraded: 2, non_critical: 1}};
+  var CRITICALITY_LABEL = {{critical: 'CRITICAL', degraded: 'DEGRADED', non_critical: 'DEGRADED (non-critical)'}};
+  var CRITICALITY_DOT = {{critical: 'bad', degraded: 'warn', non_critical: 'ok'}};
+  var CRITICALITY_EXPLANATION = {{
+    critical: "may directly affect today's squad/transfer/captain recommendation",
+    degraded: 'the model falls back to its existing prior/cold-start handling - a real but bounded effect',
+    non_critical: 'comparison/informational only - no current FPL decision is affected',
+  }};
+  function sourceCriticality(name) {{
+    if (SOURCE_CRITICALITY[name]) return SOURCE_CRITICALITY[name];
+    if (name.indexOf('fpl_api_event_live_') === 0) return 'degraded';
+    return 'non_critical';
   }}
   // Real fix (2026-08-28, direct user report: a dashboard opened via
   // `file://` - downloaded/copied out of `data/` rather than served over
@@ -791,11 +943,16 @@ def generate_dashboard_html(
         degEl.dataset.renderedKey = visibleKey;
         if (visible.length) {{
           degEl.hidden = false;
-          var summaryText = visible.length + ' issue' + (visible.length > 1 ? 's' : '');
-          var detailHtml = visible.map(function(s) {{
-            return '<li>' + readableSourceImpact(s) + ' <span class="system-live-degraded-raw">(' + s + ')</span></li>';
+          var tiers = visible.map(sourceCriticality);
+          var worst = tiers.reduce(function(a, b) {{ return CRITICALITY_RANK[b] > CRITICALITY_RANK[a] ? b : a; }}, 'non_critical');
+          var detailHtml = visible.map(function(s, i) {{
+            var tier = tiers[i];
+            return '<li><span class="dot dot-' + CRITICALITY_DOT[tier] + '"></span>' + readableSourceImpact(s) +
+              ' &mdash; ' + CRITICALITY_EXPLANATION[tier] +
+              ' <span class="system-live-degraded-raw">(' + s + ')</span></li>';
           }}).join('');
-          degEl.innerHTML = '<details><summary>Data health &middot; ' + summaryText +
+          degEl.innerHTML = '<details><summary><span class="dot dot-' + CRITICALITY_DOT[worst] + '"></span>Data health &middot; ' +
+            CRITICALITY_LABEL[worst] + ' (' + visible.length + ' source' + (visible.length !== 1 ? 's' : '') + ')' +
             '</summary><ul class="system-live-degraded-list">' + detailHtml + '</ul></details>';
         }} else {{
           degEl.hidden = true;
@@ -1268,6 +1425,28 @@ def generate_dashboard_html(
         var meKey = 'me:' + msg.id;
         var label = (msg.event_type || '').replace(/_/g, ' ');
         addFeedEntry(meKey, '<b>' + feedTime() + '</b> ' + (msg.description || (msg.web_name || 'Unknown') + ' ' + label));
+      }} else if (msg.channel === 'match_fragment' && msg.html) {{
+        // Real fix (2026-08-29, forensic product redesign - direct spec:
+        // "do not leave the momentum graph/shot map frozen until full
+        // regen"). The server re-renders this match's ENTIRE card (score,
+        // stats, momentum SVG, shot map SVG, feed, analysis) via the exact
+        // same Python function the initial page used, on every real
+        // change - this just swaps the live DOM node for the fresh one.
+        // No client-side chart math, so there is no second, JS-side
+        // rendering path to drift from the server's real output.
+        var existingCard = document.querySelector('[data-match-card="' + msg.match_id + '"]');
+        if (existingCard) {{
+          var tmp = document.createElement('div');
+          tmp.innerHTML = msg.html;
+          var freshCard = tmp.firstElementChild;
+          if (freshCard) {{ existingCard.replaceWith(freshCard); }}
+        }}
+        // A brand-new match transitioning to LIVE with no existing card
+        // yet is a real, disclosed gap this fragment-swap alone can't
+        // close (there is nowhere to insert a wholly new top-level card
+        // without knowing this match's real sort position among others) -
+        // the existing ~10s snapshot poll/next full regen remains the
+        // real catch-up path for that specific case.
       }}
     }};
     liveSource.onerror = function() {{ /* real, expected when live-server isn't running - EventSource retries natively */ }};

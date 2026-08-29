@@ -6,10 +6,11 @@ from fpl_agent.monitoring.dashboard import generate_dashboard_html
 from fpl_agent.monitoring.dashboard.legacy import (
     _format_kickoff,
     _local_time_span,
-    _match_intelligence_html,
+    _match_report_strip_html,
     _news_html,
     _pitch_html_from_xi,
     _risk_monitor_html,
+    _team_outlook_html,
 )
 from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 from test_optimization_squad import _seed
@@ -602,6 +603,85 @@ def test_dashboard_live_tracking_row_has_stable_ids_for_browser_patching(db_conn
     assert "(C)" in result and "captain-name" in result
 
 
+def test_live_tracking_row_shows_a_real_team_crest(db_conn):
+    """Real product-redesign requirement (2026-08-29, direct user
+    correction: "even during live tracking i dont see any team crests
+    like fotmob did"). `compute_live_bonus`'s own real `teams` join
+    (`live_bonus.py`) now carries each row's real `team_code` through to
+    `_live_tracking_html`, which renders it via the SAME cached-crest
+    mechanism every other badge on this dashboard uses - no cached file in
+    this test's isolated data dir, so the honest monogram fallback is what
+    proves the real code path ran (not a missing/broken image)."""
+    from fpl_agent.monitoring.dashboard.legacy import _live_tracking_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (1,'Gameweek 1','2026-08-21T17:30:00Z',1, 0,0,0,1,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 1, ?)", (now,),
+    )
+    db_conn.commit()
+
+    live_payload = {
+        "elements": [
+            {"id": 1, "stats": {"minutes": 60, "bps": 25, "goals_scored": 1, "assists": 0, "total_points": 8},
+             "explain": [{"fixture": 1}]},
+        ]
+    }
+
+    result = _live_tracking_html(db_conn, {1}, live_payload)
+
+    assert "live-row-crest" in result
+    assert "outlook-badge-mono" in result  # honest fallback - proves the crest lookup actually ran
+
+
+def test_live_tracking_shows_a_real_fpl_impact_chain(db_conn):
+    """Real product-redesign requirement (2026-08-29): Live Tracking's
+    "FPL IMPACT" layer - real cause-and-effect (raw points -> captain
+    multiplier -> squad total) as a compact visual chain, not verbose
+    text. Uses the SAME real `by_player` shape `_compute_my_live_score`
+    already builds (raw `points`, separate `multiplier`) - captain raw 10
+    doubled to 20, plus one other real contributor at 5, for a real 25pt
+    squad total with the captain providing a real, checkable 80% share."""
+    from fpl_agent.monitoring.dashboard.legacy import _live_tracking_html
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    now = "t0"
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (1,'Gameweek 1','2026-08-21T17:30:00Z',1, 0,0,0,1,?)", (now,),
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 1, ?)", (now,),
+    )
+    db_conn.commit()
+
+    live_payload = {
+        "elements": [
+            {"id": 10, "stats": {"minutes": 60, "bps": 25, "goals_scored": 1, "assists": 0, "total_points": 10},
+             "explain": [{"fixture": 1}]},
+            {"id": 11, "stats": {"minutes": 60, "bps": 10, "goals_scored": 0, "assists": 1, "total_points": 5},
+             "explain": [{"fixture": 1}]},
+        ]
+    }
+    by_player = (
+        {"player_id": 10, "points": 10, "multiplier": 2, "play_state": "live"},
+        {"player_id": 11, "points": 5, "multiplier": 1, "play_state": "live"},
+    )
+
+    result = _live_tracking_html(db_conn, {10, 11}, live_payload, captain_id=10, by_player=by_player)
+
+    assert "live-impact-strip" in result
+    assert "Live squad total" in result and "25 pts" in result
+    assert "Captain 10pt" in result and "&times;2" in result and "20</b>" in result
+    assert "(80% of total)" in result
+
+
 def test_dashboard_live_tracking_shows_no_defcon_badge_for_gkp(db_conn):
     """GKP is never DEFCON-eligible (defcon_threshold is None) - the panel
     must not fabricate a "0/None" or any other progress badge for one.
@@ -729,7 +809,7 @@ def test_match_intelligence_panel_shows_all_matches_even_without_a_squad(db_conn
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, set())
+    result = _match_report_strip_html(db_conn, set())
 
     assert "Premier League" in result
     assert "FULL_TIME" in result
@@ -738,7 +818,7 @@ def test_match_intelligence_panel_shows_all_matches_even_without_a_squad(db_conn
 
 def test_match_intelligence_panel_empty_state_with_squad_but_no_synced_match(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
     assert "No match intelligence synced yet" in result
 
 
@@ -762,7 +842,7 @@ def test_match_intelligence_panel_shows_real_synced_match_and_implications(db_co
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert "Premier League" in result
     assert "PRE_MATCH" in result
@@ -788,14 +868,21 @@ def test_match_intelligence_panel_shows_real_pending_queue_state(db_conn):
     from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
     enqueue_analysis_job(db_conn, match_id, "FULL_TIME", "Team A 3-0 Team B (final)")
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert "QUALITATIVE ANALYSIS" in result
     assert "PENDING" in result
     assert "will process automatically" in result
 
 
-def test_match_intelligence_panel_shows_provisional_headline_for_non_full_time_analysis(db_conn):
+def test_match_report_strip_excludes_live_and_halftime_matches(db_conn):
+    """Real behavior change (2026-08-29 forensic product redesign): a
+    genuinely LIVE/HALFTIME match is now exclusively owned by Live Football
+    (`monitoring/dashboard/match_centre.py`) - this strip must never render
+    it a second time (see `_match_report_strip_html`'s own docstring for
+    why: two independent renderers of the same real match used to exist
+    side by side). A HALFTIME match with a real provisional headline is the
+    exact case that used to leak through here."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
     db_conn.execute(
         "INSERT INTO match_intelligence "
@@ -813,10 +900,10 @@ def test_match_intelligence_panel_shows_provisional_headline_for_non_full_time_a
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
-    assert "PROVISIONAL" in result
-    assert "Home side ahead at the break" in result
+    assert "Home side ahead at the break" not in result
+    assert "No match intelligence synced yet" in result
 
 
 def test_match_intelligence_panel_prefers_full_time_headline_over_provisional(db_conn):
@@ -842,7 +929,7 @@ def test_match_intelligence_panel_prefers_full_time_headline_over_provisional(db
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert "final full-time headline" in result
     assert "provisional headline" not in result
@@ -1428,7 +1515,7 @@ def test_match_intelligence_panel_never_shows_a_raw_debug_string(db_conn):
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert "retrieved_at=" not in result
     assert "source=fotmob" not in result
@@ -1446,7 +1533,7 @@ def test_match_intelligence_panel_renders_a_compact_row_for_a_bare_pre_match_fix
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert "match-intel-row" in result
     assert "not yet analyzed" not in result
@@ -1465,7 +1552,7 @@ def test_match_intelligence_panel_sorts_full_time_before_pre_match(db_conn):
     )
     db_conn.commit()
 
-    result = _match_intelligence_html(db_conn, {1})
+    result = _match_report_strip_html(db_conn, {1})
 
     assert result.index("FULL_TIME") < result.index("match-intel-row")
 
@@ -1706,6 +1793,38 @@ def test_team_outlook_renders_as_a_real_table(db_conn):
     assert "<th>Tactical signal</th>" in result
     assert "<th>Fixture quality</th>" in result
     assert "<th>FPL signal</th>" in result
+
+
+def test_team_outlook_is_league_wide_and_flags_squad_teams(db_conn):
+    """Real product-redesign requirement (2026-08-29): every real tracked
+    team appears (not just the locked squad's own teams), and a squad
+    team is marked with a real highlight badge rather than filtered.
+
+    Attack/Defence columns were tried and then REMOVED this same pass
+    (direct, harsher follow-up correction: "why are there dashes on
+    attack and defence" - FPL's own bootstrap API is genuinely all-zero
+    for these fields league-wide this early in the season, so the columns
+    added nothing but visual clutter; removed rather than left showing an
+    empty dash for every real team)."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    for tid in (9, 10):
+        db_conn.execute(
+            "INSERT INTO teams (id, code, name, short_name, strength_overall_home, strength_overall_away, "
+            "strength_attack_home, strength_attack_away, strength_defence_home, strength_defence_away, "
+            "pulse_id, updated_at) VALUES (?,?,?,?,3,3,1200,1250,1100,1150,?,'t0')",
+            (tid, tid, f"NonSquadTeam{tid}", f"NS{tid}", tid),
+        )
+    db_conn.commit()
+
+    result = _team_outlook_html(db_conn, {1})  # player 1 is on team_id=1 per _seed's own fixture data
+
+    assert "NonSquadTeam9" in result
+    assert "NonSquadTeam10" in result
+    assert result.count("YOUR SQUAD") >= 1
+    assert "outlook-badge-mono" in result
+    assert "outlook-badge\" src=" not in result  # no crest cached in this test's isolated data dir - honest monogram fallback
+    assert "<th>Attack</th>" not in result
+    assert "<th>Defence</th>" not in result
 
 
 # --- Real 4-state lineup badge + Next GW Plan panel (2026-08-22, automation-lifecycle pass) ---

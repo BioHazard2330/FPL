@@ -19,6 +19,9 @@ data/*.npz
 data/*.joblib
 data/dashboard.html
 data/live_snapshot.json
+# real, regenerable via `fpl sync-crests` - never worth committing 20
+# binary PNGs that a fresh checkout can re-fetch in seconds
+data/crests/
 logs/*.log
 logs/*.log.*
 *.cache/
