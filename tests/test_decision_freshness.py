@@ -62,6 +62,41 @@ def test_has_material_change_since_ignores_low_severity(db_conn):
     assert has_material_change_since(db_conn, cutoff, squad_ids={1}) is None
 
 
+def test_has_material_change_since_ignores_kickoff_reminder_despite_high_severity(db_conn):
+    """Real bug found live (2026-08-29, direct user report: "why does the
+    dashboard again say recomputing") - a real strategic-plan decision was
+    flagged stale by nothing more than a `kickoff_reminder` change_events
+    row. That event type is deliberately hardcoded HIGH severity in
+    `ingestion/change_detection.py::detect_upcoming_kickoffs`, but that
+    label was calibrated for a different consumer (the alerts panel: "your
+    squad's match starts soon") - it carries zero new information about any
+    player's form/injury/price/lineup, so it must never make an otherwise-
+    fresh recommendation look stale just because it happens to share the
+    HIGH severity column with real projection-relevant events."""
+    cutoff = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc).isoformat()
+    later = datetime(2026, 8, 29, 11, 0, tzinfo=timezone.utc).isoformat()
+    record_event(db_conn, "kickoff_reminder", "fixture", 15, None, "2026-08-29T16:30:00Z", later, "fpl_api_fixtures", "CONFIRMED", "HIGH")
+    db_conn.commit()
+
+    assert has_material_change_since(db_conn, cutoff, squad_ids={1}) is None
+
+
+def test_has_material_change_since_still_finds_a_real_change_alongside_a_kickoff_reminder(db_conn):
+    """The kickoff_reminder exclusion must be narrow - a real, genuinely
+    material HIGH event happening around the same time must still be
+    found, never accidentally swallowed by the same filter."""
+    cutoff = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc).isoformat()
+    later = datetime(2026, 8, 29, 11, 0, tzinfo=timezone.utc).isoformat()
+    record_event(db_conn, "kickoff_reminder", "fixture", 15, None, "2026-08-29T16:30:00Z", later, "fpl_api_fixtures", "CONFIRMED", "HIGH")
+    record_event(db_conn, "status_change", "player", 1, "a", "i", later, "fpl_api", "CONFIRMED", "HIGH")
+    db_conn.commit()
+
+    change = has_material_change_since(db_conn, cutoff, squad_ids={1})
+
+    assert change is not None
+    assert change["event_type"] == "status_change"
+
+
 def test_assess_freshness_none_when_no_strategic_decision_logged(db_conn):
     assert assess_recommendation_freshness(db_conn, None, {1, 2, 3}) is None
 

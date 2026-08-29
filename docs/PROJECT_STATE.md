@@ -1,10 +1,22 @@
 # Project State
 
-Last updated: 2026-08-29 (ApexCharts visualization-system rebuild). Read this before
+Last updated: 2026-08-29 (RECOMPUTING severity-overload bug). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, RECOMPUTING severity-overload bug)
+
+`has_material_change_since` (shared by the dashboard's freshness check AND
+the auto-recompute trigger) was treating `kickoff_reminder` change_events
+as material - that event type is deliberately hardcoded HIGH severity for
+a different real consumer (the alerts panel), not because a kickoff
+carries any new player/price/lineup information. Excluded explicitly.
+Verified live against production (`is_stale` flipped True->False for the
+real triggering row) and via a real regenerated dashboard screenshot
+("Current · computed 5h ago", no banner). Full account: `docs/history/
+36-session-2026-08-29-recomputing-severity-overload-bug.md`.
 
 ## Where things stand (updated 2026-08-29, ApexCharts visualization-system rebuild)
 

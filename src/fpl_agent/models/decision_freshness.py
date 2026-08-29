@@ -46,7 +46,24 @@ def has_material_change_since(
     owns doesn't make an existing recommendation stale) plus any
     non-player-entity HIGH event (kept unscoped - e.g. a fixture-level
     change) since those aren't squad-attributable the same way. Returns
-    the raw row as a dict, or None when nothing material happened."""
+    the raw row as a dict, or None when nothing material happened.
+
+    Real bug found + fixed live (2026-08-29, direct user report: "why does
+    the dashboard again say recomputing" - decision 378 flagged stale by a
+    real `kickoff_reminder` event for fixture 15). `kickoff_reminder` is
+    deliberately hardcoded HIGH severity in `ingestion/change_detection.py
+    ::detect_upcoming_kickoffs` - but that HIGH label was calibrated for a
+    completely different consumer (the alerts/notifications panel: "your
+    squad's match starts soon", genuinely worth surfacing at that
+    severity). It carries ZERO new information about any player's
+    form/injury/price/lineup - the kickoff time was already known when the
+    strategic plan was computed, a reminder firing later doesn't change
+    what the plan should recommend. Reusing the same `severity` column for
+    the recompute-materiality gate silently treated an every-fixture,
+    guaranteed-to-fire timer event as if it were a real reason to
+    recompute (and, upstream, to show the misleading RECOMPUTING banner) -
+    excluded here explicitly rather than lowering its real, correct
+    severity for the alerts panel it was designed for."""
     squad_ids = squad_ids or set()
     if squad_ids:
         placeholders = ",".join("?" * len(squad_ids))
@@ -54,7 +71,7 @@ def has_material_change_since(
             f"""
             SELECT event_type, entity, entity_id, old_value, new_value, detected_at
             FROM change_events
-            WHERE severity='HIGH' AND detected_at > ?
+            WHERE severity='HIGH' AND event_type != 'kickoff_reminder' AND detected_at > ?
               AND (entity != 'player' OR entity_id IN ({placeholders}))
             ORDER BY detected_at DESC LIMIT 1
             """,
@@ -63,7 +80,7 @@ def has_material_change_since(
     else:
         row = conn.execute(
             "SELECT event_type, entity, entity_id, old_value, new_value, detected_at "
-            "FROM change_events WHERE severity='HIGH' AND detected_at > ? "
+            "FROM change_events WHERE severity='HIGH' AND event_type != 'kickoff_reminder' AND detected_at > ? "
             "ORDER BY detected_at DESC LIMIT 1",
             (since_iso,),
         ).fetchone()
