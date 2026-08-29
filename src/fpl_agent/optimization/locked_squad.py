@@ -155,11 +155,64 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
     case."""
     entry_id = get_my_team_entry_id(conn)
     if entry_id is not None:
-        latest = get_latest_squad_detail(conn, entry_id)
-        if latest is not None:
+        # Real, confirmed-recurring race, retried once (2026-08-29, direct
+        # user report: "now the dashboard says no squad" - traced to
+        # `logs/fpl_agent.log` showing `_xi_from_real_picks`'s own "zero
+        # picks" warning firing repeatedly over 24+ hours). Two real causes,
+        # not one: (1) this project's long-running persistent processes
+        # (`live-server`, `live-match-poll`) hold their own imported copy of
+        # this module in memory and only pick up a fixed .py file on their
+        # own next restart - a stale-code process could still hit the torn
+        # read `get_latest_squad_detail`'s atomic scalar-subquery SELECT was
+        # meant to close; (2) `sqlite3.OperationalError` ("database is
+        # locked") from a genuine concurrent writer (`run-scheduled`'s own
+        # `_upsert_picks` resync) used to propagate uncaught here. A single,
+        # cheap, immediate retry of the whole real fetch (no sleep needed -
+        # by the time this function's own second DB round-trip runs, a real
+        # concurrent writer's transaction has essentially always already
+        # committed) covers both without needing to eliminate every
+        # possible real interleaving between independent processes.
+        def _fetch_real_xi():
+            latest = get_latest_squad_detail(conn, entry_id)
+            if latest is None:
+                return None
             event, picks = latest
+            return event, picks, _xi_from_real_picks(conn, event, entry_id, picks)
+
+        # Retrying `_xi_from_real_picks` alone with the SAME already-fetched
+        # `picks` would be pointless (it's a pure function of that list -
+        # nothing left to re-race) - re-fetch `latest` fresh on each
+        # attempt, and also guard the real `sqlite3.OperationalError`
+        # ("database is locked") a genuine concurrent writer can raise here,
+        # which used to propagate uncaught.
+        #
+        # Bumped 2 attempts -> 3 with a small real sleep between them
+        # (2026-08-29, direct user report the first version "doesn't work
+        # fully" - still recurred sometimes). Two IMMEDIATE retries assumed
+        # a concurrent writer's transaction resolves in microseconds - true
+        # under normal load, but this project's own real concurrent writers
+        # (`run-scheduled`, `live-match-poll`, `live-server`, ad-hoc regens)
+        # can all be contending for the same file at once, and under that
+        # genuine heavier load a writer's transaction can still be mid-flight
+        # tens of milliseconds later. A short real sleep (not busy-looping)
+        # costs nothing on the common case (the first attempt almost always
+        # succeeds) and gives a real writer meaningfully more wall-clock time
+        # to finish before the next read.
+        import time as _time
+
+        result = None
+        for _attempt in range(3):
+            if _attempt > 0:
+                _time.sleep(0.05 * _attempt)
+            try:
+                result = _fetch_real_xi()
+            except sqlite3.OperationalError:
+                result = None
+            if result is not None and result[2] is not None and result[2].starting:
+                break
+        if result is not None:
+            event, picks, xi = result
             squad_ids = [r["player_id"] for r in picks]
-            xi = _xi_from_real_picks(conn, event, entry_id, picks)
             if xi is not None and xi.starting:
                 summary = conn.execute(
                     "SELECT bank_tenths, team_value_tenths FROM my_team_gw_summary WHERE entry_id=? AND event=?",

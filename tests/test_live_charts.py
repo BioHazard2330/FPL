@@ -1,4 +1,10 @@
+import html
+import re
+from datetime import datetime, timedelta, timezone
+
 from fpl_agent.monitoring.dashboard.live_charts import render_live_charts
+from fpl_agent.optimization.locked_squad import LockedSquadState
+from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 
 
 def _seed_gw_summary(conn, entry_id, rows):
@@ -25,14 +31,17 @@ def test_render_live_charts_shows_honest_empty_state_with_fewer_than_two_gws(db_
 
 
 def test_render_live_charts_draws_real_polylines_for_two_plus_gws(db_conn):
-    """Real Chart.js rewrite (2026-08-29, direct harsh user correction: the
-    hand-rolled SVG "looks terrible"): each real chart is now a `<canvas>`
-    with a real embedded data payload - Chart.js itself draws the line
-    client-side. This proves the real series data is correct, not the
-    (now client-side) drawing."""
+    """Real ApexCharts rewrite (2026-08-29, direct harsh user correction: the
+    hand-rolled SVG "looks terrible", then the first Chart.js result too):
+    each real chart is now a `<div class='live-chart-canvas'>` with a real
+    embedded data payload - ApexCharts itself draws the line client-side.
+    This proves the real series data is correct, not the (now client-side)
+    drawing."""
     _seed_gw_summary(db_conn, 1, [(1, 60, 500000), (2, 75, 300000)])
     result = render_live_charts(db_conn, 1)
-    assert result.count("<canvas") == 2
+    assert result.count("live-chart-canvas'") == 2
+    assert "<polyline" not in result
+    assert "<canvas" not in result
     # Cumulative points must actually cumulate, not just show event 2's own 75.
     assert "135" in result  # 60 + 75
 
@@ -253,3 +262,128 @@ def test_actual_vs_expected_series_excludes_bench(db_conn):
 
     assert 99.0 not in actual.values
     assert actual.values == [8.0, 5.0]
+
+
+# --- Captain impact / player value / fixture heatmap (2026-08-29, ApexCharts spec pass) ---
+
+def test_captain_impact_chart_shows_honest_empty_state_below_two_samples(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_captain_impact_chart
+
+    result = render_captain_impact_chart(db_conn, event=2)
+
+    assert "Not enough real captain-resolved samples" in result
+
+
+def test_captain_impact_chart_buckets_real_samples_into_distinct_windows(db_conn):
+    import json
+
+    from fpl_agent.monitoring.dashboard.live_charts import render_captain_impact_chart
+
+    _seed_live_points_sample(db_conn, event=2, points=10, created_at="2026-08-29T12:00:00Z", captain_points=4)
+    _seed_live_points_sample(db_conn, event=2, points=18, created_at="2026-08-29T12:20:00Z", captain_points=8)
+
+    result = render_captain_impact_chart(db_conn, event=2)
+
+    assert "&quot;kind&quot;: &quot;column&quot;" in result
+    assert "&quot;stacked&quot;: true" in result
+    m = re.search(r"data-chart=\"([^\"]*)\"", result)
+    payload = json.loads(html.unescape(m.group(1)))
+    # 2 real samples 20 real minutes apart fall into 2 distinct real windows.
+    assert len(payload["labels"]) == 2
+    assert payload["series"][0]["values"] == [4.0, 8.0]  # real captain points per window
+    assert payload["series"][1]["values"] == [6.0, 10.0]  # real squad-minus-captain per window
+
+
+def test_captain_impact_chart_stays_readable_across_a_multi_day_gw(db_conn):
+    """Real bug found live (2026-08-29): a fixed 15-min bucket over a GW
+    that genuinely spans several real days (Friday to Monday matches)
+    produced 60+ unreadable bars. Bucket width must scale with the real
+    observed span, targeting ~10 readable real buckets regardless."""
+    import json
+
+    from fpl_agent.monitoring.dashboard.live_charts import render_captain_impact_chart
+
+    base = datetime(2026, 8, 29, 12, 0, 0, tzinfo=timezone.utc)
+    for i in range(20):
+        ts = (base + timedelta(hours=i * 6)).isoformat().replace("+00:00", "Z")
+        _seed_live_points_sample(db_conn, event=2, points=10 + i, created_at=ts, captain_points=4 + i)
+
+    result = render_captain_impact_chart(db_conn, event=2)
+
+    m = re.search(r"data-chart=\"([^\"]*)\"", result)
+    payload = json.loads(html.unescape(m.group(1)))
+    assert len(payload["labels"]) <= 15  # never the old 60+ real bars
+
+
+def _candidate(pid, web_name, price_tenths, median):
+    return PlayerCandidate(
+        player_id=pid, web_name=web_name, position="MID", team_id=1, team_short="T1",
+        price_tenths=price_tenths, xp=median, median=median, floor=median * 0.5, ceiling=median * 1.5,
+        confidence="MEDIUM", expected_minutes=80.0,
+    )
+
+
+def _locked(starting):
+    xi = StartingXI(starting=starting, bench=[], captain=None, vice_captain=None)
+    return LockedSquadState(
+        source="synced_real", event=2, squad_ids=frozenset(c.player_id for c in starting),
+        xi=xi, bank_tenths=0, squad_value_tenths=1000, decision_id=None, free_transfers=1,
+    )
+
+
+def test_player_value_chart_sorts_by_real_xp_per_million_descending(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_player_value_chart
+
+    # Player A: 6.0 xP at £6.0m -> 1.0 xP/£m. Player B: 4.0 xP at £4.0m -> 1.0.
+    # Player C: 9.0 xP at £6.0m -> 1.5 xP/£m - the real best-value player.
+    locked = _locked([
+        _candidate(1, "PlayerA", price_tenths=60, median=6.0),
+        _candidate(2, "PlayerB", price_tenths=40, median=4.0),
+        _candidate(3, "PlayerC", price_tenths=60, median=9.0),
+    ])
+
+    result = render_player_value_chart(locked)
+
+    assert "PlayerC" in result
+    assert '"1.5"' in result or "1.5" in result
+
+
+def test_player_value_chart_empty_without_a_locked_squad():
+    from fpl_agent.monitoring.dashboard.live_charts import render_player_value_chart
+
+    assert render_player_value_chart(None) == ""
+
+
+def _insert_team_with_strength(conn, team_id, code, short_name):
+    conn.execute(
+        "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,'t0')",
+        (team_id, code, f"Team{team_id}", short_name),
+    )
+
+
+def test_fixture_heatmap_shows_real_teams_and_gws(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_fixture_heatmap_chart
+
+    _insert_team_with_strength(db_conn, 1, 1, "AAA")
+    _insert_team_with_strength(db_conn, 2, 2, "BBB")
+    db_conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        "is_current, is_next, updated_at) VALUES (2, 'GW2', 't0', 99999999999, 0, 0, 1, 0, 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1, 2, 1, 2, 0, 0, 't0')"
+    )
+    db_conn.commit()
+
+    result = render_fixture_heatmap_chart(db_conn, squad_ids=set())
+
+    assert "&quot;kind&quot;: &quot;heatmap&quot;" in result
+    assert "AAA" in result and "BBB" in result
+    assert "GW2" in result
+
+
+def test_fixture_heatmap_empty_without_any_real_teams(db_conn):
+    from fpl_agent.monitoring.dashboard.live_charts import render_fixture_heatmap_chart
+
+    assert render_fixture_heatmap_chart(db_conn, squad_ids=set()) == ""

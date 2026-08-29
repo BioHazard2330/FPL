@@ -1,10 +1,85 @@
 # Project State
 
-Last updated: 2026-08-29 (visual-quality correction pass). Read this before
+Last updated: 2026-08-29 (ApexCharts visualization-system rebuild). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-08-29, ApexCharts visualization-system rebuild)
+
+Every quantitative chart on the dashboard now uses the real ApexCharts type
+matched to its data semantics, not one generic area-chart config
+everywhere: live rank/points get a real `datetime` axis with real squad
+goal/card event annotations and a stepline for points (discrete scoring
+events, not a continuous drift); captain contribution and actual-vs-
+expected are real column/grouped-column charts; match momentum
+(`monitoring/dashboard/match_centre.py::_momentum_chart_html`) is a real
+diverging area, replacing hand-rolled SVG. Four genuinely new charts:
+projection floor/median/ceiling range (per squad player, real `PlayerCandidate`
+data, zero new queries), Dixon-Coles team-strength bar, xG-vs-xA scatter,
+and per-match player-form line — all real, already-computed or already-
+stored data. Persistent chart instances (`window.dashboardCharts`) with
+real incremental `appendData` live updates replace the old destroy-recreate-
+every-poll pattern. Full account, including 6 real bugs found and fixed
+live (a config-nesting bug that broke every chart identically, a
+`market_teams`/`teams` id-space mismatch, an unsupported JS-function
+`fill.opacity`, a stale-process SSE bug, axis-precision collapse, and new
+permanent per-chart error isolation): `docs/history/35-session-2026-08-29-
+apexcharts-visualization-rebuild.md`.
+
+**Follow-up pass, same day**: a more detailed 14-chart spec added 3 more
+real charts (captain impact - a live intragame stacked column, dynamically
+bucketed to stay readable across a GW spanning several real days; player
+value, real xP-per-£m; a real fixture-difficulty heatmap, additive
+alongside the existing grid — not a replacement, reconciling the earlier
+"keep the grid" call with this pass's explicit re-ask). Two real functional
+bugs fixed: `live-match-poll` never regenerated the dashboard for a match's
+own FIRST transition into LIVE (the direct cause of a real "game's online
+but not on the dashboard" report — fixed, `cli/main.py::live_match_poll_cmd`
+now triggers a real regen on that transition specifically, not just on
+FULL_TIME); `get_locked_squad()`'s retry now sleeps briefly between attempts
+(the previous zero-delay 2-retry version could still occasionally lose the
+race under this project's own real heavy concurrent load). Full responsive
+QA at 1440/1024/768/390px, real screenshots, zero console errors.
+
+**Reboot survival**: `scripts/setup_startup_shortcut.ps1` places a real
+Windows Startup-folder shortcut (no admin rights needed) that starts all 3
+real scheduled tasks at every login — closes "must run automatically even
+after a shutdown" without needing Administrator privileges (confirmed live
+that the cleaner `AtLogOn` scheduled-task trigger requires them, even for a
+task you already own). Real, disclosed limit: this starts everything the
+moment the user logs into Windows, not before anyone has logged in at all -
+closing that fully would need a Windows Service or stored credentials,
+both out of scope for a personal-laptop tool with this project's own
+standing "never handle credentials" rule.
+
+## Where things stand (updated 2026-08-29, autonomy correction pass)
+
+Real root cause found for a fresh "no squad / live tracking stuck / graphs
+look bad" report right after the previous pass's fixes: `fpl live-server`
+had never actually been registered in Task Scheduler (the setup script
+existed, was never run) and the running `fpl live-match-poll` instance
+predated every fix made earlier the same day - both persistent processes
+were serving stale, pre-fix in-memory code regardless of what had landed on
+disk. Fixed: registered `FPLAgentLiveServer` for real (port 8877, matches
+docs), killed both stale processes so fresh ones pick up current code.
+Corrected a real logic bug in the previous session's draft `locked_squad.py`
+retry (it retried a pure function with identical input - a no-op); now
+re-fetches fresh on each of up to 2 attempts and catches `sqlite3.
+OperationalError`. Live chart marker labels rewritten (real rounded
+background pill + collision-avoidance nudge, replacing bare `fillText` that
+could overlap the x-axis with only 2 real GW data points); area fills
+changed from flat single-alpha to a real top-to-bottom gradient fade. Full
+account: `docs/history/34-session-2026-08-29-autonomy-correction-pass.md`.
+
+**Standing operational note**: this project has two persistent, unattended
+processes (`live-server`, `live-match-poll`) that only pick up a code fix
+when they themselves restart - both now have Task Scheduler auto-relaunch-
+on-exit, but a process that's merely alive-but-stale (not crashed) still
+needs an explicit kill to pick up a fix immediately. Check `Get-
+ScheduledTask -TaskName FPLAgentLiveServer,FPLAgentLivePoll,FPLAgentSync`
+and process start times vs source `mtime` if something looks stale again.
 
 ## Where things stand (updated 2026-08-29, visual-quality correction pass)
 

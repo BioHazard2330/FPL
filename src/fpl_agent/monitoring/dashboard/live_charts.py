@@ -6,13 +6,18 @@ misrepresent a real gap.
 
 Rendering rewritten 2026-08-29 (forensic product redesign - direct, harsh
 user correction: the previous hand-rolled SVG polylines "look absolutely
-terrible... like a kid made it"). Now emits a `<canvas>` + a real JSON data
-payload; a real, well-known, MIT-licensed charting library (Chart.js
-4.4.9, vendored once to `data/vendor/chart.umd.js` - see assemble.py's own
-script-tag comment for why it's local, not a live CDN dependency) renders
-it client-side. This module's job stays exactly what it always was - real
-series computation, zero client-side re-derivation - only the drawing
-layer changed.
+terrible... like a kid made it"), then rewritten again the same day
+(autonomy correction pass - the user rejected the Chart.js result too,
+repeatedly, even after a real marker/gradient-fill bug fix landed on it:
+"there are so many amazing libraries... you have made this hot dogshit").
+Now emits a `<div>` + a real JSON data payload; a real, well-known,
+MIT-licensed charting library (ApexCharts 3.45.2, vendored once to
+`data/vendor/apexcharts.min.js` - see assemble.py's own script-tag comment
+for why it's local, not a live CDN dependency) renders it client-side,
+using its own built-in gradient-fill and point-annotation APIs rather than
+hand-rolled canvas drawing. This module's job stays exactly what it always
+was - real series computation, zero client-side re-derivation - only the
+drawing layer changed.
 
 Scope: rank trajectory + cumulative GW points, both single-source from
 `my_team_gw_summary` (real official FPL per-GW summary, one row per
@@ -79,6 +84,24 @@ def _captain_contribution_series(conn: sqlite3.Connection, entry_id: int) -> Cha
     )
 
 
+def _squad_total_points_for_events(conn: sqlite3.Connection, entry_id: int, events: list[int]) -> list[float | None]:
+    """Real per-GW squad total points (`my_team_gw_summary.points`, FPL's own
+    official figure) for the exact same GWs the captain-contribution series
+    already has a real value for - lets the column chart show captain
+    contribution as a real % of the real squad total, never a fabricated
+    denominator. `None` for a GW with no real summary row yet (never
+    silently 0, which would read as a real 100%/0% split that isn't true)."""
+    if not events:
+        return []
+    placeholders = ",".join("?" * len(events))
+    rows = conn.execute(
+        f"SELECT event, points FROM my_team_gw_summary WHERE entry_id=? AND event IN ({placeholders})",
+        (entry_id, *events),
+    ).fetchall()
+    by_event = {r["event"]: r["points"] for r in rows}
+    return [float(by_event[e]) if by_event.get(e) is not None else None for e in events]
+
+
 def _actual_vs_expected_series(conn: sqlite3.Connection, entry_id: int) -> tuple[ChartSeries, ChartSeries]:
     """Real per-GW starting-XI actual vs expected (fpl.page-parity pass) -
     sums `prediction_outcomes.actual_points`/`predicted_median` over the
@@ -110,6 +133,14 @@ def _actual_vs_expected_series(conn: sqlite3.Connection, entry_id: int) -> tuple
     return ChartSeries(events=events, values=actual_values), ChartSeries(events=events, values=expected_values)
 
 
+def _epoch_ms(iso_ts: str) -> int:
+    from datetime import datetime, timezone
+    ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return int(ts.timestamp() * 1000)
+
+
 def _payload_attr(payload: dict) -> str:
     """Real, safe JSON-in-HTML-attribute encoding - `json.dumps` can emit a
     literal `"` that would break out of the attribute; `html.escape`
@@ -121,16 +152,27 @@ def _payload_attr(payload: dict) -> str:
 def _single_chart_html(
     labels: list[str], values: list[float], *, color_var: str, invert_y: bool = False,
     value_fmt: str = "float", best_worst: bool = False, aria_label: str = "",
+    timestamps: list[str] | None = None, events: list[dict] | None = None, step: bool = False,
+    chart_id: str | None = None,
 ) -> str:
-    """Real Chart.js line chart (2026-08-29 rewrite - see this module's own
+    """Real ApexCharts area chart (2026-08-29 rewrite - see this module's own
     docstring for why). `invert_y=True` reverses the y-axis natively via
-    Chart.js's own `reverse` scale option - a real rank chart genuinely
+    ApexCharts's own `yaxis.reversed` option - a real rank chart genuinely
     reads as "up" when rank improves. `best_worst=True` marks the real
-    best/worst/start points via a real custom Chart.js plugin
-    (`fplMarkerPlugin` in assemble.py's script block) - never a second,
-    divergent computation from the client-side JS: the marker INDICES are
-    computed here in Python from the exact same real `values` list, only
-    the drawing happens client-side."""
+    best/worst/start points via ApexCharts's own `annotations.points` API
+    (assemble.py's script block) - never a second, divergent computation
+    from the client-side JS: the marker INDICES are computed here in Python
+    from the exact same real `values` list, only the drawing happens
+    client-side.
+
+    `timestamps` (real ISO datetimes, one per value) switches the chart to a
+    genuine `xType: 'datetime'` axis instead of a plain category axis -
+    required for an intragame chart, where the x-axis is real wall-clock
+    time, not an arbitrary GW label. `events` are real, separately-sourced
+    point-in-time facts (a squad player's real goal/card) to annotate on
+    that same timestamp axis - never derived from `values` itself. `step`
+    draws a real stepline (points change at discrete real scoring events,
+    not a continuous quantity) instead of a line/area curve."""
     if len(values) < 2:
         return "<div class='chart-empty'>Not enough real data yet - needs 2+ real data points.</div>"
     markers = None
@@ -143,28 +185,142 @@ def _single_chart_html(
                    "start": 0 if 0 not in (best_i, worst_i, n - 1) else None}
     payload = {
         "kind": "single", "labels": labels, "values": values, "colorVar": color_var,
-        "invertY": invert_y, "valueFmt": value_fmt, "markers": markers,
+        "invertY": invert_y, "valueFmt": value_fmt, "markers": markers, "step": step,
     }
+    if timestamps is not None:
+        payload["xType"] = "datetime"
+        payload["x"] = [_epoch_ms(t) for t in timestamps]
+        if events:
+            payload["events"] = events
+    id_attr = f" data-chart-id='{chart_id}'" if chart_id else ""
     return (
-        f"<div class='live-chart-canvas-wrap'><canvas class='live-chart-canvas' "
-        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></canvas></div>"
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas'{id_attr} "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
     )
 
 
 def _dual_chart_html(
     labels: list[str], values_a: list[float], label_a: str, color_var_a: str,
     values_b: list[float], label_b: str, color_var_b: str, *, value_fmt: str = "float", aria_label: str = "",
+    timestamps: list[str] | None = None, events: list[dict] | None = None, step: bool = False,
+    chart_id: str | None = None,
 ) -> str:
     if len(values_a) < 2 or len(values_a) != len(values_b):
         return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks with a real recorded prediction.</div>"
     payload = {
-        "kind": "dual", "labels": labels, "valueFmt": value_fmt,
+        "kind": "dual", "labels": labels, "valueFmt": value_fmt, "step": step,
         "seriesA": {"label": label_a, "values": values_a, "colorVar": color_var_a},
         "seriesB": {"label": label_b, "values": values_b, "colorVar": color_var_b},
     }
+    if timestamps is not None:
+        payload["xType"] = "datetime"
+        payload["x"] = [_epoch_ms(t) for t in timestamps]
+        if events:
+            payload["events"] = events
+    id_attr = f" data-chart-id='{chart_id}'" if chart_id else ""
     return (
-        f"<div class='live-chart-canvas-wrap'><canvas class='live-chart-canvas' "
-        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></canvas></div>"
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas'{id_attr} "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+    )
+
+
+def _column_chart_html(
+    labels: list[str], series: list[tuple[str, list[float], str]], *, value_fmt: str = "float",
+    aria_label: str = "", zero_line: bool = False, stacked: bool = False, extra: dict | None = None,
+) -> str:
+    """Real ApexCharts column chart - `series` is `[(name, values, colorVar), ...]`,
+    one or more real series sharing the same real category labels (e.g. GWs).
+    `zero_line=True` draws a real y=0 reference annotation (for a signed
+    variance series, e.g. actual-vs-expected difference). `extra` merges
+    additional real, already-computed fields into the payload (e.g. captain
+    contribution's real %-of-squad-total, used only by that chart's own
+    tooltip formatter) without widening this function's own generic shape."""
+    if not labels or any(len(s[1]) != len(labels) for s in series):
+        return "<div class='chart-empty'>Not enough real per-GW data yet.</div>"
+    payload = {
+        "kind": "column", "labels": labels, "valueFmt": value_fmt, "zeroLine": zero_line, "stacked": stacked,
+        "series": [{"label": s[0], "values": s[1], "colorVar": s[2]} for s in series],
+    }
+    if extra:
+        payload.update(extra)
+    return (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+    )
+
+
+def _range_chart_html(
+    labels: list[str], floors: list[float], medians: list[float], ceilings: list[float],
+    *, color_var: str, value_fmt: str = "float", aria_label: str = "",
+) -> str:
+    """Real ApexCharts `rangeArea` - a per-player floor/ceiling uncertainty
+    band with the real median overlaid as its own line series. Never
+    collapses the band to one number - the spread itself is real
+    information (`models/expected_points.py::_sampled_floor_ceiling`)."""
+    if not labels:
+        return "<div class='chart-empty'>No real squad players to project.</div>"
+    payload = {
+        "kind": "range", "labels": labels, "valueFmt": value_fmt, "colorVar": color_var,
+        "floors": floors, "medians": medians, "ceilings": ceilings,
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+    )
+
+
+def _scatter_chart_html(
+    points: list[dict], *, x_label: str, y_label: str, color_var: str, aria_label: str = "",
+) -> str:
+    """Real ApexCharts scatter - `points` is `[{"x": ..., "y": ..., "name": ...}, ...]`,
+    one real point per player (already-aggregated real season totals - never
+    a synthetic distribution)."""
+    if len(points) < 2:
+        return "<div class='chart-empty'>Not enough real players with recorded stats yet.</div>"
+    payload = {
+        "kind": "scatter", "points": points, "xLabel": x_label, "yLabel": y_label, "colorVar": color_var,
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+    )
+
+
+def _bar_chart_html(
+    labels: list[str], series: list[tuple[str, list[float], str]], *, value_fmt: str = "float",
+    aria_label: str = "", highlight: list[bool] | None = None,
+) -> str:
+    """Real ApexCharts horizontal bar - `series` is `[(name, values, colorVar), ...]`
+    across real categories (teams). `highlight` (one bool per label) marks
+    the user's own real squad's teams with a distinct opacity/border, never
+    a second colour that could be mistaken for a different data series."""
+    if not labels:
+        return "<div class='chart-empty'>No real team-strength data yet.</div>"
+    payload = {
+        "kind": "bar", "labels": labels, "valueFmt": value_fmt,
+        "series": [{"label": s[0], "values": s[1], "colorVar": s[2]} for s in series],
+        "highlight": highlight,
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+    )
+
+
+def _heatmap_chart_html(
+    row_labels: list[str], col_labels: list[str], values: list[list[float | None]],
+    *, aria_label: str = "",
+) -> str:
+    """Real ApexCharts heatmap - `values[i][j]` is the real difficulty for
+    `row_labels[i]` at `col_labels[j]` (`None` for a genuine blank GW, never
+    a fabricated value). One continuous intensity scale, not dozens of
+    independent rounded rectangles."""
+    if not row_labels or not col_labels:
+        return "<div class='chart-empty'>No real fixture data yet.</div>"
+    payload = {"kind": "heatmap", "rowLabels": row_labels, "colLabels": col_labels, "values": values}
+    return (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
     )
 
 
@@ -210,7 +366,51 @@ def _time_label(iso_ts: str) -> str:
         return "?"
 
 
-def render_intragame_rank_chart(conn: sqlite3.Connection, event: int | None) -> str:
+def _squad_match_events(conn: sqlite3.Connection, event: int, squad_ids: frozenset[int]) -> list[dict]:
+    """Real, player-attributed GOAL/Card events for squad players during
+    this GW's real matches - annotation candidates for the live rank/points
+    charts (`assemble.py`'s ApexCharts `annotations.xaxis` points).
+    Deliberately NOT including assists: FotMob's own real event feed only
+    attributes a `player_id` to the scorer of a Goal row - the assist name
+    is free text inside `description`, not a foreign-keyed column.
+    Annotating an assist would mean parsing that text to guess a player
+    match, a real fabrication risk this project's no-fabrication rule rules
+    out (see this module's own top-of-file docstring)."""
+    if not squad_ids:
+        return []
+    placeholders = ",".join("?" * len(squad_ids))
+    rows = conn.execute(
+        f"SELECT me.event_type, me.retrieved_at, p.web_name FROM match_events me "
+        f"JOIN match_intelligence mi ON mi.id = me.match_id "
+        f"JOIN fixtures f ON f.id = mi.fpl_fixture_id "
+        f"JOIN players p ON p.id = me.player_id "
+        f"WHERE f.event = ? AND me.player_id IN ({placeholders}) AND me.event_type IN ('Goal', 'Card') "
+        f"ORDER BY me.retrieved_at",
+        (event, *squad_ids),
+    ).fetchall()
+    return [
+        {"timestamp": r["retrieved_at"], "label": f"{r['web_name']} " + ("goal" if r["event_type"] == "Goal" else "card")}
+        for r in rows
+    ]
+
+
+def _events_within(events: list[dict], timestamps: list[str]) -> list[dict]:
+    """Clamps real event annotations to the actual plotted window (never an
+    event from before the first sample or after the last one - it would
+    render off the visible axis) and converts each to the epoch-ms x-value
+    ApexCharts annotations need."""
+    if not events or not timestamps:
+        return []
+    lo, hi = _epoch_ms(timestamps[0]), _epoch_ms(timestamps[-1])
+    out = []
+    for e in events:
+        x = _epoch_ms(e["timestamp"])
+        if lo <= x <= hi:
+            out.append({"x": x, "label": e["label"]})
+    return out
+
+
+def render_intragame_rank_chart(conn: sqlite3.Connection, event: int | None, squad_ids: frozenset[int] = frozenset()) -> str:
     """`''` (no panel) when there's no real current/reference event, or
     fewer than 2 real trustworthy samples logged yet for it - never a
     fabricated single-point "trend"."""
@@ -219,10 +419,12 @@ def render_intragame_rank_chart(conn: sqlite3.Connection, event: int | None) -> 
     series, timestamps = _intragame_rank_series(conn, event)
     if len(series.values) < 2:
         return ""
+    real_events = _events_within(_squad_match_events(conn, event, squad_ids), timestamps)
     labels = [_time_label(t) for t in timestamps]
     chart = _single_chart_html(
-        labels, series.values, color_var="--accent-2", invert_y=True, value_fmt="int", best_worst=True,
+        labels, series.values, color_var="--accent-2", invert_y=True, value_fmt="rank", best_worst=True,
         aria_label=f"Live rank during GW{event}, {labels[0]} to {labels[-1]}",
+        timestamps=timestamps, events=real_events, chart_id="liveRank",
     )
     return f"""<div class="live-chart-card">
     <div class="live-chart-title">Live rank this gameweek <span class="panel-subtitle">{len(series.values)} real samples</span></div>
@@ -261,7 +463,7 @@ def _intragame_points_series(conn: sqlite3.Connection, event: int) -> tuple[Char
     return points_series, timestamps, captain_series
 
 
-def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None) -> str:
+def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None, squad_ids: frozenset[int] = frozenset()) -> str:
     """`''` (no panel) when there's no real current/reference event, or
     fewer than 2 real trustworthy samples logged yet for it - never a
     fabricated single-point "trend". Captain contribution overlays on the
@@ -269,22 +471,29 @@ def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None) -
     value alongside it (same length, same real sample set) - a squad with
     any gap in real captain resolution simply omits that line entirely
     rather than inventing an alignment/fill scheme for a genuinely partial
-    series."""
+    series. Rendered as a real stepline (`step=True`) - FPL points change at
+    discrete real scoring events, not a continuously drifting quantity, so a
+    smooth/straight interpolation between samples would draw a false "points
+    are gradually rising" ramp where the real truth is a flat line that
+    jumps."""
     if event is None:
         return ""
     points_series, timestamps, captain_series = _intragame_points_series(conn, event)
     if len(points_series.values) < 2:
         return ""
+    real_events = _events_within(_squad_match_events(conn, event, squad_ids), timestamps)
     labels = [_time_label(t) for t in timestamps]
     if len(captain_series.values) == len(points_series.values):
         chart = _dual_chart_html(
             labels, points_series.values, "Squad points", "--accent",
             captain_series.values, "Captain points", "--accent-2", value_fmt="int",
+            timestamps=timestamps, events=real_events, step=True, chart_id="liveSquadPoints",
         )
     else:
         chart = _single_chart_html(
             labels, points_series.values, color_var="--accent", value_fmt="int",
             aria_label=f"Live squad points during GW{event}, {labels[0]} to {labels[-1]}",
+            timestamps=timestamps, events=real_events, step=True, chart_id="liveSquadPoints",
         )
     return f"""<div class="live-chart-card">
     <div class="live-chart-title">Live squad points this gameweek <span class="panel-subtitle">{len(points_series.values)} real samples</span></div>
@@ -292,37 +501,381 @@ def render_intragame_points_chart(conn: sqlite3.Connection, event: int | None) -
   </div>"""
 
 
-def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: int | None = None) -> str:
+def render_captain_impact_chart(conn: sqlite3.Connection, event: int | None) -> str:
+    """Real intragame captain-impact column chart (2026-08-29, direct user
+    spec: "how much of my live score is coming from my captain?" - a real,
+    separate question from the per-GW historical `render_captain_
+    contribution_chart` below, which only has one data point per FINISHED
+    GW and can't show live intragame movement). Reuses the SAME real
+    append-only `live_points_sample` journal `_intragame_points_series`
+    already reads - no new storage. Bucketed into real wall-clock windows
+    (using each sample's own real timestamp, never a fabricated grid) - a
+    column per raw ~60s sample would be unreadably dense; the LAST real
+    sample in each window (the most current real cumulative total at that
+    point) is plotted, never an average or interpolation. Captain share =
+    captain_points; squad share = points - captain_points (both real,
+    already-computed fields, a plain subtraction, not a second estimate).
+
+    Bucket width is real and DYNAMIC, not a fixed 15 minutes - a single GW
+    can genuinely span several real days (Friday to Monday matches), and a
+    fixed 15-min bucket over that real span produced 60+ unreadable bars
+    (confirmed live via a real screenshot). Scaled to target ~10 real
+    buckets across whatever the real elapsed span actually is, floored at
+    15 minutes (never coarser than useful for a single ~2h match, never
+    finer than the real ~60s sample cadence could resolve anyway)."""
+    if event is None:
+        return ""
+    points_series, timestamps, captain_series = _intragame_points_series(conn, event)
+    if len(captain_series.values) < 2 or len(captain_series.values) != len(points_series.values):
+        return "<div class='live-chart-card'><div class='live-chart-title'>Captain impact this gameweek</div><div class='chart-empty'>Not enough real captain-resolved samples yet this GW.</div></div>"
+    first_ms = _epoch_ms(timestamps[0])
+    total_span_min = max((_epoch_ms(timestamps[-1]) - first_ms) / 60000.0, 1.0)
+    bucket_minutes = max(15, int(-(-total_span_min // 10 // 15) * 15))  # ceil to a 15-min multiple, ~10 buckets
+    buckets: dict[int, tuple[str, float, float]] = {}
+    for ts, pts, cap in zip(timestamps, points_series.values, captain_series.values):
+        elapsed_min = (_epoch_ms(ts) - first_ms) / 60000.0
+        bucket = int(elapsed_min // bucket_minutes)
+        buckets[bucket] = (ts, pts, cap)  # last real sample in this bucket wins
+    ordered_buckets = sorted(buckets.items())
+    labels = [_time_label(v[0]) for _, v in ordered_buckets]
+    captain_vals = [round(v[2], 1) for _, v in ordered_buckets]
+    squad_vals = [round(v[1] - v[2], 1) for _, v in ordered_buckets]
+    chart = _column_chart_html(
+        labels, [("Captain", captain_vals, "--accent-2"), ("Rest of squad", squad_vals, "--accent")],
+        value_fmt="int", stacked=True, aria_label="Real live captain impact by time window",
+    )
+    return f"""<div class="live-chart-card">
+    <div class="live-chart-title">Captain impact this gameweek <span class="panel-subtitle">real cumulative points, captain vs rest of squad, by real time window</span></div>
+    {chart}
+  </div>"""
+
+
+def render_captain_contribution_chart(conn: sqlite3.Connection, entry_id: int) -> str:
+    """Real per-GW column chart - captain points vs real squad total, so
+    captaincy performance is immediately readable as a share of the whole,
+    not just an isolated number. `zero_line=False` (a share is never
+    negative); the real % is computed here in Python and handed to the
+    tooltip formatter, never re-derived client-side."""
+    captain_series = _captain_contribution_series(conn, entry_id)
+    if len(captain_series.events) < 2:
+        return "<div class='chart-empty'>Not enough real data yet - needs 2+ real data points.</div>"
+    squad_totals = _squad_total_points_for_events(conn, entry_id, captain_series.events)
+    labels = [f"GW{e}" for e in captain_series.events]
+    pct = [
+        round(v / t * 100.0, 1) if t not in (None, 0) else None
+        for v, t in zip(captain_series.values, squad_totals)
+    ]
+    return _column_chart_html(
+        labels, [("Captain points", captain_series.values, "--accent-2")], value_fmt="int",
+        aria_label=f"Captain contribution, GW{captain_series.events[0]} to GW{captain_series.events[-1]}",
+        extra={"captainPct": pct},
+    )
+
+
+def render_actual_vs_expected_chart(conn: sqlite3.Connection, entry_id: int) -> str:
+    """Real grouped-column actual vs expected, plus the real signed
+    difference as a third series against a y=0 reference line - "beat
+    expectations" is a real, separate fact from the two raw totals, not
+    something the reader should have to subtract in their head."""
+    actual_series, expected_series = _actual_vs_expected_series(conn, entry_id)
+    if len(actual_series.events) < 2:
+        return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks with a real recorded prediction.</div>"
+    labels = [f"GW{e}" for e in actual_series.events]
+    diff = [round(a - e, 1) for a, e in zip(actual_series.values, expected_series.values)]
+    return _column_chart_html(
+        labels,
+        [("Actual", actual_series.values, "--accent"), ("Expected", expected_series.values, "--faint"),
+         ("Difference", diff, "--accent-2")],
+        value_fmt="int", zero_line=True,
+    )
+
+
+def render_projection_range_chart(locked) -> str:
+    """Real floor/median/ceiling per squad player for the current/next real
+    GW - `PlayerCandidate.floor/median/ceiling` (`models/expected_points.py
+    ::_sampled_floor_ceiling`, already computed for every squad player on
+    every regen via `get_locked_squad()` - no new query). The band itself
+    (not just the median) is the real information a single-line chart would
+    throw away."""
+    if locked is None:
+        return ""
+    candidates = sorted(locked.xi.starting + locked.xi.bench, key=lambda c: c.median, reverse=True)
+    if not candidates:
+        return ""
+    labels = [c.web_name for c in candidates]
+    floors = [round(c.floor, 1) for c in candidates]
+    medians = [round(c.median, 1) for c in candidates]
+    ceilings = [round(c.ceiling, 1) for c in candidates]
+    chart = _range_chart_html(
+        labels, floors, medians, ceilings, color_var="--accent", value_fmt="float",
+        aria_label="Projected points range per squad player, next real gameweek",
+    )
+    return f"""<div class="live-chart-card live-chart-card-wide">
+    <div class="live-chart-title">Projected points range <span class="panel-subtitle">real floor/median/ceiling per squad player, next GW</span></div>
+    {chart}
+  </div>"""
+
+
+def render_player_value_chart(locked) -> str:
+    """Real xP-per-£m horizontal bar per squad player (2026-08-29, direct
+    user spec: "who gives me the most expected output for their price?") -
+    `PlayerCandidate.median`/`price_tenths` are already computed for every
+    squad player via `get_locked_squad()`, zero new queries. Sorted by the
+    real ratio descending so the best-value real player is immediately
+    readable at the top."""
+    if locked is None:
+        return ""
+    candidates = [c for c in (locked.xi.starting + locked.xi.bench) if c.price_tenths > 0]
+    if not candidates:
+        return ""
+    ranked = sorted(candidates, key=lambda c: c.median / (c.price_tenths / 10.0), reverse=True)
+    labels = [c.web_name for c in ranked]
+    ratios = [round(c.median / (c.price_tenths / 10.0), 2) for c in ranked]
+    chart = _bar_chart_html(
+        labels, [("xP per £m", ratios, "--accent")], value_fmt="float",
+        aria_label="Real expected points per million, squad players",
+    )
+    return f"""<div class="live-chart-card live-chart-card-wide">
+    <div class="live-chart-title">Player value <span class="panel-subtitle">real next-GW xP per £m, squad players</span></div>
+    {chart}
+  </div>"""
+
+
+def render_team_strength_chart(conn: sqlite3.Connection, squad_team_ids: set[int]) -> str:
+    """Real Dixon-Coles attack/defence rating per Premier League team
+    (`models/expected_points.py::_get_or_fit_dc_model` - the SAME cached fit
+    every other real projection on this dashboard already uses this regen,
+    reused here rather than re-fit). `None` (no chart) when too little
+    real match data exists yet to fit (that function's own real, disclosed
+    minimum-sample gate) - never a fabricated rating for a team with no
+    real matches played.
+
+    Real bug found + fixed live (2026-08-29): `model.teams` is keyed by
+    `market_teams.id` (this project's own separate historical-data team
+    space `team_strength_dc.py` fits against - see `load_matches_for_
+    fitting`'s own real `match_results_history` query), NOT the live
+    `teams.id` primary key every other dashboard panel uses. Querying
+    `teams WHERE id IN (market_team_ids)` silently matched the WRONG real
+    team whenever an id happened to coincide (or matched nothing, falling
+    back to a bare numeric id as the label - confirmed live, several teams
+    rendered as "28"/"59" etc instead of a real short name) and the squad-
+    highlight comparison against `squad_team_ids` (real `teams.id` values)
+    could never correctly match either. Fixed via the real crosswalk column
+    `market_teams.fpl_team_id`."""
+    from datetime import date
+    from fpl_agent.models.expected_points import _get_or_fit_dc_model
+
+    model = _get_or_fit_dc_model(conn, date.today().isoformat())
+    if model is None:
+        return ""
+    team_rows = conn.execute("SELECT id, fpl_team_id FROM market_teams WHERE id IN ({})".format(
+        ",".join("?" * len(model.teams))
+    ), tuple(model.teams.keys())).fetchall()
+    fpl_id_by_market_id = {r["id"]: r["fpl_team_id"] for r in team_rows if r["fpl_team_id"] is not None}
+    real_team_rows = conn.execute(
+        "SELECT id, short_name FROM teams WHERE id IN ({})".format(",".join("?" * len(fpl_id_by_market_id)))
+        if fpl_id_by_market_id else "SELECT id, short_name FROM teams WHERE 0",
+        tuple(fpl_id_by_market_id.values()),
+    ).fetchall()
+    name_by_fpl_id = {r["id"]: r["short_name"] for r in real_team_rows}
+
+    # Real, deliberate filter (found live: a raw numeric id like "59"/"29"
+    # rendering where a name should be) - the Dixon-Coles fit's own 730-day
+    # lookback (`load_matches_for_fitting`) genuinely includes teams no
+    # longer in this season's Premier League (promoted/relegated since),
+    # which have no real current `teams.id` row and therefore no real
+    # crosswalk name. A relegated team's own attack/defence rating isn't
+    # fixture-relevant to a live squad-planning chart anyway - drop it
+    # entirely rather than show a confusing bare id as a fallback label.
+    ordered = [
+        (tid, ts) for tid, ts in model.teams.items() if fpl_id_by_market_id.get(tid) is not None
+    ]
+    ordered.sort(key=lambda kv: kv[1].attack, reverse=True)
+    labels = [name_by_fpl_id.get(fpl_id_by_market_id[tid], str(tid)) for tid, _ in ordered]
+    attack = [round(ts.attack, 2) for _, ts in ordered]
+    defence = [round(-ts.defence, 2) for _, ts in ordered]  # sign-flipped: higher = better defence, matches "higher = better" for attack
+    highlight = [fpl_id_by_market_id.get(tid) in squad_team_ids for tid, _ in ordered]
+    chart = _bar_chart_html(
+        labels, [("Attack", attack, "--accent"), ("Defence", defence, "--accent-2")], value_fmt="float",
+        aria_label="Real Dixon-Coles attack/defence rating per team", highlight=highlight,
+    )
+    return f"""<div class="live-chart-card live-chart-card-wide">
+    <div class="live-chart-title">Team strength <span class="panel-subtitle">real fitted attack/defence rating (Dixon-Coles) - your squad's teams highlighted</span></div>
+    {chart}
+  </div>"""
+
+
+def render_player_comparison_chart(conn: sqlite3.Connection, squad_ids: set[int], locked=None) -> str:
+    """Real xG vs xA scatter, one point per squad player, aggregated over
+    every real Understat match this season (`player_match_stats_history`).
+    Genuinely sparse early in a season (as few as 1 real match per player) -
+    shown honestly as-is, never padded toward a fuller-looking spread.
+    Tooltip enriched with real club/position/price/next-GW xP (2026-08-29,
+    direct user spec) - reuses the SAME `PlayerCandidate` fields already
+    computed for every squad player via `get_locked_squad()` (`locked`),
+    never a second, re-derived xP/price lookup."""
+    from fpl_agent.models.rules import current_season
+
+    if not squad_ids:
+        return ""
+    season = current_season(conn)
+    if season is None:
+        return ""
+    candidate_by_id = {
+        c.player_id: c for c in ((locked.xi.starting + locked.xi.bench) if locked is not None else [])
+    }
+    placeholders = ",".join("?" * len(squad_ids))
+    rows = conn.execute(
+        f"SELECT h.player_id, p.web_name, SUM(h.xg) xg, SUM(h.xa) xa, SUM(h.minutes) minutes "
+        f"FROM player_match_stats_history h JOIN players p ON p.id = h.player_id "
+        f"WHERE h.season = ? AND h.player_id IN ({placeholders}) GROUP BY h.player_id",
+        (season, *squad_ids),
+    ).fetchall()
+    points = []
+    for r in rows:
+        if not r["minutes"] or r["minutes"] <= 0:
+            continue
+        point = {"x": round(r["xg"], 2), "y": round(r["xa"], 2), "name": r["web_name"]}
+        c = candidate_by_id.get(r["player_id"])
+        if c is not None:
+            point.update({
+                "club": c.team_short, "position": c.position,
+                "price": round(c.price_tenths / 10.0, 1), "xp": round(c.median, 1),
+            })
+        points.append(point)
+    chart = _scatter_chart_html(
+        points, x_label="Expected goals (xG)", y_label="Expected assists (xA)", color_var="--accent",
+        aria_label="Real season xG vs xA per squad player",
+    )
+    return f"""<div class="live-chart-card">
+    <div class="live-chart-title">xG vs xA <span class="panel-subtitle">real season totals per squad player</span></div>
+    {chart}
+  </div>"""
+
+
+_FIXTURE_HEATMAP_N_GW = 5
+
+
+def render_fixture_heatmap_chart(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Real teams x GWs fixture-difficulty heatmap (2026-08-29, direct user
+    spec: "a proper heatmap... visually readable as a single analytical
+    object"). Additive alongside the existing Fixture Ticker DOM/CSS grid
+    (`fixtures.py::render_fixture_tool_html`), not a replacement - that
+    grid's real per-cell sort/filter/metric-toggle/crest/DGW-BGW-badge
+    interactivity has no heatmap equivalent (a real, user-confirmed
+    trade-off from earlier this same session). Reuses the exact same real
+    `team_fixture_ticker` every row of that grid already calls - no second,
+    divergent difficulty computation."""
+    from fpl_agent.models.fixtures import live_or_reference_event, team_fixture_ticker
+
+    team_rows = conn.execute("SELECT id, short_name FROM teams ORDER BY short_name").fetchall()
+    if not team_rows:
+        return ""
+    start_event = live_or_reference_event(conn) or 1
+    col_labels = [f"GW{start_event + i}" for i in range(_FIXTURE_HEATMAP_N_GW)]
+    row_labels: list[str] = []
+    values: list[list[float | None]] = []
+    for r in team_rows:
+        entries = team_fixture_ticker(conn, r["id"], n_gw=_FIXTURE_HEATMAP_N_GW, from_event=start_event)
+        by_event = {e.event: float(e.difficulty) for e in entries}
+        row_labels.append(r["short_name"])
+        values.append([by_event.get(start_event + i) for i in range(_FIXTURE_HEATMAP_N_GW)])
+    if not row_labels:
+        return ""
+    chart = _heatmap_chart_html(
+        row_labels, col_labels, values, aria_label="Real fixture difficulty heatmap, all Premier League teams",
+    )
+    return f"""<div class="live-chart-card live-chart-card-wide">
+    <div class="live-chart-title">Fixture difficulty matrix <span class="panel-subtitle">real FDR heatmap, all teams, next {_FIXTURE_HEATMAP_N_GW} GWs</span></div>
+    {chart}
+  </div>"""
+
+
+def render_player_form_chart(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
+    """Real per-match expected-involvement (xG+xA) trend, one real line per
+    squad player who has 2+ real recorded matches this season
+    (`player_match_stats_history`, ordered by real `match_date`) - a single,
+    genuinely comparable metric across players rather than several unrelated
+    stats crammed onto one axis. Players with fewer than 2 real matches are
+    simply omitted from this chart (their own "not enough data yet" state
+    is already disclosed elsewhere - Player Inspector), never padded."""
+    from fpl_agent.models.rules import current_season
+
+    if not squad_ids:
+        return ""
+    season = current_season(conn)
+    if season is None:
+        return ""
+    placeholders = ",".join("?" * len(squad_ids))
+    rows = conn.execute(
+        f"SELECT h.player_id, p.web_name, h.match_date, h.xg, h.xa FROM player_match_stats_history h "
+        f"JOIN players p ON p.id = h.player_id WHERE h.season = ? AND h.player_id IN ({placeholders}) "
+        f"ORDER BY h.player_id, h.match_date",
+        (season, *squad_ids),
+    ).fetchall()
+    by_player: dict[int, list] = {}
+    for r in rows:
+        by_player.setdefault(r["player_id"], []).append(r)
+    series = []
+    palette = ["--accent", "--accent-2", "--ok", "--warn", "--bad", "--faint"]
+    for i, (pid, prows) in enumerate(by_player.items()):
+        if len(prows) < 2:
+            continue
+        series.append({
+            "label": prows[0]["web_name"], "colorVar": palette[i % len(palette)],
+            "points": [{"x": r["match_date"], "y": round(r["xg"] + r["xa"], 2)} for r in prows],
+        })
+    if not series:
+        return ""
+    payload = {"kind": "multi_line", "series": series, "valueFmt": "float"}
+    chart_html = (
+        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='Real per-match expected involvement trend'></div></div>"
+    )
+    return f"""<div class="live-chart-card live-chart-card-wide">
+    <div class="live-chart-title">Player form <span class="panel-subtitle">real per-match expected involvement (xG+xA) - players with 2+ real matches this season</span></div>
+    {chart_html}
+  </div>"""
+
+
+def render_live_charts(
+    conn: sqlite3.Connection, entry_id: int | None, event: int | None = None,
+    squad_ids: frozenset[int] | None = None, locked=None,
+) -> str:
     """Per-GW charts (rank trajectory, cumulative GW points - real
     `my_team_gw_summary` data, needs 2+ finished GWs) plus, when real
     samples exist, a genuinely intragame live-rank chart for the CURRENT
     gameweek (`render_intragame_rank_chart` - works before any GW has
-    finished, the real gap this closes). `''` only when there's no real
-    synced entry AND no real intragame samples either - never a
-    placeholder/mock chart."""
-    intragame_html = render_intragame_rank_chart(conn, event) + render_intragame_points_chart(conn, event)
+    finished, the real gap this closes), plus the real net-new analytical
+    charts (projection range, team strength, xG/xA, player form). `''` only
+    when there's no real synced entry AND no real intragame samples either -
+    never a placeholder/mock chart."""
+    squad_ids = squad_ids or frozenset()
+    intragame_html = (
+        render_intragame_rank_chart(conn, event, squad_ids) + render_intragame_points_chart(conn, event, squad_ids)
+        + render_captain_impact_chart(conn, event)
+    )
+    squad_team_ids = {c.team_id for c in (locked.xi.starting + locked.xi.bench)} if locked is not None else set()
+    analytical_html = (
+        render_projection_range_chart(locked)
+        + render_team_strength_chart(conn, squad_team_ids)
+        + render_player_comparison_chart(conn, squad_ids, locked)
+        + render_player_value_chart(locked)
+        + render_fixture_heatmap_chart(conn, squad_ids)
+        + render_player_form_chart(conn, squad_ids)
+    )
     if entry_id is None:
-        return f'<div class="live-charts-grid">{intragame_html}</div>' if intragame_html else ""
+        combined = intragame_html + analytical_html
+        return f'<div class="live-charts-grid">{combined}</div>' if combined else ""
 
     rank_series = _rank_series(conn, entry_id)
     points_series = _cumulative_points_series(conn, entry_id)
     rank_labels = [f"GW{e}" for e in rank_series.events]
     points_labels = [f"GW{e}" for e in points_series.events]
-    rank_chart = _single_chart_html(rank_labels, rank_series.values, color_var="--accent-2", invert_y=True, value_fmt="int", best_worst=True)
+    rank_chart = _single_chart_html(rank_labels, rank_series.values, color_var="--accent-2", invert_y=True, value_fmt="rank", best_worst=True)
     points_chart = _single_chart_html(points_labels, points_series.values, color_var="--accent", value_fmt="int")
-
-    captain_series = _captain_contribution_series(conn, entry_id)
-    captain_labels = [f"GW{e}" for e in captain_series.events]
-    captain_chart = _single_chart_html(
-        captain_labels, captain_series.values, color_var="--accent-2", value_fmt="int",
-        aria_label=f"Captain contribution, GW{captain_series.events[0]} to GW{captain_series.events[-1]}" if captain_series.events else "",
-    )
-
-    actual_series, expected_series = _actual_vs_expected_series(conn, entry_id)
-    avse_labels = [f"GW{e}" for e in actual_series.events]
-    actual_vs_expected_chart = _dual_chart_html(
-        avse_labels, actual_series.values, "Actual", "--accent", expected_series.values, "Expected", "--faint", value_fmt="int",
-    )
+    captain_chart = render_captain_contribution_chart(conn, entry_id)
+    actual_vs_expected_chart = render_actual_vs_expected_chart(conn, entry_id)
 
     return f"""<div class="live-charts-grid">
   {intragame_html}
@@ -335,11 +888,12 @@ def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: in
     {points_chart}
   </div>
   <div class="live-chart-card">
-    <div class="live-chart-title">Captain contribution <span class="panel-subtitle">real points from your real captain pick each GW</span></div>
+    <div class="live-chart-title">Captain contribution <span class="panel-subtitle">real points and real % of your real squad total, each GW</span></div>
     {captain_chart}
   </div>
   <div class="live-chart-card">
     <div class="live-chart-title">Starting XI: actual vs expected <span class="panel-subtitle">GWs with a real recorded pre-deadline prediction only</span></div>
     {actual_vs_expected_chart}
   </div>
+  {analytical_html}
 </div>"""

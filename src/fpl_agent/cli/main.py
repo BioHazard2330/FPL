@@ -2735,6 +2735,25 @@ def live_match_poll_cmd(interval: int, max_hours: float):
             any_live = False
             any_failure = False
             any_full_time_transition = False
+            # Real gap found + fixed 2026-08-29 (direct user report: "games
+            # online but i dont see it on dashboard") - `_write_dashboard()`
+            # below only ever fired on a real FULL_TIME transition (a
+            # deliberate 2026-08-28 perf fix so this loop's fast tick never
+            # re-triggers the ~1-minute full regen). But a match's FIRST
+            # transition into LIVE/HALFTIME needs a real full regen too - a
+            # brand-new match has no existing DOM card yet for the browser's
+            # own ~10s snapshot poll to patch (that poll can only update an
+            # ALREADY-rendered match card's score/stats, confirmed by its own
+            # docstring: "a brand-new match transitioning to LIVE with no
+            # existing card yet is a real, disclosed gap this fragment-swap
+            # alone can't close"). Without this, a genuinely live match could
+            # sit invisible on the dashboard for however long until the next
+            # regular `run_scheduled` regen - a real violation of the user's
+            # own "no delays, everything must update automatically" standing
+            # directive. Gated to a genuine not-live -> live/halftime
+            # transition specifically (never every tick a match stays live),
+            # so this stays exactly as rare/cheap as the FULL_TIME case.
+            any_new_live_transition = False
             for row in rows:
                 if not row["kickoff_utc"]:
                     continue
@@ -2757,6 +2776,12 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                     continue
                 if result["status"] in ("LIVE", "HALFTIME"):
                     any_live = True
+                    if row["prior_status"] not in ("LIVE", "HALFTIME"):
+                        any_new_live_transition = True
+                        click.echo(
+                            f"live-match-poll: {row['home_name']} v {row['away_name']} just went "
+                            f"{result['status']} - triggering an immediate dashboard regen so its card appears"
+                        )
                 elif result["status"] == "FULL_TIME" and row["prior_status"] != "FULL_TIME":
                     any_full_time_transition = True
                     from fpl_agent.ingestion.analysis_queue import supersede_stale_halftime_jobs
@@ -2819,10 +2844,12 @@ def live_match_poll_cmd(interval: int, max_hours: float):
             # live_snapshot.json channel (below) now carries the fields that
             # genuinely change every tick (live rank, live points, played/
             # live/to-play); the full dashboard only needs to regenerate on
-            # a real FULL_TIME transition (a meaningful, infrequent event -
-            # new post-GW pipeline state, real final scores) - unchanged
-            # cadence otherwise (run_scheduled's own regular regen).
-            if any_full_time_transition:
+            # a real FULL_TIME transition, or (2026-08-29 fix) a match's own
+            # first LIVE/HALFTIME transition (`any_new_live_transition`, see
+            # above - a meaningful, infrequent event each, never every live
+            # tick) - unchanged cadence otherwise (run_scheduled's own
+            # regular regen).
+            if any_full_time_transition or any_new_live_transition:
                 try:
                     _write_dashboard()
                 except Exception as e:

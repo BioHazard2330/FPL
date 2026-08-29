@@ -22,6 +22,8 @@ bars, a full two-half pitch with each team's shots on its own attacking
 half) and rebuilt around the same real conventions - never copying their
 markup, reusing their well-established visual language for this same real
 data."""
+import html
+import json
 import sqlite3
 
 from fpl_agent.monitoring.dashboard.legacy import _crest_html, _esc, _humanize, _match_feed_html, _relative_time
@@ -44,70 +46,47 @@ _OUTCOME_LABEL = {
 _EVENT_TYPE_CLASS = {"Goal": "goal", "Substitution": "sub", "Card": "card", "Shot": "shot"}
 
 
-def _momentum_svg(conn: sqlite3.Connection, match_id: int, momentum: list[dict], home_team_id: int | None) -> str:
-    """Real per-minute momentum, drawn as a filled two-tone area (home
-    pressure above the zero line, away pressure below) - FotMob's own
-    -100..100 scale, never interpolated beyond the real per-minute samples
-    it supplies. Real minute gridlines (0/15/30/45/60/75/90, clipped to
-    whatever minutes actually exist), a distinct half-time divider at 45',
-    and real goal markers (2026-08-29 forensic product redesign - direct
-    spec: "half-time divider... goals... major events") pulled straight
-    from the same `match_events` table the Match Feed already reads -
-    never a second event source."""
+def _momentum_chart_html(conn: sqlite3.Connection, match_id: int, momentum: list[dict], home_team_id: int | None) -> str:
+    """Real per-minute momentum, rendered as a real ApexCharts diverging
+    area (home pressure above the zero line, away pressure below) -
+    FotMob's own -100..100 scale, never interpolated beyond the real
+    per-minute samples it supplies. Rewritten from hand-rolled SVG
+    (2026-08-29, autonomy correction pass - full ApexCharts adoption for
+    every quantitative chart, spatial-only exceptions like the shot map
+    kept as SVG). Two real series (home/away pressure) are both direct,
+    deterministic transforms of the SAME one real signed value per minute
+    (`max(v,0)`/`min(v,0)`) - not a second data source, the same real
+    clamp-to-baseline the old SVG polygon fill already did. Real halftime
+    divider + goal annotations pulled straight from the same `match_events`
+    table the Match Feed already reads - never a second event source."""
     if len(momentum) < 2:
         return "<div class='chart-empty'>Momentum unavailable from the current FotMob payload for this match yet.</div>"
     max_minute = max(m["minute"] for m in momentum)
-    mid_y = _MOMENTUM_H / 2
-    top_y, bottom_y = 14, _MOMENTUM_H - 20
+    minutes = [m["minute"] for m in momentum]
+    home_series = [max(m["value"], 0) for m in momentum]
+    away_series = [min(m["value"], 0) for m in momentum]
 
-    def x_at(minute: int) -> float:
-        return (minute / max(max_minute, 1)) * _MOMENTUM_W
-
-    def y_at(value: int) -> float:
-        span = mid_y - top_y
-        return mid_y - (value / 100.0) * span
-
-    pts = [(x_at(m["minute"]), y_at(m["value"])) for m in momentum]
-    line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    # Two clipped area fills (positive-only, negative-only) - each point
-    # clamped to the baseline rather than computing an exact zero-crossing
-    # (FotMob itself only ever supplies one discrete sample per minute, so
-    # a linear approximation between two real samples is honest, not a
-    # fabricated extra data point).
-    home_area = " ".join(f"{x:.1f},{min(y, mid_y):.1f}" for x, y in pts)
-    away_area = " ".join(f"{x:.1f},{max(y, mid_y):.1f}" for x, y in pts)
-    last_x, last_y = pts[-1]
-
-    grid_minutes = [m for m in (0, 15, 30, 45, 60, 75, 90) if m <= max_minute + 2]
-    if max_minute > 90 and max_minute not in grid_minutes:
-        grid_minutes.append(max_minute)
-    gridlines = "".join(
-        f"<line x1='{x_at(gm):.1f}' y1='{top_y}' x2='{x_at(gm):.1f}' y2='{bottom_y}' "
-        f"class='match-momentum-grid{' match-momentum-ht' if gm == 45 else ''}' />"
-        f"<text x='{x_at(gm):.1f}' y='{_MOMENTUM_H - 4}' text-anchor='middle' class='chart-axis-label'>{gm}'</text>"
-        for gm in grid_minutes
-    )
     goal_rows = conn.execute(
         "SELECT minute, team_id, description FROM match_events WHERE match_id=? AND event_type='Goal' "
         "AND minute IS NOT NULL ORDER BY minute", (match_id,),
     ).fetchall()
-    goal_markers = "".join(
-        f"<g class='match-momentum-goal{' match-momentum-goal-home' if g['team_id'] == home_team_id else ' match-momentum-goal-away'}'>"
-        f"<line x1='{x_at(g['minute']):.1f}' y1='{top_y}' x2='{x_at(g['minute']):.1f}' y2='{bottom_y}' />"
-        f"<circle cx='{x_at(g['minute']):.1f}' cy='{top_y if g['team_id'] == home_team_id else bottom_y}' r='4' />"
-        f"<title>{_esc(g['description'] or 'Goal')}</title></g>"
+    goals = [
+        {
+            "minute": g["minute"],
+            "label": _esc(g["description"] or "Goal"),
+            "side": "home" if g["team_id"] == home_team_id else "away",
+        }
         for g in goal_rows if g["minute"] <= max_minute
+    ]
+    payload = {
+        "kind": "momentum", "minutes": minutes, "home": home_series, "away": away_series,
+        "maxMinute": max_minute, "goals": goals, "halftime": 45 <= max_minute,
+    }
+    return (
+        f"<div class='live-chart-canvas-wrap match-momentum-wrap'><div class='live-chart-canvas' "
+        f"data-match-momentum='{match_id}' data-chart=\"{html.escape(json.dumps(payload), quote=True)}\" "
+        f"role='img' aria-label='Match momentum, minute {momentum[0]['minute']} to {momentum[-1]['minute']}'></div></div>"
     )
-    return f"""<svg class="match-momentum-svg" data-match-momentum="{match_id}" viewBox="0 0 {_MOMENTUM_W} {_MOMENTUM_H}"
-    preserveAspectRatio="none" role="img" aria-label="Match momentum, minute {momentum[0]['minute']} to {momentum[-1]['minute']}">
-  {gridlines}
-  <polygon points="{home_area} {last_x:.1f},{mid_y} {pts[0][0]:.1f},{mid_y}" class="match-momentum-fill-home" />
-  <polygon points="{away_area} {last_x:.1f},{mid_y} {pts[0][0]:.1f},{mid_y}" class="match-momentum-fill-away" />
-  <line x1="0" y1="{mid_y}" x2="{_MOMENTUM_W}" y2="{mid_y}" class="match-momentum-mid" />
-  <polyline points="{line_points}" fill="none" class="match-momentum-line" stroke-width="2" stroke-linejoin="round" />
-  <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4.5" class="match-momentum-dot" />
-  {goal_markers}
-</svg>"""
 
 
 def _shot_map_svg(
@@ -135,7 +114,20 @@ def _shot_map_svg(
         side_cls = "home" if is_home else "away"
         outcome_cls, r = _OUTCOME_STYLE.get(s.get("outcome"), ("miss", 1.8))
         display_x = s["x"] if is_home else (100 - s["x"])
-        cx, cy = display_x, s["y"] * (_PITCH_H / 100.0)
+        # Real, confirmed edge case (2026-08-29, direct user report: "the
+        # live football dashboard looks a little off"): FotMob's real x/y
+        # occasionally lands slightly outside the nominal 0-100 range (a
+        # shot right on the goal line, or a rounding artefact in their own
+        # data) - confirmed live, this exact match, two real shots at
+        # x=100.4/102.8. Unclamped, `100 - x` goes negative and the dot
+        # draws off the pitch rect entirely, clipped by the SVG viewBox -
+        # a real shot silently disappearing off-canvas, not a fabricated
+        # position. Clamping to the valid pitch range keeps every real shot
+        # visible at the true edge instead of invisible past it - the
+        # shot's own real relative geometry is still honestly represented,
+        # just not allowed to render somewhere that doesn't exist.
+        cx = max(0.0, min(100.0, display_x))
+        cy = max(0.0, min(100.0, s["y"])) * (_PITCH_H / 100.0)
         label_bits = [f"{s['minute']}'" if s.get("minute") is not None else None, s.get("player_name")]
         if s.get("xg") is not None:
             label_bits.append(f"{s['xg']:.2f} xG")
@@ -297,7 +289,7 @@ def _match_card_html(conn: sqlite3.Connection, m: dict) -> str:
     status_label = "HT" if m["status"] == "HALFTIME" else (m["live_minute"] or "LIVE")
     squad_badge = "<span class='outlook-chip squad-badge'>YOUR SQUAD</span>" if m["is_squad_match"] else ""
     stats_html = _team_stats_rows_html(m["team_stats"].get("home"), m["team_stats"].get("away"))
-    momentum_html = _momentum_svg(conn, m["match_id"], m["momentum"], m["home_team_id"])
+    momentum_html = _momentum_chart_html(conn, m["match_id"], m["momentum"], m["home_team_id"])
     shot_map_html = _shot_map_svg(
         m["match_id"], m["shots"], home_team_id=m["home_team_id"],
         home_short=m["home_short"], away_short=m["away_short"],

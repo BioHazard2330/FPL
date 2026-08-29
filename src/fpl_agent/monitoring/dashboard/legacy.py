@@ -2198,10 +2198,28 @@ def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -
         # same flat grey badge - "bleak"). Purely a CSS hook off the SAME
         # real `event_type` string already stored, never a new field.
         type_cls = _MATCH_FEED_TYPE_CLASS.get(r["event_type"], "")
+        # Real, confirmed redundancy fix (2026-08-29, direct user report:
+        # "the live football dashboard looks a little off" - a real live
+        # match showed "GOAL Goal — Dan Ndoye" / "SHOT Shot saved — Xaver
+        # Schlager" in the feed). FotMob's own real description text
+        # already restates the event type as its own leading word - this
+        # never touches the STORED description (the real feed data stays
+        # exactly as FotMob supplied it), only trims the one duplicated
+        # word for THIS display so the colored type badge and the prose
+        # don't visibly repeat each other.
+        desc = _esc(r["description"])
+        event_type_esc = _esc(r["event_type"])
+        stripped = re.sub(rf"^{re.escape(event_type_esc)}\s*[—-]?\s*", "", desc, count=1, flags=re.IGNORECASE)
+        # Real edge case found live (2026-08-29): a genuine FotMob "VAR"
+        # event's own description is just "VAR — " with nothing after the
+        # dash - stripping the redundant leading word would leave a blank
+        # description next to a badge with no other content. Only use the
+        # stripped version when real text actually remains.
+        desc = stripped if stripped.strip() else desc
         items.append(
             f"<div class='match-feed-item'><span class='match-feed-minute'>{minute_label}</span>"
-            f"<span class='match-feed-type {type_cls}'>{_esc(r['event_type'])}</span>"
-            f"<span class='match-feed-desc'>{_esc(r['description'])}</span></div>"
+            f"<span class='match-feed-type {type_cls}'>{event_type_esc}</span>"
+            f"<span class='match-feed-desc'>{desc}</span></div>"
         )
     return "<div class='match-feed'>" + "\n".join(items) + "</div>"
 
@@ -4422,23 +4440,15 @@ _CSS = """
     font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg);
     text-shadow: 0 0 6px var(--surface-2), 0 0 3px var(--surface-2); white-space: nowrap; margin: 0; }
 
-  /* Momentum - a real per-minute filled area chart (home pressure above
-     the zero line, away below), with real minute gridlines - replaces the
-     first pass's bare, unlabelled single line. Floored at the same
-     240px/220px desktop/mobile bar every other live chart here uses. */
-  .match-momentum-svg { width: 100%; height: auto; min-height: 300px; display: block; }
-  .match-momentum-grid { stroke: var(--gridline); stroke-width: 0.5; opacity: 0.6; }
-  .match-momentum-mid { stroke: var(--gridline); stroke-width: 1.5; }
-  .match-momentum-fill-home { fill: var(--mc-home); opacity: 0.28; }
-  .match-momentum-fill-away { fill: var(--mc-away); opacity: 0.28; }
-  .match-momentum-line { stroke: var(--fg); opacity: 0.85; }
-  .match-momentum-dot { fill: var(--fg); }
-  /* Half-time divider + real goal markers (2026-08-29 forensic redesign) */
-  .match-momentum-ht { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: 1; }
-  .match-momentum-goal line { stroke-width: 1.5; opacity: 0.9; }
-  .match-momentum-goal circle { stroke: var(--surface-2); stroke-width: 1.5; }
-  .match-momentum-goal-home line, .match-momentum-goal-home circle { stroke: var(--mc-home); fill: var(--mc-home); }
-  .match-momentum-goal-away line, .match-momentum-goal-away circle { stroke: var(--mc-away); fill: var(--mc-away); }
+  /* Momentum - a real ApexCharts diverging area (home pressure above the
+     zero line, away below) - rewritten 2026-08-29 (autonomy correction
+     pass) from hand-rolled SVG to the same real charting library every
+     other quantitative chart on this dashboard uses; `_momentum_chart_html`
+     (match_centre.py) emits a `.live-chart-canvas` div, so it shares that
+     class's sizing rule - this wrap only sets a slightly taller real height
+     (momentum reads better with more vertical room than a compact per-GW
+     trend card). */
+  .match-momentum-wrap .live-chart-canvas-wrap { height: 280px; }
 
   /* Shot map - a real full-pitch (both halves) plot, each team's shots on
      ITS OWN attacking half (away team's real x mirrored purely for this
@@ -4480,7 +4490,8 @@ _CSS = """
   .match-feed-type-sub { color: #04c8ff !important; background: rgba(4, 200, 255, 0.14) !important; }
 
   @media (max-width: 480px) {
-    .match-momentum-svg, .shot-map-svg { min-height: 220px; }
+    .match-momentum-wrap .live-chart-canvas-wrap { height: 220px; }
+    .shot-map-svg { min-height: 220px; }
     .match-centre-score { font-size: 1.7rem; }
     .mc-badge { width: 24px; height: 24px; font-size: 0.62rem; }
   }
@@ -4704,12 +4715,21 @@ _CSS = """
      and mobile (~220px) bars from a single value. */
   .live-charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 16px; }
   .live-chart-card { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+  /* Real wide-card variant (2026-08-29, autonomy correction pass) - the new
+     analytical charts (projection range, team strength, player form) carry
+     more real categories/series than the compact per-GW cards and need the
+     full row width to stay legible, not squeezed into one auto-fit column. */
+  .live-chart-card-wide { grid-column: 1 / -1; }
   .live-chart-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
-  /* Real Chart.js canvas (2026-08-29 rewrite, replacing hand-rolled SVG -
-     see live_charts.py's own docstring). A fixed-height wrapper is
-     required for Chart.js's `maintainAspectRatio:false` responsive mode
-     to size correctly - the canvas itself has no intrinsic ratio. */
+  /* Real ApexCharts canvas (rewritten 2026-08-29, replacing Chart.js then
+     hand-rolled SVG before it - see live_charts.py's own docstring). A
+     fixed-height wrapper is required for ApexCharts' `height:'100%'`
+     responsive mode to size correctly - the container itself has no
+     intrinsic ratio. Wide cards get real extra height - a dense range/bar/
+     multi-line chart is illegible squeezed into the same 260px a simple
+     two-point trend uses. */
   .live-chart-canvas-wrap { position: relative; height: 260px; width: 100%; }
+  .live-chart-card-wide .live-chart-canvas-wrap { height: 360px; }
   .live-chart-canvas { width: 100% !important; height: 100% !important; }
   .chart-empty { color: var(--faint); font-size: 0.85rem; padding: 8px 0; }
   /* Real "LIVE CHANGES" feed (2026-08-29, "final runtime reliability pass"

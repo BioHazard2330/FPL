@@ -29,6 +29,7 @@ computation. Never runs Dixon-Coles, Monte Carlo, or the strategic beam
 search - those stay on their own expensive, materiality-gated cadence
 (`cli/main.py::_maybe_trigger_strategic_plan_recompute`), untouched here."""
 import json
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -453,7 +454,29 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         }
 
     if my_live_score is not None:
-        _maybe_log_intragame_points_sample(conn, event, my_live_score, rank_block)
+        # Real, isolated try/except (2026-08-29, direct user report: "the
+        # dashboard says recomputing... this looks a little off" - traced to
+        # a real, recurring `sqlite3.OperationalError: database is locked`
+        # here). Root cause: `assemble.py`'s dashboard-regen path wraps this
+        # whole call inside an explicit read-only `BEGIN` (its own real
+        # torn-read fix), and this ONE write - a genuinely non-critical,
+        # throttled chart-sample log - was contending with a real concurrent
+        # writer (`live-match-poll`, now polling far more often after this
+        # same session's own scheduler fix) for a write lock on the SAME
+        # database file. The uncaught exception aborted the ENTIRE snapshot
+        # build, which is why the whole SYSTEM LIVE strip kept silently
+        # falling back to its unpolled "Unknown" shell on every regen -
+        # confirmed live via the real recurring traceback in
+        # logs/fpl_agent.log. This sample is a real "nice to have" for one
+        # chart, never worth sacrificing the rest of a real, already-computed
+        # snapshot over - skipped for this tick only, never silently retried
+        # into a wedged state (the next real tick tries again fresh).
+        try:
+            _maybe_log_intragame_points_sample(conn, event, my_live_score, rank_block)
+        except sqlite3.OperationalError:
+            logging.getLogger("fpl_agent.live_snapshot").warning(
+                "intragame points sample write skipped this tick (database locked by a real concurrent writer)"
+            )
 
     return {
         "version": now,  # ISO timestamp - sortable, and a real "as of" disclosure, not an opaque counter

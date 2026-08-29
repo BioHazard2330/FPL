@@ -108,6 +108,39 @@ def test_live_match_uses_the_fast_interval(db_conn, monkeypatch):
     assert calls["intervals"] == [20]
 
 
+def test_a_match_going_live_for_the_first_time_triggers_an_immediate_dashboard_regen(db_conn, monkeypatch):
+    """Real bug found + fixed 2026-08-29 (direct user report: "games online
+    but i dont see it on dashboard"). `_write_dashboard()` used to only ever
+    fire on a real FULL_TIME transition (a deliberate 2026-08-28 perf fix) -
+    a match's own FIRST transition into LIVE never got one, so a brand-new
+    match had no DOM card for the browser's ~10s snapshot poll to patch
+    (that poll can only update an ALREADY-rendered card). Seeds a real
+    PRE_MATCH prior status with a payload reporting LIVE - a genuine
+    not-live -> live transition - and asserts the real regen fires."""
+    kickoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    _seed_match_intelligence_row(db_conn, "PRE_MATCH", kickoff)
+    _stub(monkeypatch, _live_payload())
+
+    result, calls = _run_with_sleep_limit(monkeypatch, ["live-match-poll", "--interval", "20"])
+
+    assert result.exit_code == 0, result.output
+    assert "triggering an immediate dashboard regen" in result.output
+
+
+def test_a_match_still_live_on_a_later_tick_does_not_re_trigger_the_regen(db_conn, monkeypatch):
+    """The real trigger must fire only on the genuine transition, never on
+    every tick a match simply stays live (that would undo the 2026-08-28
+    perf fix this same trigger is layered onto)."""
+    kickoff = datetime.now(timezone.utc) - timedelta(minutes=17)
+    _seed_match_intelligence_row(db_conn, "LIVE", kickoff)
+    _stub(monkeypatch, _live_payload())
+
+    result, calls = _run_with_sleep_limit(monkeypatch, ["live-match-poll", "--interval", "20"])
+
+    assert result.exit_code == 0, result.output
+    assert "triggering an immediate dashboard regen" not in result.output
+
+
 def test_full_time_stops_the_poller(db_conn, monkeypatch):
     kickoff = datetime.now(timezone.utc) - timedelta(minutes=90)
     _seed_match_intelligence_row(db_conn, "LIVE", kickoff)

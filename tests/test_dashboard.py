@@ -2344,31 +2344,83 @@ def test_statistics_honest_empty_state_before_any_snapshot(db_conn):
 # the whole real pipeline (assemble.py -> decision_freshness.py -> home.py),
 # not just the isolated pieces. ---------------------------------------------
 
-def _seed_strategic_plan_with_current_rec(conn, *, path_total=20.0):
+def _seed_strategic_plan_with_current_rec(conn, *, path_total=20.0, label="ROLL", action_kind="roll", confidence="HIGH"):
     from fpl_agent.database.decisions import log_decision
 
     return log_decision(
-        conn, "strategic_plan", "ROLL (strategic 8GW EV=20.0)",
+        conn, "strategic_plan", f"{label} (strategic 8GW EV={path_total})",
         {
             "horizon_gw": 8, "note": "test", "immediate_vs_strategic_differ": False,
-            "horizon_comparison": [{"horizon_gw": 8, "opening_action": "ROLL", "total_net_ev": path_total}],
+            "horizon_comparison": [{"horizon_gw": 8, "opening_action": label, "total_net_ev": path_total}],
             "best_path": {
                 "total_net_ev": path_total, "path_total": path_total, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
-                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": label, "uses_hit": False}],
             },
             "paths": [{
                 "total_net_ev": path_total, "path_total": path_total, "delta_vs_roll": 0.0, "delta_vs_leader": 0.0,
-                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+                "final_free_transfers": 1, "final_bank_tenths": 5, "steps": [{"event": 2, "action": label, "uses_hit": False}],
             }],
             "chip_schedule": None,
             "current_recommendation": {
-                "verdict": "ACT", "action_kind": "roll", "label": "ROLL", "path_total": path_total,
-                "immediate_optimum_label": "ROLL", "strategic_optimum_label": "ROLL",
-                "immediate_vs_strategic_differ": False, "evidence_confidence": "HIGH",
+                "verdict": "ACT", "action_kind": action_kind, "label": label, "path_total": path_total,
+                "immediate_optimum_label": label, "strategic_optimum_label": label,
+                "immediate_vs_strategic_differ": False, "evidence_confidence": confidence,
                 "reason": "no transfer clears the bar", "starting_action_options": [],
             },
         },
     )
+
+
+def test_current_fpl_state_clears_recomputing_after_a_real_recompute_even_when_hysteresis_holds_the_old_verdict(db_conn):
+    """Real bug found + fixed (2026-08-29, direct user report: "why is the
+    dashboard saying recomputing and i have run fpl strategic plan again" -
+    it never cleared no matter how many times the user re-ran it). Root
+    cause: the freshness check used to compare against
+    `_compute_primary_verdict`'s own HYSTERESIS-filtered decision
+    (`decision_hysteresis.py`, milestone 4) - which deliberately keeps
+    displaying an older decision until a real EV/confidence/persistence bar
+    is cleared, so a genuinely fresh recompute that hysteresis correctly
+    declines to promote made the staleness check compare against a
+    timestamp that could never advance. This seeds exactly that scenario:
+    decision A (ROLL) computed first, a real HIGH-severity change lands,
+    THEN a real recompute produces decision B (TRANSFER, only +1 EV -
+    below the 5.0 hysteresis bar, so the hero still correctly DISPLAYS
+    ROLL) - the dashboard must still say CURRENT, not RECOMPUTING, because
+    a real recompute already happened after the triggering change."""
+    from datetime import datetime, timedelta, timezone
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    from test_optimization_locked_squad import _seed_real_picks
+    _seed_real_picks(db_conn)
+
+    # Explicit, deterministic ordering (real elapsed wall-clock time between
+    # statements is ~0s, so a naive "+1 second" offset on only ONE
+    # timestamp doesn't reliably land it between the other two) - A at T0,
+    # the triggering change at T0+1s, recompute B at T0+2s.
+    t0 = datetime.now(timezone.utc)
+    decision_a_id = _seed_strategic_plan_with_current_rec(db_conn, path_total=20.0, label="ROLL")
+    db_conn.execute("UPDATE decisions SET created_at=? WHERE id=?", (t0.isoformat(), decision_a_id))
+    db_conn.execute(
+        "INSERT INTO change_events (event_type, entity, entity_id, old_value, new_value, detected_at, "
+        "sources, confidence, severity, fpl_impact, action_required) "
+        "VALUES ('status_change','player',30,'a','i',?,'[]','CONFIRMED','HIGH',NULL,0)",
+        ((t0 + timedelta(seconds=1)).isoformat(),),
+    )
+    db_conn.commit()
+    # Real recompute B - only +1.0 EV over A (below the real 5.0 hysteresis
+    # bar), so `stable_current_recommendation` correctly keeps DISPLAYING A
+    # (ROLL) - but freshness must be judged against B's own real timestamp,
+    # not A's, since a genuine recompute already accounted for the change
+    # detected above.
+    decision_b_id = _seed_strategic_plan_with_current_rec(db_conn, path_total=21.0, label="TRANSFER", action_kind="transfer")
+    db_conn.execute("UPDATE decisions SET created_at=? WHERE id=?", ((t0 + timedelta(seconds=2)).isoformat(), decision_b_id))
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert "<div class='home-hero-stale-banner'>" not in result
+    assert ">ROLL<" in result or "ROLL" in result  # hysteresis still correctly displays the earlier verdict
 
 
 def test_current_fpl_state_shows_recomputing_when_a_real_change_postdates_the_decision(db_conn):

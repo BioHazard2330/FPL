@@ -273,12 +273,34 @@ def generate_dashboard_html(
     # its real age and check for a real, already-recorded material change
     # since it was computed (`change_events`, HIGH severity, squad-scoped)
     # rather than silently presenting a possibly-outdated verdict as current.
+    #
+    # Real bug found + fixed (2026-08-29, direct user report: "why is the
+    # dashboard saying recomputing and i have run fpl strategic plan again" -
+    # it never cleared no matter how many times the user re-ran it). This
+    # used to check `primary_verdict.strategic_decision` - the HYSTERESIS-
+    # filtered decision (`models/decision_hysteresis.py`, milestone 4),
+    # which deliberately keeps pointing at an older decision until a real EV/
+    # confidence/persistence bar is cleared, specifically so the DISPLAYED
+    # verdict doesn't flip-flop on noise. That's the right behavior for what
+    # to SHOW - it's the wrong thing to check freshness against: a fresh
+    # recompute can genuinely re-confirm the same answer (hysteresis
+    # correctly declines to flip it) while this check kept comparing against
+    # the old, hysteresis-locked timestamp - meaning RECOMPUTING could never
+    # clear even after a real, successful re-run, because hysteresis's own
+    # job is to NOT advance that reference point. Freshness must answer "has
+    # a recompute happened since the world last changed", which needs the
+    # RAW latest strategic_plan decision (same one `live_snapshot.py`'s own
+    # freshness check and `adversarial_audit.py`'s cross-check already use,
+    # per `decision_freshness.py`'s own docstring - hysteresis was always
+    # meant to be excluded from this, this call site was just never updated
+    # when milestone 4 introduced it).
     freshness = None
     if current_rec is not None and locked is not None:
         from fpl_agent.models.decision_freshness import assess_recommendation_freshness
+
+        latest_strategic_decision = latest_decision_of_type(conn, "strategic_plan")
         freshness = assess_recommendation_freshness(
-            conn, primary_verdict.strategic_decision if primary_verdict is not None else None,
-            set(locked.squad_ids),
+            conn, latest_strategic_decision, set(locked.squad_ids),
         )
     # Real MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
     # pass) - every input here is a real, already-real, independently-cheap
@@ -397,7 +419,7 @@ def generate_dashboard_html(
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
   {_live_tracking_html(conn, squad_ids, live_payload, captain_id=(locked.xi.captain.player_id if locked is not None and locked.xi.captain else None), by_player=(my_live_score.by_player if my_live_score is not None else None))}
-  {live_charts.render_live_charts(conn, my_team_entry_id, reference_event)}
+  {live_charts.render_live_charts(conn, my_team_entry_id, reference_event, squad_ids, locked)}
   <div class="live-changes-feed-wrap" id="live-changes-feed-wrap" hidden>
     <div class="live-changes-feed-title">LIVE CHANGES</div>
     <ul class="live-changes-feed" id="live-changes-feed"></ul>
@@ -470,15 +492,18 @@ def generate_dashboard_html(
 {_CSS}
 {_CSS_WORKSPACE}
 </style>
-<!-- Real Chart.js (v4.4.9, MIT license), vendored locally (2026-08-29
-     forensic redesign - direct user correction: hand-rolled SVG charts
-     "look terrible... like a kid made it"). Downloaded once to
-     data/vendor/chart.umd.js and served same-origin - never a live CDN
-     dependency, works offline like every other asset here. If this file
-     is ever missing (a copy of dashboard.html moved without its data/
-     folder), the chart <canvas> elements simply stay blank - real,
-     honest degradation, not a broken-image-style failure. -->
-<script src="vendor/chart.umd.js"></script>
+<!-- Real ApexCharts (v3.45.2, MIT license), vendored locally. Swapped in
+     2026-08-29 (autonomy correction pass) from Chart.js - direct, repeated
+     user correction that the charts still "looked bad" even after a real
+     marker/gradient-fill fix landed on Chart.js: ApexCharts' own built-in
+     gradient-fill and point-annotation APIs give a polished result with far
+     less hand-rolled canvas code (no more custom label-collision plugin).
+     Downloaded once to data/vendor/apexcharts.min.js and served same-origin
+     - never a live CDN dependency, works offline like every other asset
+     here. If this file is ever missing (a copy of dashboard.html moved
+     without its data/ folder), the chart containers simply stay blank -
+     real, honest degradation, not a broken-image-style failure. -->
+<script src="vendor/apexcharts.min.js"></script>
 </head>
 <body class="state-{_esc(dash_state.lower())}">
 <header class="topbar">
@@ -651,121 +676,442 @@ def generate_dashboard_html(
 }})();
 
 (function() {{
-  // Real Chart.js rendering (2026-08-29 forensic product redesign - direct,
-  // harsh user correction: the previous hand-rolled SVG line charts "look
-  // absolutely terrible... like a kid made it"). Each `.live-chart-canvas`
-  // carries its own real, already-computed data payload (`live_charts.py`'s
-  // own docstring explains why the SERIES math stays server-side, unchanged -
-  // only the drawing moved to a real, well-known charting library). No-op
-  // entirely if Chart.js failed to load (e.g. a copy of dashboard.html moved
-  // without its data/vendor/ folder) - real, honest degradation.
-  if (typeof Chart === 'undefined') return;
+  // Real ApexCharts chart architecture (2026-08-29, autonomy correction pass
+  // - direct, repeated, all-caps user correction demanding a coherent
+  // per-visualization redesign, not "one generic area-chart config for
+  // everything": "ApexCharts is now the REQUIRED visualization engine...
+  // replace weak visualizations with correct analytical visualizations...
+  // do not implement one chart and stop"). Named builder functions per real
+  // chart kind (`single`/`dual` time-series area, `column`/grouped-column,
+  // `range` floor-median-ceiling band, `scatter`, `bar`, `momentum`
+  // diverging area, `multi_line` per-player form) - each owns its own real
+  // ApexCharts config; only theme tokens (`cssVar`/`fmtVal`) are shared.
+  // Persistent instances live in `window.dashboardCharts` (keyed by a real
+  // server-assigned `data-chart-id`, or `momentum[matchId]`) so a live poll
+  // or an SSE match-card swap can call `updateSeries`/`appendData` on an
+  // EXISTING chart instead of destroying and recreating one every tick -
+  // `window.fplInitCharts(root)` is the one real entry point, called once
+  // for the initial page and again for any DOM subtree an SSE swap inserts.
+  window.dashboardCharts = window.dashboardCharts || {{ momentum: {{}} }};
+  if (typeof ApexCharts === 'undefined') {{ window.fplInitCharts = function() {{}}; return; }}
   var rootStyle = getComputedStyle(document.documentElement);
   function cssVar(name) {{ return rootStyle.getPropertyValue(name).trim() || '#00ff87'; }}
-  function withAlpha(hex, alpha) {{
-    hex = hex.replace('#', '');
-    if (hex.length === 3) {{ hex = hex.split('').map(function(c) {{ return c + c; }}).join(''); }}
-    var r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
-    if (isNaN(r) || isNaN(g) || isNaN(b)) return 'rgba(0,255,135,' + alpha + ')';
-    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-  }}
   function fmtVal(v, valueFmt) {{
+    if (v == null) return '';
+    // Real domain-specific axis formatting (2026-08-29, direct user spec:
+    // rank as "2.4m" not "2,400,000"). 'rank' is only ever a real overall-
+    // rank magnitude (hundreds of thousands to low millions) - never used
+    // for FPL points, which stay plain small integers ('int').
+    if (valueFmt === 'rank') {{
+      var abs = Math.abs(v);
+      if (abs >= 1000000) return (v / 1000000).toFixed(1).replace(/\\.0$/, '') + 'm';
+      if (abs >= 1000) return (v / 1000).toFixed(0) + 'k';
+      return Math.round(v).toString();
+    }}
     return valueFmt === 'int' ? Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toFixed(1);
   }}
-  // Real best/worst/start markers (2026-08-29) - a custom Chart.js plugin,
-  // not the separate chartjs-plugin-annotation package (avoids a second
-  // vendored dependency for three dots + labels). `markers` (best/worst/
-  // start dataIndex, or null) come straight from `_single_chart_html`'s own
-  // real computation over the exact same values already plotted - this
-  // plugin only draws, never recomputes.
-  var fplMarkerPlugin = {{
-    id: 'fplMarkers',
-    afterDatasetsDraw: function(chart) {{
-      var markers = chart.$fplMarkers;
-      if (!markers) return;
-      var meta = chart.getDatasetMeta(0);
-      var ctx = chart.ctx;
+  var FONT = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
+  // Real bug found + fixed live (2026-08-29, verified via the actual
+  // browser console after the first regen: EVERY chart kind failed
+  // identically with "Cannot read properties of undefined (reading
+  // 'type')" inside apexcharts.min.js). Root cause: this helper used to
+  // return a single FLAT object with `type`/`height`/etc. at the top
+  // level - but ApexCharts' own real config shape requires those under a
+  // nested `chart: {{...}}` key (`options.chart.type` is what its
+  // constructor actually reads); with no `chart` key present at all,
+  // `options.chart` was `undefined` for every single chart, uniformly.
+  // Each builder below still passes `type` (and nothing else chart-level)
+  // at its own object's top level for its own readability - this helper
+  // is what actually nests it correctly before ApexCharts ever sees it.
+  function baseChart(config) {{
+    var out = Object.assign({{}}, config);
+    var type = out.type, stacked = out.stacked;
+    delete out.type;
+    delete out.stacked;
+    out.chart = Object.assign({{
+      type: type, stacked: !!stacked, height: '100%', foreColor: cssVar('--faint'), fontFamily: FONT,
+      toolbar: {{ show: false }}, zoom: {{ enabled: false }},
+      animations: {{ enabled: true, speed: 350 }}, parentHeightOffset: 0,
+    }}, out.chart || {{}});
+    return out;
+  }}
+  function axisLabelStyle() {{ return {{ colors: cssVar('--faint'), fontSize: '11px' }}; }}
+  function baseGrid() {{ return {{ borderColor: cssVar('--gridline'), strokeDashArray: 3, padding: {{ left: 8, right: 8 }} }}; }}
+
+  // --- single / dual real time-series area (live rank, live squad points,
+  // rank trajectory, cumulative points) ----------------------------------
+  function buildTimeSeries(payload) {{
+    var valueFmt = payload.valueFmt || 'float';
+    var isDual = payload.kind === 'dual';
+    var isDatetime = payload.xType === 'datetime';
+    var faint = cssVar('--faint'), surface2 = cssVar('--surface-2'), fg = cssVar('--fg');
+
+    function toPoints(values) {{
+      return isDatetime ? values.map(function(v, i) {{ return {{ x: payload.x[i], y: v }}; }}) : values;
+    }}
+    var series = isDual
+      ? [
+          {{ name: payload.seriesA.label, data: toPoints(payload.seriesA.values) }},
+          {{ name: payload.seriesB.label, data: toPoints(payload.seriesB.values) }},
+        ]
+      : [{{ name: 'Value', data: toPoints(payload.values) }}];
+    var colors = isDual ? [cssVar(payload.seriesA.colorVar), cssVar(payload.seriesB.colorVar)] : [cssVar(payload.colorVar)];
+    var rawValues = isDual ? payload.seriesA.values : payload.values;
+
+    // No fabrication (standing project rule): with exactly 2 real points a
+    // line can only honestly be straight - any curvature a spline draws
+    // there is entirely synthetic. A real stepline (`payload.step`) is used
+    // instead for a quantity that only changes at discrete real events
+    // (FPL points), never a continuous drift.
+    var curveType = payload.step ? 'stepline' : (rawValues.length <= 2 ? 'straight' : 'smooth');
+
+    var points = [];
+    if (payload.markers) {{
       var defs = [
-        {{ key: 'best', color: cssVar('--ok'), label: 'Best' }},
-        {{ key: 'worst', color: cssVar('--bad'), label: 'Worst' }},
-        {{ key: 'start', color: cssVar('--faint'), label: 'Start' }},
+        {{ key: 'start', color: faint, label: 'Start', offsetY: -18 }},
+        {{ key: 'worst', color: cssVar('--bad'), label: 'Worst', offsetY: 18 }},
+        {{ key: 'best', color: cssVar('--ok'), label: 'Best', offsetY: -18 }},
       ];
       defs.forEach(function(d) {{
-        var idx = markers[d.key];
+        var idx = payload.markers[d.key];
         if (idx === null || idx === undefined) return;
-        var pt = meta.data[idx];
-        if (!pt) return;
-        var x = pt.x, y = pt.y;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = d.color;
-        ctx.fill();
-        ctx.strokeStyle = cssVar('--surface');
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        var label = d.label + ' ' + fmtVal(chart.data.datasets[0].data[idx], chart.$fplValueFmt);
-        ctx.font = '700 10px Inter, sans-serif';
-        ctx.fillStyle = d.color;
-        var top = y < chart.chartArea.top + 20;
-        ctx.textAlign = x < chart.chartArea.left + 30 ? 'left' : (x > chart.chartArea.right - 30 ? 'right' : 'center');
-        ctx.fillText(label, x, top ? y + 16 : y - 8);
-        ctx.restore();
+        points.push({{
+          x: isDatetime ? payload.x[idx] : payload.labels[idx], y: payload.values[idx],
+          marker: {{ size: 4, fillColor: d.color, strokeColor: surface2, strokeWidth: 2 }},
+          label: {{
+            text: d.label + ' ' + fmtVal(payload.values[idx], valueFmt),
+            borderColor: d.color, offsetY: d.offsetY,
+            style: {{ color: fg, background: surface2, fontSize: '11px', fontWeight: 700, padding: {{ left: 7, right: 7, top: 4, bottom: 4 }} }},
+          }},
+        }});
       }});
-    }},
-  }};
-  Chart.register(fplMarkerPlugin);
-
-  var baseOptions = {{
-    responsive: true, maintainAspectRatio: false,
-    interaction: {{ mode: 'index', intersect: false }},
-    plugins: {{
-      legend: {{ display: false, labels: {{ color: cssVar('--muted'), boxWidth: 10, font: {{ size: 11 }} }} }},
-      tooltip: {{
-        backgroundColor: cssVar('--surface-2'), titleColor: cssVar('--fg'), bodyColor: cssVar('--fg'),
-        borderColor: cssVar('--gridline'), borderWidth: 1, padding: 8, displayColors: true,
-      }},
-    }},
-    scales: {{
-      x: {{ grid: {{ color: cssVar('--gridline') }}, ticks: {{ color: cssVar('--faint'), font: {{ size: 10 }}, maxRotation: 0 }} }},
-      y: {{ grid: {{ color: cssVar('--gridline') }}, ticks: {{ color: cssVar('--faint'), font: {{ size: 10 }} }} }},
-    }},
-  }};
-
-  document.querySelectorAll('.live-chart-canvas').forEach(function(canvas) {{
-    var payload;
-    try {{ payload = JSON.parse(canvas.dataset.chart); }} catch (e) {{ return; }}
-    var ctx = canvas.getContext('2d');
-    var valueFmt = payload.valueFmt || 'float';
-    var opts = JSON.parse(JSON.stringify(baseOptions));
-    opts.scales.y.reverse = !!payload.invertY;
-    opts.scales.y.ticks.callback = function(v) {{ return fmtVal(v, valueFmt); }};
-    opts.plugins.tooltip.callbacks = {{
-      label: function(item) {{ return item.dataset.label + ': ' + fmtVal(item.parsed.y, valueFmt); }},
-    }};
-
-    var datasets;
-    if (payload.kind === 'dual') {{
-      opts.plugins.legend.display = true;
-      datasets = [payload.seriesA, payload.seriesB].map(function(s) {{
-        var color = cssVar(s.colorVar);
-        return {{
-          label: s.label, data: s.values, borderColor: color, backgroundColor: withAlpha(color, 0.12),
-          fill: false, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
-        }};
-      }});
-    }} else {{
-      var color = cssVar(payload.colorVar);
-      datasets = [{{
-        label: 'Value', data: payload.values, borderColor: color, backgroundColor: withAlpha(color, 0.18),
-        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2.5,
-      }}];
     }}
+    // Real, meaningful FPL event annotations (a squad player's real goal or
+    // card, `_squad_match_events` - never a synthetic marker) - a vertical
+    // dashed line + small label at the real timestamp it happened.
+    var xAnnotations = (payload.events || []).map(function(e) {{
+      return {{
+        x: e.x, borderColor: cssVar('--accent-2'), strokeDashArray: 3,
+        label: {{
+          text: e.label, orientation: 'horizontal', offsetY: -4,
+          style: {{ color: fg, background: surface2, fontSize: '10px', fontWeight: 700, padding: {{ left: 5, right: 5, top: 2, bottom: 2 }} }},
+        }},
+      }};
+    }});
 
-    var chart = new Chart(ctx, {{ type: 'line', data: {{ labels: payload.labels, datasets: datasets }}, options: opts, plugins: [fplMarkerPlugin] }});
-    chart.$fplMarkers = payload.markers || null;
-    chart.$fplValueFmt = valueFmt;
-  }});
+    return baseChart({{
+      type: 'area',
+      series: series,
+      colors: colors,
+      stroke: {{ curve: curveType, width: isDual ? 2 : 2.5 }},
+      fill: {{ type: 'gradient', gradient: {{ shadeIntensity: 1, opacityFrom: isDual ? 0.25 : 0.4, opacityTo: 0.03, stops: [0, 95, 100] }} }},
+      dataLabels: {{ enabled: false }},
+      markers: {{ size: 0, hover: {{ size: 5 }} }},
+      grid: baseGrid(),
+      legend: {{ show: isDual, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600, markers: {{ size: 5 }} }},
+      xaxis: Object.assign(
+        {{ labels: {{ style: axisLabelStyle(), rotate: 0 }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }}, tooltip: {{ enabled: false }} }},
+        isDatetime ? {{ type: 'datetime' }} : {{ categories: payload.labels }}
+      ),
+      yaxis: {{ reversed: !!payload.invertY, labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, valueFmt); }} }} }},
+      // Real contextual tooltip (2026-08-29, direct user spec: never a bare
+      // "Value: 26" - show time, the real value(s), the real delta since
+      // the previous real sample, and the nearest real event if one landed
+      // close to this point) - only for the real intragame (datetime-axis)
+      // charts, where "since the previous sample" and "nearest event" are
+      // both meaningful; the sparse per-GW charts keep the plain formatter.
+      tooltip: isDatetime ? {{
+        theme: 'dark', shared: isDual,
+        custom: function(opts) {{
+          var idx = opts.dataPointIndex;
+          var x = payload.x[idx];
+          var timeStr = new Date(x).toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
+          var lines = ['<b>' + timeStr + '</b>'];
+          if (isDual) {{
+            lines.push(payload.seriesA.label + ': ' + fmtVal(payload.seriesA.values[idx], valueFmt));
+            lines.push(payload.seriesB.label + ': ' + fmtVal(payload.seriesB.values[idx], valueFmt));
+          }} else {{
+            lines.push(fmtVal(payload.values[idx], valueFmt));
+          }}
+          if (idx > 0) {{
+            var prevVal = isDual ? payload.seriesA.values[idx - 1] : payload.values[idx - 1];
+            var curVal = isDual ? payload.seriesA.values[idx] : payload.values[idx];
+            var delta = curVal - prevVal;
+            if (delta !== 0) {{
+              var prevTime = new Date(payload.x[idx - 1]).toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
+              lines.push((delta > 0 ? '+' : '') + fmtVal(delta, valueFmt) + ' since ' + prevTime);
+            }}
+          }}
+          var nearestEvent = (payload.events || []).find(function(e) {{ return Math.abs(e.x - x) <= 90000; }});
+          if (nearestEvent) {{ lines.push(nearestEvent.label); }}
+          return '<div style="padding:8px 10px;background:' + surface2 + ';color:' + fg +
+            ';font-size:12px;line-height:1.5;">' + lines.join('<br/>') + '</div>';
+        }},
+      }} : {{ theme: 'dark', x: {{ show: true }}, y: {{ formatter: function(v) {{ return fmtVal(v, valueFmt); }} }} }},
+      annotations: {{ points: points, xaxis: xAnnotations }},
+    }});
+  }}
+
+  // --- column / grouped column (captain contribution, actual vs expected) -
+  function buildColumn(payload) {{
+    var valueFmt = payload.valueFmt || 'float';
+    var colors = payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
+    var pct = payload.captainPct;
+    return baseChart({{
+      type: 'bar',
+      stacked: !!payload.stacked,
+      series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.values }}; }}),
+      colors: colors,
+      plotOptions: {{ bar: {{ columnWidth: payload.stacked ? '55%' : (payload.series.length > 1 ? '65%' : '45%'), borderRadius: payload.stacked ? 0 : 3 }} }},
+      dataLabels: {{ enabled: false }},
+      grid: baseGrid(),
+      legend: {{ show: payload.series.length > 1, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
+      xaxis: {{ categories: payload.labels, labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
+      yaxis: {{ labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, valueFmt); }} }} }},
+      tooltip: {{
+        theme: 'dark',
+        y: {{
+          formatter: function(v, opts) {{
+            var text = fmtVal(v, valueFmt);
+            if (pct && opts.seriesIndex === 0 && pct[opts.dataPointIndex] != null) {{
+              text += ' (' + pct[opts.dataPointIndex] + '% of squad total)';
+            }}
+            return text;
+          }},
+        }},
+      }},
+      annotations: payload.zeroLine ? {{ yaxis: [{{ y: 0, borderColor: cssVar('--faint'), strokeDashArray: 4 }}] }} : {{}},
+    }});
+  }}
+
+  // --- range (projected points floor/median/ceiling per squad player) ----
+  function buildRange(payload) {{
+    var color = cssVar(payload.colorVar);
+    return baseChart({{
+      type: 'rangeArea',
+      series: [
+        {{ name: 'Floor-ceiling', type: 'rangeArea', data: payload.labels.map(function(l, i) {{ return {{ x: l, y: [payload.floors[i], payload.ceilings[i]] }}; }}) }},
+        {{ name: 'Median', type: 'line', data: payload.labels.map(function(l, i) {{ return {{ x: l, y: payload.medians[i] }}; }}) }},
+      ],
+      colors: [color, color],
+      fill: {{ opacity: [0.18, 1] }},
+      stroke: {{ curve: 'straight', width: [0, 2.5] }},
+      markers: {{ size: [0, 4] }},
+      dataLabels: {{ enabled: false }},
+      grid: baseGrid(),
+      legend: {{ show: false }},
+      xaxis: {{ categories: payload.labels, labels: {{ style: axisLabelStyle(), rotate: -45, trim: true }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
+      yaxis: {{ labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
+      tooltip: {{
+        theme: 'dark', shared: true,
+        custom: function(opts) {{
+          var i = opts.dataPointIndex;
+          return '<div style="padding:8px 10px;background:' + cssVar('--surface-2') + ';color:' + cssVar('--fg') + ';font-size:12px;">' +
+            '<b>' + payload.labels[i] + '</b><br/>Ceiling: ' + fmtVal(payload.ceilings[i], payload.valueFmt) +
+            '<br/>Median: ' + fmtVal(payload.medians[i], payload.valueFmt) +
+            '<br/>Floor: ' + fmtVal(payload.floors[i], payload.valueFmt) + '</div>';
+        }},
+      }},
+    }});
+  }}
+
+  // --- scatter (real xG vs xA per squad player) ---------------------------
+  function buildScatter(payload) {{
+    var color = cssVar(payload.colorVar);
+    return baseChart({{
+      type: 'scatter',
+      series: [{{ name: 'Players', data: payload.points.map(function(p) {{ return {{ x: p.x, y: p.y }}; }}) }}],
+      colors: [color],
+      markers: {{ size: 6, strokeWidth: 2, strokeColors: cssVar('--surface') }},
+      grid: baseGrid(),
+      xaxis: {{
+        type: 'numeric', tickAmount: 5,
+        title: {{ text: payload.xLabel, style: {{ color: cssVar('--faint'), fontSize: '11px' }} }},
+        labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return Number(v).toFixed(1); }} }},
+        axisBorder: {{ show: false }}, axisTicks: {{ show: false }},
+      }},
+      yaxis: {{
+        title: {{ text: payload.yLabel, style: {{ color: cssVar('--faint'), fontSize: '11px' }} }},
+        labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return Number(v).toFixed(1); }} }},
+      }},
+      tooltip: {{
+        theme: 'dark',
+        custom: function(opts) {{
+          var p = payload.points[opts.dataPointIndex];
+          // Real contextual tooltip (2026-08-29, direct user spec: club/
+          // position/price/xP alongside xG/xA) - `club`/`position`/`price`/
+          // `xp` are only present when a real `PlayerCandidate` was found
+          // for this player (see live_charts.py's own docstring) - never
+          // fabricated when absent, the line is simply omitted.
+          var lines = ['<b>' + p.name + '</b>'];
+          if (p.club || p.position) {{ lines.push([p.club, p.position].filter(Boolean).join(' &middot; ')); }}
+          lines.push(payload.xLabel + ': ' + p.x + '  ' + payload.yLabel + ': ' + p.y);
+          if (p.price != null) {{ lines.push('Price: &pound;' + p.price + 'm'); }}
+          if (p.xp != null) {{ lines.push('Next-GW xP: ' + p.xp); }}
+          return '<div style="padding:8px 10px;background:' + cssVar('--surface-2') + ';color:' + cssVar('--fg') +
+            ';font-size:12px;line-height:1.5;">' + lines.join('<br/>') + '</div>';
+        }},
+      }},
+    }});
+  }}
+
+  // --- horizontal bar (real Dixon-Coles team strength) --------------------
+  function buildBar(payload) {{
+    var colors = payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
+    var highlight = payload.highlight || [];
+    var faint = cssVar('--faint'), fg = cssVar('--fg');
+    // Real squad-team highlight (2026-08-29, fixed live after the first
+    // attempt - a `fill.opacity` FUNCTION is not reliably supported for
+    // ApexCharts' bar type and rendered every bar solid black, confirmed
+    // live via a real screenshot). A per-category axis LABEL colour array
+    // is an officially documented, reliable ApexCharts feature - the
+    // user's own real squad teams get the real accent colour, every other
+    // team a muted one, driven entirely by the real `highlight` flag
+    // computed server-side.
+    var labelColors = payload.labels.map(function(_, i) {{ return (highlight.length && highlight[i]) ? fg : faint; }});
+    return baseChart({{
+      type: 'bar',
+      series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.values }}; }}),
+      colors: colors,
+      plotOptions: {{ bar: {{ horizontal: true, barHeight: '70%' }} }},
+      dataLabels: {{ enabled: false }},
+      grid: baseGrid(),
+      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
+      xaxis: {{ categories: payload.labels, labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
+      yaxis: {{ labels: {{ style: {{ colors: labelColors, fontSize: '11px' }} }} }},
+      tooltip: {{ theme: 'dark', y: {{ formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
+    }});
+  }}
+
+  // --- match momentum (diverging real home/away pressure) -----------------
+  function buildMomentum(payload) {{
+    var homeColor = cssVar('--accent'), awayColor = cssVar('--bad'), fg = cssVar('--fg'), surface2 = cssVar('--surface-2');
+    var xAnnotations = (payload.goals || []).map(function(g) {{
+      return {{
+        x: g.minute, borderColor: g.side === 'home' ? homeColor : awayColor, strokeDashArray: 0,
+        label: {{
+          text: g.label, orientation: 'horizontal', offsetY: g.side === 'home' ? -4 : 14,
+          style: {{ color: fg, background: surface2, fontSize: '10px', fontWeight: 700, padding: {{ left: 5, right: 5, top: 2, bottom: 2 }} }},
+        }},
+      }};
+    }});
+    if (payload.halftime) {{
+      xAnnotations.push({{ x: 45, borderColor: cssVar('--faint'), strokeDashArray: 4, label: {{ text: 'HT', style: {{ color: fg, background: surface2, fontSize: '10px' }} }} }});
+    }}
+    return baseChart({{
+      type: 'area',
+      series: [
+        {{ name: 'Home pressure', data: payload.minutes.map(function(m, i) {{ return {{ x: m, y: payload.home[i] }}; }}) }},
+        {{ name: 'Away pressure', data: payload.minutes.map(function(m, i) {{ return {{ x: m, y: payload.away[i] }}; }}) }},
+      ],
+      colors: [homeColor, awayColor],
+      stroke: {{ curve: 'straight', width: 1.5 }},
+      fill: {{ type: 'solid', opacity: 0.55 }},
+      dataLabels: {{ enabled: false }},
+      markers: {{ size: 0 }},
+      grid: baseGrid(),
+      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
+      xaxis: {{
+        type: 'numeric', min: 0, max: Math.max(payload.maxMinute, 90),
+        tickAmount: 6, labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return Math.round(v) + "'"; }} }},
+        axisBorder: {{ show: false }}, axisTicks: {{ show: false }},
+      }},
+      yaxis: {{ min: -100, max: 100, labels: {{ show: false }} }},
+      tooltip: {{ theme: 'dark', x: {{ formatter: function(v) {{ return Math.round(v) + "'"; }} }} }},
+      annotations: {{ xaxis: xAnnotations }},
+    }});
+  }}
+
+  // --- per-player form (real xG+xA per match, one line per squad player) --
+  function buildMultiLine(payload) {{
+    var palette = payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
+    return baseChart({{
+      type: 'line',
+      series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.points.map(function(p) {{ return {{ x: new Date(p.x).getTime(), y: p.y }}; }}) }}; }}),
+      colors: palette,
+      stroke: {{ curve: 'straight', width: 2 }},
+      markers: {{ size: 4 }},
+      dataLabels: {{ enabled: false }},
+      grid: baseGrid(),
+      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '11px', fontWeight: 600 }},
+      xaxis: {{ type: 'datetime', labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
+      // Real per-match xG+xA values are sub-1 and often close together
+      // (e.g. 0.71 vs 0.74) - the shared `fmtVal` 1-decimal float format
+      // collapsed several distinct y-axis ticks to the same displayed
+      // "0.7" (found live). This chart's own values need real 2-decimal
+      // precision to stay legible; every other chart's values are large
+      // enough that 1 decimal (or the 'int' format) already reads fine.
+      yaxis: {{ labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return Number(v).toFixed(2); }} }} }},
+      tooltip: {{ theme: 'dark', x: {{ format: 'dd MMM' }}, y: {{ formatter: function(v) {{ return Number(v).toFixed(2); }} }} }},
+    }});
+  }}
+
+  // --- fixture-difficulty heatmap (real teams x GWs, single analytical object) -
+  function buildHeatmap(payload) {{
+    var bad = cssVar('--bad'), warn = cssVar('--warn'), ok = cssVar('--ok'), faint = cssVar('--faint');
+    var series = payload.rowLabels.map(function(row, i) {{
+      return {{
+        name: row,
+        data: payload.colLabels.map(function(col, j) {{ return {{ x: col, y: payload.values[i][j] }}; }}),
+      }};
+    }});
+    return baseChart({{
+      type: 'heatmap',
+      series: series,
+      dataLabels: {{ enabled: false }},
+      plotOptions: {{
+        heatmap: {{
+          radius: 2,
+          colorScale: {{
+            ranges: [
+              {{ from: 0, to: 2.4, name: 'Easy', color: ok }},
+              {{ from: 2.4, to: 3.4, name: 'Average', color: warn }},
+              {{ from: 3.4, to: 6, name: 'Hard', color: bad }},
+            ],
+          }},
+        }},
+      }},
+      grid: {{ borderColor: cssVar('--gridline'), padding: {{ left: 8, right: 8 }} }},
+      xaxis: {{ labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
+      yaxis: {{ labels: {{ style: {{ colors: faint, fontSize: '10px' }} }} }},
+      tooltip: {{
+        theme: 'dark',
+        y: {{ formatter: function(v) {{ return v == null ? 'Blank GW' : 'FDR ' + v.toFixed(0); }} }},
+      }},
+    }});
+  }}
+
+  var BUILDERS = {{
+    single: buildTimeSeries, dual: buildTimeSeries, column: buildColumn, range: buildRange,
+    scatter: buildScatter, bar: buildBar, momentum: buildMomentum, multi_line: buildMultiLine,
+    heatmap: buildHeatmap,
+  }};
+
+  window.fplInitCharts = function(root) {{
+    (root || document).querySelectorAll('.live-chart-canvas').forEach(function(el) {{
+      var payload;
+      try {{ payload = JSON.parse(el.dataset.chart); }} catch (e) {{ return; }}
+      var builder = BUILDERS[payload.kind];
+      if (!builder) return;
+      var chartId = el.dataset.chartId;
+      var matchId = el.dataset.matchMomentum;
+      if (chartId && window.dashboardCharts[chartId]) {{ window.dashboardCharts[chartId].destroy(); }}
+      if (matchId && window.dashboardCharts.momentum[matchId]) {{ window.dashboardCharts.momentum[matchId].destroy(); }}
+      // Real per-chart isolation - one malformed payload must never blank
+      // every OTHER real chart on the page (a plain `.forEach` callback
+      // throwing aborts every remaining iteration, which is exactly what a
+      // single bad chart used to do here before this guard existed).
+      try {{
+        var chart = new ApexCharts(el, builder(payload));
+        chart.render();
+        if (chartId) {{ window.dashboardCharts[chartId] = chart; window.dashboardCharts[chartId + 'LastX'] = null; }}
+        if (matchId) {{ window.dashboardCharts.momentum[matchId] = chart; }}
+      }} catch (e) {{
+        console.error('fplInitCharts: chart kind=' + payload.kind + ' failed to render', e);
+      }}
+    }});
+  }};
+  window.fplInitCharts(document);
 }})();
 
 (function() {{
@@ -1066,6 +1412,7 @@ def generate_dashboard_html(
     tickLiveStrip();
     if (snap.version === lastVersion) return;
     lastVersion = snap.version;
+    appendLiveChartSamples(snap);
     if (snap.rank) {{
       var rankEl = document.getElementById('live-rank-value');
       if (rankEl && snap.rank.estimated_rank != null && snap.rank.is_current && snap.rank.precision !== 'degenerate') {{
@@ -1140,6 +1487,40 @@ def generate_dashboard_html(
   // client-side every tick - real, disclosed scope limit: those stay
   // accurate as of the last full dashboard regen/FULL_TIME transition,
   // only the fast-moving score/stat numbers patch in place every poll.
+  // Real live-chart incremental update (2026-08-29, autonomy correction
+  // pass - spec section 16/17: "charts must NOT be destroyed and recreated
+  // every polling cycle... use updateSeries/appendData... append new live
+  // observations where appropriate"). `window.dashboardCharts.liveRank`/
+  // `liveSquadPoints` are the SAME persistent ApexCharts instances
+  // `fplInitCharts` created for the page's own real intragame charts (see
+  // that function's own docstring) - this only ever appends a genuinely
+  // NEW real sample (guarded by the real timestamp already carried on
+  // `snap.rank.retrieved_at`/`snap.generated_at`, never a re-append of the
+  // same tick), never re-renders the whole chart.
+  function appendLiveChartSamples(snap) {{
+    var dc = window.dashboardCharts;
+    if (!dc) return;
+    if (dc.liveRank && snap.rank && snap.rank.estimated_rank != null && snap.rank.is_current &&
+        snap.rank.precision !== 'degenerate' && snap.rank.retrieved_at) {{
+      var rankX = Date.parse(snap.rank.retrieved_at);
+      if (rankX && rankX !== dc.liveRankLastX) {{
+        dc.liveRankLastX = rankX;
+        dc.liveRank.appendData([{{ data: [{{ x: rankX, y: snap.rank.estimated_rank }}] }}]);
+      }}
+    }}
+    if (dc.liveSquadPoints && snap.points && snap.points.points != null && snap.generated_at) {{
+      var ptsX = Date.parse(snap.generated_at);
+      if (ptsX && ptsX !== dc.liveSquadPointsLastX) {{
+        dc.liveSquadPointsLastX = ptsX;
+        var isDual = dc.liveSquadPoints.w && dc.liveSquadPoints.w.config.series.length > 1;
+        var appendPoints = [{{ data: [{{ x: ptsX, y: snap.points.points }}] }}];
+        if (isDual && snap.points.captain_points != null) {{
+          appendPoints.push({{ data: [{{ x: ptsX, y: snap.points.captain_points }}] }});
+        }}
+        dc.liveSquadPoints.appendData(appendPoints);
+      }}
+    }}
+  }}
   var _STAT_FMT = {{
     possession_pct: function(v) {{ return Math.round(v) + '%'; }},
     xg: function(v) {{ return v.toFixed(2); }},
@@ -1429,17 +1810,24 @@ def generate_dashboard_html(
         // Real fix (2026-08-29, forensic product redesign - direct spec:
         // "do not leave the momentum graph/shot map frozen until full
         // regen"). The server re-renders this match's ENTIRE card (score,
-        // stats, momentum SVG, shot map SVG, feed, analysis) via the exact
-        // same Python function the initial page used, on every real
+        // stats, momentum chart, shot map SVG, feed, analysis) via the
+        // exact same Python function the initial page used, on every real
         // change - this just swaps the live DOM node for the fresh one.
-        // No client-side chart math, so there is no second, JS-side
-        // rendering path to drift from the server's real output.
+        // The momentum panel is now a real ApexCharts instance, not inert
+        // SVG markup, so the freshly-inserted `.live-chart-canvas` needs a
+        // real re-init (2026-08-29, autonomy correction pass) -
+        // `window.fplInitCharts` (this same script's own init entry point)
+        // destroys any stale instance for this match first, so a real
+        // fragment swap never leaks the previous chart.
         var existingCard = document.querySelector('[data-match-card="' + msg.match_id + '"]');
         if (existingCard) {{
           var tmp = document.createElement('div');
           tmp.innerHTML = msg.html;
           var freshCard = tmp.firstElementChild;
-          if (freshCard) {{ existingCard.replaceWith(freshCard); }}
+          if (freshCard) {{
+            existingCard.replaceWith(freshCard);
+            if (window.fplInitCharts) window.fplInitCharts(freshCard);
+          }}
         }}
         // A brand-new match transitioning to LIVE with no existing card
         // yet is a real, disclosed gap this fragment-swap alone can't

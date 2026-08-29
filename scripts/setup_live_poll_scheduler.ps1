@@ -9,8 +9,19 @@ just because a prior run already exited. `-MultipleInstances IgnoreNew`
 means a periodic re-trigger while an instance is still genuinely mid-match
 is a safe no-op, not a duplicate poller.
 
+Real, confirmed production gap (2026-08-29, direct user report: "a match
+has already started and there is no update about it on the dashboard") -
+the default 30-minute restart interval this script originally shipped with
+is a genuine blind spot: whatever caused the prior instance to exit (an
+early idle-exit, a crash, anything), a real live match kicking off inside
+that 30-minute window gets zero coverage until the next scheduled restart.
+`-MultipleInstances IgnoreNew` already makes a frequent re-trigger a safe,
+cheap no-op while a real instance is genuinely still alive (it just fails
+to acquire the singleton lock and exits immediately) - there is no real
+cost to checking far more often. Default lowered 30 -> 3 minutes.
+
 Usage:
-    powershell -ExecutionPolicy Bypass -File setup_live_poll_scheduler.ps1 [-IntervalMinutes 30] [-MaxHours 6]
+    powershell -ExecutionPolicy Bypass -File setup_live_poll_scheduler.ps1 [-IntervalMinutes 3] [-MaxHours 6]
 
 This makes a persistent, unattended change to the machine's Task Scheduler -
 review before running. To remove it later, run remove_live_poll_scheduler.ps1.
@@ -21,7 +32,7 @@ this project's single authoritative match-lifecycle logic
 task and FPLAgentSync are just two different cadences calling into it.
 #>
 param(
-    [int]$IntervalMinutes = 30,
+    [int]$IntervalMinutes = 3,
     [double]$MaxHours = 6.0,
     [string]$TaskName = "FPLAgentLivePoll"
 )
