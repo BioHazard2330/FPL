@@ -246,6 +246,7 @@ def maybe_enqueue_analysis(
 def sync_match(
     conn, home_team_name: str, away_team_name: str, day: date_cls,
     tracked_squad_ids: set[int] | None = None,
+    provider: "FootballDataProvider | None" = None,
 ) -> dict:
     """Resolve -> fetch -> normalize -> upsert. Idempotent: re-running (the
     intended way to refresh a LIVE match) overwrites the same rows, never
@@ -260,14 +261,27 @@ def sync_match(
     for any tracked squad member on either side of this match - safe to call
     on every sync regardless of whether the lineup was ALREADY confirmed
     last time (the detector's own change_events idempotency guard is what
-    prevents a repeat alert, not this flag)."""
+    prevents a repeat alert, not this flag).
+
+    `provider` (2026-08-29, "live architecture rebuild" milestone 5) -
+    optional, defaults to a real `FotMobProvider()` (unchanged behavior for
+    every pre-existing call site). Real, genuine swappability per the
+    spec's own provider-abstraction goal: `provider.find_match`/
+    `.fetch_match_details` replace the bare module-level calls this
+    function used before - a future caller (or a future alternative
+    provider, per the standing free-resources-only constraint this session
+    already resolved to keep FotMob as the sole real implementation) can
+    inject a different one without touching this function's own logic."""
+    from fpl_agent.providers.football import FootballDataProvider, FotMobProvider
+
+    provider = provider or FotMobProvider()
     try:
-        fotmob_match_id = find_match(day, home_team_name, away_team_name)
+        fotmob_match_id = provider.find_match(day, home_team_name, away_team_name)
         if fotmob_match_id is None:
             raise FotMobFetchError(
                 f"no FotMob match found for {home_team_name!r} vs {away_team_name!r} on {day.isoformat()}"
             )
-        payload = fetch_match_details(fotmob_match_id)
+        payload = provider.fetch_match_details(fotmob_match_id)
     except FotMobFetchError as exc:
         update_source_health(conn, _SOURCE_NAME, success=False, error=str(exc))
         raise
