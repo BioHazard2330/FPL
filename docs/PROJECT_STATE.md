@@ -6,6 +6,32 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, FotMob data extraction + live Match Centre pass)
+
+Real FotMob investigation (live-tested against actual endpoints): `content.
+momentum`/`content.shotmap`/`content.playerStats` were confirmed present in
+the SAME `matchDetails` payload `fotmob_source.py::sync_match` already
+fetches every sync - real per-minute momentum + per-shot x/y/xG were never
+parsed (migration 0035, `match_momentum`/`match_shots` tables), and real
+rating/minutes/assists/xA/chances-created were hardcoded to `None` in
+`parse_player_states` despite the schema already supporting them. Real bug
+found + fixed: the `player_match_state` upsert's `ON CONFLICT DO UPDATE
+SET` omitted `rating`, so a re-synced match never refreshed it. New
+`monitoring/dashboard/match_centre.py` - real live score/team-stats/
+momentum-chart/shot-map/my-players panel, single-sourced from a new
+`live_snapshot.py::_active_matches_block` (zero duplicate FotMob fetches),
+placed unconditionally near the top of the page (deliberately independent
+of the coarser gameweek-level `dash_state`). Real torn-read fix:
+`_write_dashboard` now wraps `generate_dashboard_html` in an explicit
+`BEGIN`/rollback transaction (confirmed that function's whole call tree is
+genuinely read-only) so a concurrent scheduled writer can no longer make
+one render combine a new value for one field with an old value for
+another. `live-match-poll` default interval tightened 25s->15s. 1257 tests
+green (12 new), live-verified by temporarily flipping a real finished match
+to LIVE status, screenshotting, and reverting - no GW was genuinely live
+this session. Full account:
+`docs/history/27-session-2026-08-29-fotmob-live-match-centre.md`.
+
 ## Where things stand (updated 2026-08-29, live command centre pass)
 
 Real bug found + fixed: the browser's "Next check" live-poll countdown
