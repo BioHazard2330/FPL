@@ -2643,6 +2643,15 @@ def live_match_poll_cmd(interval: int, max_hours: float):
         click.echo(f"live-match-poll: {lock.reason} - exiting cleanly")
         return
     conn = get_connection()
+    # Real fast-engine wiring (2026-08-29, "live architecture rebuild" pass) -
+    # registers real event-bus subscribers against this connection before
+    # any real `sync_match` call below can publish an event for them to
+    # react to (this loop calls `sync_match` directly, not through
+    # `refresh_in_progress_matches`, so it needs its own registration).
+    from fpl_agent.events.bus import bus as _event_bus
+    from fpl_agent.live import fast_engine as _fast_engine
+
+    _fast_engine.register(conn, _event_bus)
     # Resolved once, not re-resolved every tick - matches run_scheduled's own
     # pattern (2026-08-22, automation-lifecycle pass). Threaded into every
     # sync_match call below so a real lineup-confirmation transition fires

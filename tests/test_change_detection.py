@@ -105,6 +105,36 @@ def test_status_change_to_injured_is_high_severity(db_conn):
     assert events[0]["severity"] == "HIGH"
 
 
+def test_status_change_also_dispatches_a_real_bus_event(db_conn):
+    """2026-08-29, "live architecture rebuild" pass - `record_event` must
+    ALSO publish onto the same process-wide event bus `sync_match`'s
+    football-side events use (a real status change is exactly the kind of
+    "AVAILABILITY_CHANGED" a live subscriber needs), not just write to
+    `change_events`."""
+    from fpl_agent.events.bus import bus
+    from fpl_agent.events.types import EventType
+
+    bus.reset()
+    received = []
+    bus.subscribe(EventType.AVAILABILITY_CHANGED, lambda e: received.append(e))
+
+    bootstrap = make_bootstrap()
+    _seed(db_conn, bootstrap, "t0")
+    prev = snapshot_player_state(db_conn)
+    bootstrap2 = make_bootstrap()
+    bootstrap2["elements"][0]["status"] = "i"
+    new_rows = normalize_players(bootstrap2)
+
+    detect_player_lifecycle_changes(db_conn, prev, new_rows, "t1", "fpl_api_bootstrap")
+    db_conn.commit()
+
+    assert len(received) == 1
+    assert received[0].entity == "player"
+    assert received[0].entity_id == 1
+    assert received[0].payload["new_value"] == "i"
+    bus.reset()
+
+
 def test_setpiece_change_detected_only_after_first_sync(db_conn):
     bootstrap = make_bootstrap()
     _seed(db_conn, bootstrap, "t0")

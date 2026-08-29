@@ -2,7 +2,29 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from fpl_agent.events.bus import Event, bus as _event_bus
+from fpl_agent.events.types import EventType
+
 _SETPIECE_FIELDS = ("penalties_order", "penalties_text", "corners_order", "corners_text", "direct_fk_order", "direct_fk_text")
+
+# Real event_type -> bus EventType map (2026-08-29, "live architecture
+# rebuild" pass) - this project's own `change_events` table already IS a
+# real, persisted event log (every real FPL-side lifecycle change since
+# 2026-08-21); this just ALSO dispatches the same real event onto the
+# SAME process-wide bus `sync_match`'s football-side events use, so a
+# live subscriber never has to watch two separate systems. Not every real
+# `event_type` string here has an exact spec-vocabulary match -
+# `new_player`/`club_change`/`setpiece_change`/`predicted_lineup_change`/
+# `start_percent_change` all genuinely ARE "something about this player's
+# state changed", so they map to the generic `PLAYER_STATE_CHANGED` rather
+# than inventing a new bus type per DB event_type.
+_BUS_EVENT_TYPE = {
+    "price_change": EventType.PRICE_CHANGED,
+    "status_change": EventType.AVAILABILITY_CHANGED,
+    "lineup_confirmed": EventType.LINEUP_CONFIRMED,
+    "kickoff_reminder": EventType.FIXTURE_CHANGED,
+}
+_DEFAULT_BUS_EVENT_TYPE = EventType.PLAYER_STATE_CHANGED
 
 _BAD_STATUS = {"i", "s", "u"}  # injured, suspended, unavailable
 
@@ -40,6 +62,16 @@ def record_event(
         "VALUES (?,?,?,?,?,?,?,?,?,?,0)",
         (event_type, entity, entity_id, old_value, new_value, detected_at, json.dumps([source]), confidence, severity, fpl_impact),
     )
+    # Real, additional dispatch onto the SAME process-wide event bus
+    # `sync_match`'s football-side events use (2026-08-29, "live
+    # architecture rebuild" pass) - the `change_events` INSERT above stays
+    # the real, authoritative persisted record; this never replaces it.
+    _event_bus.publish(Event(
+        event_type=_BUS_EVENT_TYPE.get(event_type, _DEFAULT_BUS_EVENT_TYPE),
+        entity=entity, entity_id=entity_id, occurred_at=detected_at,
+        payload={"event_type": event_type, "old_value": old_value, "new_value": new_value, "severity": severity},
+        source=source,
+    ))
 
 
 def snapshot_player_state(conn: sqlite3.Connection) -> dict[int, dict]:

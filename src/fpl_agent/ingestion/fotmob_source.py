@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 import requests
 
+from fpl_agent.events.bus import Event, bus as _event_bus
+from fpl_agent.events.types import EventType
 from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
 from fpl_agent.ingestion.market_identity import (
     COMMON_TEAM_NAME_ALIASES,
@@ -17,6 +19,10 @@ from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
 from fpl_agent.ingestion.raw_store import save_raw
 from fpl_agent.ingestion.sync import update_source_health
 from fpl_agent.models.match_intelligence import (
+    FULL_TIME,
+    HALFTIME,
+    LIVE,
+    PRE_MATCH,
     parse_match,
     parse_match_events,
     parse_momentum,
@@ -160,7 +166,18 @@ def refresh_in_progress_matches(conn, tracked_squad_ids: set[int] | None = None)
     default `None` (unchanged behavior). Threaded straight through to
     `sync_match` so a real lineup-confirmation transition fires the
     corresponding change_events row automatically on this cadence too, not
-    only from `fpl live-match-poll`'s faster loop."""
+    only from `fpl live-match-poll`'s faster loop.
+
+    Real fast-engine wiring (2026-08-29, "live architecture rebuild" pass) -
+    registers `live/fast_engine.py`'s real event-bus subscribers against
+    THIS connection before any real `sync_match` call below can publish an
+    event for them to react to. Safe to call every real invocation of this
+    function (a fresh process each time - see `fast_engine.register`'s own
+    docstring on why repeat registration is only a real concern within one
+    long-lived process, e.g. this project's own test suite)."""
+    from fpl_agent.live import fast_engine as _fast_engine
+
+    _fast_engine.register(conn, _event_bus)
     now = datetime.now(timezone.utc)
     rows = conn.execute(
         "SELECT mi.id, mi.fotmob_match_id, mi.status AS prior_status, mi.kickoff_utc, "
@@ -287,6 +304,43 @@ def sync_match(
         "SELECT id FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)
     ).fetchone()["id"]
 
+    # Real match-lifecycle events (2026-08-29, "live architecture rebuild"
+    # pass, milestone 1) - published once per genuine status transition,
+    # never on every tick (an unchanged status is a real no-op, not a
+    # repeat event). Generalizes the FULL_TIME-only check
+    # `maybe_enqueue_analysis` already made further down this function -
+    # that call is unchanged, this is a real, additional dispatch onto the
+    # event bus for any live subscriber (the fast engine, a future
+    # materiality engine), not a replacement for the qualitative-analysis
+    # queue hook.
+    _STATUS_TRANSITION_EVENT = {
+        (PRE_MATCH, LIVE): EventType.MATCH_STARTED,
+        (LIVE, HALFTIME): EventType.MATCH_HALFTIME,
+        (HALFTIME, LIVE): EventType.MATCH_RESUMED,
+    }
+    if match.status == FULL_TIME and prior_status != FULL_TIME:
+        _event_bus.publish(Event(
+            event_type=EventType.MATCH_FINISHED, entity="match", entity_id=match_id, occurred_at=now,
+            payload={"match_id": match_id, "home_score": match.home_score, "away_score": match.away_score},
+            source=_SOURCE_NAME,
+        ))
+    else:
+        # Real bug found + fixed while writing this milestone's own
+        # deterministic test: a match with NO prior real sync (the first
+        # time `sync_match` ever sees it - `prior_status_row` is `None`)
+        # is equivalent to PRE_MATCH for transition-detection purposes
+        # (this project has simply never observed it before) - the first
+        # real check any tracked fixture gets is very often already LIVE
+        # (a poll landing after kickoff), and that first observation IS a
+        # real MATCH_STARTED, not a no-op.
+        effective_prior = prior_status if prior_status is not None else PRE_MATCH
+        transition_type = _STATUS_TRANSITION_EVENT.get((effective_prior, match.status))
+        if transition_type is not None:
+            _event_bus.publish(Event(
+                event_type=transition_type, entity="match", entity_id=match_id,
+                occurred_at=now, payload={"match_id": match_id, "live_minute": match.live_minute}, source=_SOURCE_NAME,
+            ))
+
     team_name_to_fpl_id = {match.home_team_name: home_fpl_team_id, match.away_team_name: away_fpl_team_id}
 
     players_resolved = 0
@@ -348,15 +402,34 @@ def sync_match(
     # matching needed); player resolution reuses the fotmob_player_id ->
     # player_id crosswalk this same sync just wrote into player_match_state,
     # rather than re-running name matching a second time.
+    def _resolve_player(fotmob_id: str | None) -> int | None:
+        if fotmob_id is None:
+            return None
+        row = conn.execute(
+            "SELECT player_id FROM player_match_state WHERE match_id=? AND fotmob_player_id=?",
+            (match_id, fotmob_id),
+        ).fetchone()
+        return row["player_id"] if row else None
+
+    # Real event-type -> bus EventType map (2026-08-29, "live architecture
+    # rebuild" pass) - `Half`/`AddedTime` are real administrative markers
+    # (see parse_match_events's own docstring), not modeled as dispatchable
+    # events this milestone - disclosed, not fabricated.
+    _MATCH_EVENT_TYPE_MAP = {"Goal": EventType.GOAL, "Card": EventType.CARD, "Substitution": EventType.SUBSTITUTION, "Shot": EventType.SHOT}
+
     for me in parse_match_events(payload):
         event_team_id = home_fpl_team_id if me.is_home else (away_fpl_team_id if me.is_home is False else None)
-        event_player_id = None
-        if me.fotmob_player_id is not None:
-            row = conn.execute(
-                "SELECT player_id FROM player_match_state WHERE match_id=? AND fotmob_player_id=?",
-                (match_id, me.fotmob_player_id),
-            ).fetchone()
-            event_player_id = row["player_id"] if row else None
+        event_player_id = _resolve_player(me.fotmob_player_id)
+        # Real "is this a genuinely NEW incident this tick" check (2026-08-29
+        # - the event bus must only ever fire once per real incident, never
+        # once per poll of an already-known one). `match_events`'s own real
+        # UNIQUE(match_id, source, source_event_id) constraint is the exact
+        # real identity key this project already committed to for this
+        # table (migration 0025) - reused here, not a second definition.
+        already_known = conn.execute(
+            "SELECT 1 FROM match_events WHERE match_id=? AND source=? AND source_event_id=?",
+            (match_id, _SOURCE_NAME, me.source_event_id),
+        ).fetchone() is not None
         conn.execute(
             "INSERT INTO match_events "
             "(match_id, source, source_event_id, minute, event_type, team_id, player_id, description, retrieved_at) "
@@ -367,6 +440,26 @@ def sync_match(
             (match_id, _SOURCE_NAME, me.source_event_id, me.minute, me.event_type,
              event_team_id, event_player_id, me.description, now),
         )
+        if already_known:
+            continue
+        bus_type = _MATCH_EVENT_TYPE_MAP.get(me.event_type)
+        if bus_type is None:
+            continue
+        payload_extra = {"match_id": match_id, "minute": me.minute, "team_id": event_team_id, "description": me.description}
+        if bus_type == EventType.SUBSTITUTION:
+            payload_extra["player_in_id"] = _resolve_player(me.extra.get("player_in_fotmob_id"))
+            payload_extra["player_out_id"] = _resolve_player(me.extra.get("player_out_fotmob_id"))
+        elif bus_type == EventType.GOAL:
+            assist_player_id = _resolve_player(me.extra.get("assist_player_fotmob_id"))
+            if assist_player_id is not None:
+                _event_bus.publish(Event(
+                    event_type=EventType.ASSIST, entity="player", entity_id=assist_player_id, occurred_at=now,
+                    payload={"match_id": match_id, "minute": me.minute, "team_id": event_team_id}, source=_SOURCE_NAME,
+                ))
+        _event_bus.publish(Event(
+            event_type=bus_type, entity="player", entity_id=event_player_id, occurred_at=now,
+            payload=payload_extra, source=_SOURCE_NAME,
+        ))
 
     # Real per-minute momentum + per-shot x/y/xG storage (2026-08-29, "live
     # command centre" pass) - both confirmed live in this SAME payload

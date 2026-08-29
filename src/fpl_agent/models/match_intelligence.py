@@ -56,6 +56,18 @@ class MatchEvent:
     fotmob_player_id: str | None
     player_name: str | None
     description: str
+    # Real event-type-specific extra detail the event bus needs but the
+    # persisted `match_events` row doesn't carry (2026-08-29, "live
+    # architecture rebuild" pass) - e.g. a Substitution's real OUT player
+    # (`player_out_fotmob_id`/`player_out_name`) alongside the ON player
+    # already carried by the fields above, or a Goal's real
+    # `assist_player_fotmob_id`. Empty dict when there's nothing extra -
+    # never a fabricated key.
+    extra: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.extra is None:
+            object.__setattr__(self, "extra", {})
 
 
 @dataclass(frozen=True)
@@ -244,6 +256,19 @@ def parse_match_events(payload: dict) -> list["MatchEvent"]:
         # reader cares about) - `swap[0]`'s own real id, never the empty
         # top-level `player` object this event type carries.
         sub_in_id = swap[0].get("id") if swap else None
+        sub_out_id = swap[1].get("id") if len(swap) > 1 else None
+        # Real extra detail the event bus needs (2026-08-29, "live
+        # architecture rebuild" pass) - a real `assistPlayerId` confirmed
+        # live on a Goal event's own raw shape (never fabricated - only
+        # set when FotMob's own payload actually carries it).
+        extra: dict = {}
+        if event_type == "Substitution":
+            if sub_in_id is not None:
+                extra["player_in_fotmob_id"] = str(sub_in_id)
+            if sub_out_id is not None:
+                extra["player_out_fotmob_id"] = str(sub_out_id)
+        elif event_type == "Goal" and e.get("assistPlayerId") is not None:
+            extra["assist_player_fotmob_id"] = str(e["assistPlayerId"])
         events.append(MatchEvent(
             source_event_id=f"fact-{raw_id}", minute=e.get("time"), event_type=event_type,
             is_home=e.get("isHome"),
@@ -252,6 +277,7 @@ def parse_match_events(payload: dict) -> list["MatchEvent"]:
                 else (str(player["id"]) if player.get("id") is not None else None)
             ),
             player_name=sub_in if event_type == "Substitution" else player_name, description=desc,
+            extra=extra,
         ))
 
     shots = ((payload.get("content") or {}).get("shotmap") or {}).get("shots") or []
