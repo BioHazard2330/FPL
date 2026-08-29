@@ -1254,17 +1254,33 @@ def _live_tracking_html(
             is_captain = captain_id is not None and r.player_id == captain_id
             name_html = f"<strong class='captain-name'>{_esc(r.web_name)} (C)</strong>" if is_captain else f"<strong>{_esc(r.web_name)}</strong>"
             pts = points_by_id.get(r.player_id)
-            points_html = f"<span class='live-stat' id='live-row-points-{r.player_id}'>{pts if pts is not None else '&mdash;'} pts</span>"
+            # Plain text, no nested span - the browser's live poll sets this
+            # element's `textContent` directly on every patch (see
+            # `patchLiveRows` in assemble.py's own script), which would
+            # destroy any inner markup.
+            points_html = (
+                f"<span class='live-row-points' id='live-row-points-{r.player_id}'>"
+                f"{pts if pts is not None else '&mdash;'} pts</span>"
+            )
+            # Real two-tier row (2026-08-29 visual redesign, direct user
+            # complaint: this row was one flat, equal-weight line of tiny
+            # text - "genuinely terrible and boring"). Name/points now lead
+            # visually; the football/scoring detail (minutes/goals/BPS/
+            # DEFCON/bonus) is a real secondary stat strip below. Every
+            # element keeps its exact existing `id` - the browser's live
+            # poll patches these in place every ~10s and must keep working
+            # unchanged.
             lines.append(
-                f"<div class='live-row' data-player-id='{r.player_id}'>{status_dot}"
-                f"{name_html}"
-                f"{points_html}"
+                f"<div class='live-row' data-player-id='{r.player_id}'>"
+                f"<div class='live-row-head'>{status_dot}{name_html}{points_html}</div>"
+                f"<div class='live-row-stats'>"
                 f"<span class='live-stat' id='live-row-minutes-{r.player_id}'>{r.minutes}&prime;{' final' if finished else ''}</span>"
                 f"<span class='live-stat' id='live-row-goals-{r.player_id}'>{r.goals_scored}G {r.assists}A</span>"
                 f"<span class='live-stat' id='live-row-bps-{r.player_id}'>BPS {r.bps}</span>"
                 f"{defcon_html}"
                 f"<span class='bonus-badge' id='live-row-bonus-{r.player_id}'>+{r.provisional_bonus}</span>"
-                f"<span id='live-row-confirmed-{r.player_id}'>{confirmed}</span></div>"
+                f"<span id='live-row-confirmed-{r.player_id}'>{confirmed}</span>"
+                f"</div></div>"
             )
         return "<div class='live-active'>" + "\n".join(lines) + "</div>"
 
@@ -2108,12 +2124,22 @@ def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -
     items = []
     for r in rows:
         minute_label = f"{_esc(str(r['minute']))}&prime;" if r["minute"] is not None else "&mdash;"
+        # Real per-event-type colour (2026-08-29 visual redesign, direct
+        # user complaint: the match feed rendered every event type in the
+        # same flat grey badge - "bleak"). Purely a CSS hook off the SAME
+        # real `event_type` string already stored, never a new field.
+        type_cls = _MATCH_FEED_TYPE_CLASS.get(r["event_type"], "")
         items.append(
             f"<div class='match-feed-item'><span class='match-feed-minute'>{minute_label}</span>"
-            f"<span class='match-feed-type'>{_esc(r['event_type'])}</span>"
+            f"<span class='match-feed-type {type_cls}'>{_esc(r['event_type'])}</span>"
             f"<span class='match-feed-desc'>{_esc(r['description'])}</span></div>"
         )
     return "<div class='match-feed'>" + "\n".join(items) + "</div>"
+
+
+_MATCH_FEED_TYPE_CLASS = {
+    "Goal": "match-feed-type-goal", "Card": "match-feed-type-card", "Substitution": "match-feed-type-sub",
+}
 
 
 def _match_stats_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
@@ -3941,8 +3967,18 @@ _CSS = """
     font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2);
     margin-bottom: 8px; }
   .live-now-tag .pulse-dot { background: var(--accent-2); box-shadow: 0 0 0 0 rgba(0,255,135,0.5); }
-  .live-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;
-    background: var(--surface-2); border-radius: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+  /* Real two-tier row (2026-08-29 visual redesign, direct user complaint:
+     "live tracking graphs look genuinely terrible and boring" - one flat,
+     equal-weight line of tiny text). Name + real live points now lead
+     visually; minutes/goals/BPS/DEFCON/bonus form a real secondary stat
+     strip. Same real ids as before - only the container/CSS changed. */
+  .live-row { padding: 10px 12px; background: var(--surface-2); border-radius: 8px; margin-bottom: 6px; }
+  .live-row-head { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
+  .live-row-head strong { flex: 1; }
+  .live-row-points { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.15rem;
+    color: var(--accent); }
+  .live-row-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px;
+    font-size: 0.76rem; padding-top: 6px; border-top: 1px solid var(--gridline); }
   .live-stat { color: var(--muted); }
   .bonus-badge { background: var(--ok); color: #fff; font-weight: 700; border-radius: 999px; padding: 1px 7px; font-size: 0.75rem; }
   .bonus-provisional { color: var(--warn); font-size: 0.75rem; }
@@ -4330,54 +4366,112 @@ _CSS = """
   .match-stats-row .match-stats-value:first-child { text-align: right; }
   .match-stats-label { color: var(--faint); font-size: 0.72rem; text-align: center; white-space: nowrap; }
 
-  /* --- Match Centre (2026-08-29, "live command centre" pass) - real score/
-     momentum/shot-map/my-players hierarchy for an active LIVE/HALFTIME
-     match, single-sourced from `live_snapshot._active_matches_block`. --- */
-  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 14px; }
-  .match-centre-card { background: var(--surface); border-radius: 12px; padding: 16px; }
-  .match-centre-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  /* --- Match Centre (2026-08-29, real score/momentum/shot-map/my-players
+     hierarchy for an active LIVE/HALFTIME match, single-sourced from
+     `live_snapshot._active_matches_block`). Visual rebuild same day, direct
+     user complaint that the first pass was bare numbers and an unlabelled
+     line - studied FotMob's own real match-centre page directly (crests +
+     big score header, proportional stat bars, a full two-half pitch) and
+     rebuilt around the same real conventions. `--home`/`--away` are real,
+     genuinely DISTINCT hues (this codebase's own `--accent`/`--accent-2`
+     resolve to the identical hex in dark mode - confirmed by reading
+     :root directly - so a home-vs-away comparison needs its own two real
+     colours, not that pair). --- */
+  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; margin-top: 14px; }
+  .match-centre-card { background: var(--surface); border-radius: 12px; padding: 18px;
+    --mc-home: #00ff87; --mc-away: #04c8ff; }
+  .match-centre-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .mc-team { display: flex; align-items: center; gap: 8px; }
+  .mc-team-away { justify-content: flex-end; text-align: right; flex-direction: row-reverse; }
+  /* Real text-monogram badge (2026-08-29) - not an official crest, see
+     match_centre.py::_team_badge_html's own docstring: the real PL badge
+     CDN was live-tested and confirmed to 403 a plain cross-origin `<img>`
+     load, so this is an honest, zero-dependency substitute instead. */
+  .mc-badge { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex;
+    align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 800;
+    letter-spacing: 0.02em; background: var(--surface-2); border: 1.5px solid var(--gridline); }
+  .mc-badge-home { color: var(--mc-home); border-color: rgba(0,255,135,0.4); }
+  .mc-badge-away { color: var(--mc-away); border-color: rgba(4,200,255,0.4); }
   .match-centre-team { font-weight: 700; font-size: 0.95rem; }
-  .match-centre-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.6rem; color: var(--fg); }
-  .match-centre-minute { font-size: 0.78rem; font-weight: 700; color: var(--live-accent, #3ecf8e); padding: 2px 8px;
-    border-radius: 5px; background: rgba(62, 207, 142, 0.14); }
-  .match-centre-section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--faint); margin: 14px 0 6px; }
-  .match-centre-chart { background: var(--surface-2); border-radius: 8px; padding: 8px; }
+  .mc-score-block { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .match-centre-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 2.1rem;
+    color: var(--fg); line-height: 1; letter-spacing: 0.02em; }
+  .match-centre-minute { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #3ecf8e; padding: 2px 10px; border-radius: 99px; background: rgba(62, 207, 142, 0.16); }
+  .match-centre-header .squad-badge { grid-column: 1 / -1; justify-self: center; margin-top: 8px; }
+  .match-centre-section-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--faint); font-weight: 700; margin: 18px 0 8px; }
+  .match-centre-chart { background: var(--surface-2); border-radius: 8px; padding: 10px; }
 
-  /* Momentum - a real per-minute chart, floored at the same 240px/220px
-     desktop/mobile bar every other live chart in this dashboard uses. */
+  /* Real proportional home-vs-away stat bars (2026-08-29 redesign - a bare
+     "9 ... Shots ... 18" pair with no bar, this dashboard's own confirmed
+     first-pass mistake, communicates nothing at a glance). */
+  .mc-stat-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 10px; padding: 6px 0; }
+  .mc-stat-val { font-weight: 700; font-size: 0.85rem; color: var(--fg); font-variant-numeric: tabular-nums; text-align: center; }
+  .mc-stat-bar { position: relative; height: 20px; border-radius: 4px; overflow: hidden; background: var(--surface); display: flex; }
+  .mc-stat-bar-home { background: var(--mc-home); opacity: 0.85; height: 100%; }
+  .mc-stat-bar-away { background: var(--mc-away); opacity: 0.85; height: 100%; }
+  .mc-stat-bar .match-centre-section-title { display: none; }
+  .mc-stat-label { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1;
+    font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg);
+    text-shadow: 0 0 6px var(--surface-2), 0 0 3px var(--surface-2); white-space: nowrap; margin: 0; }
+
+  /* Momentum - a real per-minute filled area chart (home pressure above
+     the zero line, away below), with real minute gridlines - replaces the
+     first pass's bare, unlabelled single line. Floored at the same
+     240px/220px desktop/mobile bar every other live chart here uses. */
   .match-momentum-svg { width: 100%; height: auto; min-height: 240px; display: block; }
-  .match-momentum-mid { stroke: var(--gridline); stroke-width: 1; }
-  .match-momentum-line { stroke: var(--accent-2); }
-  .match-momentum-dot { fill: var(--accent-2); }
+  .match-momentum-grid { stroke: var(--gridline); stroke-width: 0.5; opacity: 0.6; }
+  .match-momentum-mid { stroke: var(--gridline); stroke-width: 1.5; }
+  .match-momentum-fill-home { fill: var(--mc-home); opacity: 0.28; }
+  .match-momentum-fill-away { fill: var(--mc-away); opacity: 0.28; }
+  .match-momentum-line { stroke: var(--fg); opacity: 0.85; }
+  .match-momentum-dot { fill: var(--fg); }
 
-  /* Shot map - a real pitch-percentage plot, never a fabricated coordinate
-     transform. Home/away distinguished by colour, outcome by fill style. */
+  /* Shot map - a real full-pitch (both halves) plot, each team's shots on
+     ITS OWN attacking half (away team's real x mirrored purely for this
+     shared display - see the Python docstring for why that's honest, not
+     fabricated). Home/away distinguished by real distinct colour, outcome
+     by fill style, with a real legend (the first pass had none). */
   .shot-map-svg { width: 100%; height: auto; min-height: 220px; display: block; }
-  .shot-map-pitch { fill: rgba(62, 207, 142, 0.05); stroke: var(--gridline); stroke-width: 0.3; }
-  .shot-map-box { fill: none; stroke: var(--gridline); stroke-width: 0.3; }
-  .shot-map-halfway { stroke: var(--gridline); stroke-width: 0.2; stroke-dasharray: 1 1; }
-  .shot-dot { stroke-width: 0.6; cursor: default; }
-  .shot-dot-home { stroke: var(--accent); }
-  .shot-dot-away { stroke: var(--accent-2); }
-  .shot-outcome-goal { fill: #00ff87; }
-  .shot-outcome-saved { fill: rgba(4, 245, 255, 0.55); }
-  .shot-outcome-post { fill: rgba(240, 196, 25, 0.6); }
-  .shot-outcome-blocked, .shot-outcome-miss { fill: rgba(255,255,255,0.12); }
+  .shot-map-pitch { fill: rgba(62, 207, 142, 0.04); stroke: var(--gridline); stroke-width: 0.4; }
+  .shot-map-box { fill: none; stroke: var(--gridline); stroke-width: 0.4; }
+  .shot-map-halfway { stroke: var(--gridline); stroke-width: 0.3; }
+  .shot-dot { stroke-width: 0.8; cursor: default; }
+  .shot-dot-home { stroke: var(--mc-home); }
+  .shot-dot-away { stroke: var(--mc-away); }
+  .shot-outcome-goal { fill: #ffd400; }
+  .shot-outcome-saved { fill: rgba(4, 200, 255, 0.5); }
+  .shot-outcome-post { fill: rgba(240, 196, 25, 0.55); }
+  .shot-outcome-blocked, .shot-outcome-miss { fill: rgba(255,255,255,0.14); }
+  .shot-map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; padding: 0 2px; }
+  .shot-map-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; color: var(--muted); }
+  .shot-map-legend-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; stroke-width: 1px; }
 
   /* My players in this match - compact rows, FOOTBALL evidence kept
      visually distinct from FPL scoring (which lives in Live Tracking). */
-  .match-player-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 0;
+  .match-player-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0;
     border-top: 1px solid var(--gridline); font-size: 0.85rem; }
   .match-player-row:first-of-type { border-top: none; }
   .match-player-name { font-weight: 700; min-width: 90px; }
   .match-player-status { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: var(--faint); }
   .match-player-minutes { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .match-player-rating { font-weight: 700; color: var(--accent-2); background: var(--surface); padding: 1px 6px;
+  .match-player-rating { font-weight: 700; color: #0a0a0b; background: #ffd400; padding: 1px 7px;
     border-radius: 5px; font-size: 0.78rem; }
   .match-player-football { color: var(--muted); font-size: 0.8rem; }
-  @media (max-width: 480px) { .match-momentum-svg { min-height: 220px; } }
+
+  /* Real per-event-type colour in the Match Feed (2026-08-29 redesign) -
+     the first pass rendered every event type in the same flat grey badge. */
+  .match-feed-type-goal { color: #ffd400 !important; background: rgba(255, 212, 0, 0.14) !important; }
+  .match-feed-type-card { color: #ff5b5b !important; background: rgba(255, 91, 91, 0.14) !important; }
+  .match-feed-type-sub { color: #04c8ff !important; background: rgba(4, 200, 255, 0.14) !important; }
+
+  @media (max-width: 480px) {
+    .match-momentum-svg, .shot-map-svg { min-height: 220px; }
+    .match-centre-score { font-size: 1.7rem; }
+    .mc-badge { width: 24px; height: 24px; font-size: 0.62rem; }
+  }
 
   /* --- Dashboard-state architecture (2026-08-21): one real signal
      (dash_state, computed in generate_dashboard_html) reorders the SAME

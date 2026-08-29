@@ -5,6 +5,7 @@ from fpl_agent.models.match_intelligence import (
     PRE_MATCH,
     derive_status,
     parse_match,
+    parse_match_events,
     parse_momentum,
     parse_player_states,
     parse_shot_map,
@@ -262,6 +263,56 @@ _PAYLOAD_WITH_PLAYER_STATS = {
         },
     },
 }
+
+
+# Real fragments confirmed live 2026-08-29 against the actual finished GW2
+# match (id 5795429) - `general.homeTeam.id` matches `isHome` semantics.
+_PAYLOAD_WITH_EVENTS = {
+    "general": {"homeTeam": {"id": 9825}, "awayTeam": {"id": 8456}},
+    "content": {
+        "matchFacts": {"events": {"events": [
+            {
+                "reactKey": "goal1", "eventId": 111, "type": "Goal", "time": 17, "isHome": False,
+                "player": {"id": 737066, "name": "Erling Haaland"}, "assistStr": "Phil Foden",
+            },
+            {
+                # Real confirmed shape - a Substitution event's own top-level
+                # `player` is always empty; the real names live in `swap`
+                # (swap[0]=ON, swap[1]=OFF, confirmed against FotMob's own
+                # real commentary text for this exact match).
+                "reactKey": "sub1", "type": "Substitution", "time": 89, "isHome": False,
+                "player": {"id": None}, "swap": [
+                    {"name": "Vitor Reis", "id": "1580952"}, {"name": "Abdukodir Khusanov", "id": "1362998"},
+                ],
+            },
+        ]}},
+        "shotmap": {"shots": [], "Periods": {"All": []}},
+    },
+}
+
+
+def test_parse_match_events_reads_real_goal_with_assist():
+    events = parse_match_events(_PAYLOAD_WITH_EVENTS)
+    goal = next(e for e in events if e.event_type == "Goal")
+    assert goal.player_name == "Erling Haaland"
+    assert goal.minute == 17
+    assert "Haaland" in goal.description
+    assert "Phil Foden" in goal.description
+
+
+def test_parse_match_events_real_bug_fix_substitution_shows_real_player_names():
+    """Real bug found + fixed 2026-08-29 (direct user report): a
+    Substitution event's own top-level `player` field is always empty
+    (`{"id": null}`) - the real names live in `swap` instead. Before this
+    fix, `description` fell through to the bare, nameless event-type
+    string ("Substitution"), matching the exact reported symptom
+    ("SUBSTITUTION Substitution" with no player)."""
+    events = parse_match_events(_PAYLOAD_WITH_EVENTS)
+    sub = next(e for e in events if e.event_type == "Substitution")
+    assert sub.description == "Vitor Reis on for Abdukodir Khusanov"
+    assert sub.player_name == "Vitor Reis"  # the player coming ON
+    assert sub.fotmob_player_id == "1580952"
+    assert sub.minute == 89
 
 
 def test_parse_player_states_reads_real_playerstats_fields():

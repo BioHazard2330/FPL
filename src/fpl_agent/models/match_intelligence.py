@@ -211,10 +211,25 @@ def parse_match_events(payload: dict) -> list["MatchEvent"]:
         # alongside player incidents - genuinely useful (real added-time
         # amount), not just noise, given real descriptions rather than the
         # generic "AddedTime — AddedTime" fallback.
+        # Real bug found + fixed 2026-08-29 ("live command centre" visual
+        # pass, direct user report: a substitution rendered as the bare,
+        # nameless "SUBSTITUTION Substitution"). A real `Substitution`
+        # event carries `player: {"id": null}` (confirmed live - no name at
+        # the top level at all) - the two real player names live in
+        # `swap` instead: `swap[0]` is the player coming ON, `swap[1]` the
+        # player coming OFF (confirmed against FotMob's own real
+        # commentary text for this exact match: "89' Substitution / Kaden
+        # Braithwaite / Nico O'Reilly" + "O'Reilly also makes way, as
+        # Braithwaite gets a run out" - swap[0]=Braithwaite=ON matches).
+        swap = e.get("swap") or []
+        sub_in = swap[0].get("name") if len(swap) > 0 else None
+        sub_out = swap[1].get("name") if len(swap) > 1 else None
         if event_type == "Half":
             desc = "Half-time" if e.get("halfStrShort") == "HT" else "End of match"
         elif event_type == "AddedTime":
             desc = e.get("minutesAddedStr") or "Added time announced"
+        elif event_type == "Substitution" and (sub_in or sub_out):
+            desc = f"{sub_in or '?'} on for {sub_out or '?'}"
         elif player_name:
             desc = f"{event_type} — {player_name}"
         else:
@@ -224,10 +239,19 @@ def parse_match_events(payload: dict) -> list["MatchEvent"]:
         raw_id = e.get("eventId") or e.get("reactKey")
         if raw_id is None:
             continue
+        # For a Substitution, `fotmob_player_id`/`player_name` describe the
+        # player coming ON (the real, forward-looking fact a live feed
+        # reader cares about) - `swap[0]`'s own real id, never the empty
+        # top-level `player` object this event type carries.
+        sub_in_id = swap[0].get("id") if swap else None
         events.append(MatchEvent(
             source_event_id=f"fact-{raw_id}", minute=e.get("time"), event_type=event_type,
-            is_home=e.get("isHome"), fotmob_player_id=str(player["id"]) if player.get("id") is not None else None,
-            player_name=player_name, description=desc,
+            is_home=e.get("isHome"),
+            fotmob_player_id=(
+                str(sub_in_id) if event_type == "Substitution" and sub_in_id is not None
+                else (str(player["id"]) if player.get("id") is not None else None)
+            ),
+            player_name=sub_in if event_type == "Substitution" else player_name, description=desc,
         ))
 
     shots = ((payload.get("content") or {}).get("shotmap") or {}).get("shots") or []

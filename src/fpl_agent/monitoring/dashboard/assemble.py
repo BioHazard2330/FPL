@@ -1548,8 +1548,11 @@ _CSS_WORKSPACE = """
      dot color - "unknown" (no snapshot polled yet, grey), "live" (snapshot
      age < 60s, green), "stale" (>=60s since the last real poll, amber) -
      never a fabricated "live" state, see the poll script's own comment. */
-  .system-live-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
-    font-size: 0.74rem; color: var(--faint); margin-bottom: 14px; }
+  /* Real legibility fix (2026-08-29, direct user complaint: "text too
+     small everywhere" on Home) - this strip crams 7 real fields onto one
+     row; 0.74rem read as genuinely tiny alongside the rest of the hero. */
+  .system-live-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+    font-size: 0.8rem; color: var(--faint); margin-bottom: 16px; }
   .system-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
   .system-live-strip[data-live-state="live"] .system-live-dot { background: #3ecf8e; }
   .system-live-strip[data-live-state="stale"] .system-live-dot { background: #f0c419; }

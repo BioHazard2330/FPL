@@ -193,7 +193,8 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
     matches = conn.execute(
         "SELECT mi.id, mi.fotmob_match_id, mi.status, mi.home_score, mi.away_score, mi.live_minute, "
         "mi.home_team_id, mi.away_team_id, mi.retrieved_at, "
-        "ht.short_name AS home_short, at.short_name AS away_short "
+        "ht.short_name AS home_short, at.short_name AS away_short, "
+        "ht.code AS home_code, at.code AS away_code "
         "FROM match_intelligence mi JOIN teams ht ON ht.id = mi.home_team_id "
         "JOIN teams at ON at.id = mi.away_team_id WHERE mi.status IN ('LIVE','HALFTIME')"
     ).fetchall()
@@ -249,6 +250,7 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
         out.append({
             "match_id": m["id"], "fotmob_match_id": m["fotmob_match_id"], "status": m["status"],
             "home_team_id": m["home_team_id"], "away_team_id": m["away_team_id"],
+            "home_code": m["home_code"], "away_code": m["away_code"],
             "home_short": m["home_short"], "away_short": m["away_short"],
             "home_score": m["home_score"], "away_score": m["away_score"], "live_minute": m["live_minute"],
             "is_squad_match": is_squad_match,
