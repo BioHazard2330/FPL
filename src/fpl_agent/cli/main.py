@@ -2813,6 +2813,38 @@ def live_match_poll_cmd(interval: int, max_hours: float):
         release_singleton_lock()
 
 
+@cli.command("live-server")
+@click.option("--port", default=8877, type=int, help="local HTTP/SSE port (default 8877)")
+def live_server_cmd(port: int):
+    """Real-time client transport (2026-08-29, "live architecture rebuild"
+    milestone 2, spec section 8: "replace the browser-as-primary-poller
+    model with SSE"). A separate, real, persistent process from
+    `live-match-poll` (that one owns FotMob ingestion; this one owns
+    serving the dashboard + a real `/events` SSE stream to the browser) -
+    deliberately separated per the spec's own "keep the worker persistent
+    runtime and the dashboard/API separate" allowance. Tails the same
+    real, already-persisted `match_events`/`change_events` tables and
+    `live_snapshot.json` (see `live/sse_server.py`'s own docstring for why
+    a DB-tailing bridge, not the in-process event bus, is the correct
+    cross-process mechanism here) - never a second ingestion path, never
+    touches the optimizer. The browser's existing ~10s snapshot poll is
+    UNCHANGED and keeps working as the real reconciliation fallback
+    whether or not this server is running."""
+    from fpl_agent.live.sse_server import run_forever
+    from fpl_agent.scheduler.process_lock import acquire_singleton_lock, release_singleton_lock as _release_lock
+
+    lock_path = DATA_DIR / "live_server.lock"
+    lock = acquire_singleton_lock(lock_path=lock_path)
+    if not lock.acquired:
+        click.echo(f"live-server: {lock.reason} - exiting cleanly")
+        return
+    click.echo(f"live-server: listening on http://127.0.0.1:{port} (SSE at /events) - Ctrl+C to stop")
+    try:
+        run_forever(DATA_DIR, port)
+    finally:
+        _release_lock(lock_path=lock_path)
+
+
 @cli.command()
 def injuries():
     """List players not fully available (status/chance-of-playing derived, official source)."""

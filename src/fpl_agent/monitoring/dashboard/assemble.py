@@ -1221,6 +1221,38 @@ def generate_dashboard_html(
   setTimeout(function() {{
     if (!pollEverSucceeded) location.reload();
   }}, {_SILENT_FALLBACK_RELOAD_SECONDS * 1000});
+
+  // Real-time transport (2026-08-29, "live architecture rebuild" milestone
+  // 2, spec section 8: "replace the browser-as-primary-poller model with
+  // SSE"). A real `EventSource` connection to the SEPARATE `fpl
+  // live-server` process (default port 8877, see `live/sse_server.py`),
+  // when one happens to be running. Deliberately purely ADDITIVE: the
+  // poll loop above is completely unchanged and keeps serving as the real
+  // reconciliation fallback per the spec's own "this is the fallback, not
+  // the primary" instruction - if live-server isn't running (the common
+  // case today - it's a new, separate, optional process, not yet wired
+  // into the Task Scheduler), `EventSource` fails silently and retries in
+  // the background on its own native schedule; nothing else on this page
+  // is affected. Only the `snapshot` channel is wired this pass - it
+  // reuses `applySnapshot` directly (that function's own version guard
+  // already makes an out-of-order or duplicate push a safe no-op), so a
+  // real live_snapshot.json write reaches this page within about one
+  // tailer poll cycle (~1.5s) instead of waiting up to the 10s poll
+  // interval. `match_event`/`change_event` channel messages are received
+  // by `live-server` and broadcast, but not yet rendered here - a real,
+  // disclosed follow-up (they'd need their own dedup-key scheme reconciled
+  // with `pushLiveChanges`'s existing one to avoid a double-counted feed
+  // entry when both the SSE push and the next poll describe the same
+  // real incident).
+  try {{
+    var liveSource = new EventSource('http://127.0.0.1:8877/events');
+    liveSource.onmessage = function(ev) {{
+      var msg;
+      try {{ msg = JSON.parse(ev.data); }} catch (e) {{ return; }}
+      if (msg.channel === 'snapshot' && msg.snapshot) applySnapshot(msg.snapshot);
+    }};
+    liveSource.onerror = function() {{ /* real, expected when live-server isn't running - EventSource retries natively */ }};
+  }} catch (e) {{ /* EventSource unsupported/blocked - the poll fallback above is unaffected */ }}
 }})();
 
 (function() {{

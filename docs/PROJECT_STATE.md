@@ -6,6 +6,39 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 2)
+
+Real-time client transport (spec section 8: "replace the browser-as-
+primary-poller model with SSE"). New `live/sse_server.py` + `fpl
+live-server` CLI command - a real, stdlib-only (no new dependency)
+`ThreadingHTTPServer` exposing `/events` (Server-Sent Events) and serving
+the dashboard's static files. Deliberately a SEPARATE real OS process from
+`live-match-poll` (per the spec's own "keep the persistent worker and the
+dashboard/API separate" allowance) - since milestone 1's in-process event
+bus doesn't span processes, `DbTailer` bridges the gap by tailing the
+same real, already-persisted `match_events`/`change_events` tables plus
+`live_snapshot.json`'s own mtime, translating each genuinely new
+row/version into a real SSE push (this is also, by construction, the
+real reconciliation mechanism the spec asks for - every push reads
+straight from the authoritative DB/file state). The browser's existing
+~10s snapshot poll is completely unchanged - it now serves purely as the
+real fallback/reconciliation path; a new, minimal `EventSource` connection
+(default `http://127.0.0.1:8877/events`) reuses the existing
+`applySnapshot` function directly for near-immediate updates when
+`live-server` is reachable, and fails silently (auto-retries) when it
+isn't - zero regression risk either way. Real bug found + fixed via this
+milestone's own tests: a genuinely new row inserted in the narrow window
+between server start and the tailer thread's own initialization was
+wrongly treated as "already known at startup" (baseline computed too
+late) - fixed by capturing the baseline synchronously in `LiveServer.
+__init__`, before `.start()` returns. `scripts/setup_live_server_scheduler.ps1`/
+`remove_live_server_scheduler.ps1` prepared (not run - a persistent Task
+Scheduler change is the user's call) mirroring the existing live-poll
+scheduler pattern. 1274 tests green (7 new). Smoke-tested against the
+real production `data/` directory (dashboard.html + live_snapshot.json
+both served correctly). Full account:
+`docs/history/29-session-2026-08-29-live-architecture-milestone-2.md`.
+
 ## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 1)
 
 Direct spec: replace ad-hoc "read the DB directly" wiring with a real event-
