@@ -6,6 +6,31 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 1)
+
+Direct spec: replace ad-hoc "read the DB directly" wiring with a real event-
+driven pipeline (provider -> canonical state -> fast/deep engines ->
+decision -> dashboard). Milestone 1 (no UI changes): new `events/` package
+(`EventType` vocabulary, synchronous in-process `EventBus` - correct scope
+for this single-process CLI app, not a distributed broker) and
+`live/fast_engine.py` + migration 0036 (`live_player_state` - a real
+SUBSTITUTION/MATCH_FINISHED-driven "this player's match minutes are now
+locked" fact this project previously computed and threw away).
+`fotmob_source.py::sync_match` now diffs against `match_events`'s own real
+UNIQUE key to detect genuinely new incidents and publishes typed
+GOAL/ASSIST/CARD/SUBSTITUTION/MATCH_STARTED/HALFTIME/RESUMED/FINISHED
+events (assist via FotMob's own real `assistPlayerId`); `change_detection.py`
+now also publishes PRICE_CHANGED/AVAILABILITY_CHANGED/LINEUP_CONFIRMED/
+FIXTURE_CHANGED onto the SAME bus - one real event system, not two. Real
+bug found + fixed via this milestone's own deterministic test: a fixture's
+very first sync (often already LIVE) never fired MATCH_STARTED. 1267 tests
+green (7 new), including a real 3-tick E2E test proving the whole chain.
+Full account: `docs/history/28-session-2026-08-29-live-architecture-milestone-1.md`.
+**Not done yet, real, disclosed, next milestones**: SSE/WebSocket
+transport, FPL-side provider abstraction, materiality-engine
+consolidation, decision hysteresis, reconciliation loop, production
+verification against a genuinely live match.
+
 ## Where things stand (updated 2026-08-29, FotMob data extraction + live Match Centre pass)
 
 Real FotMob investigation (live-tested against actual endpoints): `content.
