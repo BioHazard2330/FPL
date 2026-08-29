@@ -6,6 +6,50 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, live architecture rebuild - milestones 4-6)
+
+Three more real pieces closed in one continuation ("continue everything
+left"): **(4) decision hysteresis** (spec section 11) - new `models/
+decision_hysteresis.py::stable_current_recommendation`, wired into the
+ONE real place the "don't flip-flop on noise" concern actually lives
+(`monitoring/dashboard/legacy.py::_compute_primary_verdict`, the
+dashboard's single authoritative verdict) - requires a real minimum EV
+advantage (5.0 pts), a real confidence floor (MEDIUM+), or real
+persistence across >=2 consecutive complete decisions before replacing an
+already-stable recommendation. Deliberately NOT wired into `live_
+snapshot.py`'s freshness check or `adversarial_audit.py`'s cross-check -
+those legitimately want the raw, unfiltered latest decision. **(5) live
+feed SSE rendering** - `change_event`/`match_event` SSE channels (built in
+milestone 2 but not rendered) now appear in the browser's live-changes
+feed, reusing the EXACT SAME dedup-key scheme the existing poll-based feed
+already uses (`'chg:'+entity_id+':'+detected_at`) so the same real
+`change_events` row delivered twice (once by SSE, once by the next poll)
+correctly dedupes; `match_event` (FotMob's own richer per-incident
+description) gets its own real key off `match_events.id`, genuinely
+additive rather than a duplicate. **(6) provider abstraction** (spec: "a
+provider abstraction... so the provider can later be swapped") - new
+`providers/football.py` (`FootballDataProvider` Protocol + `FotMobProvider`,
+a real class wrapper around the existing FotMob module functions, dynamic
+module lookup so existing `monkeypatch.setattr(fotmob_mod, ...)` tests keep
+working unchanged) and `providers/fpl.py` (`FplDataProvider` Protocol -
+real finding: `ingestion/fpl_api.py::FPLApiAdapter`, built in an earlier
+session, ALREADY satisfies this shape; aliased as `OfficialFplProvider`,
+zero reimplementation). `sync_match` gained an optional `provider=`
+parameter (defaults to `FotMobProvider()`, 100% backward compatible) -
+genuine swappability proven by injecting a real fake provider and
+confirming it (not the real FotMob functions) gets called. 1291 tests
+green (17 new: 8 hysteresis, 5 providers, plus SSE/dashboard regression
+coverage). Full account:
+`docs/history/31-session-2026-08-29-live-architecture-milestones-4-6.md`.
+
+**Genuinely still open** (real, disclosed): real production verification
+against a genuinely live match with the full pipeline active end-to-end
+(no GW was live this entire session); the FPL-side event vocabulary
+(FPL_POINTS_CHANGED/BONUS_CHANGED) isn't wired onto the event bus yet
+(FPL's own live endpoint remains the authoritative source for those,
+read directly - not currently republished as bus events); end-to-end
+latency instrumentation (spec section 15) not built.
+
 ## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 3)
 
 Materiality engine (spec sections 6/7: "do not run the expensive optimizer
