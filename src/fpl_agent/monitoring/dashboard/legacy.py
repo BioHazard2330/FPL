@@ -2116,6 +2116,58 @@ def _match_feed_html(conn: sqlite3.Connection, match_id: int, limit: int = 15) -
     return "<div class='match-feed'>" + "\n".join(items) + "</div>"
 
 
+def _match_stats_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
+                       away_team_id: int | None, home_short: str, away_short: str) -> str:
+    """Real compact MATCH STATS row (2026-08-29, "live command centre" pass,
+    spec section O) - possession/shots/shots-on-target/corners/xG straight
+    from `team_match_state` (`fotmob_source.py::sync_match`'s own real,
+    already-ingested team-level rows - no new fetch, no new parsing).
+    Deliberately only the few FPL-relevant stats this real source actually
+    has (no "big chances" field exists in `team_match_state` - honestly
+    omitted, never fabricated) - a handful of readable rows, not a 20-stat
+    dump. `''` when neither team has a real row yet (e.g. right at kickoff,
+    before FotMob's first live sync for this match)."""
+    if home_team_id is None or away_team_id is None:
+        return ""
+    rows = {
+        r["team_id"]: r for r in conn.execute(
+            "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners "
+            "FROM team_match_state WHERE match_id=? AND team_id IN (?,?)",
+            (match_id, home_team_id, away_team_id),
+        ).fetchall()
+    }
+    home, away = rows.get(home_team_id), rows.get(away_team_id)
+    if home is None and away is None:
+        return ""
+
+    def _stat(label: str, key: str, fmt: str = "{}") -> str:
+        h = home[key] if home is not None else None
+        a = away[key] if away is not None else None
+        if h is None and a is None:
+            return ""
+        h_text = fmt.format(h) if h is not None else "&mdash;"
+        a_text = fmt.format(a) if a is not None else "&mdash;"
+        return (
+            f"<div class='match-stats-row'><span class='match-stats-value'>{h_text}</span>"
+            f"<span class='match-stats-label'>{_esc(label)}</span>"
+            f"<span class='match-stats-value'>{a_text}</span></div>"
+        )
+
+    rows_html = (
+        _stat("Possession", "possession_pct", "{:.0f}%")
+        + _stat("Shots", "shots")
+        + _stat("On target", "shots_on_target")
+        + _stat("xG", "xg", "{:.2f}")
+        + _stat("Corners", "corners")
+    )
+    if not rows_html:
+        return ""
+    return (
+        f"<div class='match-stats'><div class='match-stats-teams'>"
+        f"<span>{_esc(home_short)}</span><span>{_esc(away_short)}</span></div>{rows_html}</div>"
+    )
+
+
 def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_id: int | None,
                               away_team_id: int | None, squad_ids: set[int]) -> str:
     """Real per-match FotMob state (minutes/goals/assists/rating) for locked-
@@ -2129,7 +2181,8 @@ def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_
     placeholders = ",".join("?" * len(squad_ids))
     team_placeholders = ",".join("?" * len(team_ids))
     rows = conn.execute(
-        f"SELECT p.web_name, pms.minutes, pms.goals, pms.assists, pms.rating, pms.started "
+        f"SELECT p.web_name, pms.minutes, pms.goals, pms.assists, pms.rating, pms.started, "
+        f"pms.xg, pms.xa, pms.shots, pms.key_passes "
         f"FROM players p LEFT JOIN player_match_state pms ON pms.player_id = p.id AND pms.match_id=? "
         f"WHERE p.id IN ({placeholders}) AND p.team_id IN ({team_placeholders})",
         (match_id, *squad_ids, *team_ids),
@@ -2151,6 +2204,20 @@ def _match_your_players_html(conn: sqlite3.Connection, match_id: int, home_team_
                 bits.append(f"{r['goals']}G")
             if r["assists"]:
                 bits.append(f"{r['assists']}A")
+            # Real FOOTBALL-evidence stats (2026-08-29, "live command centre"
+            # pass) - `xg`/`xa`/`shots`/`key_passes` were already fetched and
+            # stored by `fotmob_source.py::sync_match` but never surfaced
+            # here; kept visually/conceptually separate from the FPL-scoring
+            # numbers above (goals/assists/minutes), never implied to equal
+            # FPL points themselves.
+            if r["shots"]:
+                bits.append(f"{r['shots']} shot{'s' if r['shots'] != 1 else ''}")
+            if r["xg"] is not None:
+                bits.append(f"{r['xg']:.2f} xG")
+            if r["xa"] is not None:
+                bits.append(f"{r['xa']:.2f} xA")
+            if r["key_passes"]:
+                bits.append(f"{r['key_passes']} key pass{'es' if r['key_passes'] != 1 else ''}")
             if r["rating"] is not None:
                 bits.append(f"rating {r['rating']:.1f}")
             detail = " &middot; ".join(bits) if bits else "on the pitch"
@@ -2891,11 +2958,13 @@ def _match_intelligence_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
   {_match_your_players_html(conn, m["id"], m["home_team_id"], m["away_team_id"], squad_ids)}"""
                 if is_squad_relevant else ""
             )
+            match_stats_html = _match_stats_html(conn, m["id"], m["home_team_id"], m["away_team_id"], home_short, away_short)
             match_centre_html = f"""
   <div class="outlook-head" style="margin-top:10px">
     <strong>{_esc(home_short)} {m['home_score'] if m['home_score'] is not None else 0} &ndash; {m['away_score'] if m['away_score'] is not None else 0} {_esc(away_short)}</strong>
     <span class="outlook-chip">{minute_label}</span>{live_badge}
   </div>
+  {match_stats_html}
   <div class="bench-label" style="margin-top:8px">Match Feed</div>
   {_match_feed_html(conn, m["id"])}{your_players_html}"""
 
@@ -4249,6 +4318,18 @@ _CSS = """
     color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
   .match-feed-desc { color: var(--fg); flex: 1; }
 
+  /* --- Match Stats (2026-08-29, "live command centre" pass, spec section
+     O) - a compact real home-vs-away row set (possession/shots/on-target/
+     xG/corners), never a 20-stat dump. --- */
+  .match-stats { margin-top: 8px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+  .match-stats-teams { display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin-bottom: 4px; }
+  .match-stats-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+    font-size: 0.82rem; padding: 2px 0; }
+  .match-stats-value { color: var(--fg); font-weight: 600; text-align: center; }
+  .match-stats-row .match-stats-value:first-child { text-align: right; }
+  .match-stats-label { color: var(--faint); font-size: 0.72rem; text-align: center; white-space: nowrap; }
+
   /* --- Dashboard-state architecture (2026-08-21): one real signal
      (dash_state, computed in generate_dashboard_html) reorders the SAME
      panels by choosing which already-built section string renders first -
@@ -4457,10 +4538,19 @@ _CSS = """
   /* Live charts (2026-08-29, real my_team_gw_summary-sourced rank/points
      trajectory - "finish the live product loop" item 6). Reuses the same
      --accent/--accent-2/--faint tokens every other panel already uses. */
-  .live-charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
+  /* Real fix (2026-08-29, "live command centre" pass, direct user
+     acceptance failure: "graphs rendered so small they are difficult to
+     interpret"). Widened the grid's minimum column (260px let 4+ charts
+     cram onto one desktop row, each too narrow to read - "two good charts
+     beat four unreadable ones" per the same acceptance pass) and floored
+     the SVG's own height (was pure `height:auto`, i.e. whatever a narrow
+     column's aspect-ratio-derived height happened to be, sometimes well
+     under 100px) at a real minimum that clears both the desktop (~240px)
+     and mobile (~220px) bars from a single value. */
+  .live-charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 16px; }
   .live-chart-card { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
   .live-chart-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
-  .live-chart-svg { width: 100%; height: auto; display: block; }
+  .live-chart-svg { width: 100%; height: auto; min-height: 240px; display: block; }
   .chart-axis-label { font-size: 9px; fill: var(--faint); }
   .chart-last-label { font-size: 11px; font-weight: 600; fill: var(--fg); }
   .chart-empty { color: var(--faint); font-size: 0.85rem; padding: 8px 0; }

@@ -165,7 +165,12 @@ def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_sna
     # an explicit "computed Xh ago" detail, not just the raw status word.
     assert ">Current<" in result
     assert "computed" in result
-    assert "1 source(s) degraded: odds_api" in result
+    # Real readable "Data health" summary (2026-08-29 fix) - never a raw
+    # connector-name dump in primary UI; the plain-English impact leads,
+    # the raw name only appears inside the collapsed detail.
+    assert "Data health &middot; 1 issue" in result
+    assert "Match odds" in result
+    assert "(odds_api)" in result
 
 
 def test_render_hero_shows_real_live_captain_points_when_available():

@@ -129,6 +129,57 @@ def _freshness_html(freshness) -> str:
 
 _NEWS_SOURCE_NAMES = {"bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss"}
 
+# Real friendly impact labels (2026-08-29, "live command centre" pass, direct
+# user complaint: raw connector names like "fpl_api_my_team" reading as an
+# eyesore in primary UI). Mirrors `assemble.py`'s JS-side `SOURCE_IMPACT` map
+# exactly - same real source-name catalog every `update_source_health` call
+# site in this project actually uses (checked directly, not guessed).
+# Alert-delivery channels are excluded - a failed toast/Telegram/Discord send
+# isn't a DATA freshness problem for this strip.
+_SOURCE_IMPACT = {
+    "fpl_api_bootstrap": "Player prices/stats", "fpl_api_fixtures": "Fixtures",
+    "fpl_api_my_team": "Squad sync", "livefpl": "Rank", "odds_api": "Match odds",
+    "odds_api_player_props": "Player odds", "understat": "xG/xA data",
+    "understat_cross_league": "Cross-league xG data", "fotmob": "Live match data",
+    "football_data": "Fixture results", "fpl_elite_panel": "Elite-manager panel",
+    "fpl_live_rank_sample": "Rank sampling",
+    "fantasyfootballscout_team_news": "Predicted lineups",
+    "fantasyfootballpundit_start_percent": "Start-percent data",
+}
+_SOURCE_IMPACT_HIDDEN = {"windows_toast_alerts", "telegram_alerts", "discord_alerts"}
+
+
+def _readable_source_impact(name: str) -> str:
+    if name in _SOURCE_IMPACT:
+        return _SOURCE_IMPACT[name]
+    if name.startswith("fpl_api_event_live_"):
+        return "Live match data"
+    if name.startswith("football_data_"):
+        return "Fixture results"
+    return name.replace("_", " ")
+
+
+def _degraded_health_html(degraded: list[str]) -> str:
+    """Real, readable "Data health" summary (2026-08-29) - never a raw
+    connector-name dump in primary UI. Collapsed `<details>` (zero new JS,
+    same disclosure pattern already used elsewhere in this dashboard) -
+    the plain-English impact leads, the raw technical name stays available
+    but only on click/expand, matching the "Advanced/System" disclosure
+    rule for internal names."""
+    visible = [s for s in degraded if s not in _SOURCE_IMPACT_HIDDEN]
+    if not visible:
+        return "<span class='system-live-field system-live-degraded' id='system-live-degraded' hidden></span>"
+    n = len(visible)
+    items = "".join(
+        f"<li>{_esc(_readable_source_impact(s))} <span class='system-live-degraded-raw'>({_esc(s)})</span></li>"
+        for s in visible
+    )
+    return (
+        f"<span class='system-live-field system-live-degraded' id='system-live-degraded'>"
+        f"<details><summary>Data health &middot; {n} issue{'s' if n != 1 else ''}</summary>"
+        f"<ul class='system-live-degraded-list'>{items}</ul></details></span>"
+    )
+
 
 def _system_live_html(snapshot: dict | None = None) -> str:
     """Real, always-honest freshness strip. Ages tick from real stored
@@ -233,10 +284,7 @@ def _system_live_html(snapshot: dict | None = None) -> str:
         decision_detail = "no decision logged yet"
     news_age = _relative_time(max(news_times)) if news_times else "unavailable"
     projections_age = _relative_time((cadence.get("system") or {}).get("last_sync_at")) if projections_at else "unavailable"
-    degraded_html = (
-        f"<span class='system-live-field system-live-degraded' id='system-live-degraded'>{len(degraded)} source(s) degraded: {_esc(', '.join(degraded))}</span>"
-        if degraded else "<span class='system-live-field system-live-degraded' id='system-live-degraded' hidden></span>"
-    )
+    degraded_html = _degraded_health_html(degraded)
 
     data_attrs = "".join(
         f" data-{name}=\"{_esc(value)}\""

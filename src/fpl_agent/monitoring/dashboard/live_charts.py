@@ -22,7 +22,13 @@ table/migration)."""
 import sqlite3
 from dataclasses import dataclass
 
-_W, _H = 600, 160
+# Real fix (2026-08-29, "live command centre" pass, direct user acceptance
+# failure: "charts are rendered so small they are difficult to interpret").
+# `_H` raised from 160 - the SVG's own `preserveAspectRatio="none"` already
+# stretches to fill its CSS box (see `.live-chart-svg`'s real `min-height`
+# floor in `legacy.py`'s stylesheet), so a taller intrinsic ratio here means
+# less stretch is needed to clear that floor at typical real card widths.
+_W, _H = 600, 220
 _PAD_L, _PAD_R, _PAD_T, _PAD_B = 44, 12, 12, 22
 
 
@@ -357,11 +363,11 @@ def render_live_charts(conn: sqlite3.Connection, entry_id: int | None, event: in
     return f"""<div class="live-charts-grid">
   {intragame_html}
   <div class="live-chart-card">
-    <div class="live-chart-title">Rank trajectory</div>
+    <div class="live-chart-title">Rank trajectory <span class="panel-subtitle">your real overall rank at the end of each finished GW</span></div>
     {rank_svg}
   </div>
   <div class="live-chart-card">
-    <div class="live-chart-title">Cumulative GW points</div>
+    <div class="live-chart-title">Cumulative GW points <span class="panel-subtitle">real official FPL points, running total across the season</span></div>
     {points_svg}
   </div>
   <div class="live-chart-card">

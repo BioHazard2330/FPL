@@ -648,6 +648,32 @@ def generate_dashboard_html(
     rankNextDueAt: null, decisionStatus: null, newsAt: null, projectionsAt: null,
     staleReason: null, staleDetectedAt: null, recomputeTriggeredAt: null,
   }};
+  // Real friendly impact labels for `source_freshness.source` names (2026-08-
+  // 29, "live command centre" pass, direct user requirement: never show a
+  // raw internal connector name - "fpl_api_my_team" - as primary UI; show
+  // what it actually means for the user instead). Mirrors
+  // `home.py::_SOURCE_IMPACT` exactly (same real source-name catalog this
+  // project's own `update_source_health` call sites use) so the immediate
+  // server-rendered paint and this live-polled update never disagree.
+  // Alert-delivery channels (toast/telegram/discord) are excluded - a
+  // failed notification isn't a DATA freshness problem for this strip.
+  var SOURCE_IMPACT = {{
+    fpl_api_bootstrap: 'Player prices/stats', fpl_api_fixtures: 'Fixtures',
+    fpl_api_my_team: 'Squad sync', livefpl: 'Rank', odds_api: 'Match odds',
+    odds_api_player_props: 'Player odds', understat: 'xG/xA data',
+    understat_cross_league: 'Cross-league xG data', fotmob: 'Live match data',
+    football_data: 'Fixture results', fpl_elite_panel: 'Elite-manager panel',
+    fpl_live_rank_sample: 'Rank sampling',
+    fantasyfootballscout_team_news: 'Predicted lineups',
+    fantasyfootballpundit_start_percent: 'Start-percent data',
+  }};
+  var SOURCE_IMPACT_HIDDEN = {{windows_toast_alerts: 1, telegram_alerts: 1, discord_alerts: 1}};
+  function readableSourceImpact(name) {{
+    if (SOURCE_IMPACT[name]) return SOURCE_IMPACT[name];
+    if (name.indexOf('fpl_api_event_live_') === 0) return 'Live match data';
+    if (name.indexOf('football_data_') === 0) return 'Fixture results';
+    return name.replace(/_/g, ' ');
+  }}
   // Real fix (2026-08-28, direct user report: a dashboard opened via
   // `file://` - downloaded/copied out of `data/` rather than served over
   // http - showed this strip permanently frozen at placeholder text,
@@ -735,11 +761,29 @@ def generate_dashboard_html(
     if (projEl) projEl.textContent = liveState.projectionsAt != null ? fmtAgo(liveState.projectionsAt) : 'unavailable';
     var degEl = document.getElementById('system-live-degraded');
     if (degEl) {{
-      if (liveState.degraded.length) {{
-        degEl.hidden = false;
-        degEl.textContent = liveState.degraded.length + ' source(s) degraded: ' + liveState.degraded.join(', ');
-      }} else {{
-        degEl.hidden = true;
+      var visible = liveState.degraded.filter(function(s) {{ return !SOURCE_IMPACT_HIDDEN[s]; }});
+      var visibleKey = visible.join(',');
+      // Real fix: this whole `tickLiveStrip` runs every 1s (the age ticker),
+      // but the degraded-source LIST itself only actually changes on a real
+      // poll. Rebuilding `innerHTML` unconditionally every second destroyed
+      // the <details> element's own open/closed state (and any in-flight
+      // click) every tick - a real, confirmed regression found live-
+      // verifying this in a real browser. Only touch the DOM when the real
+      // underlying list changed since the last render.
+      if (visibleKey !== degEl.dataset.renderedKey) {{
+        degEl.dataset.renderedKey = visibleKey;
+        if (visible.length) {{
+          degEl.hidden = false;
+          var summaryText = visible.length + ' issue' + (visible.length > 1 ? 's' : '');
+          var detailHtml = visible.map(function(s) {{
+            return '<li>' + readableSourceImpact(s) + ' <span class="system-live-degraded-raw">(' + s + ')</span></li>';
+          }}).join('');
+          degEl.innerHTML = '<details><summary>Data health &middot; ' + summaryText +
+            '</summary><ul class="system-live-degraded-list">' + detailHtml + '</ul></details>';
+        }} else {{
+          degEl.hidden = true;
+          degEl.innerHTML = '';
+        }}
       }}
     }}
     // "live" only within 90s of a REAL successful poll that itself proved a
@@ -760,9 +804,30 @@ def generate_dashboard_html(
   // from that real timestamp every tick, so the display self-corrects
   // even if a tick was skipped or delayed.
   var nextPollAt = Date.now() + POLL_INTERVAL_MS;
+  // Real poll-failure tracking (2026-08-29, "live command centre" pass -
+  // direct fix for a confirmed real bug: "Next check" could reach 0s and
+  // sit there while no fresh data had arrived). Root cause: `nextPollAt`
+  // used to be advanced ONLY inside `applySnapshot`, which returns
+  // immediately on a failed/absent fetch (see `poll()` below) - so once a
+  // single poll failed (e.g. no live_snapshot.json this session, a genuine
+  // and common case per this file's own long-standing comment), the
+  // countdown never advanced again and stuck at 0 forever. `nextPollAt` is
+  // now reset on every real poll ATTEMPT, and a genuinely stalled channel
+  // (no success in 3+ intervals) shows an honest "delayed - retrying"
+  // state instead of a bare, frozen "0s".
+  var lastPollOkAt = null;
+  var consecutivePollFailures = 0;
   function tickNextCheck() {{
     var el = document.getElementById('system-live-next-check');
     if (!el) return;
+    // Only show "delayed" once real live data was flowing and then
+    // stopped (a genuine regression) - a session with NO live match at all
+    // never had a real poll to lose, so it keeps the plain countdown
+    // rather than a false "delayed" alarm for an entirely expected state.
+    if (consecutivePollFailures >= 3 && pollEverSucceeded) {{
+      el.textContent = 'delayed — retrying';
+      return;
+    }}
     var remaining = Math.max(0, Math.round((nextPollAt - Date.now()) / 1000));
     el.textContent = remaining + 's';
   }}
@@ -772,6 +837,15 @@ def generate_dashboard_html(
 
   function applySnapshot(snap) {{
     if (!snap) return;
+    // Real out-of-order guard (2026-08-29, "live command centre" pass,
+    // direct spec requirement: "if the payload timestamp is older than the
+    // browser's current state, ignore it" - a slower response must never
+    // overwrite fresher already-applied state). `version` is a real ISO
+    // timestamp (`live_snapshot.py`'s own `generated_at`, sortable as a
+    // plain string) - this poll loop never has more than one fetch in
+    // flight at once, so this is a defensive floor, not a fix for a
+    // reproduced race, but it's a real, cheap, correct guard against one.
+    if (lastVersion != null && snap.version != null && snap.version < lastVersion) return;
     // Real poll succeeded - update the freshness strip's own real state
     // regardless of whether the snapshot's CONTENT changed (an unchanged
     // snapshot still proves the channel itself is alive; its `generated_at`
@@ -1057,13 +1131,27 @@ def generate_dashboard_html(
   }}
   var pollEverSucceeded = false;
   function poll() {{
+    // Real fix: reset on every ATTEMPT, not only on success (see this var's
+    // own declaration comment above for the exact bug this closes).
+    nextPollAt = Date.now() + POLL_INTERVAL_MS;
     fetch('live_snapshot.json', {{cache: 'no-store'}})
       .then(function(r) {{
-        if (r.ok) pollEverSucceeded = true;
+        if (r.ok) {{
+          pollEverSucceeded = true;
+          lastPollOkAt = Date.now();
+          consecutivePollFailures = 0;
+        }} else {{
+          consecutivePollFailures++;
+        }}
+        tickNextCheck();
         return r.ok ? r.json() : null;
       }})
       .then(applySnapshot)
-      .catch(function() {{ /* no snapshot yet, or not served over http - silent */ }});
+      .catch(function() {{
+        consecutivePollFailures++;
+        tickNextCheck();
+        /* no snapshot yet, or not served over http - silent */
+      }});
   }}
   poll();
   setInterval(poll, POLL_INTERVAL_MS);
@@ -1363,8 +1451,19 @@ def generate_dashboard_html(
 _CSS_WORKSPACE = """
   /* HOME workspace (2026-08-27, frontend redesign) - first viewport, six
      metrics only, no competing content. */
-  .home-hero { padding: 28px clamp(16px, 4vw, 40px); background: linear-gradient(180deg, var(--fpl-purple, #37003c) 0%, #2a002e 100%);
-    color: #fff; border-radius: 0 0 18px 18px; }
+  /* Real fix (2026-08-29, "live command centre" pass, direct user finding:
+     "the stylesheet's own visual language claims flat/zero-gradients [see
+     the header's own 2026-08-27 'flat rebuild - a plain dark bar, no
+     gradient' comment] but the Home hero still washes the whole screen in
+     a purple gradient" - a genuine, confirmed contradiction, not a style
+     nitpick). Flat `--surface-2` (the same real token the rest of this
+     flat design language already uses) + a narrow left accent bar carries
+     the brand identity instead of a full-bleed gradient wash. `--fg`
+     (theme-aware) replaces the old hardcoded `#fff`, which only ever
+     worked against a guaranteed-dark purple background. */
+  .home-hero { padding: 28px clamp(16px, 4vw, 40px); background: var(--surface-2);
+    border-left: 4px solid var(--fpl-purple, #37003c);
+    color: var(--fg); border-radius: 0 0 18px 18px; }
   .home-hero-gw { font-size: 0.85rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.75; }
   .home-hero-action { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: clamp(2rem, 6vw, 3.4rem);
     letter-spacing: 0.02em; margin-top: 4px; }
@@ -1389,6 +1488,10 @@ _CSS_WORKSPACE = """
   .system-live-label { font-weight: 800; letter-spacing: 0.06em; color: var(--fg); font-size: 0.72rem; }
   .system-live-field b { color: var(--fg); font-weight: 600; }
   .system-live-degraded { color: #f0c419; }
+  .system-live-degraded summary { cursor: pointer; list-style: none; }
+  .system-live-degraded summary::-webkit-details-marker { display: none; }
+  .system-live-degraded-list { margin: 6px 0 0; padding-left: 16px; color: var(--muted); font-size: 0.72rem; }
+  .system-live-degraded-raw { color: var(--faint); }
   .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
   .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
     background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
@@ -1424,7 +1527,7 @@ _CSS_WORKSPACE = """
   .home-metric-delta-good { color: #3ecf8e; }
   .home-metric-delta-bad { color: #f0c419; }
   .home-hero-actions { display: flex; gap: 10px; margin-top: 24px; }
-  .home-action-btn { padding: 9px 18px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); color: #fff;
+  .home-action-btn { padding: 9px 18px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg);
     text-decoration: none; font-weight: 600; font-size: 0.9rem; }
   .home-action-primary { background: #00ff87; color: #14002b; border-color: transparent; }
   @media (max-width: 480px) {{ .home-hero {{ border-radius: 0; padding: 20px 16px; }} }}
