@@ -17,8 +17,8 @@ from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_my_team_entry_id
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.monitoring.dashboard import (
-    benchmark, fixtures, home, injuries, intelligence, live_charts, market, opportunity, plan, player_data,
-    points_changes, price_history, squad, template_team,
+    benchmark, fixtures, home, injuries, intelligence, live_charts, market, match_centre, opportunity, plan,
+    player_data, points_changes, price_history, squad, template_team,
 )
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
@@ -418,9 +418,23 @@ def generate_dashboard_html(
   </div>
 </section>"""
 
+    # Real live Match Centre (2026-08-29, "live command centre" pass) - score/
+    # minute/team-stats/momentum/shot-map/my-players for any genuinely LIVE/
+    # HALFTIME match, single-sourced from `live_snapshot._active_matches_block`
+    # (the SAME data the browser's fast poll channel patches from - never a
+    # second query path). Deliberately NOT gated on the coarser gameweek-
+    # level `dash_state` (a real, confirmed distinct case: one early fixture
+    # can be genuinely LIVE in `match_intelligence` while the whole
+    # gameweek's own lifecycle state hasn't yet flipped to "LIVE") - placed
+    # unconditionally near the top of the page, right after the Home hero,
+    # and returns `''` (a real empty section, never a placeholder card)
+    # whenever nothing is genuinely live right now.
+    match_centre_section_html = match_centre.render_match_centre(conn, squad_ids)
+
     if dash_state == "LIVE":
-        panel_order = [live_section_html, match_intelligence_section_html, team_outlook_section_html,
-                        intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html]
+        panel_order = [live_section_html, match_intelligence_section_html,
+                        team_outlook_section_html, intelligence_summary_section_html,
+                        opportunity_board_section_html, market_summary_section_html]
     elif dash_state == "POST_MATCH":
         panel_order = [live_section_html, match_intelligence_section_html, team_outlook_section_html,
                         intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html, compare_panel]
@@ -474,6 +488,7 @@ def generate_dashboard_html(
 
 <nav class="site-nav" aria-label="Section navigation">
   <a href="#home" class="site-nav-primary">Home</a>
+  <a href="#live-match-centre" class="site-nav-primary">Live</a>
   <a href="#plan" class="site-nav-primary">Plan</a>
   <a href="#squad" class="site-nav-primary">Squad</a>
   <a href="#intelligence-summary" class="site-nav-primary">Intelligence</a>
@@ -488,6 +503,8 @@ def generate_dashboard_html(
 
 {home_section_html}
 {payload_script_html}
+
+{match_centre_section_html}
 
 {plan_section_html}
 
@@ -943,6 +960,7 @@ def generate_dashboard_html(
       }}
     }}
     patchLiveRows(snap);
+    patchMatchCentre(snap);
     pushLiveChanges(snap);
   }}
   // Real Live Tracking row patching (2026-08-28, direct user ask: "the
@@ -956,6 +974,46 @@ def generate_dashboard_html(
   function _setText(id, text) {{
     var el = document.getElementById(id);
     if (el && el.textContent !== text) el.textContent = text;
+  }}
+  // Real Match Centre live patching (2026-08-29, "live command centre"
+  // pass) - score/minute/team-stats numbers for any active match, straight
+  // off `snap.active_matches` (the SAME real per-tick FotMob data
+  // `monitoring.live_snapshot._active_matches_block` writes - zero second
+  // fetch path). Deliberately does NOT redraw the momentum/shot-map SVGs
+  // client-side every tick - real, disclosed scope limit: those stay
+  // accurate as of the last full dashboard regen/FULL_TIME transition,
+  // only the fast-moving score/stat numbers patch in place every poll.
+  var _STAT_FMT = {{
+    possession_pct: function(v) {{ return Math.round(v) + '%'; }},
+    xg: function(v) {{ return v.toFixed(2); }},
+  }};
+  function patchMatchCentre(snap) {{
+    (snap.active_matches || []).forEach(function(m) {{
+      var scoreEl = document.querySelector('[data-match-score="' + m.match_id + '"]');
+      if (scoreEl) {{
+        var scoreText = m.home_score + ' - ' + m.away_score;
+        if (scoreEl.textContent !== scoreText) scoreEl.textContent = scoreText;
+      }}
+      var minuteEl = document.querySelector('[data-match-minute="' + m.match_id + '"]');
+      if (minuteEl) {{
+        var label = m.status === 'HALFTIME' ? 'HT' : (m.live_minute || 'LIVE');
+        if (minuteEl.textContent !== label) minuteEl.textContent = label;
+      }}
+      var statsEl = document.querySelector('[data-match-stats="' + m.match_id + '"]');
+      if (statsEl && m.team_stats) {{
+        ['home', 'away'].forEach(function(side) {{
+          var stats = m.team_stats[side];
+          if (!stats) return;
+          Object.keys(stats).forEach(function(key) {{
+            var el = statsEl.querySelector('[data-stat-' + side + '="' + key + '"]');
+            if (!el || stats[key] == null) return;
+            var fmt = _STAT_FMT[key] || function(v) {{ return String(v); }};
+            var text = fmt(stats[key]);
+            if (el.textContent !== text) el.textContent = text;
+          }});
+        }});
+      }}
+    }});
   }}
   function patchLiveRows(snap) {{
     var pointsByPlayer = {{}};
@@ -1467,6 +1525,16 @@ _CSS_WORKSPACE = """
   .home-hero-gw { font-size: 0.85rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.75; }
   .home-hero-action { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: clamp(2rem, 6vw, 3.4rem);
     letter-spacing: 0.02em; margin-top: 4px; }
+  /* Real fix (2026-08-29, "live command centre" pass, direct spec: "the
+     giant PLAY WILDCARD headline must NOT consume the dominant visual area
+     while matches are being played"). `.state-live` is the SAME body class
+     `dash_state` already computes server-side (no new state, no new Python
+     logic) - during a real live GW the recommendation stays visible (never
+     hidden - a different question, still answered) but stops dominating,
+     so the Match Centre/live metrics promoted right below it (see
+     `panel_order` in `assemble.py`) get the primary visual weight instead. */
+  .state-live .home-hero-action { font-size: clamp(1.4rem, 3.4vw, 2rem); }
+  .state-live .home-hero-reason { font-size: 0.88rem; max-width: 560px; }
   .home-hero-roll .home-hero-action { color: #00ff87; }
   .home-hero-transfer .home-hero-action, .home-hero-chip .home-hero-action { color: #04f5ff; }
   .home-hero-review .home-hero-action { color: #f0c419; }

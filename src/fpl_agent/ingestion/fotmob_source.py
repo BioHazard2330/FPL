@@ -19,7 +19,9 @@ from fpl_agent.ingestion.sync import update_source_health
 from fpl_agent.models.match_intelligence import (
     parse_match,
     parse_match_events,
+    parse_momentum,
     parse_player_states,
+    parse_shot_map,
     parse_team_states,
 )
 
@@ -301,8 +303,17 @@ def sync_match(
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(match_id, fotmob_player_id) DO UPDATE SET "
             "player_id=excluded.player_id, team_id=excluded.team_id, started=excluded.started, "
-            "minutes=excluded.minutes, goals=excluded.goals, assists=excluded.assists, shots=excluded.shots, "
-            "key_passes=excluded.key_passes, xg=excluded.xg, xa=excluded.xa, touches_box=excluded.touches_box, "
+            # Real bug found + fixed 2026-08-29 ("live command centre" pass):
+            # `rating` was in the INSERT column list but missing from this
+            # UPDATE SET - a re-sync of an already-tracked match (every real
+            # match, since `sync_match` is designed to be re-run repeatedly)
+            # silently never updated a player's rating after the first
+            # insert. Confirmed live: Haaland's real row had `rating=None`
+            # even after `parse_player_states` (fixed the same session) had
+            # started returning a real 8.85.
+            "minutes=excluded.minutes, rating=excluded.rating, goals=excluded.goals, assists=excluded.assists, "
+            "shots=excluded.shots, key_passes=excluded.key_passes, xg=excluded.xg, xa=excluded.xa, "
+            "touches_box=excluded.touches_box, "
             "substituted_on_minute=excluded.substituted_on_minute, substituted_off_minute=excluded.substituted_off_minute, "
             "penalty_shots=excluded.penalty_shots, penalty_goals=excluded.penalty_goals, "
             "retrieved_at=excluded.retrieved_at",
@@ -319,14 +330,15 @@ def sync_match(
         conn.execute(
             "INSERT INTO team_match_state "
             "(match_id, team_id, formation, possession_pct, shots, shots_on_target, xg, corners, "
-            "source, retrieved_at, confidence) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "big_chances, big_chances_missed, source, retrieved_at, confidence) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(match_id, team_id) DO UPDATE SET "
             "formation=excluded.formation, possession_pct=excluded.possession_pct, shots=excluded.shots, "
             "shots_on_target=excluded.shots_on_target, xg=excluded.xg, corners=excluded.corners, "
+            "big_chances=excluded.big_chances, big_chances_missed=excluded.big_chances_missed, "
             "retrieved_at=excluded.retrieved_at",
             (match_id, fpl_team_id, ts.formation, ts.possession_pct, ts.shots, ts.shots_on_target, ts.xg,
-             ts.corners, _SOURCE_NAME, now, "medium"),
+             ts.corners, ts.big_chances, ts.big_chances_missed, _SOURCE_NAME, now, "medium"),
         )
 
     # Real live match-feed incidents (goals/cards/subs/shots) - separate
@@ -354,6 +366,44 @@ def sync_match(
             "description=excluded.description, retrieved_at=excluded.retrieved_at",
             (match_id, _SOURCE_NAME, me.source_event_id, me.minute, me.event_type,
              event_team_id, event_player_id, me.description, now),
+        )
+
+    # Real per-minute momentum + per-shot x/y/xG storage (2026-08-29, "live
+    # command centre" pass) - both confirmed live in this SAME payload
+    # (migration 0035), never a second FotMob request. `INSERT OR REPLACE`
+    # (not upsert-with-excluded) is fine here: both tables are pure derived
+    # snapshots of the current real payload, never manually edited.
+    for mp in parse_momentum(payload):
+        conn.execute(
+            "INSERT OR REPLACE INTO match_momentum (match_id, minute, value, source, retrieved_at) "
+            "VALUES (?,?,?,?,?)",
+            (match_id, mp.minute, mp.value, _SOURCE_NAME, now),
+        )
+    for shot in parse_shot_map(payload):
+        # Real team-id resolution via the same fotmob_player_id crosswalk
+        # `match_events` above already relies on (no second name-matching
+        # pass) - a shot's own team is derivable from whichever side the
+        # shooting player's already-resolved `player_match_state` row
+        # belongs to, more reliable than FotMob's raw numeric team id
+        # (never crosswalked to our own team ids elsewhere in this file).
+        shot_team_id = None
+        shot_player_id = None
+        if shot.fotmob_player_id is not None:
+            prow = conn.execute(
+                "SELECT player_id, team_id FROM player_match_state WHERE match_id=? AND fotmob_player_id=?",
+                (match_id, shot.fotmob_player_id),
+            ).fetchone()
+            if prow is not None:
+                shot_player_id = prow["player_id"]
+                shot_team_id = prow["team_id"]
+        conn.execute(
+            "INSERT OR REPLACE INTO match_shots "
+            "(match_id, fotmob_shot_id, team_id, player_id, fotmob_player_id, player_name, minute, x, y, xg, "
+            "is_on_target, outcome, shot_type, situation, period, source, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (match_id, shot.fotmob_shot_id, shot_team_id, shot_player_id, shot.fotmob_player_id, shot.player_name,
+             shot.minute, shot.x, shot.y, shot.xg, int(shot.is_on_target) if shot.is_on_target is not None else None,
+             shot.outcome, shot.shot_type, shot.situation, shot.period, _SOURCE_NAME, now),
         )
 
     conn.commit()

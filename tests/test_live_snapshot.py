@@ -111,6 +111,87 @@ def _fake_locked_squad(event, starting_ids, bench_ids=(), captain_id=None, vice_
     )
 
 
+def _seed_live_match(conn, match_id_hint, home_team_id, away_team_id, status="LIVE"):
+    for team_id in (home_team_id, away_team_id):
+        conn.execute(
+            "INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?, 't0')",
+            (team_id, team_id, f"Team{team_id}", f"T{team_id}"),
+        )
+    conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, home_team_id, away_team_id, status, "
+        "home_score, away_score, live_minute, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, str(match_id_hint), home_team_id, away_team_id, status, 1, 0, "24'", "2026-08-29T18:24:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO team_match_state (match_id, team_id, possession_pct, shots, shots_on_target, xg, corners, "
+        "big_chances, big_chances_missed, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, home_team_id, 45.0, 6, 2, 0.8, 3, 1, 1, "2026-08-29T18:24:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO team_match_state (match_id, team_id, possession_pct, shots, shots_on_target, xg, corners, "
+        "big_chances, big_chances_missed, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, away_team_id, 55.0, 8, 4, 1.4, 5, 2, 0, "2026-08-29T18:24:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO match_momentum (match_id, minute, value, retrieved_at) VALUES (?,?,?,?), (?,?,?,?)",
+        (match_id_hint, 0, 0, "2026-08-29T18:24:00+00:00", match_id_hint, 24, -35, "2026-08-29T18:24:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, player_name, minute, x, y, xg, "
+        "is_on_target, outcome, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, "s1", home_team_id, "Test Scorer", 12, 88.0, 50.0, 0.3, 1, "Goal", "2026-08-29T18:24:00+00:00"),
+    )
+    conn.commit()
+
+
+def test_active_matches_block_reads_real_match_data_no_extra_network(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _active_matches_block
+
+    _seed_player(db_conn, 1, web_name="Haaland", team_id=10, element_type=4)
+    _seed_live_match(db_conn, 500, home_team_id=10, away_team_id=20)
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, minutes, "
+        "rating, goals, assists, shots, xg, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (500, 1, "999", 10, 1, 24, 7.9, 1, 0, 2, 0.31, "2026-08-29T18:24:00+00:00"),
+    )
+    conn.commit()
+
+    active = _active_matches_block(conn, frozenset({1}))
+    assert len(active) == 1
+    m = active[0]
+    assert m["is_squad_match"] is True
+    assert m["home_score"] == 1 and m["away_score"] == 0
+    assert m["live_minute"] == "24'"
+    assert m["team_stats"]["home"]["possession_pct"] == 45.0
+    assert m["team_stats"]["away"]["big_chances"] == 2
+    assert [(p["minute"], p["value"]) for p in m["momentum"]] == [(0, 0), (24, -35)]
+    assert m["shots"][0]["outcome"] == "Goal"
+    assert len(m["my_players"]) == 1
+    assert m["my_players"][0]["web_name"] == "Haaland"
+    assert m["my_players"][0]["rating"] == 7.9
+
+
+def test_active_matches_block_sorts_squad_matches_first(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _active_matches_block
+
+    _seed_player(db_conn, 1, web_name="Haaland", team_id=10, element_type=4)
+    _seed_live_match(db_conn, 500, home_team_id=30, away_team_id=40)  # no squad player
+    _seed_live_match(db_conn, 501, home_team_id=10, away_team_id=20)  # has a squad player (team 10)
+
+    active = _active_matches_block(db_conn, frozenset({1}))
+    assert len(active) == 2
+    assert active[0]["match_id"] == 501
+    assert active[0]["is_squad_match"] is True
+    assert active[1]["is_squad_match"] is False
+
+
+def test_active_matches_block_empty_when_no_live_match(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _active_matches_block
+
+    assert _active_matches_block(db_conn, frozenset()) == []
+
+
 def test_squad_block_reports_slot_captain_and_availability(db_conn, monkeypatch):
     import fpl_agent.monitoring.live_snapshot as ls_mod
 

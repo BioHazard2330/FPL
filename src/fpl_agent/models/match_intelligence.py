@@ -96,6 +96,41 @@ class TeamMatchState:
     shots_on_target: int | None
     xg: float | None
     corners: int | None
+    big_chances: int | None
+    big_chances_missed: int | None
+
+
+@dataclass(frozen=True)
+class MomentumPoint:
+    """Real FotMob per-minute momentum sample (`content.momentum.main.data`,
+    confirmed live 2026-08-29 against a real finished match: a -100..100
+    value per minute, negative=away pressure/positive=home pressure - never
+    interpolated beyond the real samples FotMob itself supplies)."""
+    minute: int
+    value: int
+
+
+@dataclass(frozen=True)
+class ShotEvent:
+    """Real per-shot record (`content.shotmap.shots`, confirmed live
+    2026-08-29 - 28 real shots with genuine x/y/xG on a finished GW2 match).
+    `x`/`y` are FotMob's own real pitch-percentage coordinates (0-100,
+    attacking direction toward x=100) - never a fabricated/guessed
+    transform. `outcome` is FotMob's raw `eventType` (Goal/AttemptSaved/
+    Miss/BlockedShot/Post)."""
+    fotmob_shot_id: str
+    team_fotmob_id: int | None
+    fotmob_player_id: str | None
+    player_name: str | None
+    minute: int | None
+    x: float | None
+    y: float | None
+    xg: float | None
+    is_on_target: bool | None
+    outcome: str | None
+    shot_type: str | None
+    situation: str | None
+    period: str | None
 
 
 def derive_status(general: dict, header_status: dict | None = None) -> str:
@@ -241,64 +276,119 @@ def _shot_aggregates_by_player(payload: dict) -> dict[str, dict]:
     return agg
 
 
+def _player_stats_by_id(payload: dict) -> dict[str, dict]:
+    """Real per-player detailed stats (`content.playerStats`, confirmed live
+    2026-08-29 against a real finished match - keyed by FotMob player id,
+    each carrying a "Top stats" group with real rating/minutes/goals/
+    assists/xA/chances-created values). `None` (absent key) for a pre-match
+    payload or a match this project hasn't confirmed the shape against -
+    every caller treats a missing id here as "use the shot-aggregate
+    fallback", never a crash."""
+    player_stats = (payload.get("content") or {}).get("playerStats")
+    if not isinstance(player_stats, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for pid, p in player_stats.items():
+        top = next((g.get("stats") or {} for g in (p.get("stats") or []) if g.get("key") == "top_stats"), {})
+        out[str(pid)] = {
+            title: (v.get("stat") or {}).get("value")
+            for title, v in top.items() if isinstance(v, dict)
+        }
+    return out
+
+
+def _substitution_minutes(performance: dict | None) -> tuple[int | None, int | None]:
+    """Real substitution timing off `performance.substitutionEvents`
+    (confirmed live 2026-08-29 - a real subIn/subOut minute per event, on
+    both a starter who was later subbed off and a bench player subbed on).
+    Never guessed from minutes-played alone."""
+    on_minute = off_minute = None
+    for ev in (performance or {}).get("substitutionEvents") or []:
+        if ev.get("type") == "subIn":
+            on_minute = ev.get("time")
+        elif ev.get("type") == "subOut":
+            off_minute = ev.get("time")
+    return on_minute, off_minute
+
+
+def _player_match_state_from_entry(
+    entry: dict, team_name: str, started: bool, shot_aggregates: dict, stats_by_id: dict,
+) -> "PlayerMatchState":
+    fotmob_id = str(entry.get("id"))
+    performance = entry.get("performance") or {}
+    # shotmap.shots is a real, always-present live feed (confirmed live
+    # pre-match: an empty list, not an absent key) - a player missing from
+    # it has genuinely taken zero shots so far, a real observed fact, not
+    # missing data. Default to 0/0.0, not None.
+    agg = shot_aggregates.get(fotmob_id, {"shots": 0, "goals": 0, "xg": 0.0, "penalty_shots": 0, "penalty_goals": 0})
+    top = stats_by_id.get(fotmob_id, {})
+    on_minute, off_minute = _substitution_minutes(performance)
+    # Real "Chances created" (FotMob's own term - the closest real analog
+    # this source publishes to "key passes", confirmed live; never a
+    # fabricated second definition of key passes).
+    key_passes = top.get("Chances created")
+    return PlayerMatchState(
+        fotmob_player_id=fotmob_id,
+        team_name=team_name,
+        name_raw=entry.get("name", ""),
+        started=started,
+        minutes=top.get("Minutes played"),
+        position=None,
+        rating=top.get("FotMob rating", performance.get("rating")),
+        goals=int(top["Goals"]) if top.get("Goals") is not None else agg.get("goals", 0),
+        assists=int(top["Assists"]) if top.get("Assists") is not None else None,
+        shots=int(top["Total shots"]) if top.get("Total shots") is not None else agg.get("shots", 0),
+        key_passes=int(key_passes) if key_passes is not None else None,
+        xg=float(top["Expected goals (xG)"]) if top.get("Expected goals (xG)") is not None else agg.get("xg", 0.0),
+        xa=float(top["Expected assists (xA)"]) if top.get("Expected assists (xA)") is not None else None,
+        touches_box=top.get("Touches in opposition box"),
+        substituted_on_minute=on_minute,
+        substituted_off_minute=off_minute,
+        penalty_shots=agg.get("penalty_shots", 0),
+        penalty_goals=agg.get("penalty_goals", 0),
+    )
+
+
 def parse_player_states(payload: dict) -> list[PlayerMatchState]:
-    """Starters only - FotMob's free lineup payload does not publish a bench
-    list for this match pre-kickoff (confirmed live: `lineup.homeTeam` keys
-    are exactly `id/name/formation/starters/coach/unavailable/
-    averageStarterAge/totalStarterMarketValue`, no `bench` key). A benched
-    player who is later subbed on will appear once shot/stat data references
-    them; substitution-pattern detection beyond that is Slice B's job, not
-    this one's. `position` is deliberately left null: FotMob's raw
-    `positionId` values were not confirmed against a verified mapping this
-    session, and this project's own `players.element_type` already carries a
-    real position once the player is resolved - guessing here would risk a
-    silently wrong label for no real benefit."""
+    """Starters + bench (2026-08-29 fix - a real bench/`subs` list IS
+    published once a match has real lineup data; confirmed live against a
+    finished match, `homeTeam.subs` carries the same shape as `starters`
+    plus `performance.substitutionEvents`. The earlier "starters only, no
+    bench key" finding was real but specific to a pre-match payload check -
+    not re-checked against a live/finished match until now). Real minutes/
+    rating/assists/xA/chances-created now come from `content.playerStats`
+    (confirmed live - previously hardcoded to `None`/never extracted);
+    shot-count/goals/xG/penalty fall back to the real shot-aggregate
+    computation when `playerStats` doesn't cover a given id (e.g. a very
+    early pre-match payload). `position` stays null - see this function's
+    own prior reasoning, unchanged: FotMob's raw `positionId` mapping was
+    never verified, and this project's own `players.element_type` already
+    carries a real position once resolved."""
     content = payload.get("content") or {}
     lineup = content.get("lineup") or {}
     shot_aggregates = _shot_aggregates_by_player(payload)
+    stats_by_id = _player_stats_by_id(payload)
     states: list[PlayerMatchState] = []
 
     for side_key in ("homeTeam", "awayTeam"):
         side = lineup.get(side_key) or {}
         team_name = side.get("name", "")
         for starter in side.get("starters") or []:
-            fotmob_id = str(starter.get("id"))
-            # shotmap.shots is a real, always-present live feed (confirmed
-            # live pre-match: an empty list, not an absent key) - a player
-            # missing from it has genuinely taken zero shots so far, a real
-            # observed fact, not missing data. Default to 0/0.0, not None.
-            agg = shot_aggregates.get(
-                fotmob_id, {"shots": 0, "goals": 0, "xg": 0.0, "penalty_shots": 0, "penalty_goals": 0}
-            )
-            states.append(
-                PlayerMatchState(
-                    fotmob_player_id=fotmob_id,
-                    team_name=team_name,
-                    name_raw=starter.get("name", ""),
-                    started=True,
-                    minutes=None,
-                    position=None,
-                    rating=None,
-                    goals=agg.get("goals", 0),
-                    assists=None,
-                    shots=agg.get("shots", 0),
-                    key_passes=None,
-                    xg=agg.get("xg", 0.0),
-                    xa=None,
-                    touches_box=None,
-                    substituted_on_minute=None,
-                    substituted_off_minute=None,
-                    penalty_shots=agg.get("penalty_shots", 0),
-                    penalty_goals=agg.get("penalty_goals", 0),
-                )
-            )
+            states.append(_player_match_state_from_entry(starter, team_name, True, shot_aggregates, stats_by_id))
+        for sub in side.get("subs") or []:
+            states.append(_player_match_state_from_entry(sub, team_name, False, shot_aggregates, stats_by_id))
     return states
 
 
+_TEAM_STATS_FIELDS = ("possession_pct", "shots", "shots_on_target", "xg", "corners", "big_chances", "big_chances_missed")
+
+
 def _safe_team_stats(stats_block: dict | None, side_index: int) -> dict:
-    """See module docstring - this shape is best-effort/unverified. Any
-    lookup failure returns all-None rather than raising."""
-    result = {"possession_pct": None, "shots": None, "shots_on_target": None, "xg": None, "corners": None}
+    """Confirmed live 2026-08-29 against a real finished match (this shape
+    was previously best-effort/unverified per this function's own prior
+    docstring note - the real payload matches exactly). Any lookup failure
+    still returns all-None rather than raising."""
+    result = {field: None for field in _TEAM_STATS_FIELDS}
     if not stats_block:
         return result
     try:
@@ -309,6 +399,8 @@ def _safe_team_stats(stats_block: dict | None, side_index: int) -> dict:
             "Shots on target": "shots_on_target",
             "Expected goals (xG)": "xg",
             "Corners": "corners",
+            "Big chances": "big_chances",
+            "Big chances missed": "big_chances_missed",
         }
         for group in groups:
             for item in group.get("stats", []):
@@ -324,7 +416,7 @@ def _safe_team_stats(stats_block: dict | None, side_index: int) -> dict:
                 cleaned = str(raw).replace("%", "").strip()
                 result[field] = float(cleaned) if field in ("possession_pct", "xg") else int(float(cleaned))
     except (TypeError, ValueError, KeyError, IndexError):
-        return {"possession_pct": None, "shots": None, "shots_on_target": None, "xg": None, "corners": None}
+        return {field: None for field in _TEAM_STATS_FIELDS}
     return result
 
 
@@ -347,6 +439,54 @@ def parse_team_states(payload: dict) -> list[TeamMatchState]:
                 shots_on_target=stats["shots_on_target"],
                 xg=stats["xg"],
                 corners=stats["corners"],
+                big_chances=stats["big_chances"],
+                big_chances_missed=stats["big_chances_missed"],
             )
         )
     return team_states
+
+
+def parse_momentum(payload: dict) -> list[MomentumPoint]:
+    """`content.momentum` is a real `False` (bool) pre-match (confirmed live
+    on a real not-yet-kicked-off fixture) and a real `{"main": {"data": [...]}}`
+    dict once a match has started (confirmed live on a finished match - a
+    full 0-90+ minute series). Returns `[]` for the pre-match/absent case -
+    never a fabricated flat line."""
+    momentum = ((payload.get("content") or {}).get("momentum")) or {}
+    if not isinstance(momentum, dict):
+        return []
+    data = ((momentum.get("main") or {}).get("data")) or []
+    points = []
+    for d in data:
+        minute, value = d.get("minute"), d.get("value")
+        if minute is None or value is None:
+            continue
+        points.append(MomentumPoint(minute=int(minute), value=int(value)))
+    return points
+
+
+def parse_shot_map(payload: dict) -> list[ShotEvent]:
+    """`content.shotmap.shots` - confirmed live 2026-08-29 against a real
+    finished match (28 real shots, genuine x/y/xG/outcome fields). Real
+    empty list pre-match/no shots yet (confirmed live: `{"shots": [],
+    "Periods": {"All": []}}`), never fabricated."""
+    shots = ((payload.get("content") or {}).get("shotmap") or {}).get("shots") or []
+    out = []
+    for s in shots:
+        shot_id = s.get("id")
+        if shot_id is None:
+            continue
+        out.append(ShotEvent(
+            fotmob_shot_id=str(shot_id),
+            team_fotmob_id=s.get("teamId"),
+            fotmob_player_id=str(s["playerId"]) if s.get("playerId") is not None else None,
+            player_name=s.get("fullName") or s.get("playerName"),
+            minute=s.get("min"),
+            x=s.get("x"), y=s.get("y"), xg=s.get("expectedGoals"),
+            is_on_target=s.get("isOnTarget"),
+            outcome=s.get("eventType"),
+            shot_type=s.get("shotType"),
+            situation=s.get("situation"),
+            period=s.get("period"),
+        ))
+    return out

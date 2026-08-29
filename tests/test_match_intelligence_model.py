@@ -5,7 +5,9 @@ from fpl_agent.models.match_intelligence import (
     PRE_MATCH,
     derive_status,
     parse_match,
+    parse_momentum,
     parse_player_states,
+    parse_shot_map,
     parse_team_states,
 )
 
@@ -162,3 +164,119 @@ def test_parse_team_states_never_crashes_on_malformed_stats_shape():
     states = parse_team_states(payload)
     assert len(states) == 2
     assert all(s.possession_pct is None for s in states)
+
+
+# Real fragments confirmed live 2026-08-29 ("live command centre" pass)
+# against a real finished GW2 match (Crystal Palace 1-4 Man City, fotmob
+# matchId 5795429) - trimmed shapes, not invented field names.
+_REAL_STATS_WITH_BIG_CHANCES = {
+    "Periods": {"All": {"stats": [
+        {"title": "Top stats", "stats": [
+            {"title": "Ball possession", "stats": [28, 72]},
+            {"title": "Big chances", "stats": [3, 5]},
+            {"title": "Big chances missed", "stats": [3, 2]},
+            {"title": "Corners", "stats": [2, 6]},
+        ]},
+    ]}},
+}
+
+
+def test_parse_team_states_extracts_real_big_chances():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["stats"] = _REAL_STATS_WITH_BIG_CHANCES
+    states = parse_team_states(payload)
+    home, away = states[0], states[1]
+    assert home.big_chances == 3
+    assert home.big_chances_missed == 3
+    assert away.big_chances == 5
+    assert away.big_chances_missed == 2
+
+
+def test_parse_momentum_returns_empty_list_pre_match_when_false():
+    # Real confirmed shape - `content.momentum` is the literal bool `False`
+    # before kickoff, never a dict with empty data.
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["momentum"] = False
+    assert parse_momentum(payload) == []
+
+
+def test_parse_momentum_reads_real_per_minute_series():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["momentum"] = {
+        "main": {"data": [{"minute": 0, "value": 0}, {"minute": 2, "value": 27}, {"minute": 8, "value": -100}]},
+    }
+    points = parse_momentum(payload)
+    assert [(p.minute, p.value) for p in points] == [(0, 0), (2, 27), (8, -100)]
+
+
+def test_parse_shot_map_reads_real_coordinates_and_outcome():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["shotmap"] = {"shots": [{
+        "id": 2960614345, "eventType": "Miss", "teamId": 9826, "playerId": 860920,
+        "fullName": "Edward Nketiah", "x": 99.78, "y": 45.89, "min": 2, "isOnTarget": False,
+        "expectedGoals": 0.048, "shotType": "LeftFoot", "situation": "RegularPlay", "period": "FirstHalf",
+    }]}
+    shots = parse_shot_map(payload)
+    assert len(shots) == 1
+    s = shots[0]
+    assert s.fotmob_shot_id == "2960614345"
+    assert s.player_name == "Edward Nketiah"
+    assert s.minute == 2
+    assert abs(s.x - 99.78) < 1e-9
+    assert s.outcome == "Miss"
+    assert s.is_on_target is False
+
+
+def test_parse_shot_map_empty_pre_match():
+    assert parse_shot_map(_PAYLOAD) == []
+
+
+# Real fragment confirmed live 2026-08-29 - `content.playerStats` (keyed by
+# FotMob player id) carries real rating/minutes/assists/xA/chances-created
+# once a match has started; previously never extracted (hardcoded to None).
+_PAYLOAD_WITH_PLAYER_STATS = {
+    "content": {
+        "lineup": {
+            "homeTeam": {
+                "name": "Arsenal", "formation": "4-3-3",
+                "starters": [{"id": 111111, "name": "Bukayo Saka", "performance": {"rating": 7.8}}],
+                "subs": [{"id": 333333, "name": "Test Sub", "performance": {
+                    "rating": 6.5, "substitutionEvents": [{"time": 70, "type": "subIn"}],
+                }}],
+            },
+            "awayTeam": {"name": "Coventry City", "formation": "4-4-2", "starters": []},
+        },
+        "shotmap": {"shots": [], "Periods": {"All": []}},
+        "playerStats": {
+            "111111": {"stats": [{"key": "top_stats", "stats": {
+                "FotMob rating": {"stat": {"value": 7.8}},
+                "Minutes played": {"stat": {"value": 90}},
+                "Assists": {"stat": {"value": 1}},
+                "Expected assists (xA)": {"stat": {"value": 0.31}},
+                "Chances created": {"stat": {"value": 2}},
+            }}]},
+        },
+    },
+}
+
+
+def test_parse_player_states_reads_real_playerstats_fields():
+    states = parse_player_states(_PAYLOAD_WITH_PLAYER_STATS)
+    saka = next(s for s in states if s.fotmob_player_id == "111111")
+    assert saka.minutes == 90
+    assert saka.rating == 7.8
+    assert saka.assists == 1
+    assert abs(saka.xa - 0.31) < 1e-9
+    assert saka.key_passes == 2
+
+
+def test_parse_player_states_includes_bench_with_substitution_timing():
+    states = parse_player_states(_PAYLOAD_WITH_PLAYER_STATS)
+    sub = next(s for s in states if s.fotmob_player_id == "333333")
+    assert sub.started is False
+    assert sub.substituted_on_minute == 70
+    assert sub.rating == 6.5  # falls back to performance.rating - not in playerStats this fixture

@@ -166,6 +166,100 @@ def _source_freshness_block(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
+_MAX_SHOTS_PER_MATCH = 40  # generous real cap - a real match rarely exceeds ~25-30 total shots
+
+
+def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -> list[dict]:
+    """Real LIVE/HALFTIME match data for the browser's fast poll channel
+    (2026-08-29, "live command centre" pass - direct fix for the real,
+    confirmed gap that `sync_match`'s own real per-tick FotMob refresh
+    (`cli/main.py::live_match_poll_cmd`, every ~15-25s) only ever reached
+    the browser on the NEXT full dashboard regen, never this fast channel).
+    Every field here is a pure DB read of data `sync_match` already wrote
+    this same tick - zero new network cost, matches this module's own
+    "stay cheap" contract. Squad-relevant matches sort first (the captain's
+    match, then other squad-player matches) per the direct "prioritize
+    matches with MY players" requirement - never all matches given equal
+    visual weight."""
+    squad_team_ids: set[int] = set()
+    if squad_ids:
+        placeholders = ",".join("?" * len(squad_ids))
+        squad_team_ids = {
+            r["team_id"] for r in conn.execute(
+                f"SELECT DISTINCT team_id FROM players WHERE id IN ({placeholders})", tuple(squad_ids)
+            ).fetchall()
+        }
+
+    matches = conn.execute(
+        "SELECT mi.id, mi.fotmob_match_id, mi.status, mi.home_score, mi.away_score, mi.live_minute, "
+        "mi.home_team_id, mi.away_team_id, mi.retrieved_at, "
+        "ht.short_name AS home_short, at.short_name AS away_short "
+        "FROM match_intelligence mi JOIN teams ht ON ht.id = mi.home_team_id "
+        "JOIN teams at ON at.id = mi.away_team_id WHERE mi.status IN ('LIVE','HALFTIME')"
+    ).fetchall()
+    if not matches:
+        return []
+
+    out = []
+    for m in matches:
+        team_stats = {
+            r["team_id"]: {
+                "possession_pct": r["possession_pct"], "shots": r["shots"], "shots_on_target": r["shots_on_target"],
+                "xg": r["xg"], "corners": r["corners"], "big_chances": r["big_chances"],
+                "big_chances_missed": r["big_chances_missed"],
+            }
+            for r in conn.execute(
+                "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners, big_chances, big_chances_missed "
+                "FROM team_match_state WHERE match_id=?", (m["id"],),
+            ).fetchall()
+        }
+        momentum = [
+            {"minute": r["minute"], "value": r["value"]}
+            for r in conn.execute(
+                "SELECT minute, value FROM match_momentum WHERE match_id=? ORDER BY minute", (m["id"],)
+            ).fetchall()
+        ]
+        shots = [
+            {
+                "minute": r["minute"], "x": r["x"], "y": r["y"], "xg": r["xg"], "outcome": r["outcome"],
+                "is_on_target": bool(r["is_on_target"]) if r["is_on_target"] is not None else None,
+                "team_id": r["team_id"], "player_name": r["player_name"],
+            }
+            for r in conn.execute(
+                "SELECT minute, x, y, xg, outcome, is_on_target, team_id, player_name FROM match_shots "
+                "WHERE match_id=? ORDER BY minute DESC LIMIT ?", (m["id"], _MAX_SHOTS_PER_MATCH),
+            ).fetchall()
+        ]
+        is_squad_match = m["home_team_id"] in squad_team_ids or m["away_team_id"] in squad_team_ids
+        my_players = []
+        if is_squad_match and squad_ids:
+            placeholders = ",".join("?" * len(squad_ids))
+            my_players = [
+                {
+                    "player_id": r["player_id"], "web_name": r["web_name"], "started": bool(r["started"]),
+                    "minutes": r["minutes"], "rating": r["rating"], "goals": r["goals"], "assists": r["assists"],
+                    "shots": r["shots"], "xg": r["xg"], "xa": r["xa"], "key_passes": r["key_passes"],
+                    "substituted_on_minute": r["substituted_on_minute"], "substituted_off_minute": r["substituted_off_minute"],
+                }
+                for r in conn.execute(
+                    f"SELECT pms.*, p.web_name FROM player_match_state pms JOIN players p ON p.id = pms.player_id "
+                    f"WHERE pms.match_id=? AND pms.player_id IN ({placeholders})", (m["id"], *squad_ids),
+                ).fetchall()
+            ]
+        out.append({
+            "match_id": m["id"], "fotmob_match_id": m["fotmob_match_id"], "status": m["status"],
+            "home_team_id": m["home_team_id"], "away_team_id": m["away_team_id"],
+            "home_short": m["home_short"], "away_short": m["away_short"],
+            "home_score": m["home_score"], "away_score": m["away_score"], "live_minute": m["live_minute"],
+            "is_squad_match": is_squad_match,
+            "team_stats": {"home": team_stats.get(m["home_team_id"]), "away": team_stats.get(m["away_team_id"])},
+            "momentum": momentum, "shots": shots, "my_players": my_players,
+            "retrieved_at": m["retrieved_at"],
+        })
+    out.sort(key=lambda x: not x["is_squad_match"])
+    return out
+
+
 _RECOMPUTE_LOCK_STALE_MINUTES = 15  # same real bound cli/main.py::_STRATEGIC_PLAN_AUTO_STALE_MINUTES uses - a lock older than this is an abandoned/crashed run, never a permanent "RECOMPUTING"
 
 
@@ -351,6 +445,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "rank": rank_block,
         "points": points_block,
         "squad": _squad_block(conn, locked),
+        "active_matches": _active_matches_block(conn, squad_ids),
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),
         "match_events": _match_events_block(live_bonus_rows),
         "recent_changes": _recent_changes_block(conn, squad_ids),

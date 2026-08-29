@@ -4330,6 +4330,55 @@ _CSS = """
   .match-stats-row .match-stats-value:first-child { text-align: right; }
   .match-stats-label { color: var(--faint); font-size: 0.72rem; text-align: center; white-space: nowrap; }
 
+  /* --- Match Centre (2026-08-29, "live command centre" pass) - real score/
+     momentum/shot-map/my-players hierarchy for an active LIVE/HALFTIME
+     match, single-sourced from `live_snapshot._active_matches_block`. --- */
+  .match-centre-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 14px; }
+  .match-centre-card { background: var(--surface); border-radius: 12px; padding: 16px; }
+  .match-centre-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .match-centre-team { font-weight: 700; font-size: 0.95rem; }
+  .match-centre-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.6rem; color: var(--fg); }
+  .match-centre-minute { font-size: 0.78rem; font-weight: 700; color: var(--live-accent, #3ecf8e); padding: 2px 8px;
+    border-radius: 5px; background: rgba(62, 207, 142, 0.14); }
+  .match-centre-section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--faint); margin: 14px 0 6px; }
+  .match-centre-chart { background: var(--surface-2); border-radius: 8px; padding: 8px; }
+
+  /* Momentum - a real per-minute chart, floored at the same 240px/220px
+     desktop/mobile bar every other live chart in this dashboard uses. */
+  .match-momentum-svg { width: 100%; height: auto; min-height: 240px; display: block; }
+  .match-momentum-mid { stroke: var(--gridline); stroke-width: 1; }
+  .match-momentum-line { stroke: var(--accent-2); }
+  .match-momentum-dot { fill: var(--accent-2); }
+
+  /* Shot map - a real pitch-percentage plot, never a fabricated coordinate
+     transform. Home/away distinguished by colour, outcome by fill style. */
+  .shot-map-svg { width: 100%; height: auto; min-height: 220px; display: block; }
+  .shot-map-pitch { fill: rgba(62, 207, 142, 0.05); stroke: var(--gridline); stroke-width: 0.3; }
+  .shot-map-box { fill: none; stroke: var(--gridline); stroke-width: 0.3; }
+  .shot-map-halfway { stroke: var(--gridline); stroke-width: 0.2; stroke-dasharray: 1 1; }
+  .shot-dot { stroke-width: 0.6; cursor: default; }
+  .shot-dot-home { stroke: var(--accent); }
+  .shot-dot-away { stroke: var(--accent-2); }
+  .shot-outcome-goal { fill: #00ff87; }
+  .shot-outcome-saved { fill: rgba(4, 245, 255, 0.55); }
+  .shot-outcome-post { fill: rgba(240, 196, 25, 0.6); }
+  .shot-outcome-blocked, .shot-outcome-miss { fill: rgba(255,255,255,0.12); }
+
+  /* My players in this match - compact rows, FOOTBALL evidence kept
+     visually distinct from FPL scoring (which lives in Live Tracking). */
+  .match-player-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 0;
+    border-top: 1px solid var(--gridline); font-size: 0.85rem; }
+  .match-player-row:first-of-type { border-top: none; }
+  .match-player-name { font-weight: 700; min-width: 90px; }
+  .match-player-status { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--faint); }
+  .match-player-minutes { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .match-player-rating { font-weight: 700; color: var(--accent-2); background: var(--surface); padding: 1px 6px;
+    border-radius: 5px; font-size: 0.78rem; }
+  .match-player-football { color: var(--muted); font-size: 0.8rem; }
+  @media (max-width: 480px) { .match-momentum-svg { min-height: 220px; } }
+
   /* --- Dashboard-state architecture (2026-08-21): one real signal
      (dash_state, computed in generate_dashboard_html) reorders the SAME
      panels by choosing which already-built section string renders first -

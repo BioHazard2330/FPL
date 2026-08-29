@@ -168,6 +168,69 @@ def test_sync_match_upserts_match_player_and_team_state(monkeypatch, db_conn):
     assert {r["formation"] for r in team_rows} == {"4-3-3", "4-4-2"}
 
 
+def test_sync_match_stores_real_momentum_and_shot_map(monkeypatch, db_conn):
+    """2026-08-29 ("live command centre" pass) - `content.momentum`/
+    `content.shotmap` were confirmed present in the real payload
+    `sync_match` already fetches but were never stored. Real regression
+    coverage for migration 0035 + the new storage wiring."""
+    _seed(db_conn)
+    payload = dict(_DETAILS_PAYLOAD)
+    payload["content"] = dict(_DETAILS_PAYLOAD["content"])
+    payload["content"]["momentum"] = {"main": {"data": [{"minute": 0, "value": 0}, {"minute": 5, "value": 40}]}}
+    payload["content"]["shotmap"] = {"shots": [{
+        "id": 999001, "eventType": "Miss", "teamId": 9825, "playerId": 1,
+        "fullName": "Test Player", "x": 88.5, "y": 50.0, "min": 12,
+        "isOnTarget": False, "expectedGoals": 0.15, "shotType": "RightFoot",
+        "situation": "RegularPlay", "period": "FirstHalf",
+    }]}
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: payload)
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    result = sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    match_id = result["match_id"]
+
+    momentum_rows = db_conn.execute(
+        "SELECT minute, value FROM match_momentum WHERE match_id=? ORDER BY minute", (match_id,)
+    ).fetchall()
+    assert [(r["minute"], r["value"]) for r in momentum_rows] == [(0, 0), (5, 40)]
+
+    shot_rows = db_conn.execute("SELECT * FROM match_shots WHERE match_id=?", (match_id,)).fetchall()
+    assert len(shot_rows) == 1
+    shot = shot_rows[0]
+    assert shot["fotmob_shot_id"] == "999001"
+    assert shot["player_id"] == 1  # resolved via the already-crosswalked player_match_state row
+    assert abs(shot["x"] - 88.5) < 1e-9
+    assert shot["outcome"] == "Miss"
+
+
+def test_sync_match_updates_rating_on_resync_real_upsert_bug(monkeypatch, db_conn):
+    """Real bug found + fixed 2026-08-29: the `player_match_state` upsert's
+    `ON CONFLICT DO UPDATE SET` list omitted `rating` (present in the
+    INSERT column list, but never refreshed on a re-sync) - confirmed live
+    against production (Haaland's real row stayed `rating=None` across a
+    resync even after the parser started returning a real value)."""
+    _seed(db_conn)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    payload_no_rating = dict(_DETAILS_PAYLOAD)
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: payload_no_rating)
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    before = db_conn.execute("SELECT rating FROM player_match_state WHERE fotmob_player_id='1'").fetchone()
+    assert before["rating"] is None
+
+    payload_with_rating = dict(_DETAILS_PAYLOAD)
+    payload_with_rating["content"] = dict(_DETAILS_PAYLOAD["content"])
+    payload_with_rating["content"]["playerStats"] = {
+        "1": {"stats": [{"key": "top_stats", "stats": {"FotMob rating": {"stat": {"value": 7.4}}}}]},
+    }
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: payload_with_rating)
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    after = db_conn.execute("SELECT rating FROM player_match_state WHERE fotmob_player_id='1'").fetchone()
+    assert after["rating"] == 7.4
+
+
 def test_sync_match_is_idempotent_and_updates_in_place(monkeypatch, db_conn):
     _seed(db_conn)
     monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")

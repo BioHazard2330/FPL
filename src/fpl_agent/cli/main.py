@@ -2084,10 +2084,32 @@ def _write_dashboard(
         # decides "bare call -> check the lock" - this function just passes
         # whatever the caller gave it straight through, unchanged.
         live_payload = _maybe_fetch_live_payload(conn)
-        html_content = generate_dashboard_html(
-            conn, live_payload=live_payload, gw_window=gw_window,
-            must_include_ids=must_include_ids, must_start_ids=must_start_ids, exclude_ids=exclude_ids,
-        )
+        # Real torn-read fix (2026-08-29, "live command centre" pass, direct
+        # spec requirement: "ONE DASHBOARD RENDER = ONE COHERENT STATE").
+        # `generate_dashboard_html` is a genuinely pure function of DB state
+        # (no writes anywhere in its own call tree, checked directly) but
+        # issues dozens of separate SELECTs on this one connection with no
+        # explicit transaction - Python's sqlite3 module does NOT hold an
+        # implicit transaction open across bare SELECTs, so a real
+        # concurrently-running writer (this project's own scheduled
+        # `run-scheduled`/`live-match-poll`, independent of this process)
+        # committing BETWEEN two of those SELECTs could make one render
+        # combine a new value for one field with an old value for another -
+        # the exact class of bug already found once in `my_team.py`'s own
+        # torn read. An explicit `BEGIN` here gives this connection a real,
+        # consistent point-in-time snapshot for the WAL-mode DB (concurrent
+        # writers keep committing new WAL frames undisturbed; this
+        # transaction's own reads keep seeing the state as of this BEGIN,
+        # SQLite's standard MVCC guarantee) - rolled back, never committed,
+        # since nothing here is meant to persist.
+        conn.execute("BEGIN")
+        try:
+            html_content = generate_dashboard_html(
+                conn, live_payload=live_payload, gw_window=gw_window,
+                must_include_ids=must_include_ids, must_start_ids=must_start_ids, exclude_ids=exclude_ids,
+            )
+        finally:
+            conn.rollback()
         # Keeps the cheap live_snapshot.json channel in sync with every real
         # dashboard regen too (not just live-match-poll's own faster
         # cadence) - reuses the SAME already-fetched live_payload, no second
@@ -2577,8 +2599,10 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
 
 
 @cli.command("live-match-poll")
-@click.option("--interval", default=25, type=int,
-              help="poll interval in seconds while a match is genuinely LIVE/HALFTIME (default 25)")
+@click.option("--interval", default=15, type=int,
+              help="poll interval in seconds while a match is genuinely LIVE/HALFTIME (default 15, "
+              "2026-08-29 tightened from 25 - direct spec target 'ULTRA-LIVE ~10-15s', no rate-limit "
+              "evidence found against FotMob's public endpoint this session)")
 @click.option("--max-hours", default=3.0, type=float, help="safety cap on total watch duration")
 def live_match_poll_cmd(interval: int, max_hours: float):
     """Fast, real live-match polling for Match Intelligence Core (2026-08-21,
