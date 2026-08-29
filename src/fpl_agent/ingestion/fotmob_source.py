@@ -176,8 +176,10 @@ def refresh_in_progress_matches(conn, tracked_squad_ids: set[int] | None = None)
     docstring on why repeat registration is only a real concern within one
     long-lived process, e.g. this project's own test suite)."""
     from fpl_agent.live import fast_engine as _fast_engine
+    from fpl_agent.live import materiality_engine as _materiality_engine
 
     _fast_engine.register(conn, _event_bus)
+    _materiality_engine.register(_event_bus)
     now = datetime.now(timezone.utc)
     rows = conn.execute(
         "SELECT mi.id, mi.fotmob_match_id, mi.status AS prior_status, mi.kickoff_utc, "

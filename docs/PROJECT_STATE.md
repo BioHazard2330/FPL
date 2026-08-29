@@ -6,6 +6,30 @@ session narrative here** — a new capability/architecture change gets one short
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
 
+## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 3)
+
+Materiality engine (spec sections 6/7: "do not run the expensive optimizer
+for every minor event... injury/availability changes -> full decision
+engine update"). New `live/materiality_engine.py` - makes the already-real,
+already-tested `cli/main.py::_maybe_trigger_strategic_plan_recompute`
+(HIGH-severity `change_events` + squad-mismatch + stale-decision gate,
+built in an earlier session) REACTIVE: subscribes to
+`AVAILABILITY_CHANGED`/`PLAYER_STATE_CHANGED`/`LINEUP_CONFIRMED`/
+`PRICE_CHANGED`/`FIXTURE_CHANGED` on the milestone-1 event bus and fires
+the real check the instant one of those events lands, instead of only at
+the end of a `run_scheduled` tick. Deliberately does NOT alter the
+trigger logic itself (per the standing "don't touch optimizer math"
+constraint) - pure routing. Per spec's own routing table, GOAL/ASSIST/
+CARD/SUBSTITUTION/SHOT are explicitly NOT routed here (a shot or sub is a
+FAST-ENGINE concern, never worth a real 2-10min beam search on its own -
+only a resulting AVAILABILITY_CHANGED would trigger one). Registered at
+the three real event-producing entry points (`run_scheduled`,
+`live_match_poll_cmd`, `refresh_in_progress_matches`). 1278 tests green (4
+new) - deliberately does not spawn a real subprocess in tests
+(`_maybe_trigger_strategic_plan_recompute` is monkeypatched; its own real
+trigger logic is separately covered by `test_strategic_plan_auto_trigger.py`).
+Full account: `docs/history/30-session-2026-08-29-live-architecture-milestone-3.md`.
+
 ## Where things stand (updated 2026-08-29, live architecture rebuild - milestone 2)
 
 Real-time client transport (spec section 8: "replace the browser-as-

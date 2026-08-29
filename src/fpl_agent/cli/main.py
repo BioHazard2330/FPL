@@ -1308,6 +1308,20 @@ def run_scheduled():
         release_singleton_lock(run_scheduled_lock_path)
         return
 
+    # Real materiality-engine wiring (2026-08-29, "live architecture
+    # rebuild" milestone 3) - registered BEFORE `run_sync()` below, which is
+    # where the real FPL-side change_detection calls (price/status/lineup)
+    # actually publish onto the event bus. Makes the already-real, already-
+    # tested `_maybe_trigger_strategic_plan_recompute` gate reactive (fires
+    # the instant a real material event lands) instead of only being
+    # checked once at the bottom of this function - see
+    # `live/materiality_engine.py`'s own docstring for the real routing
+    # table and why it never touches the recompute logic itself.
+    from fpl_agent.events.bus import bus as _event_bus
+    from fpl_agent.live import materiality_engine as _materiality_engine
+
+    _materiality_engine.register(_event_bus)
+
     # Real, cheap squad scoping for every live-alert step below - see
     # ingestion/my_team.py::resolve_tracked_squad_ids' own docstring for why
     # this project's push notifications are deliberately narrowed to a real
@@ -2650,8 +2664,10 @@ def live_match_poll_cmd(interval: int, max_hours: float):
     # `refresh_in_progress_matches`, so it needs its own registration).
     from fpl_agent.events.bus import bus as _event_bus
     from fpl_agent.live import fast_engine as _fast_engine
+    from fpl_agent.live import materiality_engine as _materiality_engine
 
     _fast_engine.register(conn, _event_bus)
+    _materiality_engine.register(_event_bus)
     # Resolved once, not re-resolved every tick - matches run_scheduled's own
     # pattern (2026-08-22, automation-lifecycle pass). Threaded into every
     # sync_match call below so a real lineup-confirmation transition fires
