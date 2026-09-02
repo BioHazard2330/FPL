@@ -239,6 +239,15 @@ def maybe_enqueue_analysis(
             record_statistical_evidence(conn, match_id)
         except Exception:
             pass
+        # Deterministic ROLE_CHANGE/SET_PIECE_CHANGE/TACTICAL_CHANGE detectors
+        # (2026-09-02, Phase 3 finalization) - same non-fatal posture as the
+        # statistical-evidence call above, same real FULL_TIME trigger.
+        try:
+            from fpl_agent.models.role_signal_detectors import record_role_signal_evidence
+
+            record_role_signal_evidence(conn, match_id)
+        except Exception:
+            pass
     elif new_status == "HALFTIME" and prior_status != "HALFTIME":
         enqueue_analysis_job(conn, match_id, "HALFTIME", f"{score} (halftime)")
 

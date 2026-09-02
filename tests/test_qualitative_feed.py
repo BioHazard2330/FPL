@@ -107,6 +107,70 @@ def test_expected_points_integration_surfaces_the_adjustment_without_touching_me
     assert round(ep.components.total, 2) == ep.median
 
 
+def test_role_change_persistent_trend_produces_a_bounded_goals_adjustment(db_conn):
+    """ROLE_CHANGE (2026-09-02, Phase 3 finalization deterministic detector)
+    reuses this SAME interface, never a second adjustment pathway - same
+    bounded-to-goals sizing rule as GOAL_THREAT/SET_PIECES."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role again", created_at="2026-08-22T15:00:00Z")
+
+    from fpl_agent.models.expected_points import ComponentBreakdown
+
+    real_components = ComponentBreakdown(
+        appearance=1.5, goals=2.0, assists=0.6, bonus=0.3, clean_sheet=0.0, cards=-0.1, conceded=0.0, defcon=0.0,
+    )
+    adjustment = compute_qualitative_adjustment(db_conn, 1, real_components)
+
+    assert adjustment is not None
+    assert adjustment.component == "goals"
+    assert adjustment.signal == "ROLE_CHANGE"
+    assert adjustment.delta == round(2.0 * 0.15, 4)
+
+
+def test_set_piece_change_persistent_trend_produces_a_bounded_goals_adjustment(db_conn):
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="SET_PIECE_CHANGE", direction="POSITIVE",
+                       reason="promoted to primary penalty taker", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="SET_PIECE_CHANGE", direction="POSITIVE",
+                       reason="confirmed primary penalty taker again", created_at="2026-08-22T15:00:00Z")
+
+    from fpl_agent.models.expected_points import ComponentBreakdown
+
+    real_components = ComponentBreakdown(
+        appearance=1.5, goals=2.0, assists=0.6, bonus=0.3, clean_sheet=0.0, cards=-0.1, conceded=0.0, defcon=0.0,
+    )
+    adjustment = compute_qualitative_adjustment(db_conn, 1, real_components)
+
+    assert adjustment is not None
+    assert adjustment.component == "goals"
+    assert adjustment.signal == "SET_PIECE_CHANGE"
+    assert adjustment.delta == round(2.0 * 0.15, 4)
+
+
+def test_role_change_expected_points_integration_surfaces_the_adjustment(db_conn):
+    """Full qualitative -> quantitative -> expected_points() integration for
+    the new ROLE_CHANGE category - proves the new detector's output actually
+    reaches the projection layer through the existing interface only."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role again", created_at="2026-08-22T15:00:00Z")
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
+    assert round(ep.components.total, 2) == ep.median
+
+
 def test_compute_qualitative_adjustment_returns_none_for_an_unmapped_signal(db_conn):
     """TACTICAL_CHANGE has no honest single-component target - must not be
     forced into the wrong bucket."""

@@ -77,7 +77,7 @@ from fpl_agent.logging_setup import setup_logging
 from fpl_agent.scheduler.adaptive import maybe_retighten_scheduler
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.resources import check_resources
-from fpl_agent.scheduler.status import check_scheduler_registered
+from fpl_agent.scheduler.status import assess_task_health, check_scheduler_registered
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.expected_points import MODEL_VERSION, expected_points, expected_points_window
 from fpl_agent.models.fixtures import _reference_event, detect_blank_double_gws, live_or_reference_event
@@ -2244,11 +2244,14 @@ def source_status():
 
 _SCHEDULER_TASK_NAME = "FPLAgentSync"  # must match scripts/setup_scheduler.ps1's default
 _LIVE_POLL_TASK_NAME = "FPLAgentLivePoll"  # must match scripts/setup_live_poll_scheduler.ps1's default
+_LIVE_SERVER_TASK_NAME = "FPLAgentLiveServer"  # must match scripts/setup_live_server_scheduler.ps1's default
 
 
 @cli.command("scheduler-status")
 def scheduler_status():
-    """Check whether the Windows Task Scheduler entries exist and when they last/next ran.
+    """Check whether the Windows Task Scheduler entries exist, when they
+    last/next ran, and whether that's actually healthy against each task's
+    own real registered cadence.
 
     Real gap fixed 2026-08-29 (master automation pass, restart-recovery
     audit): this only ever checked `FPLAgentSync` (the slow-cadence data
@@ -2257,8 +2260,17 @@ def scheduler_status():
     task this project's own CLAUDE.md documents as required for live-GW
     behavior, but this command silently said nothing about it either way -
     a real gap in the one command whose whole job is "prove the daemon is
-    actually running unattended". Now reports both, never claiming the
-    daemon is healthy while only checking half of it."""
+    actually running unattended". Now reports all three real tasks, never
+    claiming the daemon is healthy while only checking part of it.
+
+    Real gap fixed 2026-09-02 (autonomous-runtime audit, direct user report:
+    real optimizer runs silently stopped for ~40h while this command and
+    `fpl readiness` both kept reporting a registered task as fine): raw
+    State/NextRunTime fields alone don't say whether `LastRunTime` has
+    actually fallen behind the task's own registered cadence - added a real
+    OK/STALE/CRITICAL verdict per task (`scheduler.status.assess_task_health`)
+    alongside the raw fields, same logic `fpl readiness`'s Scheduler row now
+    uses."""
     if sys.platform != "win32":
         click.echo("scheduler-status only supports Windows Task Scheduler currently")
         return
@@ -2266,6 +2278,7 @@ def scheduler_status():
     for task_name, setup_script in (
         (_SCHEDULER_TASK_NAME, "scripts\\setup_scheduler.ps1"),
         (_LIVE_POLL_TASK_NAME, "scripts\\setup_live_poll_scheduler.ps1"),
+        (_LIVE_SERVER_TASK_NAME, "scripts\\setup_live_server_scheduler.ps1"),
     ):
         info = check_scheduler_registered(task_name)
         if info is None:
@@ -2275,6 +2288,8 @@ def scheduler_status():
         click.echo(f"task '{task_name}':")
         for key, value in info.items():
             click.echo(f"  {key}={value}")
+        health = assess_task_health(task_name, info=info)
+        click.echo(f"  health={health.status} ({health.detail})")
 
 
 @cli.command("live-bonus")
@@ -2788,8 +2803,9 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                     supersede_stale_halftime_jobs(conn)
                     click.echo(
                         f"{row['home_name']} v {row['away_name']}: FULL_TIME - final sync done, "
-                        "stopping fast polling for this match. Qualitative analysis job queued - "
-                        "run `fpl analysis-queue` next time Claude Code opens."
+                        "stopping fast polling for this match. Qualitative analysis job queued "
+                        "(async enhancement only, does not block recommendations) - "
+                        "run `fpl analysis-queue` in a Claude Code session to process it."
                     )
 
             # Real gap found + fixed 2026-08-22, tonight's-matches pass: this

@@ -19,6 +19,7 @@ from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.price_forecast import classify_price_change
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.optimization.chips import SUPPORTED_CHIP_NAMES, chip_gw_marginal_value, eligible_chips
+from fpl_agent.optimization.squad import _BENCH_WEIGHT, PlayerCandidate, StartingXI, pick_starting_xi
 
 HIT_COST = 4  # points, per transfer beyond the free allowance
 
@@ -261,8 +262,64 @@ def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: d
     return cache[key]
 
 
+def _player_position_cached(conn: sqlite3.Connection, player_id: int, cache: dict[tuple, float]) -> str:
+    """Shares the same per-call-site `cache` dict every value-function caller
+    already threads through (`search_transfer_sequences`/`compare_starting_
+    actions`), under a `("pos", id)` key shape that can't collide with the
+    float-valued `(player_id, event)` xP keys above - a player's position
+    never changes within one search, so this is a real, permanent-for-the-
+    call cache, not just a speed heuristic."""
+    key = ("pos", player_id)
+    if key not in cache:
+        cache[key] = _position(conn, player_id)
+    return cache[key]
+
+
+def resolve_gw_xi(
+    conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: int, cache: dict[tuple, float],
+) -> StartingXI:
+    """Real bug fixed 2026-09-02 (decision-engine forensic audit): every
+    multi-GW value function in this module (and `decision_analysis.py::
+    _squad_per_gw`, which imports `_squad_gw_ev` directly) used to be a bare
+    `sum(all 15 squad players' median xP)` - no starting-XI selection, no
+    captain double, bench counted at full starter value. Every `path_total`/
+    `delta_vs_roll` number the entire decision layer produces was therefore
+    not real expected FPL points at all, and had zero sensitivity to which
+    player is captained or whether a swap actually helps the scoring XI
+    versus just the bench. This is the real fix: resolve the actual
+    formation-legal best XI (`pick_starting_xi`, already used everywhere
+    else a real XI needs picking - no new modelling) for this specific
+    squad/event, so `_squad_gw_ev` below can value it like real FPL scoring
+    actually does. Deliberately does NOT read from a locked squad's real
+    captain/vice choice - a hypothetical future beam-search state has no
+    real synced picks to read; `pick_starting_xi`'s own real greedy-best-xP
+    convention (captain = top scorer, vice = second) is the correct
+    default for a projected state nobody has actually set a captain on yet."""
+    candidates = [
+        PlayerCandidate(
+            player_id=pid, web_name="", position=_player_position_cached(conn, pid, cache),
+            team_id=0, team_short="", price_tenths=0,
+            xp=_player_gw_ev(conn, pid, event, cache), median=0.0, floor=0.0, ceiling=0.0,
+            confidence="", expected_minutes=0.0,
+        )
+        for pid in squad_ids
+    ]
+    return pick_starting_xi(conn, candidates)
+
+
 def _squad_gw_ev(conn: sqlite3.Connection, squad_ids: tuple[int, ...], event: int, cache: dict[tuple, float]) -> float:
-    return sum(_player_gw_ev(conn, pid, event, cache) for pid in squad_ids)
+    """Real expected FPL points for this squad at this gameweek: starting XI
+    (formation-legal) + captain's own value doubled + bench at the same
+    disclosed `_BENCH_WEIGHT` (0.1) optionality discount `optimise_squad`'s
+    own ILP objective already uses for real auto-sub value - never zero
+    (a bench player can genuinely score if a starter blanks) and never full
+    value (they usually don't play). See `resolve_gw_xi`'s own docstring for
+    the real bug this replaces."""
+    xi = resolve_gw_xi(conn, squad_ids, event, cache)
+    starting_total = sum(c.xp for c in xi.starting)
+    captain_bonus = xi.captain.xp if xi.captain is not None else 0.0
+    bench_total = sum(c.xp for c in xi.bench) * _BENCH_WEIGHT
+    return starting_total + captain_bonus + bench_total
 
 
 def _wildcard_or_freehit_starting_soon(conn: sqlite3.Connection, event: int) -> bool:

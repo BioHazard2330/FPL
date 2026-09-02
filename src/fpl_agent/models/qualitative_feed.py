@@ -18,17 +18,24 @@ Hard constraints, taken directly from the audit's own explicit rules:
   never an invented absolute number untethered from the model's own
   baseline.
 
-Only two `fpl_signal` categories map cleanly onto one existing xP component
-each, which is a deliberate scope decision, not an oversight: GOAL_THREAT ->
-goals, CREATION -> assists. TEAM_ATTACK/FIXTURES/TACTICAL_CHANGE have no
-single honest per-player component to target (they're genuinely about the
-team or the fixture, not a component of this one player's own score) and
-are left unmapped rather than forced into the wrong bucket. ROLE/MINUTES
-signals are handled separately, inside `expected_minutes()` itself, which
-already has an established in-place-override convention (predicted-lineup/
-market-conviction/rotation-risk) this mirrors rather than duplicating a
-second pattern for.
-"""
+Only a few `fpl_signal` categories map cleanly onto one existing xP
+component each, which is a deliberate scope decision, not an oversight:
+GOAL_THREAT -> goals, CREATION -> assists, SET_PIECES -> goals.
+TEAM_ATTACK/FIXTURES/TACTICAL_CHANGE have no single honest per-player
+component to target (they're genuinely about the team or the fixture, not a
+component of this one player's own score) and are left unmapped rather than
+forced into the wrong bucket. ROLE/MINUTES signals are handled separately,
+inside `expected_minutes()` itself, which already has an established
+in-place-override convention (predicted-lineup/market-conviction/
+rotation-risk) this mirrors rather than duplicating a second pattern for.
+
+ROLE_CHANGE/SET_PIECE_CHANGE (2026-09-02, Phase 3 finalization deterministic
+detectors, `models/role_signal_detectors.py`) are real, player-level,
+single-component-mappable signals by the same honesty test above - a
+detected advanced-role shift or a promoted penalty/corner/free-kick order is
+genuinely about this player's own goal threat, same as GOAL_THREAT/
+SET_PIECES already are - so they reuse this SAME map/interface rather than
+a second adjustment pathway."""
 import sqlite3
 from dataclasses import dataclass
 
@@ -36,6 +43,8 @@ _COMPONENT_SIGNAL_MAP = {
     "GOAL_THREAT": "goals",
     "CREATION": "assists",
     "SET_PIECES": "goals",
+    "ROLE_CHANGE": "goals",
+    "SET_PIECE_CHANGE": "goals",
 }
 
 # Real, disclosed, uncalibrated bound - same honesty posture as every other

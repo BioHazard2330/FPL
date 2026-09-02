@@ -351,8 +351,16 @@ def pick_starting_xi(
     position (e.g. two forced GKPs) rather than raising - same graceful-
     limit handling the existing min-play fill already uses."""
     must_start_ids = must_start_ids or set()
+    # Real robustness fix (2026-09-02, decision-engine forensic audit) - a
+    # genuinely malformed/minimal `element_types` row (e.g. a real, thin test
+    # fixture that never populated squad_min_play/squad_max_play, only just
+    # discovered live once `transfers.py::_squad_gw_ev` started calling this
+    # function from many more real call sites than before) used to crash on
+    # `None - int`. NULL bounds coalesce to "no real constraint" (0 min, 11
+    # max) rather than raising - the same honest-degradation posture this
+    # project applies elsewhere to genuinely missing data.
     play_bounds = {
-        r["singular_name_short"]: (r["squad_min_play"], r["squad_max_play"])
+        r["singular_name_short"]: (r["squad_min_play"] or 0, r["squad_max_play"] if r["squad_max_play"] is not None else 11)
         for r in conn.execute("SELECT singular_name_short, squad_min_play, squad_max_play FROM element_types").fetchall()
     }
 

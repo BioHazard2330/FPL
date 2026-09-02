@@ -230,7 +230,19 @@ def cross_check_against_strategic_plan(conn: sqlite3.Connection, action_audit: "
 
 
 def _relative_time_hint(created_at: str | None) -> str:
-    return created_at or "unknown time"
+    """Real legibility fix (2026-09-02) - used to echo the raw ISO timestamp
+    verbatim (e.g. "2026-08-27T00:22:14.107828+00:00"), which reads as a
+    precise, current-looking value even when the compared-against
+    `strategic_plan` decision is actually days old. Reuses the same
+    `_relative_time` humanizer the dashboard's own age disclosures already
+    use (`models.decision_freshness` already imports it from here for the
+    same reason - see that module's own precedent for this cross-layer
+    import)."""
+    if created_at is None:
+        return "unknown time"
+    from fpl_agent.monitoring.dashboard.legacy import _relative_time
+
+    return _relative_time(created_at)
 
 
 # --------------------------------------------------------------------------

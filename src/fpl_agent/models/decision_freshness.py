@@ -94,6 +94,30 @@ def _player_name(conn: sqlite3.Connection, player_id: int) -> str:
     return row["web_name"] if row is not None else f"player {player_id}"
 
 
+def _recommendation_target_ids(strategic_decision) -> set[int]:
+    """Real gap closed 2026-09-02: `has_material_change_since` scoped its
+    player-level check to `squad_ids` (players the user already OWNS) - a
+    price/injury/lineup change on the player this exact decision recommends
+    BUYING (not yet owned, so never in `squad_ids`) was silently invisible to
+    staleness detection. "Target B no longer affordable" could never surface.
+
+    Reads the winning starting action's own first-GW `resulting_squad_ids`
+    (`best_path.steps[0]`, the same real beam-search output `strategic_plan`
+    already logs) - covers a plain transfer (one new player) and a
+    wildcard/free-hit rebuild (many new players) the same way, with no
+    action-kind branching. Returns an empty set (never guesses) whenever the
+    decision predates this field, has no real winning path, or recommends
+    ROLL (nothing new to watch beyond the owned squad)."""
+    try:
+        steps = strategic_decision.detail.get("best_path", {}).get("steps", [])
+    except AttributeError:
+        return set()
+    if not steps:
+        return set()
+    resulting = steps[0].get("resulting_squad_ids")
+    return set(resulting) if resulting else set()
+
+
 def assess_recommendation_freshness(
     conn: sqlite3.Connection, strategic_decision, squad_ids: set[int] | None,
 ) -> FreshnessResult | None:
@@ -106,7 +130,8 @@ def assess_recommendation_freshness(
 
     if strategic_decision is None:
         return None
-    change = has_material_change_since(conn, strategic_decision.created_at, squad_ids)
+    watch_ids = set(squad_ids or set()) | _recommendation_target_ids(strategic_decision)
+    change = has_material_change_since(conn, strategic_decision.created_at, watch_ids)
     stale_reason = None
     if change is not None:
         if change["entity"] == "player":

@@ -92,6 +92,22 @@ class FPLApiAdapter:
         immediately regardless of GW lock state (they're closed seasons)."""
         return self._get(f"fpl_api_entry_history_{entry_id}", f"/entry/{entry_id}/history/")
 
+    def fetch_entry_transfers(self, entry_id: int) -> RawFetch:
+        """Real, public, no-login transfer LOG for this entry - a flat list of
+        every transfer ever made (`element_in`/`element_out`/`event`/`time`),
+        unlike `/event/{gw}/picks/` (a locked-squad SNAPSHOT that 404s until
+        that gameweek's deadline passes). This is the only Tier 1 source that
+        reveals a transfer already made toward the CURRENT, not-yet-locked
+        gameweek - added 2026-09-02 to close a real, confirmed bug: the
+        official-history replay in `models/free_transfers.py` only ever sees
+        `event_transfers` for LOCKED gameweeks, so it correctly computes the
+        free-transfer bank walking INTO the upcoming gameweek but has no way
+        to net out transfers the user already spent inside that gameweek's
+        still-open pre-deadline window - confirmed live (dashboard showed 3,
+        real FPL app showed 2, the difference being exactly one already-made
+        pending transfer this endpoint reveals)."""
+        return self._get(f"fpl_api_entry_transfers_{entry_id}", f"/entry/{entry_id}/transfers/")
+
     def fetch_event_live(self, event: int) -> RawFetch:
         """Real-time per-player stats for an in-progress or just-finished
         gameweek - `stats.bps` updates continuously during live matches,

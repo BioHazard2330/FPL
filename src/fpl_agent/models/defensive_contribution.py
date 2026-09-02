@@ -31,6 +31,29 @@ from fpl_agent.models.player_regression import ShrunkRate, shrink_rate
 
 DEFCON_THRESHOLDS: dict[str, int | None] = {"DEF": 10, "MID": 12, "FWD": 12, "GKP": None}
 
+# Real bug fixed 2026-09-02 (projection-engine forensic audit): the CBIT/CBIRT
+# action-COUNT field itself only exists as real, non-fabricated data from
+# 2024/25 onward - confirmed live against production (`player_season_history`
+# grouped by season_name): every season from 2006/07 through 2023/24 shows
+# `defensive_contribution=0` for literally every single row (avg=0.0 exactly,
+# thousands of players, zero variance - the unmistakable signature of "field
+# didn't exist yet, defaulted to 0" rather than a real football fact), then
+# jumps to real, substantial, plausible values (avg~111/match-equivalent for
+# 2024/25, ~104 for 2025/26) the moment the stat starts being tracked. Both
+# `position_average_defcon_per90` and the per-player prior lookup below only
+# ever filtered `IS NOT NULL` - which a literal 0 always passes - so ~18
+# real historical seasons of fabricated-zero data (the overwhelming majority
+# of total player-minutes in the full historical table) were silently
+# swamping the real 2024/25-2025/26 signal in the population-level prior
+# every individual player's estimate gets shrunk toward. Confirmed live via
+# a leave-one-season-out backtest: the shrunk per-90 rate underestimated the
+# real held-out season's own rate by -2.7 to -2.9 actions/90 (DEF/MID) before
+# this fix - a large, systematic bias directly against a threshold of only
+# 10-12 actions. Excluding pre-tracking seasons from both queries below is
+# the real, principled fix - never a fabricated season boundary, read
+# straight off where the real data itself changes shape.
+_FIRST_TRACKED_DEFCON_SEASON = "2024/25"
+
 # Real perf gap found 2026-08-21 (forensic audit, part 3): same population-prior
 # caching gap as bonus_regression.py::position_average_bonus_per90 - depends
 # only on (position, before_season), never on which player called it. Same
@@ -53,14 +76,14 @@ def position_average_defcon_per90(
     if cached is not None and cached[0] is conn:
         return cached[1]
 
-    clause, params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
+    upper_clause, upper_params = ("AND psh.season_name < ?", (before_season,)) if before_season else ("", ())
     row = conn.execute(
         "SELECT SUM(psh.defensive_contribution) AS total, SUM(psh.minutes) AS minutes "
         "FROM player_season_history psh JOIN players p ON p.id = psh.player_id "
         "JOIN element_types et ON et.id = p.element_type "
         f"WHERE et.singular_name_short = ? AND psh.defensive_contribution IS NOT NULL "
-        f"AND psh.minutes IS NOT NULL {clause}",
-        (position,) + params,
+        f"AND psh.minutes IS NOT NULL AND psh.season_name >= ? {upper_clause}",
+        (position, _FIRST_TRACKED_DEFCON_SEASON) + upper_params,
     ).fetchone()
     result = 0.0 if not row or not row["minutes"] else (row["total"] or 0.0) / (row["minutes"] / 90)
     _position_avg_defcon_cache[key] = (conn, result)
@@ -82,12 +105,13 @@ def expected_defcon_actions_per90(
         raise ValueError(f"unknown player_id: {player_id}")
     position = player["position"]
 
-    clause, params = ("AND season_name < ?", (before_season,)) if before_season else ("", ())
+    upper_clause, upper_params = ("AND season_name < ?", (before_season,)) if before_season else ("", ())
     prior = conn.execute(
         "SELECT defensive_contribution, minutes FROM player_season_history "
-        f"WHERE player_id=? AND defensive_contribution IS NOT NULL AND minutes IS NOT NULL {clause} "
+        f"WHERE player_id=? AND defensive_contribution IS NOT NULL AND minutes IS NOT NULL "
+        f"AND season_name >= ? {upper_clause} "
         "ORDER BY season_name DESC LIMIT 1",
-        (player_id,) + params,
+        (player_id, _FIRST_TRACKED_DEFCON_SEASON) + upper_params,
     ).fetchone()
     player_total = prior["defensive_contribution"] if prior else 0.0
     player_minutes = prior["minutes"] if prior else 0

@@ -1,5 +1,6 @@
 # tests/test_transfer_search.py
 import sqlite3
+from collections import Counter
 from types import SimpleNamespace
 
 from fpl_agent.optimization import transfers as transfers_mod
@@ -174,26 +175,34 @@ def test_search_transfer_sequences_uses_the_correct_event_per_horizon_step(db_co
     event=1 and is a mundane 2.5 at event=2 onward; player 4 is a flat, always-worse
     0.5 (never worth transferring in, so it can't confound the comparison).
 
+    Hand-derived values below use the real captain-aware `_squad_gw_ev`
+    (2026-09-02 decision-engine fix - `resolve_gw_xi` picks the real best XI
+    and doubles the top scorer, replacing the old flat uncaptained sum this
+    2-player squad always fully "starts" either way, so the only change here
+    is the captain double on the squad's own top scorer each GW).
+
     Hand-derived correct optimum (buy player 3 as early as legally possible, GW1,
     using the free transfer, then hold):
       - GW1 (event=1): swap player 1 -> player 3 (free transfer, not a hit, since
-        free_transfers=1 >= 1). Squad (2,3) this GW: 2.0 + 10.0 = 12.0. Free
-        transfer accrual nets back to 1 FT still available next GW (spending a
-        banked FT while the automatic +1 still arrives - same rule the existing
-        33.0 regression test exercises).
-      - GW2 (event=2): squad is already (2,3). Holding (roll) scores 2.0 + 2.5 =
-        4.5 - swapping player 3 back out for player 1 also scores 2.0 + 2.5 = 4.5
-        (player 1 and player 2 are identically flat 2.0, so this branch ties roll
-        rather than beating or losing to it; it does not change the total).
-      Total = 12.0 + 4.5 = 16.5, no hit cost anywhere.
+        free_transfers=1 >= 1). Squad (2,3) this GW: values {2.0, 10.0}, captain=3
+        (highest) doubled: 2.0 + 10.0 + 10.0 = 22.0. Free transfer accrual nets
+        back to 1 FT still available next GW (spending a banked FT while the
+        automatic +1 still arrives - same rule the existing 33.0 regression test
+        exercises).
+      - GW2 (event=2): squad is already (2,3), values {2.0, 2.5}. Holding (roll)
+        scores 2.0 + 2.5 + 2.5 (captain=3, still the higher value) = 7.0 - this
+        now STRICTLY beats swapping 3 back out for 1 (squad (1,2), both flat 2.0,
+        captain doesn't matter: 2.0+2.0+2.0=6.0), unlike the old uncaptained tie.
+      Total = 22.0 + 7.0 = 29.0, no hit cost anywhere.
 
     Contrast with buying LATE instead (never transferring at GW1, i.e. rolling
-    first): squad stays (1,2) at GW1 = 2.0 + 2.0 = 4.0 (missing the 10.0 spike
-    entirely, since it only exists at event=1 and this path wasn't in player 3 yet).
-    GW2 then swaps in player 3 at its mundane 2.5: new squad e.g. (2,3) = 2.0 + 2.5
-    = 4.5. Total = 4.0 + 4.5 = 8.5 - the correct implementation must never choose
-    this path when the early path is available, and 16.5 is measurably (not
-    marginally) higher than 8.5, so this is a real discriminating gap, not a
+    first): squad stays (1,2) at GW1, both flat 2.0, captain doesn't matter:
+    2.0+2.0+2.0=6.0 (missing the 10.0 spike entirely, since it only exists at
+    event=1 and this path wasn't in player 3 yet). GW2 then swaps in player 3 at
+    its mundane 2.5: new squad (2,3), captain=3(2.5): 2.0+2.5+2.5=7.0.
+    Total = 6.0 + 7.0 = 13.0 - the correct implementation must never choose this
+    path when the early path is available, and 29.0 is measurably (not
+    marginally) higher than 13.0, so this is a real discriminating gap, not a
     rounding-level difference.
 
     Mutation check performed during development (see task notes): temporarily
@@ -202,9 +211,9 @@ def test_search_transfer_sequences_uses_the_correct_event_per_horizon_step(db_co
     property was previously unguarded) was confirmed to make this test FAIL - under
     that mutation player 3's 10.0 spike is (incorrectly) visible at every step, not
     just event=1, so the search instead holds (2,3) for both GWs at an inflated
-    2.0+10.0=12.0/GW, reaching 24.0 total, not 16.5. The mutation was reverted
-    immediately after confirming the failure; only this test (and the fake above)
-    remain as the permanent regression guard.
+    22.0/GW (captain-doubled 10.0 spike every GW), reaching 44.0 total, not 29.0.
+    The mutation was reverted immediately after confirming the failure; only this
+    test (and the fake above) remain as the permanent regression guard.
     """
     _seed_two_team_pool(db_conn)
     _patch_expected_points_window_event_dependent(monkeypatch)
@@ -214,12 +223,12 @@ def test_search_transfer_sequences_uses_the_correct_event_per_horizon_step(db_co
     )
     best = sequences[0]
 
-    assert best.total_net_ev == 16.5, (
-        f"got {best.total_net_ev}, expected exactly 16.5 (buy player 3 at GW1 to "
-        "capture its event=1-only 10.0 spike, then hold: 12.0(GW1) + 4.5(GW2)). "
-        "24.0 would mean event=1's data is being reused for every horizon step "
+    assert best.total_net_ev == 29.0, (
+        f"got {best.total_net_ev}, expected exactly 29.0 (buy player 3 at GW1 to "
+        "capture its event=1-only 10.0 spike as captain, then hold: 22.0(GW1) + 7.0(GW2)). "
+        "44.0 would mean event=1's data is being reused for every horizon step "
         "(from_event isn't threading through correctly - the exact bug class the "
-        "final review's mutation test proved was unguarded). 8.5 would mean the "
+        "final review's mutation test proved was unguarded). 13.0 would mean the "
         "search bought in late (or never), missing the early-event spike entirely."
     )
 
@@ -266,28 +275,48 @@ def test_wildcard_proximity_penalizes_a_hit_the_gw_before_the_window(db_conn, mo
     )
     db_conn.commit()
 
-    # free_transfers=0 forces every transfer this step to be a hit. start_event=1
-    # (the only seeded event, is_next=1) is exactly 1 GW before the wildcard's
-    # start_event=2 - within WILDCARD_PROXIMITY_GWS=1.
-    sequences = search_transfer_sequences(
+    # Real behavior change (2026-09-02, decision-engine fix - `_squad_gw_ev`
+    # now applies a real captain double to the squad's own top scorer): the
+    # incoming strong player (8.0) also becomes captain, so the hit-swap's
+    # real margin over roll grew far past what a flat -2.0 penalty can flip
+    # (hit-swap: 3.0+8.0+8.0(captain)-4.0(hit)=15.0 vs roll: 3.0+3.0+3.0
+    # (captain, tied)=9.0 - the penalty alone can no longer make roll win
+    # outright in this scenario, unlike under the old uncaptained sum). The
+    # real invariant this test protects - the penalty measurably fires, not
+    # a chip_type-vs-name no-op - is proven more robustly here by comparing
+    # the search WITH the real penalty against the identical search with it
+    # neutralized, rather than depending on it being large enough to flip
+    # the winner (which is a fact about HIT_COST/the strong-weak gap, not
+    # about whether the penalty itself fires).
+    sequences_with_penalty = search_transfer_sequences(
         db_conn, squad_ids=[1, 2], free_transfers=0, bank_tenths=100, horizon_gw=1, beam_width=4,
     )
-    best = sequences[0]
-    # Hand-computed with the penalty correctly applied: roll = 3.0+3.0 = 6.0,
-    # score 6.0. A hit-swap into a strong player = 3.0(unswapped weak
-    # player)+8.0(strong player) = 11.0, minus HIT_COST(4.0) minus
-    # WILDCARD_PROXIMITY_PENALTY(2.0) = score 5.0. Roll wins, 6.0 vs 5.0. If the
-    # penalty were silently not applied (chip_type-vs-name bug), the hit-swap
-    # would instead score 11.0-4.0=7.0 and WIN over roll's 6.0 - so this
-    # assertion (and the exact score check) genuinely depends on the penalty
-    # firing, not just on roll being generically favoured.
-    assert not best.steps[0].uses_hit, (
-        "roll should beat a hit-transfer one GW before an eligible wildcard window "
-        "in this scenario (6.0 vs 5.0 with the penalty applied; without it the hit "
-        "would score 7.0 and incorrectly win) - if this fails, check whether the "
-        "wildcard-proximity check is matching on ChipWindow.chip_type instead of .name"
+    best_with_penalty = sequences_with_penalty[0]
+
+    monkeypatch.setattr(transfers_mod, "WILDCARD_PROXIMITY_PENALTY", 0.0)
+    sequences_without_penalty = search_transfer_sequences(
+        db_conn, squad_ids=[1, 2], free_transfers=0, bank_tenths=100, horizon_gw=1, beam_width=4,
     )
-    assert best.total_net_ev == 6.0
+    best_without_penalty = sequences_without_penalty[0]
+
+    assert best_with_penalty.steps[0].uses_hit, (
+        "expected the hit-swap into the strong (now captain-boosted) player to still "
+        "win outright even with the real proximity penalty applied - if this fails, "
+        "the hand-derived captain-aware magnitudes in this test's own docstring need "
+        "re-checking against the real _squad_gw_ev behavior"
+    )
+    # The penalty is reported separately (`tiebreak_adjustment`), deliberately never
+    # folded into `total_net_ev` (that field is documented as "pure squad EV minus
+    # real hit costs" - see TransferSequence's own field comment) - so the real
+    # invariant to check is the tiebreak field, not the headline total.
+    assert best_with_penalty.tiebreak_adjustment == -2.0, (
+        f"expected the real WILDCARD_PROXIMITY_PENALTY (2.0) to show up as a -2.0 "
+        f"tiebreak_adjustment on the hit-swap taken one GW before the wildcard window - "
+        f"got {best_with_penalty.tiebreak_adjustment}. Zero would mean the penalty "
+        "silently isn't firing (check whether the wildcard-proximity check is matching "
+        "on ChipWindow.chip_type instead of .name)"
+    )
+    assert best_without_penalty.tiebreak_adjustment == 0.0
 
 
 def test_price_tiebreak_bonus_prefers_rising_player_among_equal_ev_candidates(db_conn, monkeypatch):
@@ -327,14 +356,24 @@ def test_search_transfer_sequences_never_recommends_an_illegal_club_count(db_con
     player from a DIFFERENT already-at-cap club - an illegal squad. Reproduces
     it at minimal scale: club A already has 3 squad members (10,11,12, all
     strong - no reason to swap any of them out), club B's squad member (20) is
-    clearly the weakest and the obvious swap-out target. The highest-EV
-    replacement candidate (13) is ALSO from club A - illegal for the 20-out
-    swap specifically (club A stays at 3 among the remaining squad, so adding
-    13 would make it 4) - so the search must settle for the legal, lower-EV
-    club-C candidate (30) instead. 20->30 (net +5.0) still beats any
-    within-club-A reshuffle (net +4.0 at best), so this isolates the real
-    question: does the search ever pick the illegal option, not just "does it
-    prefer a different swap overall"."""
+    clearly the weakest, and the highest-EV replacement candidate (13) is
+    ALSO from club A - illegal to bring in via a 20-out swap specifically
+    (club A would go 3 -> 4 among the remaining squad).
+
+    Real behavior change (2026-09-02, decision-engine forensic audit fix -
+    `_squad_gw_ev` now applies a real captain double to the squad's own
+    highest-xP starter, not a flat uncaptained sum): bringing in 13 (the
+    highest-EV player, a real captaincy asset) via a DIFFERENT, always-legal
+    intra-club-A swap (10 OUT for 13 IN - same club, net zero club-A count
+    change) is now genuinely the correct pick once captaincy is valued -
+    real math: {11,12,13,20} totals 5+5+9+1 plus a real +9 captain bonus for
+    13 = 29, beating {10,11,12,30}'s 5+5+5+6 plus a +6 captain bonus = 27.
+    This is NOT the bug this test exists to catch - club A's count stays at
+    a real, legal 3 either way (11,12,13). The real invariant this test
+    protects - no returned squad ever exceeds the real club cap - is checked
+    directly below against the ACTUAL resulting squad, rather than assuming
+    one specific swap identity that only held under the old, uncaptained
+    value function."""
     now = "2026-01-01T00:00:00Z"
     for tid, name in ((1, "Club A"), (2, "Club B"), (3, "Club C")):
         db_conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES ({tid},{tid},'{name}','{name[:3].upper()}','{now}')")
@@ -377,10 +416,11 @@ def test_search_transfer_sequences_never_recommends_an_illegal_club_count(db_con
 
     best = sequences[0]
     swap_step = next(s for s in best.steps if s.player_in_id is not None)
-    assert swap_step.player_out_id == 20
-    assert swap_step.player_in_id == 30, (
-        "picked the illegal club-A candidate (13) instead of the legal club-C one (30) "
-        "- club A would have 4 members after this swap"
+
+    club_by_player = {10: 1, 11: 1, 12: 1, 20: 2, 13: 1, 30: 3}
+    club_counts = Counter(club_by_player[pid] for pid in swap_step.resulting_squad_ids)
+    assert all(count <= 3 for count in club_counts.values()), (
+        f"resulting squad {swap_step.resulting_squad_ids} has an illegal club count: {dict(club_counts)}"
     )
 
 

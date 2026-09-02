@@ -872,7 +872,13 @@ def test_match_intelligence_panel_shows_real_pending_queue_state(db_conn):
 
     assert "QUALITATIVE ANALYSIS" in result
     assert "PENDING" in result
-    assert "will process automatically" in result
+    # Real wording fix 2026-09-02 (autonomous-runtime audit): "will process
+    # automatically next time Claude Code opens" read as if the deterministic
+    # pipeline was gated on this queue - it never was (`run_scheduled` already
+    # chains straight through regardless). The honest wording states plainly
+    # that this is an async enhancement that does not block recommendations.
+    assert "does not block this recommendation" in result
+    assert "next Claude Code session" in result
 
 
 def test_match_report_strip_excludes_live_and_halftime_matches(db_conn):

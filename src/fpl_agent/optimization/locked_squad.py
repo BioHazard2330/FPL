@@ -32,7 +32,8 @@ from dataclasses import dataclass
 from fpl_agent.ingestion.my_team import get_latest_squad_detail, get_my_team_entry_id
 
 _logger = logging.getLogger("fpl_agent.locked_squad")
-from fpl_agent.models.free_transfers import compute_real_free_transfers
+from fpl_agent.models.fixtures import live_or_reference_event
+from fpl_agent.models.free_transfers import compute_current_free_transfers
 from fpl_agent.optimization.build_team import (
     LockedDecisionIncomplete,
     generate_build_team_report,
@@ -88,8 +89,32 @@ def _xi_from_real_picks(
     existing, already-used-elsewhere (`resolve_projected_xi`) cheap
     counterpart scoped to a fixed known id set - same real per-player xP
     values (same `expected_points()` call, just for 15 players instead of
-    ~600), measured 237ms against the same production data (~26x faster)."""
-    pool = build_player_pool_for_ids(conn, {row["player_id"] for row in picks}, event)
+    ~600), measured 237ms against the same production data (~26x faster).
+
+    Real bug found + fixed 2026-09-02 (projection-engine forensic audit,
+    direct user report: "why is my squad xP only 40.6"): `event` here is the
+    real LOCKED PICKS snapshot event (the last gameweek FPL has confirmed
+    picks for) - correct for reading WHO is in the squad, WRONG as the
+    projection target once that gameweek has itself finished and the next
+    one hasn't locked yet (the entire gap between full-time and the next
+    deadline - a real, recurring multi-day window every single gameweek,
+    not an edge case). Reusing it for `build_player_pool_for_ids` fed
+    `expected_points(..., from_event=<a gameweek whose own fixtures are all
+    finished=1>)` for every single squad player - that lookup finds ZERO
+    unfinished fixtures for that event and silently falls back to the
+    generic `_LEAGUE_AVERAGE_GOALS` (1.3-1.3) instead of each player's real
+    next opponent, discarding fixture-specific signal for the whole XI.
+    Confirmed live against production: reconstructed the real dashboard's
+    40.59 total exactly using `event=2` (the picks snapshot, GW2 already
+    finished); recomputing with `event=3` (the real next actionable
+    gameweek) gave 44.82 - a real, non-uniform per-player correction
+    (some players moved down, proving this is a fixture-context bug, not a
+    magnitude scaling issue). `live_or_reference_event` is the same real
+    "what's live or about to be live" primitive `models/fixtures.py`
+    already defines - falls back to the picks event only if it's ever
+    unavailable (never raises, never blocks squad membership on it)."""
+    projection_event = live_or_reference_event(conn) or event
+    pool = build_player_pool_for_ids(conn, {row["player_id"] for row in picks}, projection_event)
     by_id = {c.player_id: c for c in pool}
     if not picks:
         # Defensive only - get_locked_squad's real call path never passes an
@@ -222,7 +247,7 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
                 value_tenths = summary["team_value_tenths"] if summary else sum(
                     c.price_tenths for c in xi.starting + xi.bench
                 )
-                free_transfers = compute_real_free_transfers(conn, entry_id, upto_event=event)
+                free_transfers = compute_current_free_transfers(conn, entry_id, upto_event=event)
                 return LockedSquadState(
                     source="synced_real", event=event, squad_ids=frozenset(squad_ids),
                     xi=xi, bank_tenths=bank_tenths, squad_value_tenths=value_tenths, decision_id=None,

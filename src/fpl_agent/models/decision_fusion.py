@@ -47,16 +47,20 @@ class CaptainViewComparison:
     explanation: str
 
 
-def _qualitative_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None, str | None, bool]:
-    """Returns (player_id, reason, is_persistent) for the squad member with
-    the most recent POSITIVE captaincy-relevant qualitative implication.
-    `is_persistent` is True only when that player's own trend for the same
-    signal is PERSISTENT_TREND (qualitative_trends.py) - a single good
-    match is real evidence but not yet grounds to override a calibrated
-    quant model on its own (spec section 16's own "not from tiny samples"
-    rule, applied here to the fusion decision itself)."""
+def _qualitative_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None, str | None, bool, str | None]:
+    """Returns (player_id, reason, is_persistent, signal) for the squad
+    member with the most recent POSITIVE captaincy-relevant qualitative
+    implication. `is_persistent` is True only when that player's own trend
+    for the same signal is PERSISTENT_TREND (qualitative_trends.py) - a
+    single good match is real evidence but not yet grounds to override a
+    calibrated quant model on its own (spec section 16's own "not from tiny
+    samples" rule, applied here to the fusion decision itself). `signal` is
+    returned (2026-09-02, Phase 3 forensic audit) so the caller can look up
+    whether - and by how much - `qualitative_feed.py` has ALREADY applied a
+    real bounded adjustment for it, rather than the caller's own
+    explanation text guessing at "the model doesn't yet capture this"."""
     if not squad_ids:
-        return None, None, False
+        return None, None, False, None
     placeholders = ",".join("?" * len(squad_ids))
     row = conn.execute(
         f"SELECT player_id, signal, reason, created_at FROM player_fpl_implications "
@@ -66,7 +70,7 @@ def _qualitative_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None,
         [*squad_ids, *_CAPTAINCY_RELEVANT_SIGNALS],
     ).fetchone()
     if row is None:
-        return None, None, False
+        return None, None, False, None
 
     is_persistent = False
     pi = player_intelligence(conn, row["player_id"])
@@ -74,7 +78,48 @@ def _qualitative_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None,
         if t.signal == row["signal"] and t.label == "PERSISTENT_TREND" and t.current_direction == "POSITIVE":
             is_persistent = True
             break
-    return row["player_id"], row["reason"], is_persistent
+    return row["player_id"], row["reason"], is_persistent, row["signal"]
+
+
+def _quantify_qualitative_gap(conn, qual_id: int, qual_signal: str | None, qual_reason: str | None) -> str:
+    """Real fix (2026-09-02, Phase 3 forensic audit, direct user report:
+    the FOOTBALL_CONFLICT text "the quant model's projection doesn't yet
+    fully capture" is a generic phrase that never says whether -or by how
+    much- `qualitative_feed.py` has ALREADY applied a real bounded
+    adjustment). Reads the SAME `compute_qualitative_adjustment` the live
+    projection path already calls for this player, so the conflict
+    explanation reports a real, already-computed number instead of
+    implying total blindness. `qual_signal` with no component mapping
+    (ROLE/MINUTES - handled inside `expected_minutes()` itself, not this
+    interface) is reported honestly as such, never guessed at."""
+    from fpl_agent.models.expected_points import expected_points
+    from fpl_agent.models.qualitative_feed import (
+        _COMPONENT_SIGNAL_MAP,
+        MAX_ADJUSTMENT_FRACTION,
+        compute_qualitative_adjustment,
+    )
+
+    if qual_signal not in _COMPONENT_SIGNAL_MAP:
+        return (
+            f"real qualitative signal for this player ({qual_reason}) - '{qual_signal}' has no direct "
+            "xP component mapping in this project's qualitative->quantitative interface, so it cannot "
+            "move the quant model's own number at all yet"
+        )
+    ep = expected_points(conn, qual_id, n_gw=1)
+    if ep.components is None:
+        return f"real qualitative signal for this player ({qual_reason}) - no component breakdown available to quantify against"
+    adjustment = compute_qualitative_adjustment(conn, qual_id, ep.components)
+    if adjustment is None:
+        return (
+            f"real qualitative signal for this player ({qual_reason}) but it hasn't yet cleared this "
+            "interface's own PERSISTENT_TREND bar, so zero adjustment has been applied to the quant model"
+        )
+    component_base = getattr(ep.components, adjustment.component)
+    return (
+        f"already added {adjustment.delta:+.2f} xP to this player's own {adjustment.component} component "
+        f"(bounded to {MAX_ADJUSTMENT_FRACTION:.0%} of that component's real {component_base:.2f}pt value) - "
+        f"real, but not enough on its own to move the model's overall pick"
+    )
 
 
 def _user_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None, str | None]:
@@ -104,7 +149,7 @@ def compare_captain_views(conn, squad_ids: list[int], options: list | None = Non
         f"highest median projection ({model_pick.median} pts)" if model_pick else "no real captaincy data for this squad"
     )
 
-    qual_id, qual_reason, qual_persistent = _qualitative_captain_signal(conn, squad_ids)
+    qual_id, qual_reason, qual_persistent, qual_signal = _qualitative_captain_signal(conn, squad_ids)
     qual_name = None
     if qual_id is not None:
         row = conn.execute("SELECT web_name FROM players WHERE id=?", (qual_id,)).fetchone()
@@ -128,10 +173,8 @@ def compare_captain_views(conn, squad_ids: list[int], options: list | None = Non
         explanation = f"you've noted a preference for {user_name} over the model's {model_pick.web_name} - your call"
     elif qual_id is not None and qual_id != model_id and qual_persistent:
         verdict = "QUALITATIVE_WINS"
-        explanation = (
-            f"{qual_name}'s real qualitative trend is a PERSISTENT positive signal ({qual_reason}) "
-            f"the quant model's projection doesn't yet fully capture"
-        )
+        gap = _quantify_qualitative_gap(conn, qual_id, qual_signal, qual_reason)
+        explanation = f"{qual_name}'s real qualitative trend is a PERSISTENT positive signal - {gap}"
     elif qual_id is not None and qual_id != model_id and not qual_persistent:
         verdict = "MODEL_WINS"
         explanation = (
@@ -333,15 +376,16 @@ def captain_cross_check(
     # FOOTBALL axis - reuses the same real, cheap qualitative-signal read
     # `compare_captain_views` uses, not that function's own full comparison
     # (which would re-run `evaluate_captaincy`).
-    qual_id, qual_reason, qual_persistent = _qualitative_captain_signal(conn, squad_ids)
+    qual_id, qual_reason, qual_persistent, qual_signal = _qualitative_captain_signal(conn, squad_ids)
     if captain_id is None:
         axes.append(CrossCheckAxis("FOOTBALL", "INSUFFICIENT_EVIDENCE", "no real model captain pick to compare against"))
     elif qual_id is not None and qual_id != captain_id and qual_persistent:
         qual_row = conn.execute("SELECT web_name FROM players WHERE id=?", (qual_id,)).fetchone()
         qual_name = qual_row["web_name"] if qual_row else "another player"
+        gap = _quantify_qualitative_gap(conn, qual_id, qual_signal, qual_reason)
         axes.append(CrossCheckAxis(
             "FOOTBALL", "FOOTBALL_CONFLICT",
-            f"a real persistent positive qualitative trend favors {qual_name} ({qual_reason}), not {captain_name}",
+            f"a real persistent positive qualitative trend favors {qual_name} over {captain_name} - {gap}",
         ))
     else:
         axes.append(CrossCheckAxis("FOOTBALL", "AGREE", "no real persistent qualitative signal contradicts this pick"))

@@ -227,12 +227,33 @@ def detect_match_standouts(conn: sqlite3.Connection, match_id: int) -> list[Dete
 def record_statistical_evidence(conn: sqlite3.Connection, match_id: int) -> int:
     """Writes `detect_match_standouts`'s real findings into
     `match_observations`/`player_fpl_implications` - additive, idempotent
-    per (match_id, subject_id, fpl_signal, analysis_version), phase always
-    'FULL_TIME' (the only phase this detector's minutes-complete evidence is
-    meaningful for). Returns the real count of NEW rows written (0 on a
-    repeat call for an already-recorded match - not an error, the expected
-    steady state once `refresh_in_progress_matches` re-syncs a finished
-    match on its normal cadence)."""
+    per (match_id, subject_id, fpl_signal), phase always 'FULL_TIME' (the
+    only phase this detector's minutes-complete evidence is meaningful
+    for). Returns the real count of NEW rows written (0 on a repeat call
+    for an already-recorded match - not an error, the expected steady state
+    once `refresh_in_progress_matches` re-syncs a finished match on its
+    normal cadence).
+
+    Real duplicate-signal bug fixed 2026-09-02 (Phase 3 forensic audit,
+    direct user report: "the same minutes-type observation can appear
+    twice in the same match evidence set"). The exists-check used to be
+    scoped to `analysis_version=STAT_ANALYSIS_VERSION` - blind to any row
+    the `.claude/skills/match-intelligence-analysis` skill already wrote
+    for the identical (match, subject, signal) under its own
+    `qual-v1` tag. `apply_match_analysis` (the skill's write path) already
+    does a real phase-scoped DELETE-then-INSERT that clears any prior
+    stat-v1 rows when the skill runs FIRST - so the only real duplication
+    window is the reverse order: the skill analyzes a match, and a LATER
+    re-run of this automatic backfill (a real, normal event - re-syncing
+    an already-finished match on its usual cadence) never saw the skill's
+    differently-tagged rows as "already covered", so it re-added its own
+    redundant ones on top. Checking existence across ANY source (never
+    filtering by `analysis_version`) closes this - one real underlying
+    signal, one canonical row, regardless of which system got there
+    first. The skill's own richer, LLM-interpreted row always wins in that
+    ordering (this function simply never overwrites what's already there),
+    matching "the skill is the one place that produces the INFERRED layer"
+    without this deterministic layer silently duplicating it later."""
     observations = detect_match_standouts(conn, match_id)
     if not observations:
         return 0
@@ -242,8 +263,8 @@ def record_statistical_evidence(conn: sqlite3.Connection, match_id: int) -> int:
     for obs in observations:
         exists = conn.execute(
             "SELECT 1 FROM match_observations WHERE match_id=? AND subject_type=? AND subject_id=? "
-            "AND fpl_signal=? AND analysis_version=?",
-            (match_id, obs.subject_type, obs.subject_id, obs.fpl_signal, STAT_ANALYSIS_VERSION),
+            "AND fpl_signal=?",
+            (match_id, obs.subject_type, obs.subject_id, obs.fpl_signal),
         ).fetchone()
         if exists is not None:
             continue

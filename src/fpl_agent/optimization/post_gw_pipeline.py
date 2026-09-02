@@ -79,6 +79,24 @@ def _backfill_statistical_evidence(conn: sqlite3.Connection) -> int:
             total += record_statistical_evidence(conn, match_id)
         except Exception:
             pass
+    total += _backfill_role_signal_evidence(conn, match_ids)
+    return total
+
+
+def _backfill_role_signal_evidence(conn: sqlite3.Connection, match_ids: list[int]) -> int:
+    """Same defensive-backfill role as `_backfill_statistical_evidence` above,
+    for the deterministic ROLE_CHANGE/SET_PIECE_CHANGE/TACTICAL_CHANGE
+    detectors (2026-09-02, Phase 3 finalization) - `record_role_signal_evidence`
+    is itself idempotent (same dedup-by-existence pattern), safe to call for
+    every already-FULL_TIME match on every pipeline run."""
+    from fpl_agent.models.role_signal_detectors import record_role_signal_evidence
+
+    total = 0
+    for match_id in match_ids:
+        try:
+            total += record_role_signal_evidence(conn, match_id)
+        except Exception:
+            pass
     return total
 
 
@@ -118,7 +136,34 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
         return PostGwPipelineResult(ran=False, event=event, reason="no locked squad to plan against")
 
     # 4. Captain + transfer verdicts (existing, cheap, already-tested).
-    decision = evaluate_locked_squad(conn, locked)
+    # Real fix 2026-09-02 (decision-engine forensic audit, PART 2: "eliminate
+    # this class of problem" - two systems producing different
+    # recommendations): this used to call `evaluate_locked_squad(conn,
+    # locked)` bare, which - when `ta`/`ca` aren't passed - runs its OWN
+    # independent `_evaluate_transfer`/`_evaluate_captain` scans rather than
+    # reusing the SAME `analyze_transfer_decision`/`analyze_captain_decision`
+    # computation the live dashboard path already passes in
+    # (`monitoring/dashboard/assemble.py`'s own `ta=ta, ca=ca` call). Both
+    # scans are mathematically supposed to agree (see `evaluate_locked_
+    # squad`'s own Part-25-perf-pass docstring), but computing them twice
+    # independently is exactly the kind of avoidable divergence risk this
+    # phase's audit was asked to close - this `post_gw_plan` journal entry
+    # must reflect the identical real computation the dashboard shows, not a
+    # second, separately-derived one.
+    from fpl_agent.optimization.decision_analysis import analyze_captain_decision, analyze_transfer_decision
+
+    # Real, deliberate graceful degradation (matches `evaluate_locked_squad`'s
+    # own captain_options try/except one call down) - a genuine projection-
+    # data gap for one specific player must not block the whole post-GW
+    # pipeline; falls back to the bare (pre-fix) call, which still computes
+    # its own real verdict via the identical underlying machinery, just
+    # without the cross-consistency guarantee this fix adds on the happy path.
+    try:
+        ta = analyze_transfer_decision(conn, locked)
+        ca = analyze_captain_decision(conn, locked)
+        decision = evaluate_locked_squad(conn, locked, ta=ta, ca=ca)
+    except Exception:
+        decision = evaluate_locked_squad(conn, locked)
 
     # 5. Chip verdict - the one place a full wildcard/free-hit re-solve is
     #    affordable (once per gameweek, not every dashboard regen).

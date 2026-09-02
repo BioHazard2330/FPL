@@ -244,3 +244,45 @@ def test_record_statistical_evidence_never_deletes_an_existing_llm_authored_row(
     ).fetchone()
     assert llm_row is not None
     assert llm_row["reason"] == "real LLM writeup"
+
+
+def test_record_statistical_evidence_does_not_duplicate_a_signal_the_skill_already_covered(db_conn, monkeypatch):
+    """Real bug fixed 2026-09-02 (Phase 3 forensic audit, direct user report:
+    "the same minutes-type observation can appear twice in the same match
+    evidence set"). Confirmed real mechanism: the skill's own write path
+    (`apply_match_analysis`) does a phase-scoped DELETE-then-INSERT that
+    clears any prior stat-v1 rows when the skill runs first, so the only
+    real duplication window is the reverse order - a LATER re-run of this
+    automatic backfill (a real, normal event on an already-analyzed,
+    re-synced match) used to be blind to the skill's differently-tagged
+    'qual-v1' row for the IDENTICAL (match, subject, signal) and added a
+    redundant second row. The exists-check must now see across analysis_version."""
+    match_id, season, match_date = _seed(db_conn)
+    monkeypatch.setattr(rules_mod, "current_season", lambda conn: season)
+    _seed_roster(db_conn, match_id, 1)
+    _seed_understat_row(db_conn, season, match_date, player_id=1, minutes=90, shots=4, xg=0.5)
+
+    # The skill already analyzed this player's real GOAL_THREAT signal (high
+    # shot volume) before this backfill ever runs again.
+    db_conn.execute(
+        "INSERT INTO match_observations "
+        "(match_id, subject_type, subject_id, observation_type, observed, inferred, fpl_direction, fpl_signal, "
+        "fpl_reason, confidence, created_at, phase, evidence_ref, analysis_version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (match_id, "player", 1, "ATTACKING_ROLE", "real LLM observed text", "real LLM inferred text",
+         "POSITIVE", "GOAL_THREAT", "real LLM reason", "medium", "2026-08-26T00:00:00+00:00",
+         "FULL_TIME", None, "qual-v1"),
+    )
+    db_conn.commit()
+
+    written = record_statistical_evidence(db_conn, match_id)
+
+    goal_threat_rows = db_conn.execute(
+        "SELECT analysis_version FROM match_observations WHERE match_id=? AND subject_id=1 AND fpl_signal='GOAL_THREAT'",
+        (match_id,),
+    ).fetchall()
+    assert len(goal_threat_rows) == 1, (
+        f"expected exactly one GOAL_THREAT row (the skill's), got {len(goal_threat_rows)} - "
+        "the deterministic backfill must not add a second row for a signal already covered"
+    )
+    assert goal_threat_rows[0]["analysis_version"] == "qual-v1"

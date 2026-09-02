@@ -14,9 +14,11 @@ from fpl_agent.models.decision_freshness import assess_recommendation_freshness,
 from test_optimization_squad import _seed
 
 
-def _decision(created_at: str, decision_id: int = 42, model_version: str | None = "calibrated-v2") -> Decision:
+def _decision(
+    created_at: str, decision_id: int = 42, model_version: str | None = "calibrated-v2", detail: dict | None = None,
+) -> Decision:
     return Decision(
-        id=decision_id, decision_type="strategic_plan", summary="test", detail={},
+        id=decision_id, decision_type="strategic_plan", summary="test", detail=detail or {},
         model_version=model_version, confidence="low", created_at=created_at,
     )
 
@@ -126,3 +128,41 @@ def test_assess_freshness_stale_when_squad_player_status_changed_after(db_conn):
     assert result.is_stale is True
     assert "P1" in result.stale_reason  # test fixture's web_name for player id 1
     assert "status_change" in result.stale_reason
+
+
+def test_assess_freshness_stale_when_recommended_target_price_changes(db_conn):
+    """Real gap closed 2026-09-02: a price/status change on the player THIS
+    decision recommends buying (player 2 - not yet owned, so not in
+    `squad_ids`) used to be invisible to staleness detection entirely,
+    because `has_material_change_since` only ever watched owned squad
+    players. "Target no longer affordable" can now actually be detected."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    computed_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    detail = {"best_path": {"steps": [{"event": 3, "resulting_squad_ids": [1, 2]}]}}
+    decision = _decision(computed_at, detail=detail)
+    later = datetime.now(timezone.utc).isoformat()
+    # player 2 is the recommended incoming player, never owned (squad_ids={1})
+    record_event(db_conn, "price_change", "player", 2, "50", "51", later, "fpl_api", "CONFIRMED", "HIGH")
+    db_conn.commit()
+
+    result = assess_recommendation_freshness(db_conn, decision, {1})
+
+    assert result.is_stale is True
+    assert "price_change" in result.stale_reason
+
+
+def test_assess_freshness_not_stale_for_a_player_outside_squad_and_target(db_conn):
+    """A HIGH change on a player who is neither owned nor part of this
+    decision's own recommended resulting squad must still be irrelevant -
+    the target-id widening must not accidentally become "watch everyone"."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    computed_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    detail = {"best_path": {"steps": [{"event": 3, "resulting_squad_ids": [1, 2]}]}}
+    decision = _decision(computed_at, detail=detail)
+    later = datetime.now(timezone.utc).isoformat()
+    record_event(db_conn, "price_change", "player", 999, "50", "51", later, "fpl_api", "CONFIRMED", "HIGH")
+    db_conn.commit()
+
+    result = assess_recommendation_freshness(db_conn, decision, {1})
+
+    assert result.is_stale is False

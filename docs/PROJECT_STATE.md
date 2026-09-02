@@ -1,10 +1,88 @@
 # Project State
 
-Last updated: 2026-08-29 (RECOMPUTING severity-overload bug). Read this before
+Last updated: 2026-09-02 (Football Intelligence Engine Phase 3 finalization). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
 (one new dated file per session, indexed in `docs/history/README.md`).
+
+## Where things stand (updated 2026-09-02, Football Intelligence Engine — Phase 3 finalization)
+
+Three deterministic detectors (`models/role_signal_detectors.py`) close out the
+qualitative layer: ROLE_CHANGE (real shots/xG profile shift vs a player's own
+baseline — `player_match_state.position`/`.touches_box` confirmed 0/654
+populated in production, so this is the honest available substitute, not the
+originally-planned literal position tracking), SET_PIECE_CHANGE (real
+`player_setpiece_history` version-order changes, anchored to the one real
+match a change took effect in), TACTICAL_CHANGE (real formation departure
+from a team's own baseline, linked to co-occurring player-level role
+signals). `models/football_signal.py::FootballSignal` gained
+`last_confirmed_at` and a real, category-aware `expires_at`/EXPIRED status
+(match-count clock: 5 real matches for role/setpiece, 3 for tactical) layered
+on `qualitative_trends.py`'s existing persistence classifier, never
+replacing it; `squad_football_signals` excludes EXPIRED by default.
+ROLE_CHANGE/SET_PIECE_CHANGE feed the existing bounded qualitative→xP
+interface (`qualitative_feed.py`), no second adjustment pathway. **Real,
+disclosed**: ROLE_CHANGE/TACTICAL_CHANGE correctly produce zero signals right
+now — production has at most 2 real matches per player/team this early in
+the season, below the 2-prior-match baseline bar both require; will start
+firing as the season progresses. SET_PIECE_CHANGE signals from this detector
+alone are structurally capped at NEW_SIGNAL (need a second independent real
+source to reach PERSISTENT_TREND), an honest consequence of reusing the
+existing classifier unmodified. Full account, including a real anchor-bug
+found via production verification (76→33 rows): `docs/history/
+41-session-2026-09-02-football-intelligence-phase3-finalization.md`.
+
+## Where things stand (updated 2026-09-02, Football Intelligence Engine — first pass)
+
+New canonical `models/football_signal.py::FootballSignal` — a real unifying
+view over already-correct pieces (`match_observations`, `qualitative_trends`,
+`compute_qualitative_adjustment`), with OBSERVATION/INTERPRETATION/
+FPL_EFFECT/DECISION_EFFECT kept explicit; `classify_decision_effect` bridges
+to the canonical `DecisionSnapshot`'s own already-computed margins, never
+re-running the beam search. Fixed a real cross-source duplicate-signal bug
+(`statistical_evidence.py`'s dedup was scoped to its own analysis_version,
+blind to the LLM skill's differently-tagged rows for the same evidence) —
+this is the standing dedup pattern every later detector (including Phase 3
+finalization above) now follows. `docs/history/
+40-session-2026-09-02-football-intelligence-engine-first-pass.md`.
+
+## Where things stand (updated 2026-09-02, Decision Engine Rebuild)
+
+**Real, critical bug found + fixed**: `optimization/transfers.py::_squad_gw_ev`
+(the value function behind every multi-GW path/step in the beam search) had
+no XI/captain/bench awareness at all — summed flat per-player EV across the
+whole 15-man squad, affecting every real multi-GW recommendation. Fixed via
+`resolve_gw_xi` + a rewritten, genuinely XI+captain+bench-weighted
+`_squad_gw_ev`; `chips.py`'s wildcard/freehit value functions fixed to use
+the same corrected baseline. New canonical `optimization/decision_snapshot.py::
+DecisionSnapshot` — one authoritative, reproducible decision object, reads
+the same hysteresis-stable source the dashboard's own primary verdict uses
+(proven consistent by a dedicated test), plus `evaluate_user_scenario` for
+real "what if I do X instead" comparisons without a second optimizer.
+`docs/history/39-session-2026-09-02-decision-engine-rebuild.md`.
+
+## Where things stand (updated 2026-09-02, Projection Engine Forensic Audit)
+
+Three real bugs found + fixed: an event-conflation bug in `locked_squad.py`
+projecting against the wrong gameweek for a mid-GW-synced squad (confirmed
+live — dashboard showed 40.6 pts where the real number was 46.1+), a
+minutes-bucket zero-shrinkage bug (thin real samples swinging to extreme
+probabilities with no positional-prior blend), and a DefCon historical-data
+contamination bug (pre-2024/25 seasons — DefCon wasn't tracked then — treated
+as real zeros instead of excluded). `docs/history/
+38-session-2026-09-02-projection-engine-forensic-audit.md`.
+
+## Where things stand (updated 2026-09-02, Autonomous Runtime)
+
+System now runs without a Claude Code session required at runtime. Real
+free-transfer off-by-one bug fixed (phantom GW1 FT — `models/
+free_transfers.py` now backed by real synced transfer history, new
+`my_team_transfers` table). `monitoring/readiness.py`'s hardcoded fake
+statuses replaced with real live-exercised checks; two real Task Scheduler
+result-code misreadings fixed (`scheduler/status.py`). Decision-freshness
+watching extended to a recommendation's own target player, not just the
+current squad. `docs/history/37-session-2026-09-02-autonomous-runtime.md`.
 
 ## Where things stand (updated 2026-08-29, RECOMPUTING severity-overload bug)
 

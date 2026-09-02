@@ -90,6 +90,25 @@ def _upsert_gw_summary(conn: sqlite3.Connection, entry_id: int, current: list[di
         )
 
 
+def _upsert_transfers(conn: sqlite3.Connection, entry_id: int, transfers: list[dict], now: str) -> int:
+    """Real transfer log rows (2026-09-02, see `FPLApiAdapter.fetch_entry_transfers`'s
+    own docstring for why this exists) - `INSERT OR IGNORE` against the real
+    natural key so a re-sync of the full log (this endpoint has no
+    incremental/since-param) never duplicates a transfer already stored."""
+    n = 0
+    for t in transfers:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO my_team_transfers (entry_id, event, element_in, element_in_cost, "
+            "element_out, element_out_cost, transfer_time, retrieved_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                entry_id, t["event"], t["element_in"], t.get("element_in_cost"),
+                t["element_out"], t.get("element_out_cost"), t["time"], now,
+            ),
+        )
+        n += cur.rowcount
+    return n
+
+
 def _upsert_picks(conn: sqlite3.Connection, entry_id: int, event: int, payload: dict, now: str) -> int:
     active_chip = payload.get("active_chip")
     picks = payload.get("picks", [])
@@ -134,6 +153,13 @@ def sync_my_team(conn: sqlite3.Connection, entry_id: int, event: int | None = No
     except SourceFetchError as e:
         history_error = str(e)
     conn.commit()
+
+    try:
+        transfers = adapter.fetch_entry_transfers(entry_id).data
+        _upsert_transfers(conn, entry_id, transfers, now)
+        conn.commit()
+    except SourceFetchError:
+        pass  # non-fatal - the pending-window free-transfer count degrades to the pure history replay
 
     resolved_event = event if event is not None else _latest_locked_event(conn)
     picks_result = {"fetched": False, "event": resolved_event, "picks_count": 0, "reason": None}

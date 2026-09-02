@@ -37,6 +37,7 @@ from fpl_agent.ingestion.market_identity import (
     resolve_player_id,
 )
 from fpl_agent.ingestion.sync import update_source_health
+from fpl_agent.models.minutes_distribution import invalidate_cache_for_connection as invalidate_minutes_bucket_cache
 from fpl_agent.models.player_regression import invalidate_cache_for_connection
 
 _TIMEOUT_SECONDS = 15
@@ -235,6 +236,7 @@ def repair_unresolved_player_ids(
 
     if rows_resolved:
         invalidate_cache_for_connection(conn)
+        invalidate_minutes_bucket_cache(conn)
     return {
         "matches_processed": matches_processed, "rows_resolved": rows_resolved,
         "rows_still_unresolved": rows_still_unresolved, "errors": errors,
@@ -302,6 +304,7 @@ def backfill_understat(
 
     if player_rows_inserted:
         invalidate_cache_for_connection(conn)
+        invalidate_minutes_bucket_cache(conn)
 
     update_source_health(conn, "understat", success=True, error=None)
     return {"matches_processed": matches_processed, "player_rows_inserted": player_rows_inserted}

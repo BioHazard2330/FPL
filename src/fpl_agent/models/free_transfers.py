@@ -62,12 +62,78 @@ def compute_real_free_transfers(conn: sqlite3.Connection, entry_id: int, upto_ev
     season = current_season(conn)
     cap = 1 + get_rule(conn, season, "rules.max_extra_free_transfers", default=4)
 
-    ft_carry = 0  # walking into event 1 - the real initial squad pick is not itself a "transfer"
+    # Real bug fixed 2026-09-02 (confirmed live: this replay returned 3,
+    # the real FPL app showed 2). Event 1 (the initial squad pick, before
+    # GW1's deadline) has NO real free-transfer mechanic - FPL's own FT
+    # accumulation only begins with the GW2 transfer window, which always
+    # starts at a flat 1 (never a rollover from a GW1 that never had a real
+    # FT to roll). The old loop instead gave event 1 a phantom `available=1`
+    # via the same `min(ft_carry+1, cap)` formula used for every real
+    # transfer window, then carried whatever was left of that phantom FT
+    # into event 2 - inflating every single gameweek's real bank by 1,
+    # permanently, from GW2 onward. Event 1's own `event_transfers` is
+    # still real data worth reading (a non-zero value there would be a
+    # genuine FPL API quirk worth knowing about) but must never seed
+    # `ft_carry` for event 2.
+    ft_carry = 0
     for r in rows:
+        if r["event"] == 1:
+            continue  # no real FT mechanic exists for the initial squad pick
         available = min(ft_carry + 1, cap)
         transfers_made = r["event_transfers"] or 0
         if chip_by_event.get(r["event"]) in _WILDCARD_LIKE_CHIPS:
             ft_carry = available  # real rule: wildcard/free-hit transfers are free, never touch the bank
         else:
             ft_carry = max(available - transfers_made, 0)
+    if events_present[-1] == 1:
+        return 1  # walking into event 2, the real flat starting amount - no rollover exists yet
     return min(ft_carry + 1, cap)
+
+
+def count_pending_transfers(conn: sqlite3.Connection, entry_id: int, event: int) -> int:
+    """Real count of transfers already logged toward `event` from the
+    `/entry/{id}/transfers/` append-only log (`ingestion.my_team.sync_my_team`)
+    - added 2026-09-02 to close a confirmed production bug: `event` is
+    typically the upcoming, not-yet-LOCKED gameweek, which
+    `compute_real_free_transfers` above has no visibility into (its own
+    `my_team_gw_summary` source only ever reflects locked gameweeks). Returns
+    0 (never a fabricated count) whenever nothing has synced yet for this
+    entry - a real absence of data, not a real absence of transfers.
+
+    Disclosed limitation: this can't distinguish "3 individual transfers"
+    from "a wildcard/free-hit played for `event`" (that only becomes knowable
+    once `event` itself locks and its picks publish `active_chip`) - a real
+    gap, not a fabrication, and it self-heals the moment the gameweek locks
+    (`compute_real_free_transfers`'s own replay then sees the real
+    `event_transfers`/`active_chip` row and this pending-window count for
+    that now-past event becomes moot)."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM my_team_transfers WHERE entry_id=? AND event=?",
+        (entry_id, event),
+    ).fetchone()
+    return row["n"] if row else 0
+
+
+def compute_current_free_transfers(conn: sqlite3.Connection, entry_id: int, upto_event: int | None = None) -> int | None:
+    """The real, currently-available free-transfer count for display -
+    `compute_real_free_transfers` (the official-history replay) minus any
+    transfers already spent in the pending gameweek's still-open pre-deadline
+    window (see `count_pending_transfers` above). This is the function the
+    live dashboard/CLI display should use; `compute_real_free_transfers`
+    itself stays unchanged for forward-looking planning callers (e.g.
+    `optimization.transfers.search_transfer_sequences`), which reason about
+    the bank at the START of a future gameweek, before any transfers toward
+    it have been made."""
+    banked = compute_real_free_transfers(conn, entry_id, upto_event=upto_event)
+    if banked is None:
+        return None
+    anchor_event = upto_event
+    if anchor_event is None:
+        row = conn.execute(
+            "SELECT MAX(event) AS event FROM my_team_gw_summary WHERE entry_id=?", (entry_id,),
+        ).fetchone()
+        anchor_event = row["event"] if row and row["event"] is not None else None
+    if anchor_event is None:
+        return banked
+    spent = count_pending_transfers(conn, entry_id, anchor_event + 1)
+    return max(banked - spent, 0)

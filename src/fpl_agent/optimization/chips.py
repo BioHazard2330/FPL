@@ -69,8 +69,28 @@ def triple_captain_value(conn: sqlite3.Connection, squad_ids: list[int]) -> floa
 
 
 def wildcard_value(conn: sqlite3.Connection, squad_ids: list[int], n_gw: int = 5) -> float:
-    """Projected xP gain from rebuilding the entire squad from scratch vs keeping it, over n_gw."""
-    current_total = sum(expected_points(conn, pid, n_gw=n_gw).median for pid in squad_ids)
+    """Projected xP gain from rebuilding the entire squad from scratch vs keeping it, over n_gw.
+
+    Real bug fixed 2026-09-02 (decision-engine forensic audit): `rebuilt.
+    total_xp` comes from `optimise_squad`'s own ILP objective, which already
+    does real joint squad+XI+captain optimisation (captain doubled, bench at
+    `_BENCH_WEIGHT`) - but `current_total` used to be a bare
+    `sum(all 15 squad players' median)`, comparing a real XI+captain-aware
+    number against a flat uncaptained one. Fixed to use the same real
+    per-event XI+captain+bench-weighted value (`transfers._squad_gw_ev`) for
+    the current squad, held constant across the window as a real, disclosed
+    approximation (a single representative gameweek's XI/captain choice,
+    same "one snapshot stands in for the window" simplification this
+    function's own n_gw default already made for the rebuilt side before
+    this fix) rather than re-resolving a genuinely different XI per GW."""
+    from fpl_agent.models.fixtures import _reference_event
+    from fpl_agent.optimization.transfers import _squad_gw_ev
+
+    event = _reference_event(conn)
+    cache: dict[tuple, float] = {}
+    current_total = _squad_gw_ev(conn, tuple(squad_ids), event, cache) * n_gw if event is not None else sum(
+        expected_points(conn, pid, n_gw=n_gw).median for pid in squad_ids
+    )
     rebuilt = optimise_squad(conn, n_gw=n_gw)
     return round(rebuilt.total_xp - current_total, 2)
 

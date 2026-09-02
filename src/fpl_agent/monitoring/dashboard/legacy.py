@@ -2606,11 +2606,29 @@ def _decision_audit_html(conn: sqlite3.Connection) -> str:
         f"<div class='strategic-subrow-muted'><strong>WHAT CHANGES IT</strong> &middot; {_esc(_humanize(top_falsifier))}{age_bit}</div>"
         if top_falsifier else f"<div class='strategic-subrow-muted'>Nothing on the board right now would flip this call{age_bit}.</div>"
     )
+    # Real staleness disclosure fixed 2026-09-02 (PART 13 of the autonomous-
+    # runtime audit): this note is baked into `audit.detail` verbatim at
+    # `fpl decision-audit` GENERATION time (an expensive, manual, cached
+    # command - see this function's own docstring) and can sit unchanged for
+    # days while `strategic_plan` keeps recomputing multiple times a day.
+    # Read in isolation, "DISAGREES with the cached fpl strategic-plan
+    # result" reads like a live, current conflict even when the strategic-
+    # plan side of that comparison is itself long superseded. Prepending the
+    # audit's own real age here (not just at the top of this much longer
+    # panel) makes that unmissable at the exact sentence a reader would act
+    # on, instead of relying on them to have also read/remembered the
+    # panel's separate age line above.
     cross_check_note = d.get("cross_check_note")
-    cross_check_html = (
-        f"<div class='conflict-row'><span class='conflict-yes'>METHODOLOGY CONFLICT</span> {_esc(cross_check_note)}</div>"
-        if cross_check_note else ""
-    )
+    cross_check_html = ""
+    if cross_check_note:
+        staleness_note = (
+            f" <em>(this audit itself is {_esc(_relative_time(audit.created_at))} old - "
+            f"re-run <code>fpl decision-audit</code> for a current cross-check before treating this as live)</em>"
+        )
+        cross_check_html = (
+            f"<div class='conflict-row'><span class='conflict-yes'>METHODOLOGY CONFLICT</span> "
+            f"{_esc(cross_check_note)}{staleness_note}</div>"
+        )
 
     causal_html = "".join(
         f"<li><strong>{_esc(s['label'])}</strong>: {_esc(_humanize(s['detail']))}</li>" for s in (d.get("causal_chain") or [])
@@ -2924,8 +2942,8 @@ def _match_report_strip_html(conn: sqlite3.Connection, squad_ids: set[int]) -> s
         elif pending_job is not None:
             verdict = (
                 f"<span class='outlook-chip outlook-alert'>QUALITATIVE ANALYSIS &middot; PENDING</span> "
-                f"queued {_esc(_relative_time(pending_job['created_at']))} - will process automatically "
-                f"next time Claude Code opens"
+                f"queued {_esc(_relative_time(pending_job['created_at']))} - async enhancement only, "
+                f"does not block this recommendation - processed in the next Claude Code session"
             )
         elif obs_count == 0:
             verdict = _esc("not yet analyzed - run the match-intelligence-analysis skill")

@@ -263,8 +263,8 @@ def _match_analysis_html(conn: sqlite3.Connection, match_id: int) -> str:
     elif pending_job is not None:
         verdict = (
             f"<span class='outlook-chip outlook-alert'>QUALITATIVE ANALYSIS &middot; PENDING</span> "
-            f"queued {_esc(_relative_time(pending_job['created_at']))} - will process automatically "
-            f"next time Claude Code opens"
+            f"queued {_esc(_relative_time(pending_job['created_at']))} - async enhancement only, "
+            f"does not block this recommendation - processed in the next Claude Code session"
         )
     else:
         return ""

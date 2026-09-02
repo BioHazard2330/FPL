@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.ingestion.my_team import set_my_team_entry_id
 from fpl_agent.optimization.locked_squad import get_locked_squad, is_locked
@@ -78,6 +80,57 @@ def test_xi_from_real_picks_handles_zero_picks_defensively(db_conn, caplog):
 
     assert result is None
     assert any("zero picks" in r.message for r in caplog.records)
+
+
+def test_xi_projects_the_next_actionable_gameweek_not_the_locked_picks_snapshot(db_conn, monkeypatch):
+    """Real, confirmed production bug (2026-09-02, projection-engine forensic
+    audit, direct user report: "why is my squad xP only 40.6"). `event` here
+    is the real LOCKED PICKS snapshot (the last gameweek FPL has confirmed
+    picks for) - correct for WHO is in the squad, wrong as the projection
+    target once that gameweek has itself finished and the next one hasn't
+    locked yet. The old code reused it for `build_player_pool_for_ids`,
+    which fed `expected_points(..., from_event=<a finished gameweek>)` for
+    every squad player - that lookup finds zero unfinished fixtures for a
+    finished event and silently falls back to the generic league-average
+    goals estimate, discarding real fixture-specific signal for the whole
+    XI. Confirmed live against production: reconstructed the real
+    dashboard's 40.59 total exactly using the picks event (GW2, already
+    finished); the real next actionable gameweek (GW3) gave 44.82 instead.
+
+    This test proves the fix at the seam: `_xi_from_real_picks` must ask
+    `build_player_pool_for_ids` to project `live_or_reference_event`'s real
+    answer, never the picks event, whenever they differ."""
+    import fpl_agent.optimization.locked_squad as locked_squad_mod
+    from fpl_agent.optimization.locked_squad import _xi_from_real_picks
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, event=2)  # picks snapshot is GW2 (already finished)
+    picks = db_conn.execute(
+        "SELECT player_id, squad_slot, multiplier, is_captain, is_vice_captain FROM my_team_picks "
+        "WHERE entry_id=7378572 AND event=2"
+    ).fetchall()
+
+    monkeypatch.setattr(locked_squad_mod, "live_or_reference_event", lambda conn: 3)
+
+    seen_events = []
+
+    def fake_pool(conn, ids, event, xp_cache=None):
+        seen_events.append(event)
+        return [
+            SimpleNamespace(player_id=pid, web_name=f"P{pid}", position="MID", team_id=1, team_short="X",
+                             price_tenths=50, xp=5.0, median=5.0, floor=2.0, ceiling=8.0,
+                             confidence="MEDIUM", expected_minutes=75.0)
+            for pid in ids
+        ]
+
+    monkeypatch.setattr(locked_squad_mod, "build_player_pool_for_ids", fake_pool)
+
+    result = _xi_from_real_picks(db_conn, event=2, entry_id=7378572, picks=picks)
+
+    assert result is not None
+    assert seen_events == [3], (
+        f"expected the real next actionable gameweek (3), not the locked picks snapshot (2) - got {seen_events}"
+    )
 
 
 def test_get_latest_squad_detail_is_one_atomic_read_not_two(db_conn):
