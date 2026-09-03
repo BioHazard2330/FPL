@@ -17,8 +17,73 @@ Take the user from preseason → GW1 → GW38 → season audit, answering one qu
 - **Recommend, never act.** No auto-submission of transfers/captain/chips anywhere in this system.
 - **One authoritative recommendation.** Every dashboard panel must agree with `optimization.decision_analysis` (`analyze_transfer_decision`/`analyze_captain_decision`). No panel computes a second, independently-reasoned recommendation that could contradict it — panels that show a *different* question (e.g. "what if I rebuilt from scratch") must label it as such, not as an alternative recommendation.
 - **Free resources only.** No paid APIs/services for new data connectors.
-- **No subagent/Agent-tool dispatch for this project.** Standing user instruction: do implementation, investigation, and fixes directly with Read/Edit/Bash/Grep in the main thread, even for large multi-file work. This is a durable rule, not a one-off.
+- **No subagent/Agent-tool dispatch for this project.** Standing user instruction: do implementation, investigation, and fixes directly with Read/Edit/Bash/Grep in the main thread, even for large multi-file work. This is a durable rule, not a one-off. **Also applies to any installed skill's own suggestion to delegate.** `critique` (installed 2026-09-03, see Skills section below) explicitly suggests spawning a sub-agent per assessment — its own text names a fallback ("If sub-agents are not available in the current environment, complete each assessment sequentially") — always take that fallback here, never the sub-agent path, regardless of what the skill's own instructions say.
 - **Autonomous authorization.** Proceed through a pillar/plan/audit's full cycle without stopping for confirmation at each step; report at natural completion points. Still applies the project's own review discipline (tests, live verification) as the substitute for a human checkpoint.
+
+## Skills / tooling ecosystem (installed 2026-09-03)
+
+Project-local skills live in `.claude/skills/`. Alongside the pre-existing
+domain skills (`squad-optimizer`, `transfer-optimizer`, `captaincy-analysis`,
+`chip-optimizer`, `match-intelligence-analysis`, `player-analysis`,
+`fpl-scan`, `full-audit`, `final-check`, `data-health`, `storage-health`,
+`fixture-watch`, `injury-monitor`, `new-player-monitor`, `preseason-monitor`,
+`price-monitor`, `team-news-monitor`), four categories were added:
+
+- **Frontend/product design**: `impeccable` (vendored from tyfarrago-hub/taste,
+  Apache 2.0, itself based on Anthropic's official `frontend-design` — also
+  installed standalone) plus its named sub-skills `critique`/`audit`/`bolder`/
+  `colorize`/`clarify`/`harden`/`optimize`/`polish`/`distill`/`adapt`.
+  **One-time setup not yet done**: these gate on a real `PRODUCT.md` (and
+  optionally `DESIGN.md`) at the project root — run `/impeccable teach`
+  (a real, confirmed interview, never auto-inferred) before first real use.
+  Requires `npx` (Node 22 confirmed present) to fetch the `impeccable` CLI on
+  first invocation.
+- **Visual QA**: `frontend-visual-qa` (vendored from daymade/claude-code-skills,
+  MIT). Real evidence-tier discipline (A = live browser/CDP — this project's
+  own `mcp__Claude_Browser__*` tools satisfy this tier directly, already the
+  primary verification method used all session; B = DevTools/E2E; C = its own
+  bundled Playwright sweep, `scripts/visual_layout_audit.mjs`; D = source/DOM
+  reasoning only, never sufficient alone). Level C needs a `playwright`/
+  `playwright-core`/`@playwright/test` package resolvable from the project or
+  the skill's own directory — **not installed** (this project has no
+  `package.json`; do not add one just to unlock Level C without asking, per
+  the skill's own explicit "do not mutate the audited project" caution).
+  Levels A/B/D work today with zero setup.
+- **Architecture review**: `software-architecture` (vendored from
+  keez97/claude-architecture-skills). General, substantive, cross-language —
+  matches this project's own "a working monolith beats a broken refactor"
+  ethos. (`python-architecture-review` from the same repo was deliberately
+  *not* installed — it's FastAPI/async-web-specific, a real mismatch for this
+  project's sync SQLite/CLI architecture.)
+- **Football intelligence** (project-local, custom-written, no external skill
+  met the bar): `fpl-football-intelligence` — the AI-filler-language rule
+  (never "genuine"/"real"/"sustained"/"trusted" as unsupported intensifiers;
+  concrete numbers only) and the EVENT→EVIDENCE→FPL-EFFECT structure, tied to
+  this project's own real detector modules (`role_signal_detectors.py`,
+  `statistical_evidence.py`, `football_signal.py`). Read this before touching
+  any football-evidence copy anywhere in the dashboard.
+- **Chart/visualization discipline** (project-local, custom-written):
+  `fpl-visualization` — the real chart-type↔analytical-question mapping tied
+  to this project's own ApexCharts infra (`live_charts.py`, `match_centre.py`,
+  `assemble.py`'s `window.fplInitCharts`), plus the real color-role table
+  (`--accent`/`#04f5ff`/`#9d5cff`/`#f0c419`/`#ff5c5c`/`#ff2882`).
+
+**Deliberately not installed**: a generic "senior-data-scientist" skill —
+every candidate checked (davila7/claude-code-templates,
+borghei/Claude-Skills, VoltAgent/awesome-claude-code-subagents) was templated
+buzzword filler with zero real content on leakage/calibration/walk-forward
+validation/distribution-shift — exactly the "generic data scientist skill"
+this project was told to avoid. No project-local replacement was written
+either (only football/visualization were in scope for that fallback) —
+**recommended next step, not yet done**: a `fpl-model-validation` skill
+mirroring `fpl-football-intelligence`'s structure, grounded in this project's
+own real validation modules (`models/decision_calibration.py`,
+`models/projection_confidence.py`, `backtesting/harness.py`,
+`models/robustness.py`, `models/value_of_information.py`). `qa-expert`
+(daymade) was also skipped — team-process/QA-handoff scaffolding, a mismatch
+for a solo project that already has 1523 real pytest tests and its own
+conventions. `webapp-testing` (Anthropic, Python+Playwright) was skipped as
+redundant with `frontend-visual-qa`'s own bundled Playwright sweep.
 
 ## Architecture
 
@@ -66,7 +131,7 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | GW lifecycle + autonomous post-GW pipeline | `models/gw_lifecycle.py`, `optimization/post_gw_pipeline.py` |
 | Live rank (honest, degenerate-sample-aware) | `models/live_rank.py` |
 | Live/per-GW charts (rank trajectory, cumulative points, intragame rank, captain contribution, starting-XI actual-vs-expected) | `monitoring/dashboard/live_charts.py` |
-| Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point, `home.py`/`plan.py`/`squad.py`/`intelligence.py`/`market.py`/`opportunity.py`/`fixtures.py`/`points_changes.py`/`price_history.py`/`template_team.py` workspaces, `data_payload.py` embedded-JSON snapshot, `legacy.py` not-yet-migrated Advanced/Live/Team-Outlook/Match-Intelligence panels) |
+| Dashboard | `monitoring/dashboard/` (package: `assemble.py` entry point + six-screen composition; `command.py`/`myteam.py`/`football.py`/`scout.py` each own a real screen (COMMAND/MY TEAM/FOOTBALL/SCOUT); PLAN is `plan.py` composed directly in `assemble.py`; ADVANCED is `legacy.py`'s still-real Decision Detail/Chip Strategy/Player Odds/Model-vs-Market Divergence/Optimizer Delta/Independent Model Benchmark/System Health panels, composed in `assemble.py`. `opportunity.py`/`market.py`/`template_team.py`/`price_history.py`/`player_data.py` are real data renderers reused by FOOTBALL/SCOUT/ADVANCED, not their own nav screens. `data_payload.py` is the embedded-JSON snapshot; `intelligence.py` supplies `_team_signal_card` to FOOTBALL; `legacy.py` still carries Live Tracking/News/Injuries/Points-Changes and all shared CSS/JS) |
 | Post-match Bonus/DefCon revision detection (real snapshot diff, never in-play bonus churn) + real GW-lock status (fpl.page's own published "locked 1h after full time" rule) | `models/points_changes.py` (`detect_points_revisions`, `is_gw_locked`), `fpl points-changes` |
 | Lightweight live-state channel (rank/points/squad/bonus-defcon/points-changes/decision-freshness/source-freshness/active-matches, browser-patched every ~10s, no full regen) | `monitoring/live_snapshot.py` (`build_live_snapshot`, `_active_matches_block`) |
 | Real live Match Centre (score/team-stats/momentum-chart/shot-map/my-players for a genuinely LIVE/HALFTIME match), real FotMob momentum/shot-map parsing | `monitoring/dashboard/match_centre.py`, `models/match_intelligence.py` (`parse_momentum`, `parse_shot_map`), migration 0035 |
@@ -106,6 +171,7 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 - **Never guess a screenshot is fine from DOM text alone for a visual-design pass** — serve `data/dashboard.html` over a real localhost HTTP server (not `file://`, which renders as a static, non-interactive, non-compositing snapshot in this environment's browser tool) and take real screenshots at the required widths before declaring a visual pass done.
 - Terminology is strict: ACTUAL vs LIVE vs NEXT-GW xP vs MULTI-GW PATH TOTAL vs DELTA VS ROLL — never call a full path total "Net EV", never call a stale number "live", never call an overlay "jointly optimized" if it isn't, never call an uncalibrated heuristic "calibrated".
 - Cheap dashboard refresh vs expensive strategic recomputation are different operations. `fpl strategic-plan`'s beam search (~1 minute) plus its `--current-action` starting-action comparison (default on, real extra cost — one continuation search per meaningful starting action, roughly 2-10+ minutes depending on horizon/beam-width) run on `fpl strategic-plan` invocation only (manual, or wired into a real materiality trigger) — it is read from the decision journal on every dashboard regen, never re-run live. `analyze_transfer_decision`/`analyze_captain_decision` DO run live every regen (real, current data) but must never re-scan the same candidate pool more than once per regen — see `evaluate_locked_squad(ta=, ca=)`.
+- **Desktop-first, permanently — not just a Phase 6 preference.** Design and verify at 1440px primary, 1080px secondary. Do not spend engineering effort on mobile-specific layout, and do not run mobile-viewport visual QA (`resize_window` preset "mobile" or width <768) unless the user explicitly asks — a real, repeated standing instruction (Phase 6 master brief: "again no more mobile shit"; repeated again 2026-09-03). A page merely "must remain usable" at narrow widths, never optimized for them.
 
 ## Data-source rules
 
@@ -147,6 +213,7 @@ Full suite (1411 tests as of 2026-09-02) takes ~15 minutes. Run targeted files f
 
 ## Current known blockers (check before trusting related output)
 
+- **FIXED 2026-09-02**: real, confirmed recurrence of "dashboard shows no squad" — a DIFFERENT root cause from the 2026-08-29 fix below. `cli/main.py::match_analyze_cmd` calls the real `_write_dashboard()` whenever a real `fpl match-analyze` run produces `change_events_written > 0`. `tests/test_cli_match_analyze.py` and `tests/test_cli_match_intelligence.py` both invoke that real command via `CliRunner` against an isolated `db_conn` fixture (Arsenal vs a synthetic "Coventry City"/COV) but never isolated `main_mod.DATA_DIR` the way `test_cli_live_match_poll.py`'s own `_isolated_live_poll_lock` fixture already does for the identical bug class there — so every full-suite run that reached these tests silently overwrote the REAL `data/dashboard.html` with the tests' own fixture content (confirmed live, byte-for-byte: "Real full-time headline"/"won at home" match the test payload verbatim). The read side was already correctly isolated (`db_conn` patches `database.connection.DATA_DIR`/`DB_PATH`), only the write destination wasn't. Fixed by adding the same `DATA_DIR`-isolation autouse fixture to both files. Real, separate, confirmed-and-fixed-in-the-same-session bug: Phase 5E's own edit briefly introduced a circular import in `strategic_planner.py` (top-level `authoritative_decision` import — fixed via `TYPE_CHECKING`/lazy import), which made the real scheduled `run-scheduled` task's own dashboard regen fail at 21:33:44 that day, so it couldn't self-heal the corrupted file until a manual regen.
 - **Football-intelligence detectors are real but data-volume-gated, 2026-09-02**: `models/role_signal_detectors.py`'s ROLE_CHANGE/TACTICAL_CHANGE need >=2 real prior matches as a baseline (`_MIN_BASELINE_MATCHES`) — production currently has at most 2 real matches per player/team this early in the 2026-27 season, so both correctly produce zero signals right now (confirmed live, not a bug — will start firing as more real matches land). SET_PIECE_CHANGE fires today (real `player_setpiece_history` version changes) but is structurally capped at NEW_SIGNAL/MONITOR from this detector alone — a real order-change is anchored to exactly ONE real match, so it can only reach PERSISTENT_TREND with a second, independent real source (e.g. a later qualitative-skill reconfirmation) for a different match, an honest consequence of reusing `qualitative_trends.py`'s classifier unmodified rather than building a second one. `player_match_state.position`/`.touches_box` are confirmed 0/654 populated in production (FotMob's free feed doesn't carry them here) — ROLE_CHANGE uses a real shots/xG profile-shift proxy instead of literal position tracking, disclosed in the module's own docstring. Full account: `docs/history/41-session-2026-09-02-football-intelligence-phase3-finalization.md`.
 - **FIXED 2026-08-29**: `has_material_change_since` (shared by the dashboard's RECOMPUTING/STALE freshness check AND `cli/main.py::_maybe_trigger_strategic_plan_recompute`) treated a `kickoff_reminder` change_events row as a real reason to consider the strategic plan stale, purely because that event type is deliberately hardcoded HIGH severity in `ingestion/change_detection.py::detect_upcoming_kickoffs` - but that label was calibrated for a different real consumer (the alerts panel: "your squad's match starts soon"), not for "does this invalidate the plan." A kickoff happening carries zero new player/price/lineup information - excluded `event_type='kickoff_reminder'` explicitly from the query rather than lowering its real, correct alert severity. Full account: `docs/history/36-session-2026-08-29-recomputing-severity-overload-bug.md`.
 
