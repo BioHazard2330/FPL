@@ -588,9 +588,19 @@ def _player_card(
             f"<div class='player-recent-ref'>{recent_actual_points:.0f} <span class='unit'>GW{recent_actual_event} pts</span></div>"
             if recent_actual_points is not None and recent_actual_event is not None else ""
         )
+        # Real minutes-security line (2026-09-03, direct reference research -
+        # dense real per-player stats, not just one xP number) - the SAME
+        # already-computed `expected_minutes` the tooltip already carries,
+        # now also on the tile face; `None` renders nothing, never a
+        # fabricated minutes estimate.
+        mins_html = (
+            f"<div class='player-mins'>{c.expected_minutes:.0f}&prime; exp.</div>"
+            if getattr(c, "expected_minutes", None) is not None else ""
+        )
         points_html = (
             f"{recent_html}"
             f"<div class='player-xp'>{c.median:.1f} <span class='unit'>xP</span><span class='next-tag'>NEXT</span></div>"
+            f"{mins_html}"
         )
 
     # Hover/focus tooltip (2026-08-21 direct user request) - real data
@@ -697,12 +707,13 @@ def _player_card(
 
     flag_marker = "<span class='player-flag' title='Model-recommended outgoing player'>&#9670;</span>" if is_recommended_out else ""
 
-    return f"""<div class="player-card{cap_class}{' player-card-flagged' if is_recommended_out else ''}" style="--accent-l:{light};--accent-d:{dark}" tabindex="0" role="button" aria-haspopup="dialog" data-player-name="{_esc(c.web_name)}" data-player-team="{_esc(c.team_short)}">
+    return f"""<div class="player-card{cap_class}{' player-card-flagged' if is_recommended_out else ''}" style="--accent-l:{light};--accent-d:{dark}" tabindex="0" role="button" aria-haspopup="dialog" data-player-id="{c.player_id}" data-player-name="{_esc(c.web_name)}" data-player-team="{_esc(c.team_short)}">
   {bench_badge}
   {armband}
   {flag_marker}
   <div class="player-photo-wrap">
     {shirt_html}
+    {_crest_html(team_code, c.team_short, css_class="player-pitch-crest") if team_code is not None else ""}
   </div>
   <div class="player-info">
     <div class="player-name">{_esc(c.web_name)}</div>
@@ -1755,6 +1766,10 @@ def _do_differently_html(ta, ca) -> str:
     bits = []
     if ta.decision_kind == "review":
         bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>Review</span><span class='risk-body'>{_esc(_humanize(ta.reason))}</span></div>")
+    if ta.decision_kind == "wait":
+        bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-monitor'>Wait</span><span class='risk-body'>{_esc(_humanize(ta.reason))}</span></div>")
+    if ta.market_signal_note:
+        bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-low'>Market</span><span class='risk-body'>{_esc(_humanize(ta.market_signal_note))}</span></div>")
     if ta.information_value_note:
         bits.append(f"<div class='risk-row'><span class='risk-severity risk-severity-low'>Worth waiting?</span><span class='risk-body'>{_esc(_humanize(ta.information_value_note))}</span></div>")
     if ca.decision_kind == "review":
@@ -2713,6 +2728,8 @@ def _compute_primary_verdict(conn: sqlite3.Connection, ta) -> _PrimaryVerdict:
         immediate_action = f"{ta.chosen.candidate.player_out_name} -> {ta.chosen.candidate.player_in_name}"
     elif ta.decision_kind == "review":
         immediate_action = "REVIEW"
+    elif ta.decision_kind == "wait":
+        immediate_action = "WAIT"
 
     horizon_gw = sd.get("horizon_gw", "?") if sd else "?"
     best_path = sd.get("best_path") if sd else None
@@ -3301,11 +3318,11 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
         context_line = ""
         if value is not None:
             if value < 0:
-                context_line = f"<div class='chip-strategy-context'>Currently a real net negative ({value:.1f}xP) - rebuilding the squad would cost more than it gains right now.</div>"
+                context_line = f"<div class='chip-strategy-context'>Net negative ({value:.1f}xP) - rebuilding the squad costs more than it gains right now.</div>"
             elif value < 2.0:
-                context_line = f"<div class='chip-strategy-context'>Currently a modest {value:.1f}xP - not yet clearly worth using.</div>"
+                context_line = f"<div class='chip-strategy-context'>Modest {value:.1f}xP - not yet clearly worth using.</div>"
             else:
-                context_line = f"<div class='chip-strategy-context'>A real, meaningful {value:.1f}xP gain - worth genuine consideration this window.</div>"
+                context_line = f"<div class='chip-strategy-context'>{value:.1f}xP gain - worth using this window.</div>"
 
         why_line = ""
         exp = explanation_by_chip.get(w.name)
@@ -3383,6 +3400,17 @@ _CSS = """
     --ok: #22c55e; --warn: #fbbf24; --bad: #f0555a;
     --ok-text: #00ff87; --accent: #00ff87; --accent-2: #00ff87;
     --fpl-purple: #37003c; --fpl-pink: #e90052;
+    /* Real chart/category color-role tokens (2026-09-03, DESIGN.md) -
+       promoted from scattered raw hex literals (assemble.py's JS chart
+       config, football.py's category accents) to real custom properties so
+       CSS and JS can both reference one source instead of two independently
+       typed hex strings drifting apart (the exact bug class that produced
+       2026-09-03's confirmed #04c8ff/#04f5ff near-miss). Fixed values in
+       both themes, matching --fpl-purple/--fpl-pink's own existing
+       convention - these are category roles, not surface tones, so they
+       don't invert with light/dark. */
+    --structural-cyan: #04f5ff; --tactical-purple: #9d5cff;
+    --captaincy-pink: #ff2882; --uncertainty-amber: #f0c419;
     --pitch-1: #0d3320; --pitch-2: #114228;
     /* Type scale (2026-08-29 forensic redesign pass) - a real, bounded fix
        for this file's own confirmed problem (dozens of near-duplicate ad
@@ -3402,38 +3430,70 @@ _CSS = """
       --ok: #0ca30c; --warn: #c98500; --bad: #d03b3b;
       --ok-text: #00a35f; --accent: #00a35f; --accent-2: #00a35f;
       --fpl-purple: #37003c; --fpl-pink: #e90052;
+      --structural-cyan: #04f5ff; --tactical-purple: #9d5cff;
+      --captaincy-pink: #ff2882; --uncertainty-amber: #f0c419;
       --pitch-1: #14532d; --pitch-2: #166534;
     }
+  }
+  /* Real self-hosted body face (2026-09-03, direct impeccable detect finding:
+     "Inter... used on so many sites it no longer feels distinctive"). IBM
+     Plex Sans - real technical/data-readout character, not on the detector's
+     own overused list - vendored locally to data/vendor/fonts/ (same
+     "works offline, no live CDN" principle this project's own ApexCharts
+     comment already states), a real variable-weight file (400-700) covering
+     every body/label weight this file uses. */
+  @font-face {
+    font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400 700;
+    font-display: swap; src: url("vendor/fonts/ibm-plex-sans.woff2") format("woff2");
   }
   * { box-sizing: border-box; }
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     margin: 0; padding: 20px 24px 48px; max-width: 1240px; margin-inline: auto;
   }
-  h2 { font-family: "Oswald", "Titillium Web", system-ui, sans-serif; font-size: 0.92rem; font-weight: 800;
+  /* Real reference correction (2026-09-03, direct FotMob comparison) - a
+     clean bold standard sans replaces the site-wide condensed display
+     face for every heading; Oswald stays reserved for the brand wordmark,
+     the GW scoreboard chip, and a genuinely live match score. */
+  h2 { font-size: 0.92rem; font-weight: 800;
        text-transform: uppercase; letter-spacing: 0.03em;
        color: var(--fg); margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
   h2::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--accent-2); flex-shrink: 0; }
   .panel > h2 { position: relative; padding-bottom: 11px; margin-bottom: 14px; border-bottom: 1px solid var(--gridline); }
   .panel > h2::after { display: none; }
+  /* `text-wrap: pretty` (real, confirmed 2026-09-03 via Playwright sweep:
+     a long subtitle at 1080px left a bare "GW" orphaned alone on its last
+     line) - a modern, no-JS fix for ragged wraps; browsers without support
+     just keep the previous wrap behavior, never breaks anything. */
   .panel-subtitle { font-size: 0.75rem; font-weight: 500; text-transform: none; letter-spacing: normal;
-    color: var(--faint); margin-left: 6px; }
+    color: var(--faint); margin-left: 6px; text-wrap: pretty; }
   code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
-  /* --- Header (2026-08-27 flat rebuild) - a plain dark bar, no gradient
-     wash, matches both reference sites' minimal top bars. --- */
-  .topbar { position: relative; display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 22px; margin: -20px -24px 18px; border-bottom: 1px solid var(--gridline);
-    background: var(--surface); }
-  .topbar-brand-block { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; }
-  .topbar-brand-block::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--accent-2); flex-shrink: 0; }
-  .brand { font-family: "Oswald", "Titillium Web", Impact, "Arial Narrow Bold", sans-serif; font-size: 1.35rem;
-    font-weight: 800; letter-spacing: 0.01em; text-transform: uppercase; color: #fff; line-height: 1.1; }
+  /* --- Header (2026-09-03, Match Graphics Package direction - direct user
+     correction: the old "flat, minimal SaaS top bar" reads nothing like
+     broadcast match graphics). A solid color-blocked ident panel (real FPL
+     purple, `--fpl-purple`) carries the brand the way a broadcast bug/ident
+     does - a full color panel, not a thin accent line - flush against the
+     dark surface bar the rest of the header sits on. Sharp corners (no
+     border-radius) on the ident panel specifically - broadcast graphics
+     cut, they don't round. */
+  .topbar { position: relative; display: flex; align-items: stretch; justify-content: space-between;
+    padding: 0 22px 0 0; margin: -20px -24px 18px; border-bottom: 1px solid var(--gridline);
+    background: var(--surface); min-height: 64px; }
+  /* Real gradient (2026-09-03, direct reference: fantasy.premierleague.com's
+     own hero banner runs deep purple through blue to cyan) - a real,
+     grounded brand asset, not an invented AI-purple-to-blue wash. */
+  .topbar-brand-block { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(100deg, var(--fpl-purple) 0%, var(--fpl-purple) 55%, #1a3a8f 85%, var(--structural-cyan) 130%);
+    padding: 0 24px; margin-right: 18px; }
+  .topbar-brand-block::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--fpl-pink); flex-shrink: 0; }
+  .brand { font-family: "Oswald", "Titillium Web", Impact, "Arial Narrow Bold", sans-serif; font-size: 1.5rem;
+    font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; color: #fff; line-height: 1.1; }
   .brand-sub { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--faint); margin-top: 1px; }
-  .topbar-right { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    color: rgba(255,255,255,0.68); margin-top: 1px; }
+  .topbar-right { align-self: center; position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .gw-badge { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.76rem; font-weight: 800;
     color: var(--bg); background: var(--accent-2); border: 1px solid var(--accent-2);
     padding: 5px 11px; border-radius: 6px; letter-spacing: 0.03em; }
@@ -3606,8 +3666,8 @@ _CSS = """
      markup needed), bigger/less-cramped player cards, real depth. Direct
      user feedback addressed: "the squad module looks lackluster... looks
      so squeezed". */
-  .pitch { position: relative; border-radius: 18px; padding: 30px 18px 22px;
-    display: flex; flex-direction: column; gap: 22px;
+  .pitch { position: relative; border-radius: 18px; padding: 26px 18px 20px;
+    display: flex; flex-direction: column; gap: 16px;
     border: 2px solid rgba(255,255,255,0.18);
     box-shadow: inset 0 0 80px rgba(0,0,0,0.4), 0 12px 34px -14px rgba(0,0,0,0.65);
     background:
@@ -3621,8 +3681,20 @@ _CSS = """
       /* outer boundary */
       linear-gradient(transparent, transparent) padding-box,
       repeating-linear-gradient(180deg, var(--pitch-1), var(--pitch-1) 46px, var(--pitch-2) 46px, var(--pitch-2) 92px); }
+  /* Real penalty-box + 6-yard-box outlines (Part 15, 2026-09-03 visual
+     rebuild: "penalty areas are clear" - the pre-existing pitch only drew
+     a thin goal-line, no real box shape). Pseudo-elements, no new markup -
+     one box at each end, matching `_POSITION_ORDER`'s real GKP-at-top /
+     FWD-at-bottom layout. */
+  .pitch::before, .pitch::after {
+    content: ""; position: absolute; left: 50%; transform: translateX(-50%);
+    width: 60%; height: 74px; border: 2px solid rgba(255,255,255,0.26);
+    z-index: 1; pointer-events: none;
+  }
+  .pitch::before { top: 44px; border-top: none; }
+  .pitch::after { bottom: 44px; border-bottom: none; }
   .pitch-zone { position: relative; z-index: 1; }
-  .zone-label { text-align: center; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
+  .zone-label { text-align: center; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 8px; }
   .pitch-row { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; position: relative; z-index: 1; }
   .bench-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
@@ -3663,6 +3735,13 @@ _CSS = """
     display: flex; align-items: center; justify-content: center; z-index: 1; }
   .player-shirt { width: 84px; height: 84px; object-fit: contain; filter: drop-shadow(0 3px 6px rgba(0,0,0,0.55)); }
   .shirt-fallback { width: 64px; height: 56px; border-radius: 6px; background: var(--accent-d); opacity: 0.55; }
+  /* Real crest-on-shirt overlay (2026-09-03, direct reference: the
+     official FPL pitch overlaps a real club crest badge on every player
+     tile - ours had shirts only, no crest, on the one screen "crest-
+     forward" matters most). A small white disc keeps the crest legible
+     against any kit colour. */
+  .player-pitch-crest { position: absolute; top: -2px; left: -2px; width: 24px; height: 24px;
+    background: #fff; border-radius: 50%; padding: 3px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); z-index: 2; }
   /* Flat text-under-shirt (2026-08-27 rebuild, direct reference: fplcopilot.
      com's own real pitch renders a player as JUST plain text under the kit
      - no card, no pill, no background box at all, name/xP told apart by
@@ -3696,6 +3775,7 @@ _CSS = """
      silently dropped once the reference event advances past it. */
   .player-recent-ref { font-size: 0.75rem; font-weight: 700; color: rgba(255,255,255,0.75); margin-top: 2px; }
   .player-recent-ref .unit { font-weight: 500; color: rgba(255,255,255,0.5); font-size: 0.75rem; }
+  .player-mins { font-size: 0.68rem; color: rgba(255,255,255,0.45); margin-top: 1px; }
   .next-tag { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; color: rgba(255,255,255,0.55);
     margin-left: 4px; vertical-align: middle; }
   .armband { position: absolute; top: -10px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
@@ -3747,7 +3827,7 @@ _CSS = """
     display: flex; align-items: center; justify-content: center; color: var(--fpl-pink); font-size: 0.75rem;
     filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
   .player-card-flagged .player-name { color: var(--fpl-pink); }
-  .player-inspector-status { display: inline-block; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem;
+  .player-inspector-status { display: inline-block; font-size: 0.75rem;
     font-weight: 800; letter-spacing: 0.05em; padding: 3px 10px; border-radius: 5px; margin-bottom: 8px; }
   .player-inspector-status-sell { background: rgba(233,0,82,0.18); color: #ff6b9d; }
   .player-inspector-status-watch { background: rgba(251,191,36,0.18); color: #d9a441; }
@@ -3775,7 +3855,7 @@ _CSS = """
     cursor: pointer; }
   .player-drawer-close:hover { border-color: var(--accent); }
   .player-drawer-head { margin-bottom: 16px; padding-right: 30px; }
-  .player-drawer-name { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 1.35rem; font-weight: 800; color: var(--fg); }
+  .player-drawer-name { font-size: 1.35rem; font-weight: 800; color: var(--fg); }
   .player-drawer-team { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
   .player-drawer-body .player-tooltip-row { padding: 7px 0; border-top: 1px solid var(--border); }
   .player-drawer-body .player-tooltip-row:first-of-type { border-top: none; }
@@ -3872,7 +3952,7 @@ _CSS = """
      card, a real status badge (green for a finished match, pink/live for
      in-progress) instead of a plain text chip. */
   .match-intel-score-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-  .match-intel-teams { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 0.98rem; color: var(--fg); }
+  .match-intel-teams { font-weight: 700; font-size: 0.98rem; color: var(--fg); }
   .match-intel-score { font-size: 1.1rem; font-weight: 800; color: var(--accent-2); margin: 0 4px; }
   .match-status-ft { background: rgba(0,255,135,0.14); color: var(--accent-2); border-color: transparent; }
   .match-status-live { background: var(--fpl-pink); color: #fff; border-color: transparent; }
@@ -3982,7 +4062,7 @@ _CSS = """
   .fx-badge-pre { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
   .fx-badge-live { background: var(--fpl-pink); color: #fff; }
   .fx-badge-ft { background: var(--faint); color: #fff; opacity: 0.7; }
-  .live-now-tag { display: inline-flex; align-items: center; gap: 6px; font-family: "Oswald", "Titillium Web", sans-serif;
+  .live-now-tag { display: inline-flex; align-items: center; gap: 6px;
     font-size: 0.75rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2);
     margin-bottom: 8px; }
   .live-now-tag .pulse-dot { background: var(--accent-2); box-shadow: 0 0 0 0 rgba(0,255,135,0.5); }
@@ -3997,14 +4077,14 @@ _CSS = """
   .live-impact-strip { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
     padding: 10px 14px; margin-bottom: 10px; background: var(--surface-2); border-radius: 8px;
     border: 1px solid var(--gridline); font-size: 0.85rem; }
-  .live-impact-item b { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; color: var(--accent); }
+  .live-impact-item b { font-weight: 800; color: var(--accent); }
   .live-impact-total { font-size: 0.9rem; }
   .live-impact-arrow { color: var(--faint); font-weight: 700; }
   .live-row { padding: 10px 12px; background: var(--surface-2); border-radius: 8px; margin-bottom: 6px; }
   .live-row-head { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
   .live-row-head strong { flex: 1; }
   .live-row-crest { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
-  .live-row-points { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.15rem;
+  .live-row-points { font-weight: 800; font-size: 1.15rem;
     color: var(--accent); }
   .live-row-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px;
     font-size: 0.76rem; padding-top: 6px; border-top: 1px solid var(--gridline); }
@@ -4028,7 +4108,7 @@ _CSS = """
      13) - sits above the two side-by-side panels, plain diffed values. */
   .compare-delta { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 0.82rem;
     color: var(--muted); margin-bottom: 12px; }
-  .compare-delta-pt { font-weight: 800; font-family: "Oswald", "Titillium Web", sans-serif; }
+  .compare-delta-pt { font-weight: 800; }
   .compare-delta-pt.pos { color: var(--ok-text); }
   .compare-delta-pt.neg { color: var(--bad); }
   .compare-recommendation { font-size: 0.82rem; color: var(--text); background: var(--surface-2);
@@ -4036,9 +4116,9 @@ _CSS = """
   .compare-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; }
   .compare-side { background: var(--surface-2); border-radius: 14px; padding: 16px 18px; border: 1px solid var(--border); }
   .compare-side.compare-optimized { border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border)); }
-  .compare-label { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
+  .compare-label { font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
-  .compare-vs { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 900; font-size: 0.85rem;
+  .compare-vs { font-weight: 900; font-size: 0.85rem;
     color: var(--faint); text-align: center; }
   .compare-metric { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0;
     font-size: 0.85rem; border-bottom: 1px solid var(--gridline); }
@@ -4073,16 +4153,18 @@ _CSS = """
     .decision-grid { grid-template-columns: 1fr; }
     .decision-grid .decision-card:first-child { grid-column: 1; }
   }
-  .decision-card { background: var(--surface-2); border-radius: 14px; padding: 14px 16px; border: 1px solid var(--border);
-    border-left: 3px solid var(--accent); }
-  .decision-card.decision-alert { border-left-color: var(--fpl-pink); }
-  .decision-card.decision-positive { border-left-color: var(--accent-2); }
-  .decision-kicker { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
+  /* Real fix (2026-09-03, DESIGN.md "no side-stripe borders" rule) - a
+     full-perimeter border in the role color plus a faint background tint
+     replaces the old colored accent stripe. */
+  .decision-card { background: var(--surface-2); border-radius: 14px; padding: 14px 16px; border: 1px solid var(--border); }
+  .decision-card.decision-alert { border-color: var(--fpl-pink); background: color-mix(in srgb, var(--fpl-pink) 8%, var(--surface-2)); }
+  .decision-card.decision-positive { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 8%, var(--surface-2)); }
+  .decision-kicker { font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
     display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .decision-headline { font-weight: 800; font-size: 1rem; margin-bottom: 4px; }
   .decision-detail { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
-  .decision-metric { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; color: var(--accent-2); font-size: 0.88rem; }
+  .decision-metric { font-weight: 800; color: var(--accent-2); font-size: 0.88rem; }
   /* Real action language (2026-08-21, third session, section 11: "these
      are your actions" not "information about decisions") - a quiet text
      tag, never a fake clickable button (this project has no capability to
@@ -4117,7 +4199,7 @@ _CSS = """
      plain bulleted list. --- */
   .risk-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; background: var(--surface-2);
     border-radius: 10px; font-size: 0.84rem; }
-  .risk-severity { flex-shrink: 0; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
+  .risk-severity { flex-shrink: 0; font-size: 0.75rem; font-weight: 800;
     letter-spacing: 0.03em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
   .risk-severity-low { background: rgba(34,197,94,0.16); color: var(--ok-text); }
   .risk-severity-monitor { background: rgba(251,191,36,0.18); color: #b8860b; }
@@ -4185,7 +4267,7 @@ _CSS = """
   .decision-compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
   .decision-compare-table th, .decision-compare-table td { padding: 7px 10px; text-align: center;
     font-variant-numeric: tabular-nums; }
-  .decision-compare-table thead th { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem;
+  .decision-compare-table thead th { font-size: 0.75rem;
     font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint);
     border-bottom: 1px solid var(--border); }
   .decision-compare-table tbody th { text-align: left; color: var(--muted); font-weight: 700; font-size: 0.78rem; }
@@ -4238,16 +4320,12 @@ _CSS = """
   }
   .path-tab-btn:hover, .path-step-btn:hover, .squad-state-pill-btn:hover { border-color: var(--accent-2); color: var(--fg); }
   .path-tab-btn.is-active, .squad-state-pill-btn.is-active { background: var(--accent-2); border-color: var(--accent-2); color: #06110b; font-weight: 800; }
-  /* Path boxes (2026-08-27, direct reference: fplcopilot.com's own real
-     Path 1/2/3 boxes) - a real headline number per path, not a small text
-     pill; overrides the shared pill layout above with a taller column. */
-  .path-box { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    min-width: 96px; padding: 10px 14px; border-radius: 10px; }
-  .path-box-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-    color: inherit; opacity: 0.8; }
-  .path-box-score { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 1.3rem; font-weight: 800; color: var(--fg); }
-  .path-box-sub { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2); }
-  .path-box.is-active, .path-box.is-active .path-box-score, .path-box.is-active .path-box-sub { color: #06110b; }
+  /* Real "path box wall" removed (2026-09-02, Phase 4C/4D visual-language
+     pass) - the Plan workspace's selector is now `.plan-select-item`
+     (assemble.py's own `_CSS_WORKSPACE`, co-located with Plan's other
+     page-specific rules), a compact segmented control, not a headline-
+     number box per path. `.path-tab-btn`'s shared pill base above still
+     styles the Squad workspace's own GW-pill switcher, unaffected. */
   .strategic-path-card[hidden] { display: none; }
 
   /* --- Squad State Machine (2026-08-27) - the squad as the real
@@ -4261,6 +4339,8 @@ _CSS = """
   .squad-state-transfer.squad-state-roll { color: var(--muted); font-weight: 600; }
   .squad-state-out { color: var(--bad); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 60%, transparent); }
   .squad-state-in { color: var(--ok-text); }
+  /* Real winner-pill badge (2026-09-03, direct FotMob reference). */
+  .squad-state-xp-pill-win { background: var(--accent-2); color: var(--bg); font-weight: 800; border-radius: 999px; padding: 1px 8px; }
   .squad-state-pos-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 0;
     border-top: 1px solid var(--border); }
   .squad-state-pos-row:first-of-type { border-top: none; }
@@ -4270,7 +4350,7 @@ _CSS = """
   /* --- Intelligence (2026-08-27) - WHAT CHANGED / WHO BENEFITS / RISK
      MONITOR / WHAT SHOULD I DO DIFFERENTLY, replacing scattered raw panels --- */
   .intel-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0; }
-  .intel-section h3, .market-section h3 { font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.76rem;
+  .intel-section h3, .market-section h3 { font-size: 0.76rem;
     font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 8px; }
   .intel-section:first-child h3, .market-section:first-child h3 { margin-top: 0; }
   @media (max-width: 640px) { .intel-grid-2, .market-grid-2 { grid-template-columns: 1fr; } }
@@ -4285,13 +4365,18 @@ _CSS = """
   .opp-card { background: transparent; border: none; border-radius: 0; border-top: 1px solid var(--border);
     padding: 12px 2px; display: grid; grid-template-columns: 88px 1fr; gap: 2px 14px; }
   .opp-card:first-child { border-top: none; padding-top: 0; }
-  .opp-card-kind { grid-column: 1; font-family: "Oswald", "Titillium Web", sans-serif; font-size: 0.75rem; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); padding-top: 3px; }
-  .opp-card-breakout .opp-card-kind { color: var(--accent-2); }
-  .opp-card-trap .opp-card-kind { color: var(--fpl-pink); }
-  .opp-card-role-change .opp-card-kind { color: #d9a441; }
-  .opp-card-fixture-swing .opp-card-kind { color: var(--accent); }
-  .opp-card-value .opp-card-kind { color: var(--ok-text); }
+  /* Real broadcast-tag badge (2026-09-03, direct user correction - plain
+     colored text read as quiet engineering-dashboard labeling, not a
+     match-graphics category tag). Solid background block per real
+     opportunity kind, same recipe as FOOTBALL's category badges. */
+  .opp-card-kind { grid-column: 1; align-self: start; font-size: 0.68rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg); background: var(--surface-2);
+    border-radius: 4px; padding: 3px 8px; margin-top: 1px; }
+  .opp-card-breakout .opp-card-kind { background: color-mix(in srgb, var(--accent-2) 24%, var(--surface-2)); color: #b6ffe0; }
+  .opp-card-trap .opp-card-kind { background: color-mix(in srgb, var(--fpl-pink) 24%, var(--surface-2)); color: #ffb6d5; }
+  .opp-card-role-change .opp-card-kind { background: color-mix(in srgb, #d9a441 24%, var(--surface-2)); color: #f2cf8f; }
+  .opp-card-fixture-swing .opp-card-kind { background: color-mix(in srgb, var(--accent) 24%, var(--surface-2)); color: #b6ffe0; }
+  .opp-card-value .opp-card-kind { background: color-mix(in srgb, var(--ok-text) 24%, var(--surface-2)); color: #b6ffe0; }
   .opp-card-title { grid-column: 2; font-size: 0.96rem; font-weight: 800; color: var(--fg); }
   .opp-pos { font-size: 0.75rem; font-weight: 700; color: var(--faint); text-transform: uppercase; margin-left: 4px; }
   .opp-card-subtitle { grid-column: 2; font-size: 0.78rem; color: var(--muted); }
@@ -4328,9 +4413,10 @@ _CSS = """
   .news-item:last-child { border-bottom: none; padding-bottom: 0; }
   /* Editorial emphasis (2026-08-21, third session, section 14) - real,
      derived relevance (name-matched to the actual squad), not equal
-     weight for every article. Quiet by design: a left accent bar + one
-     small tag, not a colored background wash. */
-  .news-item-relevant { border-left: 2px solid var(--accent-2); padding-left: 10px; margin-left: -12px; }
+     weight for every article. Revised 2026-09-03 (DESIGN.md "no
+     side-stripe borders" rule) - the `.news-relevance` tag below already
+     carries this signal on its own; the accent stripe was redundant with
+     it, not an additional source of information. */
   .news-relevance { font-size: 0.75rem; font-weight: 700; color: var(--accent-2); text-transform: uppercase;
     letter-spacing: 0.03em; }
   .news-title a { color: var(--fg); text-decoration: none; font-size: 0.88rem; font-weight: 600; }
@@ -4377,7 +4463,7 @@ _CSS = """
   .match-feed { display: flex; flex-direction: column; gap: 3px; max-height: 260px; overflow-y: auto; }
   .match-feed-item { display: flex; align-items: baseline; gap: 8px; font-size: 0.86rem;
     padding: 6px 8px; background: var(--surface-2); border-radius: 6px; }
-  .match-feed-minute { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 0.9rem;
+  .match-feed-minute { font-weight: 800; font-size: 0.9rem;
     color: var(--accent); flex-shrink: 0; min-width: 2.6em; }
   .match-feed-type { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
     color: var(--faint); background: var(--surface); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
@@ -4504,7 +4590,7 @@ _CSS = """
   /* Real per-event-type colour in the Match Feed (2026-08-29 redesign) -
      the first pass rendered every event type in the same flat grey badge. */
   .match-feed-type-goal { color: #ffd400 !important; background: rgba(255, 212, 0, 0.14) !important; }
-  .match-feed-type-card { color: #ff5b5b !important; background: rgba(255, 91, 91, 0.14) !important; }
+  .match-feed-type-card { color: var(--bad) !important; background: rgba(240, 85, 90, 0.14) !important; }
   .match-feed-type-sub { color: #04c8ff !important; background: rgba(4, 200, 255, 0.14) !important; }
 
   @media (max-width: 480px) {
@@ -4524,8 +4610,15 @@ _CSS = """
      emphasis half: the LIVE state's promoted Live Tracking panel gets a
      real glowing accent border so it reads as "this is what matters right
      now", not just a change in position. --- */
-  .panel-live-emphasis { border-color: var(--accent-2);
-    box-shadow: 0 0 0 1px var(--accent-2), 0 12px 34px -14px color-mix(in srgb, var(--accent-2) 35%, transparent); }
+  /* Real, confirmed fix (2026-09-03, DESIGN.md "Flat-By-Default Rule" /
+     impeccable dark-glow finding) - a diffuse colored box-shadow halo is
+     the generic AI-glow look this project's own design system now
+     explicitly rejects. A solid 2px border plus a tonal background tint
+     (no shadow) carries the same "this is what matters now" emphasis
+     flatly - a broadcast lower-third gets a bright border plate, not a
+     glow. */
+  .panel-live-emphasis { border: 2px solid var(--accent-2);
+    background: color-mix(in srgb, var(--accent-2) 6%, var(--surface)); }
 
   .price-list { display: flex; flex-direction: column; gap: 4px; }
   .price-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;
@@ -4658,7 +4751,7 @@ _CSS = """
   .panel-advanced summary::before { content: "▸ "; color: var(--muted); }
   .panel-advanced[open] summary::before { content: "▾ "; }
   .panel-advanced summary h2 { margin: 0; }
-  .panel-advanced summary h3 { margin: 0; display: inline; font-family: "Oswald", "Titillium Web", sans-serif;
+  .panel-advanced summary h3 { margin: 0; display: inline;
     font-size: 0.85rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg); }
   /* --- Advanced/System hub (2026-08-27, "premium product" redesign) - the
      single collapsed home for every diagnostic/uncalibrated/narrower-
@@ -4713,7 +4806,18 @@ _CSS = """
      inflated by this one root hack; removing it puts body text at a real
      16px and every other size back to its own intended value, no rem
      values rewritten. */
-  html { scroll-behavior: smooth; }
+  /* Real nav-scroll fix (2026-09-03, Phase 7 audit P0): `scroll-behavior:
+     smooth` raced against this page's own lazy-loaded images/charts still
+     resizing the document mid-animation - confirmed live, clicking a nav
+     link for a section further than ~2 screens down landed hundreds to
+     thousands of px short or past the target depending on how much lazy
+     content had resolved during the ~300-500ms animation window. Instant
+     jump removes the race entirely (the browser computes the final
+     position synchronously, once, at the moment of the jump). `[id]`
+     carries a `scroll-margin-top` so a jump still clears the sticky
+     `.site-nav` instead of hiding the target's own heading under it. */
+  html { scroll-behavior: auto; }
+  [id] { scroll-margin-top: 72px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 999px; border: 2px solid var(--bg); }
@@ -4757,6 +4861,10 @@ _CSS = """
   .live-changes-feed-wrap { margin-top: 16px; background: var(--surface); border-radius: 10px; padding: 12px 14px; }
   .live-changes-feed-title { font-size: 0.8rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
   .live-changes-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .live-changes-feed-item { font-size: 0.82rem; border-left: 2px solid var(--accent-2); padding-left: 10px; }
+  /* Real fix (2026-09-03, DESIGN.md "no side-stripe borders" rule) - a
+     plain row divider replaces the old colored accent stripe, matching
+     the same list-row pattern `.fb-signal-row` already uses. */
+  .live-changes-feed-item { font-size: 0.82rem; padding: 6px 0; border-bottom: 1px solid var(--gridline); }
+  .live-changes-feed-item:last-child { border-bottom: none; }
   .live-changes-feed-meta { color: var(--faint); font-size: 0.74rem; }
 """

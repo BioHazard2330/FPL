@@ -13,6 +13,8 @@ same principle the pre-existing board already documented), with a real
 them by default. `confidence` reuses `models.projection_confidence.
 assess_projection_confidence` (already used by `plan.py` for the same
 purpose) - no new model."""
+import json
+
 from fpl_agent.models.breakouts import find_breakouts
 from fpl_agent.models.projection_confidence import assess_projection_confidence
 from fpl_agent.models.traps import find_traps
@@ -44,9 +46,14 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
     # have this" disclosure).
     price_bit = f"£{price_m:.1f}m" if price_m is not None else "Price unavailable"
     own_bit = f"{ownership_pct:.1f}% owned" if ownership_pct is not None else ""
+    # Real crest-on-shirt overlay (2026-09-03, same real pattern as the
+    # MY TEAM pitch - crest-forward identity applies to every real shirt
+    # rendered on this dashboard, not just the pitch).
     shirt_html = (
-        f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' "
-        f"loading='lazy' alt=''>" if team_code is not None else ""
+        f"<div class='opp-card-shirt-wrap'>"
+        f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' loading='lazy' alt=''>"
+        f"{_crest_html(team_code, '', css_class='opp-card-crest')}"
+        f"</div>" if team_code is not None else ""
     )
     # Real "was this player considered by the strategic optimizer" flag
     # (2026-08-29, direct P1 spec line: "Also show whether the player was
@@ -91,24 +98,63 @@ def _category_block(kind: str, cards: list[str]) -> str:
     return f"<div class='opp-category'>{''.join(visible)}{rest_html}</div>"
 
 
-def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[int] | None = None, ta=None) -> str:
+# Index positions inside change_detection.py's `_SETPIECE_FIELDS` tuple
+# ("penalties_order", "penalties_text", "corners_order", "corners_text",
+# "direct_fk_order", "direct_fk_text") that this card cares about - the
+# *_text fields are raw scraped strings, not shown here.
+_SETPIECE_ORDER_LABELS = {0: "penalty", 2: "corner", 4: "direct free-kick"}
+
+
+def _setpiece_order_change_text(old_value: str | None, new_value: str | None) -> str:
+    """Real per-field order change ("penalty order none -> 3rd") parsed out
+    of `change_events`' own stored 6-tuple (`detect_setpiece_changes`'
+    `json.dumps(old_tuple)`/`new_tuple`) - real, confirmed bug fixed
+    2026-09-03: the raw JSON tuple (including its `null` slots for the
+    set-piece types that DIDN'T change) was being dumped straight into user
+    copy ("[null, null, null, null, null, null] -> [null, null, null, null,
+    3, null]"). Only the field(s) whose order actually differs are surfaced;
+    `None` reads as the honest "none" rather than a fabricated rank."""
+    try:
+        old_t, new_t = json.loads(old_value), json.loads(new_value)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return "set-piece order changed"
+    changes = []
+    for idx, label in _SETPIECE_ORDER_LABELS.items():
+        old_o = old_t[idx] if idx < len(old_t) else None
+        new_o = new_t[idx] if idx < len(new_t) else None
+        if old_o != new_o:
+            changes.append(f"{label} order {old_o if old_o is not None else 'none'} -> {new_o if new_o is not None else 'none'}")
+    return "; ".join(changes) if changes else "set-piece order changed"
+
+
+def render_opportunity_workspace(
+    conn, squad_ids: set[int], considered_ids: set[int] | None = None, ta=None, *, breakouts: list | None = None,
+) -> str:
+    """`breakouts`, when the caller already has a real, freshly-fetched
+    `find_breakouts()` result this regen (e.g. `scout.py` reusing it for the
+    recruitment scatter chart too), is used as-is - never a second real scan
+    of the same candidate pool (each row costs one real `expected_points()`
+    call). `None` (the default) preserves the original standalone behaviour."""
     breakout_cards, trap_cards, role_cards, swing_cards, value_cards = [], [], [], [], []
 
-    breakouts = []
     traps = []
     role_rows = []
     value_rows = []
-    try:
-        breakouts = [b for b in find_breakouts(conn)[:_MAX_PER_CATEGORY] if b.player_id not in squad_ids]
-    except Exception:
-        pass
+    if breakouts is None:
+        breakouts = []
+        try:
+            breakouts = find_breakouts(conn)
+        except Exception:
+            pass
+    breakouts = [b for b in breakouts[:_MAX_PER_CATEGORY] if b.player_id not in squad_ids]
     try:
         traps = find_traps(conn)[:_MAX_PER_CATEGORY]
     except Exception:
         pass
     try:
         role_rows = conn.execute(
-            "SELECT ce.entity_id, p.web_name, et.singular_name_short AS position, ce.detected_at "
+            "SELECT ce.entity_id, p.web_name, et.singular_name_short AS position, ce.detected_at, "
+            "ce.old_value, ce.new_value "
             "FROM change_events ce JOIN players p ON p.id = ce.entity_id "
             "JOIN element_types et ON et.id = p.element_type "
             "WHERE ce.event_type = 'setpiece_change' AND ce.entity = 'player' AND p.removed = 0 "
@@ -164,30 +210,33 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
 
     for b in breakouts:
         team_code = team_lookup.get(b.player_id, {}).get("team_code")
+        own_bit = f"{b.ownership_percent:.1f}% owned" if b.ownership_percent is not None else "low ownership"
         breakout_cards.append(_card(
             "Breakout", _esc(b.web_name), b.position, None, b.ownership_percent,
             f"{b.value_ratio:.2f} xP/£m value ratio",
-            "; ".join(b.reasons) if b.reasons else "rising value at low ownership",
+            "; ".join(b.reasons) if b.reasons else f"{b.value_ratio:.2f} xP/£m, {own_bit}",
             _confidence_label(conn, b.player_id), team_code=team_code,
             considered_by_optimizer=_considered(b.player_id), squad_impact=impact_by_player.get(b.player_id),
         ))
 
     for t in traps:
         team_code = team_lookup.get(t.player_id, {}).get("team_code")
+        own_bit = f"{t.ownership_percent:.1f}% owned" if t.ownership_percent is not None else "high ownership"
         trap_cards.append(_card(
             "Trap", _esc(t.web_name), t.position, None, t.ownership_percent,
             f"{t.eo_source} ownership source",
-            "; ".join(t.reasons) if t.reasons else "deteriorating case at high ownership",
+            "; ".join(t.reasons) if t.reasons else f"{own_bit}, case weakening",
             _confidence_label(conn, t.player_id), team_code=team_code,
             considered_by_optimizer=_considered(t.player_id), squad_impact=impact_by_player.get(t.player_id),
         ))
 
     for r in role_rows:
         team_code = team_lookup.get(r["entity_id"], {}).get("team_code")
+        order_bit = _setpiece_order_change_text(r["old_value"], r["new_value"])
         role_cards.append(_card(
             "Role Change", _esc(r["web_name"]), r["position"], None, None,
-            f"set-piece role change {_esc(_relative_time(r['detected_at']))}",
-            "a detected set-piece duty change - a genuine role signal, not a form blip",
+            f"set-piece {order_bit}, {_esc(_relative_time(r['detected_at']))}",
+            order_bit,
             _confidence_label(conn, r["entity_id"]), team_code=team_code,
             considered_by_optimizer=_considered(r["entity_id"]), squad_impact=impact_by_player.get(r["entity_id"]),
         ))
@@ -196,8 +245,8 @@ def render_opportunity_workspace(conn, squad_ids: set[int], considered_ids: set[
         team_code = team_lookup.get(r["player_id"], {}).get("team_code")
         value_cards.append(_card(
             "Value", _esc(r["web_name"]), r["position"], r["new_value"] / 10, None,
-            f"£{r['old_value']/10:.1f}m &rarr; £{r['new_value']/10:.1f}m",
-            f"price rise {_esc(_relative_time(r['changed_at']))} - real rising demand",
+            f"£{r['old_value']/10:.1f}m -> £{r['new_value']/10:.1f}m",
+            f"price rise {_esc(_relative_time(r['changed_at']))}",
             _confidence_label(conn, r["player_id"]), team_code=team_code,
             considered_by_optimizer=_considered(r["player_id"]), squad_impact=impact_by_player.get(r["player_id"]),
         ))

@@ -110,10 +110,10 @@ def detect_role_changes(conn: sqlite3.Connection, match_id: int) -> list[Detecte
         if current_xg >= _ROLE_XG_FLOOR and baseline_xg > 0 and current_xg >= baseline_xg * _ROLE_XG_RATIO_ADVANCE:
             out.append(DetectedObservation(
                 subject_type="player", subject_id=row["player_id"], observation_type="ATTACKING_ROLE",
-                observed=f"{row['xg']:.2f} real xG this match vs a {baseline_xg:.2f} real xG average over their last {len(baseline)} matches.",
-                inferred="Real shift toward a more advanced/central attacking involvement than this player's own recent norm.",
+                observed=f"{row['xg']:.2f} xG this match vs {baseline_xg:.2f} xG average over last {len(baseline)}",
+                inferred="more advanced/central role",
                 fpl_signal="ROLE_CHANGE", fpl_direction="POSITIVE",
-                fpl_reason=f"xG {current_xg:.2f} is {current_xg / baseline_xg:.1f}x this player's own real recent baseline - a genuine advanced-role signal, not a single-shot fluke.",
+                fpl_reason=f"xG {current_xg:.2f} is {current_xg / baseline_xg:.1f}x his own recent baseline",
                 confidence="medium",
                 evidence_ref=f"xg={current_xg:.2f},baseline_xg={baseline_xg:.2f},n={len(baseline)}",
             ))
@@ -126,10 +126,10 @@ def detect_role_changes(conn: sqlite3.Connection, match_id: int) -> list[Detecte
             if baseline_kp >= 1.0 and current_kp <= baseline_kp * _ROLE_CREATION_RATIO_DROP:
                 out.append(DetectedObservation(
                     subject_type="player", subject_id=row["player_id"], observation_type="ATTACKING_ROLE",
-                    observed=f"{current_kp:.0f} real key passes this match vs a {baseline_kp:.1f} real average over their last {len(baseline_kp_rows)} matches.",
-                    inferred="Real drop in this player's own recent creative involvement - possibly a reduced/changed creative role.",
+                    observed=f"{current_kp:.0f} key passes this match vs {baseline_kp:.1f} average over last {len(baseline_kp_rows)}",
+                    inferred="reduced creative role",
                     fpl_signal="ROLE_CHANGE", fpl_direction="WATCH",
-                    fpl_reason=f"key passes {current_kp:.0f} is only {current_kp / baseline_kp:.0%} of this player's own real recent baseline.",
+                    fpl_reason=f"key passes {current_kp:.0f} is {current_kp / baseline_kp:.0%} of his own recent baseline",
                     confidence="low",
                     evidence_ref=f"key_passes={current_kp:.0f},baseline_kp={baseline_kp:.2f},n={len(baseline_kp_rows)}",
                 ))
@@ -197,10 +197,10 @@ def detect_setpiece_changes(conn: sqlite3.Connection, player_id: int, match_id: 
         improved = new_order < old_order  # a lower order = higher real priority
         out.append(DetectedObservation(
             subject_type="player", subject_id=player_id, observation_type="SET_PIECE",
-            observed=f"Real {role_name} order changed from {old_order} to {new_order} (versioned {prior['valid_from']} -> {current['valid_from']}).",
-            inferred=f"Real {'increase' if improved else 'decrease'} in {role_name}-taking priority.",
+            observed=f"{role_name} order {old_order} → {new_order}",
+            inferred=f"{'promoted to' if improved else 'dropped to'} {role_name} taker #{new_order}",
             fpl_signal="SET_PIECE_CHANGE", fpl_direction="POSITIVE" if improved else "WATCH",
-            fpl_reason=f"{role_name} order {old_order} -> {new_order} - a real, official responsibility change.",
+            fpl_reason=f"{role_name} order {old_order} -> {new_order}",
             confidence="medium",
             evidence_ref=f"{field}:{old_order}->{new_order}",
         ))
@@ -239,10 +239,10 @@ def detect_tactical_changes(conn: sqlite3.Connection, team_id: int, match_id: in
 
     return [DetectedObservation(
         subject_type="team", subject_id=team_id, observation_type="FORMATION",
-        observed=f"Formation {current['formation']} this match vs a real {baseline_formation} baseline in {baseline_n}/{len(prior_rows)} of the last {len(prior_rows)} matches.",
-        inferred="A real, single-match formation departure from this team's own recent baseline - not yet confirmed as a persistent change (needs the SAME classifier's own repeated-evidence gate downstream).",
+        observed=f"{baseline_formation} → {current['formation']} (was {baseline_formation} in {baseline_n}/{len(prior_rows)} of last {len(prior_rows)})",
+        inferred="not yet confirmed as persistent",
         fpl_signal="TACTICAL_CHANGE", fpl_direction="WATCH",
-        fpl_reason=f"{current['formation']} replaces the real recent {baseline_formation} baseline this match.",
+        fpl_reason=f"{current['formation']} replaces the {baseline_formation} baseline this match",
         confidence="low",
         evidence_ref=f"formation:{baseline_formation}->{current['formation']}",
     )]
@@ -256,9 +256,9 @@ def _link_role_signal_to_tactical_change(obs: DetectedObservation) -> DetectedOb
     never appends a second competing row for the same (subject, signal)."""
     return DetectedObservation(
         subject_type=obs.subject_type, subject_id=obs.subject_id, observation_type=obs.observation_type,
-        observed=obs.observed, inferred=obs.inferred + " Coincides with a real team formation change this match.",
+        observed=obs.observed, inferred=obs.inferred + "; coincides with a formation change",
         fpl_signal=obs.fpl_signal, fpl_direction=obs.fpl_direction,
-        fpl_reason=obs.fpl_reason + " (linked to this match's real TACTICAL_CHANGE)",
+        fpl_reason=obs.fpl_reason + " (linked to this match's TACTICAL_CHANGE)",
         confidence=obs.confidence, evidence_ref=obs.evidence_ref,
     )
 

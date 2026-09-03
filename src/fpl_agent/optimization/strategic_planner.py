@@ -36,11 +36,18 @@ Still does NOT (disclosed scope boundary, not an oversight): model in-season
 price changes affecting `bank_tenths` beyond the tie-break nudge
 `search_transfer_sequences` already applies.
 """
+from __future__ import annotations
+
 import sqlite3
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
+from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.projection_confidence import _LEVEL_RANK, _LEVELS, assess_projection_confidence
 from fpl_agent.optimization.decision_analysis import _MIN_EVIDENCE_CONFIDENCE_FOR_ACTION
+
+if TYPE_CHECKING:
+    from fpl_agent.optimization.authoritative_decision import AuthoritativeDecision, CandidateAssessment
 from fpl_agent.optimization.transfers import (
     StartingActionOption,
     TransferSequence,
@@ -168,6 +175,29 @@ class CurrentRecommendation:
     evidence_confidence: str | None
     reason: str
     starting_action_options: tuple[StartingActionOption, ...]
+    # Real (2026-09-02, Phase 5E - "wire the authoritative decision into
+    # production"): the SAME `optimization/authoritative_decision.py`
+    # forensic selection (haircut/materiality-aware, never a naive
+    # top-by-EV pick) that produced this recommendation's own `top` option
+    # in the first place - carried here so every downstream consumer
+    # (`decision_snapshot.py`, the dashboard, `fpl why`) reads the real
+    # credibility/robustness/optionality/conditional-plan fields from THIS
+    # one object rather than re-deriving or omitting them. `None` only in
+    # the real, honest case where no legal starting action existed to
+    # decide between (the empty-`options` branch above).
+    authoritative: AuthoritativeDecision | None = None
+    # Real (2026-09-02, Phase 5E) - the SAME chosen candidate's raw
+    # credibility/robustness/optionality numbers `select_authoritative_
+    # candidate` already computed while deciding - carried here so a
+    # persister never has to re-derive them from a second, possibly
+    # different cached path (see that function's own docstring).
+    chosen_assessment: CandidateAssessment | None = None
+    # Real (2026-09-02, Phase 6A COMMAND redesign) - the real assessment of
+    # `authoritative.best_alternative` itself, not the chosen path - see
+    # `select_authoritative_candidate`'s own docstring for why this exists
+    # (an honest "what does the alternative do better" needs the
+    # alternative's OWN real numbers, never invented).
+    runner_up_assessment: CandidateAssessment | None = None
 
 
 _DECISION_SCAN_LIMIT = 30  # generous - real production strategic_plan cadence rarely logs more than a handful/day even during search-diagnostics
@@ -247,21 +277,31 @@ def synthesize_current_recommendation(
     used_chip_names: frozenset[str] = frozenset(),
     immediate_optimum_label: str | None = None,
     known_paths: tuple[TransferSequence, ...] = (),
+    ca=None,
 ) -> CurrentRecommendation:
     """Real synthesis this task's P0 "fix the decision hierarchy" item asked
     for: runs `compare_starting_actions` (every meaningful starting action
-    against its own real best future) and picks the winner by real
-    full-horizon `path_total` - which, by construction, already includes
-    this GW's own contribution, so it never needs a separate tie-break
-    against a shorter-horizon "immediate" number; a genuine IMMEDIATE-vs-
-    STRATEGIC disagreement (`immediate_optimum_label`, e.g. from
-    `decision_analysis.analyze_transfer_decision`, passed in by the caller
-    rather than re-derived here to avoid a second competing scan) is
-    surfaced as a fact about WHY the strategic pick can differ from a
-    short-sighted one, not as a competing recommendation to reconcile.
+    against its own real best future), then picks the winner via
+    `optimization/authoritative_decision.py::select_authoritative_candidate`
+    (2026-09-02, Phase 5E - "wire the authoritative decision into
+    production") - the real, forensic, haircut/materiality-aware selection
+    built in Phase 5D, not a naive top-by-`path_total` pick. This is the ONE
+    place that selection happens; every downstream reader (`decision_
+    snapshot.py`, the dashboard, CLI) gets it from the persisted
+    `current_recommendation.authoritative` field this function returns,
+    never re-derives its own. A genuine IMMEDIATE-vs-STRATEGIC disagreement
+    (`immediate_optimum_label`, e.g. from `decision_analysis.
+    analyze_transfer_decision`, passed in by the caller rather than
+    re-derived here to avoid a second competing scan) is surfaced as a fact
+    about WHY the strategic pick can differ from a short-sighted one, not as
+    a competing recommendation to reconcile.
 
-    The only thing that can downgrade the winning action from ACT to REVIEW
-    is real evidence confidence on the chosen transfer's player pair (same
+    `ca` (optional, already-computed `CaptainDecisionAnalysis`) follows this
+    project's own established `ta=`/`ca=` no-redundant-rescan convention -
+    computed fresh here only when the caller doesn't already have one.
+
+    The winning action can be downgraded from ACT to REVIEW by EITHER real
+    evidence confidence on the chosen transfer's player pair (same
     `_MIN_EVIDENCE_CONFIDENCE_FOR_ACTION` bar `decision_analysis.py` uses,
     imported rather than redefined) - never a hard-coded player/action
     exception, and ROLL/chip actions are never evidence-gated (there is no
@@ -302,10 +342,46 @@ def synthesize_current_recommendation(
             immediate_optimum_label=immediate_optimum_label, strategic_optimum_label="ROLL",
             immediate_vs_strategic_differ=False, evidence_confidence=None,
             reason="no real legal starting action found for this squad/budget",
-            starting_action_options=(),
+            starting_action_options=(), authoritative=None, chosen_assessment=None, runner_up_assessment=None,
         )
 
-    top = options[0]
+    # Real (2026-09-02, Phase 5E) - `ca` reflects the REAL current locked
+    # squad (`get_locked_squad`), not a hypothetical `squad_ids` override a
+    # caller may have passed to THIS function (e.g. `fpl strategic-plan
+    # --squad ...`) - a real, disclosed scope limit, same as every other
+    # captain-analysis caller in this project that doesn't have one already
+    # computed against the exact squad in question.
+    if ca is None:
+        try:
+            from fpl_agent.optimization.decision_analysis import analyze_captain_decision
+            from fpl_agent.optimization.locked_squad import get_locked_squad
+
+            real_locked = get_locked_squad(conn)
+            ca = analyze_captain_decision(conn, real_locked) if real_locked is not None else None
+        except Exception:
+            ca = None
+
+    # Real (2026-09-02, Phase 5E PART 9 - "do not silently substitute an old
+    # recommendation and label it as current"): a genuine computation
+    # failure here (every candidate's own assessment failed) must never be
+    # papered over with a silent naive top-by-EV pick presented as ACT - it
+    # degrades to a real, honestly-labeled REVIEW with `authoritative=None`
+    # (UNAVAILABLE), never a fabricated confident answer. The whole
+    # `fpl strategic-plan` run still completes (its OTHER real outputs - the
+    # raw beam paths, chip schedule - are unaffected), only this ONE
+    # synthesis step degrades.
+    start_event = _reference_event(conn)
+    try:
+        from fpl_agent.optimization.authoritative_decision import select_authoritative_candidate
+
+        authoritative, top, chosen_assessment, runner_up_assessment = select_authoritative_candidate(
+            conn, options, start_event, bank_tenths, ca,
+        )
+        authoritative_unavailable_reason = None
+    except Exception as exc:
+        authoritative, chosen_assessment, runner_up_assessment = None, None, None
+        top = options[0]
+        authoritative_unavailable_reason = str(exc)
     differ = immediate_optimum_label is not None and immediate_optimum_label != top.label
 
     evidence_confidence = None
@@ -325,23 +401,40 @@ def synthesize_current_recommendation(
         "path_total already accounts for this GW too, so it takes priority" if differ else ""
     )
 
-    if evidence_ok:
-        verdict = "ACT"
+    # Real (2026-09-02, Phase 5E) - `top` is no longer necessarily
+    # `options[0]` (the raw highest-`path_total` action); it is whichever
+    # option `authoritative.decision_state`/`select_authoritative_candidate`
+    # actually settled on after the real Phase 5D haircut/materiality walk.
+    # `verdict` downgrades to REVIEW on EITHER real gate - the pre-existing
+    # evidence-confidence check on the transfer's own player pair, OR the
+    # new authoritative decision's own real robustness/materiality verdict -
+    # never silently overridden by one passing when the other fails.
+    if authoritative is None:
+        # Real UNAVAILABLE case (Phase 5E PART 9) - never a fabricated ACT.
+        verdict = "REVIEW"
         reason = (
-            f"{top.label} has the best real full-horizon future among every starting action considered "
-            f"(path_total={top.path_total})" + differ_note
+            f"real authoritative selection was UNAVAILABLE this run ({authoritative_unavailable_reason}) - "
+            f"showing the raw top-by-EV option ({top.label}, path_total={top.path_total}) for reference only, "
+            "not as a confident recommendation" + differ_note
+        )
+    elif evidence_ok and authoritative.decision_state == "ACT":
+        verdict = "ACT"
+        reason = authoritative.decision_reason + differ_note
+    elif not evidence_ok:
+        verdict = "REVIEW"
+        reason = (
+            f"{top.label} is the real authoritative pick (path_total={top.path_total}) but real evidence "
+            f"confidence is only {evidence_confidence} - see the underlying player evidence before acting on "
+            "this" + differ_note
         )
     else:
         verdict = "REVIEW"
-        reason = (
-            f"{top.label} has the best real full-horizon future (path_total={top.path_total}) but real "
-            f"evidence confidence is only {evidence_confidence} - see the underlying player evidence before "
-            "acting on this" + differ_note
-        )
+        reason = authoritative.decision_reason + differ_note
 
     return CurrentRecommendation(
         verdict=verdict, action_kind=top.kind, label=top.label, path_total=top.path_total,
         immediate_optimum_label=immediate_optimum_label, strategic_optimum_label=top.label,
         immediate_vs_strategic_differ=differ, evidence_confidence=evidence_confidence, reason=reason,
-        starting_action_options=tuple(options),
+        starting_action_options=tuple(options), authoritative=authoritative,
+        chosen_assessment=chosen_assessment, runner_up_assessment=runner_up_assessment,
     )

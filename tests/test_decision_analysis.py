@@ -137,6 +137,89 @@ def test_transfer_kept_when_evidence_confidence_is_medium_or_better(db_conn, mon
     assert result.evidence_confidence == "MEDIUM"
 
 
+def _fake_voi(upgrades=False, minutes_improve=False):
+    from fpl_agent.models.value_of_information import InformationValueAssessment
+
+    return InformationValueAssessment(
+        player_id=1, current_data_confidence="MEDIUM", projected_data_confidence_next_gw="HIGH",
+        data_confidence_would_upgrade=upgrades, minutes_confidence="MEDIUM",
+        minutes_confidence_reason="fake reason", minutes_would_likely_improve_by_waiting=minutes_improve,
+        summary="fake voi summary",
+    )
+
+
+def test_wait_verdict_when_margin_is_narrow_and_waiting_has_real_information_value(db_conn, monkeypatch):
+    """PART 7/8/21 (2026-09-02, Phase 5 optimizer forensic rebuild) - a
+    candidate that only narrowly clears the real materiality bar, with real
+    evidence confidence good enough to act, should still WAIT when real
+    additional evidence is genuinely likely to arrive soon - never a
+    blanket hold, only this narrow, disclosed case."""
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 1.2, player_out_name="P1", player_in_name="P99")  # margin_ratio 1.2 < 1.5 narrow bar
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(da_mod, "assess_projection_confidence", lambda conn, pid: _fake_confidence(pid, "MEDIUM"))
+    import fpl_agent.models.value_of_information as voi_mod
+
+    monkeypatch.setattr(voi_mod, "assess_information_value", lambda conn, pid: _fake_voi(minutes_improve=True))
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.decision_kind == "wait"
+    assert result.chosen is not None  # the real candidate still surfaces, just deferred
+    assert result.margin_ratio == 1.2
+    assert "wait" in result.reason.lower()
+
+
+def test_transfer_not_downgraded_to_wait_when_margin_is_comfortable(db_conn, monkeypatch):
+    """A comfortable-margin transfer must never be downgraded to WAIT just
+    because waiting would ALSO have some real information value - waiting
+    only matters when the decision is close enough that new evidence could
+    plausibly flip it (2026-09-02, Phase 5, explicit constraint)."""
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 5.0, player_out_name="P1", player_in_name="P99")  # margin_ratio 5.0, comfortable
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(da_mod, "assess_projection_confidence", lambda conn, pid: _fake_confidence(pid, "MEDIUM"))
+    import fpl_agent.models.value_of_information as voi_mod
+
+    monkeypatch.setattr(voi_mod, "assess_information_value", lambda conn, pid: _fake_voi(upgrades=True, minutes_improve=True))
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.decision_kind == "transfer"
+
+
+def test_wait_not_triggered_when_waiting_has_no_real_information_value(db_conn, monkeypatch):
+    """A narrow margin alone must not trigger WAIT - real evidence must
+    actually be likely to improve, or the honest verdict stays TRANSFER."""
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 1.2, player_out_name="P1", player_in_name="P99")
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    monkeypatch.setattr(da_mod, "assess_projection_confidence", lambda conn, pid: _fake_confidence(pid, "MEDIUM"))
+    import fpl_agent.models.value_of_information as voi_mod
+
+    monkeypatch.setattr(voi_mod, "assess_information_value", lambda conn, pid: _fake_voi(upgrades=False, minutes_improve=False))
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.decision_kind == "transfer"
+
+
+def test_market_signal_note_surfaces_only_when_transfer_activity_is_abnormal(db_conn, monkeypatch):
+    """PART 5 (2026-09-02) - the note is real, informational conviction
+    context only; never present when the market module has nothing
+    abnormal to report."""
+    locked = _locked(squad_ids=(1, 2, 3))
+    best = _tc(1, 99, 5.0, player_out_name="P1", player_in_name="P99")
+    _stub_common(monkeypatch, transfer_map={1: [best]}, robustness_verdict="ROBUST")
+    import fpl_agent.models.market_signal as market_mod
+
+    monkeypatch.setattr(market_mod, "assess_market_signal", lambda conn, pid, event=None: None)
+
+    result = analyze_transfer_decision(db_conn, locked)
+
+    assert result.market_signal_note is None
+
+
 def test_roll_when_best_candidate_does_not_clear_the_threshold(db_conn, monkeypatch):
     locked = _locked(squad_ids=(1, 2, 3))
     weak = _tc(1, 99, 0.3, player_out_name="P1", player_in_name="P99")
@@ -228,6 +311,23 @@ def test_captain_keep_reports_the_real_gap_below_threshold(db_conn, monkeypatch)
     assert "0.4" in result.reason
     assert result.options[0].rank == 1
     assert result.options[0].rejected_reason is None
+
+
+def test_captain_keep_reason_discloses_a_real_fragile_robustness_verdict(db_conn, monkeypatch):
+    """PART 4/20 (2026-09-02, Phase 5B) - a real FRAGILE Monte-Carlo verdict
+    on the top-2 real captain options must be disclosed in the reason text
+    itself, not left as a silent field only. Live-verified against
+    production this phase: the real current "keep Haaland" recommendation
+    carries exactly this real FRAGILE verdict."""
+    locked = _locked(squad_ids=(1, 2, 3))
+    options = [_captain_option(2, 5.4, "Best"), _captain_option(1, 5.0, "Cur")]
+    _stub_captain_common(monkeypatch, options, robustness_verdict="FRAGILE")
+
+    result = analyze_captain_decision(db_conn, locked)
+
+    assert result.decision_kind == "keep"
+    assert result.robustness == "FRAGILE"
+    assert "FRAGILE" in result.reason
 
 
 def test_captain_change_recommended_and_ranks_real_alternatives(db_conn, monkeypatch):

@@ -118,20 +118,20 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
         out.append(DetectedObservation(
             subject_type="player", subject_id=row["player_id"],
             observation_type="statistical_standout",
-            observed=f"{web_name} recorded {shots} real shots (xG {xg:.2f}) in this match.",
-            inferred="A genuinely high shot volume/quality for a single match - real attacking involvement.",
+            observed=f"{shots} shots, {xg:.2f} xG",
+            inferred="supports goal threat",
             fpl_signal="GOAL_THREAT", fpl_direction="POSITIVE",
-            fpl_reason=f"{shots} shots ({xg:.2f} xG) in his last match - a real goal threat.",
+            fpl_reason=f"{shots} shots ({xg:.2f} xG) last match",
             confidence="medium", evidence_ref=f"understat:shots={shots},xg={xg:.3f}",
         ))
     if key_passes >= _CREATION_KEY_PASSES or xa >= _CREATION_XA:
         out.append(DetectedObservation(
             subject_type="player", subject_id=row["player_id"],
             observation_type="statistical_standout",
-            observed=f"{web_name} recorded {key_passes} real key passes (xA {xa:.2f}) in this match.",
-            inferred="A genuinely high chance-creation output for a single match.",
+            observed=f"{key_passes} key passes, {xa:.2f} xA",
+            inferred="supports assist potential",
             fpl_signal="CREATION", fpl_direction="POSITIVE",
-            fpl_reason=f"{key_passes} key passes ({xa:.2f} xA) in his last match - a real creative threat.",
+            fpl_reason=f"{key_passes} key passes ({xa:.2f} xA) last match",
             confidence="medium", evidence_ref=f"understat:key_passes={key_passes},xa={xa:.3f}",
         ))
     if minutes is not None:
@@ -139,20 +139,20 @@ def _player_observations(row: sqlite3.Row, web_name: str) -> list[DetectedObserv
             out.append(DetectedObservation(
                 subject_type="player", subject_id=row["player_id"],
                 observation_type="statistical_standout",
-                observed=f"{web_name} played {minutes} real minutes in this match.",
-                inferred="Genuine, near-full match involvement - real evidence of a trusted current role.",
+                observed=f"{minutes} minutes played",
+                inferred="starting-role signal",
                 fpl_signal="MINUTES", fpl_direction="POSITIVE",
-                fpl_reason=f"Played {minutes} minutes - a real, trusted starting role.",
+                fpl_reason=f"Played {minutes} minutes",
                 confidence="medium", evidence_ref=f"understat:minutes={minutes}",
             ))
         elif minutes < _MINUTES_EARLY_WITHDRAWAL_CEILING:
             out.append(DetectedObservation(
                 subject_type="player", subject_id=row["player_id"],
                 observation_type="statistical_standout",
-                observed=f"{web_name} was withdrawn after {minutes} real minutes despite starting.",
-                inferred="A real, unexplained early withdrawal - a genuine hedge on his current role.",
+                observed=f"substituted at {minutes}', started the match",
+                inferred="rotation/injury risk",
                 fpl_signal="MINUTES", fpl_direction="NEGATIVE",
-                fpl_reason=f"Subbed off after {minutes} minutes despite starting - a real role risk.",
+                fpl_reason=f"Subbed off at {minutes}' despite starting",
                 confidence="medium", evidence_ref=f"understat:minutes={minutes}",
             ))
     return out

@@ -47,6 +47,137 @@ def _patch_expected_points_window(monkeypatch):
     monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
 
 
+def _seed_spiky_vs_steady_pool(conn: sqlite3.Connection):
+    """A real, disclosed adversarial fixture (2026-09-02, Phase 5B optimizer
+    forensic rebuild, PART 1) - two candidate replacements for the SAME
+    owned player: SPIKY (id=5) has a real, large single-GW total but barely
+    grows over 3 GWs (a one-week fixture swing, nothing after); STEADY
+    (id=6) has a modest single-GW total but a real, much larger cumulative
+    3-GW total (consistently good, no single standout week). Proves the
+    real bug this phase found and fixed: candidate ranking at the real beam
+    step used to use `n_gw=1` only - SPIKY would win that comparison and
+    STEADY would never even be evaluated as a real transfer-in option,
+    despite being the genuinely better real 3-GW pick."""
+    now = "2026-01-01T00:00:00Z"
+    conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','{now}')")
+    conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (2,2,'Team B','TMB','{now}')")
+    conn.execute(
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, "
+        f"squad_max_play, squad_select, updated_at) VALUES (1,'Forward','FWD','Forwards',1,3,3,'{now}')"
+    )
+    for pid, team_id, name, price in ((1, 1, 'Owned', 50), (5, 2, 'Spiky', 50), (6, 2, 'Steady', 50)):
+        conn.execute(
+            f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'{name}',{team_id},1,'a',0,'{now}')"
+        )
+        conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, {price}, '{now}', NULL)"
+        )
+    conn.execute(
+        f"INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
+        f"is_current, is_next, updated_at) VALUES (1,'GW1','{now}',0,0,0,1,1,'{now}')"
+    )
+    conn.execute(
+        "INSERT INTO rules (rule_key, season, version, effective_date, source, value) VALUES "
+        "('rules.max_extra_free_transfers','2026-27',1,'2026-08-01','fpl_api_bootstrap','4')"
+    )
+    conn.commit()
+
+
+_SPIKY_VS_STEADY_TOTALS = {
+    # player_id: {n_gw: real cumulative total_median}
+    1: {1: 1.0, 3: 3.0, 5: 5.0},  # Owned - mediocre either way, real transfer target
+    5: {1: 5.0, 3: 6.0, 5: 6.5},  # Spiky - wins the 1-GW comparison, barely grows after
+    6: {1: 3.0, 3: 9.0, 5: 14.0},  # Steady - loses the 1-GW comparison, wins over 3/5 GW
+}
+
+
+def _patch_spiky_vs_steady(monkeypatch):
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=_SPIKY_VS_STEADY_TOTALS[player_id][n_gw])
+
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+
+
+def test_single_gw_candidate_ranking_would_have_excluded_the_real_better_3gw_pick(db_conn, monkeypatch):
+    """Real, direct proof of the bug this phase found (not the fix) - ranking
+    by `n_gw=1` alone puts Spiky first and would drop Steady from a
+    `top_n=1` slice, even though Steady is the real, better 3-GW pick."""
+    _seed_spiky_vs_steady_pool(db_conn)
+    _patch_spiky_vs_steady(monkeypatch)
+    from fpl_agent.optimization.transfers import best_transfer_for_player
+
+    ranked_by_1gw = best_transfer_for_player(db_conn, 1, [1], bank_tenths=100, is_hit=False, n_gw=1, top_n=1)
+    assert ranked_by_1gw[0].player_in_name == "Spiky"
+
+
+def test_beam_candidate_generation_now_ranks_by_the_real_3gw_window(db_conn, monkeypatch):
+    """Real regression guard for the actual fix (2026-09-02, PART 1) -
+    `search_transfer_sequences`'s own real per-step candidate call must use
+    `n_gw=3`, not `n_gw=1` - proven by capturing the real `n_gw` argument
+    `best_transfer_for_player` is actually invoked with from inside the real
+    beam search, never by re-deriving the beam's own internal call."""
+    _seed_spiky_vs_steady_pool(db_conn)
+    _patch_spiky_vs_steady(monkeypatch)
+    from fpl_agent.optimization import transfers as transfers_mod_local
+
+    real_best_transfer_for_player = transfers_mod_local.best_transfer_for_player
+    seen_n_gw = []
+
+    def spy(conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=3, top_n=5, from_event=None, cache=None):
+        seen_n_gw.append(n_gw)
+        return real_best_transfer_for_player(
+            conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=n_gw, top_n=top_n, from_event=from_event, cache=cache,
+        )
+
+    monkeypatch.setattr(transfers_mod_local, "best_transfer_for_player", spy)
+
+    search_transfer_sequences(db_conn, squad_ids=[1], free_transfers=1, bank_tenths=100, horizon_gw=1, beam_width=3)
+
+    assert seen_n_gw, "the beam's own per-step candidate call never ran"
+    assert all(n == 3 for n in seen_n_gw), f"expected every real beam candidate call to use n_gw=3, saw {seen_n_gw}"
+
+
+def test_top_n_nomination_now_survives_with_the_real_3gw_ranking(db_conn, monkeypatch):
+    """Real, end-to-end proof at the actual nomination boundary (not the
+    final path winner - `_squad_gw_ev`'s own real per-event scoring is a
+    separate, already-correct mechanism this fix never touches). With 4 real
+    candidates and a real `top_n=3` slice (the beam's own real value), the
+    OLD `n_gw=1` ranking would drop Steady entirely (3 decoys all beat its
+    real 1-GW rate); the real, fixed `n_gw=3` ranking keeps it in."""
+    _seed_spiky_vs_steady_pool(db_conn)
+    # 3 real decoys, each beating Steady's real 1-GW rate (3.5) but losing to
+    # it on the real 3-GW cumulative total (9.0).
+    now = "2026-01-01T00:00:00Z"
+    for pid, name in ((7, "Decoy1"), (8, "Decoy2"), (9, "Decoy3")):
+        db_conn.execute(
+            f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'{name}',2,1,'a',0,'{now}')"
+        )
+        db_conn.execute(
+            f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+            f"VALUES ({pid}, 50, '{now}', NULL)"
+        )
+    db_conn.commit()
+    totals = dict(_SPIKY_VS_STEADY_TOTALS)
+    totals[6] = {1: 3.5, 3: 9.0, 5: 14.0}
+    for pid in (7, 8, 9):
+        totals[pid] = {1: 4.0, 3: 4.5, 5: 5.0}  # real 1-GW winner, real 3-GW loser vs Steady
+
+    def fake(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=totals[player_id][n_gw])
+
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake)
+    from fpl_agent.optimization.transfers import best_transfer_for_player
+
+    old_ranking = best_transfer_for_player(db_conn, 1, [1], bank_tenths=100, is_hit=False, n_gw=1, top_n=3)
+    new_ranking = best_transfer_for_player(db_conn, 1, [1], bank_tenths=100, is_hit=False, n_gw=3, top_n=3)
+
+    assert "Steady" not in {c.player_in_name for c in old_ranking}
+    assert "Steady" in {c.player_in_name for c in new_ranking}
+
+
 def test_search_transfer_sequences_returns_bounded_beam(db_conn, monkeypatch):
     _seed_two_team_pool(db_conn)
     _patch_expected_points_window(monkeypatch)

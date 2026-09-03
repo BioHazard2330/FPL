@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import fpl_agent.optimization.authoritative_decision as ad_mod
 import fpl_agent.optimization.strategic_planner as sp_mod
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.optimization.strategic_planner import (
@@ -9,6 +10,21 @@ from fpl_agent.optimization.strategic_planner import (
     synthesize_current_recommendation,
 )
 from fpl_agent.optimization.transfers import StartingActionOption, TransferSequence, TransferSequenceStep
+
+
+def _patch_authoritative(monkeypatch, decision_state="ACT", reason="fake authoritative reason"):
+    """Real (2026-09-02, Phase 5E) test helper - these tests exercise
+    `synthesize_current_recommendation`'s OWN surrounding logic (differ
+    detection, evidence-gating, `known_paths` boosting, no-options handling),
+    not `select_authoritative_candidate`'s own internal haircut/materiality
+    selection (that has its own dedicated `test_authoritative_decision.py`).
+    Faithfully stands in for "authoritative selection picked the real
+    highest-`path_total` option" - the exact real behavior for a fixture this
+    small (no robustness/credibility signal to disagree with EV rank on)."""
+    def fake_select(conn, options, start_event, bank_tenths, ca, top_k=6):
+        return SimpleNamespace(decision_state=decision_state, decision_reason=reason), options[0], None, None
+    monkeypatch.setattr(ad_mod, "select_authoritative_candidate", fake_select)
+    monkeypatch.setattr(sp_mod, "_reference_event", lambda conn: 3)
 
 
 def _seq(steps, total_net_ev, final_ft=1, final_bank=0):
@@ -99,6 +115,7 @@ def test_synthesize_current_recommendation_acts_on_the_best_full_horizon_option(
     ]
     monkeypatch.setattr(sp_mod, "compare_starting_actions", lambda *a, **k: options)
     monkeypatch.setattr(sp_mod, "_safe_confidence", lambda conn, pid: SimpleNamespace(overall="HIGH"))
+    _patch_authoritative(monkeypatch)
 
     rec = synthesize_current_recommendation(
         None, [1, 2, 3], free_transfers=1, bank_tenths=0, immediate_optimum_label="ROLL",
@@ -119,6 +136,7 @@ def test_synthesize_current_recommendation_downgrades_to_review_on_weak_evidence
     options = [_option("A -> B", "transfer", 50.0, out_id=1, in_id=2)]
     monkeypatch.setattr(sp_mod, "compare_starting_actions", lambda *a, **k: options)
     monkeypatch.setattr(sp_mod, "_safe_confidence", lambda conn, pid: SimpleNamespace(overall="LOW"))
+    _patch_authoritative(monkeypatch)
 
     rec = synthesize_current_recommendation(None, [1, 2, 3], free_transfers=1, bank_tenths=0)
 
@@ -137,6 +155,7 @@ def test_synthesize_current_recommendation_never_gates_roll_or_chip(monkeypatch)
         raise AssertionError("should never be called for a chip/roll action")
 
     monkeypatch.setattr(sp_mod, "_safe_confidence", _boom)
+    _patch_authoritative(monkeypatch)
 
     rec = synthesize_current_recommendation(None, [1, 2, 3], free_transfers=1, bank_tenths=0)
 
@@ -156,6 +175,7 @@ def test_synthesize_current_recommendation_prefers_a_known_wider_beam_result(mon
     ]
     monkeypatch.setattr(sp_mod, "compare_starting_actions", lambda *a, **k: options)
     monkeypatch.setattr(sp_mod, "_safe_confidence", lambda conn, pid: SimpleNamespace(overall="HIGH"))
+    _patch_authoritative(monkeypatch)
 
     known_paths = (_seq([_roll_step(2)], 120.0),)  # the real, wider main search found ROLL is actually worth 120.0
 

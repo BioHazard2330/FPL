@@ -86,8 +86,13 @@ def _projected_squad_html(lookup: dict[int, dict], xi, step: dict, out_xp: float
         # GW's squad, resolved for the specific OUT/IN player (who may not
         # be in the resulting squad, so the XI's own candidates can't be
         # reused directly) - never fabricated, `None` renders honestly.
-        out_xp_text = f" &mdash; {out_xp:.1f} xP" if out_xp is not None else ""
-        in_xp_text = f" &mdash; {in_xp:.1f} xP" if in_xp is not None else ""
+        # Real winner-pill badge (2026-09-03, direct FotMob reference) - the
+        # higher real xP of the OUT/IN pair gets a solid pill, the other
+        # stays plain text - never both, never neither.
+        out_winner = out_xp is not None and (in_xp is None or out_xp >= in_xp)
+        in_winner = in_xp is not None and (out_xp is None or in_xp > out_xp)
+        out_xp_text = f" &mdash; <span class='squad-state-xp-pill{' squad-state-xp-pill-win' if out_winner else ''}'>{out_xp:.1f} xP</span>" if out_xp is not None else ""
+        in_xp_text = f" &mdash; <span class='squad-state-xp-pill{' squad-state-xp-pill-win' if in_winner else ''}'>{in_xp:.1f} xP</span>" if in_xp is not None else ""
         net_line = ""
         if out_xp is not None and in_xp is not None:
             net = in_xp - out_xp
@@ -143,15 +148,13 @@ def _projected_squad_html(lookup: dict[int, dict], xi, step: dict, out_xp: float
     return transfer_line + chip_line + score_html + "".join(rows) + bench_html
 
 
-def render_squad_workspace(
-    conn, *, locked, sd: dict | None, pitch_heading: str, pitch_html: str, squad_error_html: str,
-    headline_xp: float, squad_value_m: float, bank_m: float, captain_name: str, vice_name: str,
-    xp_summary_label: str, actual_points_label: str,
-) -> str:
-    current_view = f"""<div class="squad-current-view" data-squad-panel="current">
-  {squad_error_html}{pitch_html}
-</div>"""
-
+def build_projected_switcher(conn, *, locked, sd: dict | None) -> tuple[str, str]:
+    """Real per-GW projected-squad switcher + preview panel - factored out
+    of the old `render_squad_workspace` (2026-09-02, Phase 6 rebuild) so
+    both the legacy squad panel and the new MY TEAM screen (`myteam.py`)
+    call the exact same real reconstruction logic, never a duplicated
+    second implementation. Returns `(switcher_html, projected_view_html)` -
+    both `""` when no real strategic plan with paths exists yet."""
     switcher_html = ""
     projected_view = ""
     if locked is not None and sd is not None and sd.get("paths"):
@@ -213,11 +216,4 @@ def render_squad_workspace(
   <div class="squad-state-preview">{''.join(blocks)}</div>
 </div>"""
 
-    return f"""<section class="panel panel-squad-workspace" id="squad" data-cat="data">
-  <h2>{_esc(pitch_heading)}
-    <span class="panel-subtitle">{actual_points_label}{headline_xp:.1f} {xp_summary_label} &middot; £{squad_value_m:.1f}m &middot; bank £{bank_m:.1f}m &middot;
-      {_captain_html(captain_name)} captain &middot; {_esc(vice_name)} vice</span></h2>
-  {switcher_html}
-  {current_view}
-  {projected_view}
-</section>"""
+    return switcher_html, projected_view

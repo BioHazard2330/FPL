@@ -170,7 +170,17 @@ def test_baseline_ids_captured_synchronously_before_start_closes_a_real_race(db_
     server.start()
     try:
         s = _sse_connect(server.port)
-        messages = _read_sse_messages(s, deadline_seconds=9)
+        # Real, confirmed-flaky-under-load timing margin (2026-09-02, Phase
+        # 5E section 11 investigation): reran this exact test 8x in
+        # isolation, always passed at ~9.5s wall time regardless (the poll
+        # loop always waits out its own deadline, message or not) - the one
+        # observed failure happened only inside a ~987s full-suite run,
+        # consistent with real thread-scheduling contention under heavy
+        # concurrent system load starving the tailer thread of CPU time
+        # within the original 9s window, not a logic bug in the server or
+        # this test. Bumped to 20s (pure wall-clock headroom, zero change to
+        # `LiveServer`/tailer behavior) rather than left flaky.
+        messages = _read_sse_messages(s, deadline_seconds=20)
         s.close()
         found = next((m for m in messages if m.get("channel") == "match_event"), None)
         assert found is not None, f"the pre-start row must still be reported as real/new, got {messages}"

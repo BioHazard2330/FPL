@@ -1,12 +1,35 @@
 import json
 
+import pytest
 from click.testing import CliRunner
 
+import fpl_agent.cli.main as main_mod
 from fpl_agent.cli.main import cli
 from fpl_agent.ingestion.sync import _upsert_many
 from fpl_agent.normalization.fpl_core import normalize_element_types, normalize_players, normalize_teams
 
 from test_sync import make_bootstrap
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dashboard_write(tmp_path, monkeypatch):
+    """Real, confirmed production bug (2026-09-02, live-verified against
+    `data/fpl.db`/`data/dashboard.html`): `match-analyze`'s own real command
+    body (`cli/main.py::match_analyze_cmd`) calls the real `_write_dashboard()`
+    whenever `change_events_written > 0` - `test_match_analyze_cmd_persists_
+    payload`/`test_match_analyze_cmd_marks_the_matching_queue_job_done` both
+    hit exactly that path with a real observation payload, and this file
+    never isolated `DATA_DIR` the way `test_cli_live_match_poll.py`'s own
+    `_isolated_live_poll_lock` fixture already does for the identical bug
+    class there. The read side was already correctly isolated (`db_conn`
+    patches `database.connection.DATA_DIR`/`DB_PATH`, so `_write_dashboard`'s
+    own `get_connection()` read this file's Arsenal/Coventry City fixture,
+    not real production data) - only the WRITE destination was not, so the
+    real `data/dashboard.html` got silently overwritten with this file's
+    fixture content (confirmed live: found the literal "Test Player"/"COV"/
+    GW1 fixture strings inside the real served dashboard). Every test in
+    this file now gets its own per-test tmp_path instead."""
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
 
 _PAYLOAD = {
     "headline": "Test headline",

@@ -91,6 +91,37 @@ TACTICAL_CHANGE, SUBSTITUTION_PATTERN, TEAM_PATTERN. `player_states`/
 `full_time` run — include them at other phases only if you want them
 ignored, or simply omit them.
 
+## Language discipline (2026-09-03, closes a real gap)
+
+Every `observed`/`inferred`/`fpl_reason` string you write here lands verbatim
+in `match_observations` and is read straight through to the FOOTBALL/SCOUT
+dashboard screens (`models/football_signal.py`'s `evidence` field). Apply
+`fpl-football-intelligence`'s filler-word rule here too, not just in the
+zero-LLM detectors it was written against:
+
+**Never write** genuine, real (as an intensifier), sustained, trusted,
+meaningful, significant, high-quality, encouraging, impressive **unless the
+same sentence also states the specific number that justifies it** - and even
+then, prefer just the number. If deleting the adjective loses no information,
+delete it.
+
+- Write `"3 goals, 8 shots, 1.95 xG, 90 minutes"`, not `"a real hat-trick
+  built on match-high shot volume and chance quality - genuine, sustained
+  central attacking involvement"`.
+- Write `"2 goals from 0.69 xG"`, not `"significant finishing
+  overperformance... genuinely elevated underlying shot quality"`.
+- Don't restate a number as adjective-laden prose in the same breath you just
+  stated it plainly - `"5 shots, 0.85 xG"` already IS the finding; a trailing
+  clause repeating it in words ("a real, high-volume... involvement") adds a
+  sentence without adding information.
+- A tactical READ (the WHY DID IT HAPPEN step) can still be genuine
+  interpretation - just write it as a plain claim tied to the observed
+  number ("started centrally, 3 of 5 shots from inside the box"), not
+  dressed up with an intensifier that substitutes for a number you don't
+  have (e.g. don't write "against a deep, low-possession opponent" unless
+  the row's own evidence actually carries the opponent's possession/shots
+  numbers - state the number or drop the claim).
+
 ## Substitutions
 
 For each real substitution in the evidence, note player off/on, minute

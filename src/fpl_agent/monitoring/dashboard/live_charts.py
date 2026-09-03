@@ -270,15 +270,22 @@ def _range_chart_html(
 
 
 def _scatter_chart_html(
-    points: list[dict], *, x_label: str, y_label: str, color_var: str, aria_label: str = "",
+    points: list[dict], *, x_label: str, y_label: str, color_var: str,
+    group_colors: dict[str, str] | None = None, aria_label: str = "",
 ) -> str:
     """Real ApexCharts scatter - `points` is `[{"x": ..., "y": ..., "name": ...}, ...]`,
     one real point per player (already-aggregated real season totals - never
-    a synthetic distribution)."""
+    a synthetic distribution). `group_colors` (optional, e.g.
+    `{"squad": "--accent", "candidate": "--structural-cyan"}`) splits points
+    into named, distinctly-colored series by each point's own `group` field
+    - a real second real-data group (e.g. squad vs recruitment candidate),
+    never decorative multi-coloring of one homogeneous series. Omitted
+    (`None`) keeps the original single flat-color series unchanged."""
     if len(points) < 2:
         return "<div class='chart-empty'>Not enough real players with recorded stats yet.</div>"
     payload = {
         "kind": "scatter", "points": points, "xLabel": x_label, "yLabel": y_label, "colorVar": color_var,
+        "groupColors": group_colors,
     }
     return (
         f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
@@ -307,20 +314,139 @@ def _bar_chart_html(
     )
 
 
-def _heatmap_chart_html(
-    row_labels: list[str], col_labels: list[str], values: list[list[float | None]],
-    *, aria_label: str = "",
-) -> str:
-    """Real ApexCharts heatmap - `values[i][j]` is the real difficulty for
-    `row_labels[i]` at `col_labels[j]` (`None` for a genuine blank GW, never
-    a fabricated value). One continuous intensity scale, not dozens of
-    independent rounded rectangles."""
-    if not row_labels or not col_labels:
-        return "<div class='chart-empty'>No real fixture data yet.</div>"
-    payload = {"kind": "heatmap", "rowLabels": row_labels, "colLabels": col_labels, "values": values}
+def render_strategic_trajectory_chart(sd: dict) -> str:
+    """Real cumulative strategic-value trajectory (2026-09-02, Phase 4C/4D -
+    "the most important visualization of this phase"). One real ApexCharts
+    line series per displayed path - x is the real calendar GW
+    (`step['event']`), y is the real running sum of `step['gw_ev']` (the
+    already-verified invariant `sum(gw_ev) == path_total`, see
+    `optimization/transfers.py`'s own docstring) - never a synthetic curve.
+
+    Real, disclosed Roll baseline limit: this project's decision JSON only
+    computes a real `delta_vs_roll` at the 3 checkpoint horizons
+    (`horizon_breakdown`, real 3/5/8-GW anchors), never a per-single-GW roll
+    trajectory - deriving one would mean interpolating/fabricating the
+    intermediate weeks. Roll is therefore drawn as 3 real anchor points
+    (`roll_total` at the full horizon, `path_total - delta_vs_roll` at the
+    shorter checkpoints, all real, already-computed subtraction of existing
+    fields) joined with a dashed line - visually distinct from the real
+    per-GW path lines, never implying the same weekly granularity.
+
+    Real strategic events (chip plays, transfers) are attached per-point so
+    the caller's JS can render them as x-axis annotations without a second
+    query. `path_idx`/`role` on each series let the client-side click
+    handler drive the SAME real path-selection state `plan.py`'s own
+    `showPath` JS already manages - one shared context, not a second one."""
+    paths = sd.get("paths") or []
+    if not paths:
+        return "<div class='chart-empty'>No real strategic paths to chart yet.</div>"
+
+    from fpl_agent.monitoring.dashboard.plan import primary_path_indices
+
+    primary_indices, family_of = primary_path_indices(paths)
+    # Real display cap (2026-09-02): the leading path plus up to 3 further
+    # genuinely distinct strategy families - matches the same real "don't
+    # show near-duplicate tail variants as if they're separate ideas" rule
+    # `plan.py`'s own path selector already applies, so the chart and the
+    # selector never disagree about how many real alternatives exist.
+    shown_indices = primary_indices[:4]
+
+    def _series_for_path(i: int, role: str) -> dict | None:
+        p = paths[i - 1]
+        steps = p.get("steps") or []
+        if not steps:
+            return None
+        points, events = [], []
+        running = 0.0
+        for s in steps:
+            gw = s["event"]
+            running += s.get("gw_ev") or 0.0
+            points.append({"x": gw, "y": round(running, 2)})
+            action = s.get("action", "ROLL")
+            if action != "ROLL":
+                label = s.get("chip_played").upper() if s.get("chip_played") else action[:14]
+                events.append({"x": gw, "label": label})
+        return {
+            "name": f"Path {i}", "pathIdx": i, "role": role,
+            "colorVar": "--accent" if role == "leading" else "--muted",
+            "points": points, "events": events,
+        }
+
+    series = []
+    for rank, i in enumerate(shown_indices):
+        s = _series_for_path(i, "leading" if rank == 0 else "alt")
+        if s is not None:
+            series.append(s)
+    if not series:
+        return "<div class='chart-empty'>No real strategic paths to chart yet.</div>"
+
+    # Real Roll baseline anchors - see this function's own docstring for why
+    # only 3 real points exist, never a fabricated per-GW roll line.
+    start_gw = paths[0]["steps"][0]["event"] if paths[0].get("steps") else None
+    roll_points = []
+    hb = paths[0].get("horizon_breakdown") or {}
+    if start_gw is not None:
+        for h_key in sorted(hb, key=lambda k: int(k)):
+            entry = hb[h_key]
+            if entry.get("delta_vs_roll") is None:
+                continue
+            roll_points.append({
+                "x": start_gw + int(h_key) - 1,
+                "y": round(entry["path_total"] - entry["delta_vs_roll"], 2),
+            })
+        roll_total = sd.get("roll_total")
+        horizon_gw = sd.get("horizon_gw")
+        if roll_total is not None and horizon_gw and not any(rp["x"] == start_gw + horizon_gw - 1 for rp in roll_points):
+            roll_points.append({"x": start_gw + horizon_gw - 1, "y": round(roll_total, 2)})
+    if roll_points:
+        series.append({
+            "name": "Roll", "pathIdx": None, "role": "roll", "colorVar": "--faint",
+            "points": roll_points, "events": [],
+        })
+
+    payload = {"kind": "trajectory", "series": series, "valueFmt": "float"}
     return (
-        f"<div class='live-chart-canvas-wrap'><div class='live-chart-canvas' "
-        f"data-chart=\"{_payload_attr(payload)}\" role='img' aria-label='{_esc_attr(aria_label)}'></div></div>"
+        f"<div class='live-chart-canvas-wrap plan-trajectory-canvas-wrap'><div class='live-chart-canvas' "
+        f"data-chart-id='plan-trajectory' "
+        f"data-chart=\"{_payload_attr(payload)}\" role='img' "
+        f"aria-label='Real cumulative strategic value by gameweek, leading and alternative paths'></div></div>"
+    )
+
+
+def render_strategic_contribution_chart(sd: dict) -> str:
+    """Real, honest "why this beats Roll" decomposition (2026-09-02, Phase
+    4C/4D section 9) - deliberately a SIMPLER two-segment breakdown (Roll
+    baseline vs this path's real added value) rather than a full per-chip/
+    per-transfer waterfall.
+
+    Real, disclosed reason for the simpler shape: this project's own
+    `chip_schedule` (the only other source with a per-chip real
+    `expected_marginal_value`) is a SEPARATE DP cross-check that can
+    legitimately name a DIFFERENT chip/GW pairing than the leading path's
+    own real steps (`test_dashboard.py`'s own "2026-08-29 P0 chip-mapping
+    fix" regression test exists specifically to guard against exactly this
+    mismatch being shown as if it were the SAME path). Using it here to
+    "explain" this path's own real number would risk reintroducing that
+    already-fixed inconsistency. The two real numbers used instead
+    (`roll_total`, `delta_vs_roll`) are the exact same ones already shown in
+    the Plan lead header - this chart never disagrees with that real number,
+    just visualizes its two real components. A full per-component
+    (fixture/minutes/attacking/chip) breakdown would need a real backend
+    addition this phase's own "do not touch backend decision logic"
+    instruction puts out of scope - a real, scoped, disclosed follow-up."""
+    paths = sd.get("paths") or []
+    roll_total = sd.get("roll_total")
+    if not paths or roll_total is None:
+        return "<div class='chart-empty'>Not enough real data yet for a contribution breakdown.</div>"
+    leader = paths[0]
+    delta = leader.get("delta_vs_roll")
+    if delta is None:
+        return "<div class='chart-empty'>Not enough real data yet for a contribution breakdown.</div>"
+    return _column_chart_html(
+        ["Leading strategy"],
+        [("Roll baseline", [round(roll_total, 1)], "--faint"), ("Added value", [round(delta, 1)], "--accent")],
+        value_fmt="float", stacked=True,
+        aria_label="Real contribution breakdown - Roll baseline vs this path's added value",
     )
 
 
@@ -540,8 +666,11 @@ def render_captain_impact_chart(conn: sqlite3.Connection, event: int | None) -> 
     labels = [_time_label(v[0]) for _, v in ordered_buckets]
     captain_vals = [round(v[2], 1) for _, v in ordered_buckets]
     squad_vals = [round(v[1] - v[2], 1) for _, v in ordered_buckets]
+    # Real color-collision fix (2026-09-03) - see `render_team_strength_
+    # chart`'s own note; a stacked bar with both segments the same literal
+    # color hid the real captain-vs-rest split entirely.
     chart = _column_chart_html(
-        labels, [("Captain", captain_vals, "--accent-2"), ("Rest of squad", squad_vals, "--accent")],
+        labels, [("Captain", captain_vals, "--accent-2"), ("Rest of squad", squad_vals, "--structural-cyan")],
         value_fmt="int", stacked=True, aria_label="Real live captain impact by time window",
     )
     return f"""<div class="live-chart-card">
@@ -582,10 +711,13 @@ def render_actual_vs_expected_chart(conn: sqlite3.Connection, entry_id: int) -> 
         return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks with a real recorded prediction.</div>"
     labels = [f"GW{e}" for e in actual_series.events]
     diff = [round(a - e, 1) for a, e in zip(actual_series.values, expected_series.values)]
+    # Real color-collision fix (2026-09-03, same `--accent`/`--accent-2`
+    # identical-hex bug as Team Strength/Captain Impact) - Difference gets
+    # its own distinct hue, never a second shade of Actual's green.
     return _column_chart_html(
         labels,
-        [("Actual", actual_series.values, "--accent"), ("Expected", expected_series.values, "--faint"),
-         ("Difference", diff, "--accent-2")],
+        [("Actual", actual_series.values, "--accent-2"), ("Expected", expected_series.values, "--faint"),
+         ("Difference", diff, "--structural-cyan")],
         value_fmt="int", zero_line=True,
     )
 
@@ -602,12 +734,17 @@ def render_projection_range_chart(locked) -> str:
     candidates = sorted(locked.xi.starting + locked.xi.bench, key=lambda c: c.median, reverse=True)
     if not candidates:
         return ""
-    labels = [c.web_name for c in candidates]
+    # Real captain callout (2026-09-03) - the same real armband already
+    # shown on the pitch/status line, surfaced here too so the chart's own
+    # highest-stakes real player (2x points) is identifiable at a glance,
+    # not just another unlabeled bar.
+    captain_id = locked.xi.captain.player_id if locked.xi.captain else None
+    labels = [c.web_name + (" (C)" if c.player_id == captain_id else "") for c in candidates]
     floors = [round(c.floor, 1) for c in candidates]
     medians = [round(c.median, 1) for c in candidates]
     ceilings = [round(c.ceiling, 1) for c in candidates]
     chart = _range_chart_html(
-        labels, floors, medians, ceilings, color_var="--accent", value_fmt="float",
+        labels, floors, medians, ceilings, color_var="--accent-2", value_fmt="float",
         aria_label="Projected points range per squad player, next real gameweek",
     )
     return f"""<div class="live-chart-card live-chart-card-wide">
@@ -696,7 +833,13 @@ def render_team_strength_chart(conn: sqlite3.Connection, squad_team_ids: set[int
     defence = [round(-ts.defence, 2) for _, ts in ordered]  # sign-flipped: higher = better defence, matches "higher = better" for attack
     highlight = [fpl_id_by_market_id.get(tid) in squad_team_ids for tid, _ in ordered]
     chart = _bar_chart_html(
-        labels, [("Attack", attack, "--accent"), ("Defence", defence, "--accent-2")], value_fmt="float",
+        # Real color-collision fix (2026-09-03, direct user finding: "graphs
+        # look terrible" traced here to `--accent`/`--accent-2` being the
+        # exact same literal color, so Attack and Defence were visually
+        # indistinguishable) - Defence gets a genuinely distinct hue from
+        # the established structural-accent palette, never a second shade
+        # of the same green.
+        labels, [("Attack", attack, "--accent"), ("Defence", defence, "--structural-cyan")], value_fmt="float",
         aria_label="Real Dixon-Coles attack/defence rating per team", highlight=highlight,
     )
     return f"""<div class="live-chart-card live-chart-card-wide">
@@ -753,40 +896,46 @@ def render_player_comparison_chart(conn: sqlite3.Connection, squad_ids: set[int]
   </div>"""
 
 
-_FIXTURE_HEATMAP_N_GW = 5
-
-
-def render_fixture_heatmap_chart(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
-    """Real teams x GWs fixture-difficulty heatmap (2026-08-29, direct user
-    spec: "a proper heatmap... visually readable as a single analytical
-    object"). Additive alongside the existing Fixture Ticker DOM/CSS grid
-    (`fixtures.py::render_fixture_tool_html`), not a replacement - that
-    grid's real per-cell sort/filter/metric-toggle/crest/DGW-BGW-badge
-    interactivity has no heatmap equivalent (a real, user-confirmed
-    trade-off from earlier this same session). Reuses the exact same real
-    `team_fixture_ticker` every row of that grid already calls - no second,
-    divergent difficulty computation."""
-    from fpl_agent.models.fixtures import live_or_reference_event, team_fixture_ticker
-
-    team_rows = conn.execute("SELECT id, short_name FROM teams ORDER BY short_name").fetchall()
-    if not team_rows:
-        return ""
-    start_event = live_or_reference_event(conn) or 1
-    col_labels = [f"GW{start_event + i}" for i in range(_FIXTURE_HEATMAP_N_GW)]
-    row_labels: list[str] = []
-    values: list[list[float | None]] = []
-    for r in team_rows:
-        entries = team_fixture_ticker(conn, r["id"], n_gw=_FIXTURE_HEATMAP_N_GW, from_event=start_event)
-        by_event = {e.event: float(e.difficulty) for e in entries}
-        row_labels.append(r["short_name"])
-        values.append([by_event.get(start_event + i) for i in range(_FIXTURE_HEATMAP_N_GW)])
-    if not row_labels:
-        return ""
-    chart = _heatmap_chart_html(
-        row_labels, col_labels, values, aria_label="Real fixture difficulty heatmap, all Premier League teams",
+def render_recruitment_scatter_chart(conn: sqlite3.Connection, squad_ids: set[int], breakouts: list, locked) -> str:
+    """Real price vs next-GW xP scatter (2026-09-03, Phase 7 - `fpl-
+    visualization` skill's own real candidate: "price vs xP... not yet
+    built, only build with real axis data, never fabricated jitter"; master
+    brief's SCOUT ask: "use visual comparison... axes: price, xP"). Two real
+    point groups, never a full 600-player league scan (this project's own
+    standing "never re-scan" discipline) - your OWN squad (`locked.xi`,
+    already-computed real `PlayerCandidate.median`/`price_tenths`, zero new
+    queries) plus the SAME real `find_breakouts()` candidate pool `scout.py`
+    already fetched once for the Opportunity Board (passed in as
+    `breakouts`, never a second `expected_points()` scan). This is honestly
+    a "candidates worth a look" scatter, not an exhaustive league-wide one -
+    the two real pools this dashboard already trusts elsewhere, not a new
+    third data source."""
+    points = []
+    if locked is not None:
+        for c in locked.xi.starting + locked.xi.bench:
+            if c.price_tenths > 0:
+                points.append({
+                    "x": round(c.price_tenths / 10.0, 1), "y": round(c.median, 1),
+                    "name": c.web_name, "club": c.team_short, "position": c.position, "group": "squad",
+                })
+    if breakouts:
+        from fpl_agent.monitoring.dashboard.legacy import _bulk_player_lookup
+        lookup = _bulk_player_lookup(conn, {b.player_id for b in breakouts})
+        for b in breakouts:
+            info = lookup.get(b.player_id)
+            if info is None or not info.get("price_tenths"):
+                continue
+            points.append({
+                "x": round(info["price_tenths"] / 10.0, 1), "y": round(b.median, 1),
+                "name": b.web_name, "club": info["team_short"], "position": b.position, "group": "candidate",
+            })
+    chart = _scatter_chart_html(
+        points, x_label="Price (£m)", y_label="Next-GW xP", color_var="--accent",
+        group_colors={"squad": "--accent", "candidate": "--structural-cyan"},
+        aria_label="Real price vs next-gameweek xP, your squad and real breakout candidates",
     )
     return f"""<div class="live-chart-card live-chart-card-wide">
-    <div class="live-chart-title">Fixture difficulty matrix <span class="panel-subtitle">real FDR heatmap, all teams, next {_FIXTURE_HEATMAP_N_GW} GWs</span></div>
+    <div class="live-chart-title">Price vs xP <span class="panel-subtitle">your real squad + real breakout candidates, next GW</span></div>
     {chart}
   </div>"""
 
@@ -817,12 +966,23 @@ def render_player_form_chart(conn: sqlite3.Connection, squad_ids: set[int]) -> s
     for r in rows:
         by_player.setdefault(r["player_id"], []).append(r)
     series = []
-    palette = ["--accent", "--accent-2", "--ok", "--warn", "--bad", "--faint"]
+    # Real color-collision fix (2026-09-03, direct user finding: "player
+    # form graph looks terrible") - the old 6-slot palette had `--accent`/
+    # `--accent-2` at literally the same hex and `--ok` a near-identical
+    # green (all confirmed by reading :root directly), so 3 of 6 slots were
+    # visually one color - a genuine squad of 8-10 eligible players rendered
+    # as a tangle of indistinguishable green lines. 7 genuinely distinct
+    # hues from this codebase's own established accent palette; a dashed
+    # stroke on the second pass through the palette keeps a same-colored
+    # line (an honest, disclosed limit past 7 real concurrent series, not
+    # hidden by looking identical) visually separable from the first.
+    palette = ["--accent-2", "--structural-cyan", "--captaincy-pink", "--tactical-purple", "--bad", "--uncertainty-amber", "--faint"]
     for i, (pid, prows) in enumerate(by_player.items()):
         if len(prows) < 2:
             continue
         series.append({
             "label": prows[0]["web_name"], "colorVar": palette[i % len(palette)],
+            "dash": 4 * (i // len(palette)),
             "points": [{"x": r["match_date"], "y": round(r["xg"] + r["xa"], 2)} for r in prows],
         })
     if not series:
@@ -861,7 +1021,6 @@ def render_live_charts(
         + render_team_strength_chart(conn, squad_team_ids)
         + render_player_comparison_chart(conn, squad_ids, locked)
         + render_player_value_chart(locked)
-        + render_fixture_heatmap_chart(conn, squad_ids)
         + render_player_form_chart(conn, squad_ids)
     )
     if entry_id is None:

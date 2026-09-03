@@ -90,12 +90,8 @@ def test_squad_projected_preview_never_shows_the_disagreeing_dp_cross_check(db_c
     locked, _ = _locked_and_decision(db_conn)
     sd = _make_sd_with_disagreeing_chip_schedule(chip_event=2, chip_name="wildcard")
 
-    result = squad.render_squad_workspace(
-        db_conn, locked=locked, sd=sd, pitch_heading="Squad", pitch_html="<div></div>",
-        squad_error_html="", headline_xp=50.0, squad_value_m=100.0, bank_m=0.5,
-        captain_name="Test Captain", vice_name="Test Vice", xp_summary_label="xP",
-        actual_points_label="",
-    )
+    switcher_html, projected_view = squad.build_projected_switcher(db_conn, locked=locked, sd=sd)
+    result = switcher_html + projected_view
 
     assert "WILDCARD" in result
     assert "BBOOST" not in result
@@ -106,12 +102,8 @@ def test_squad_projected_preview_chip_badge_on_correct_event_block(db_conn):
     locked, _ = _locked_and_decision(db_conn)
     sd = _make_sd_with_disagreeing_chip_schedule(chip_event=4, chip_name="freehit")
 
-    result = squad.render_squad_workspace(
-        db_conn, locked=locked, sd=sd, pitch_heading="Squad", pitch_html="<div></div>",
-        squad_error_html="", headline_xp=50.0, squad_value_m=100.0, bank_m=0.5,
-        captain_name="Test Captain", vice_name="Test Vice", xp_summary_label="xP",
-        actual_points_label="",
-    )
+    switcher_html, projected_view = squad.build_projected_switcher(db_conn, locked=locked, sd=sd)
+    result = switcher_html + projected_view
 
     # `data-event='N' hidden` uniquely picks the squad-state-block (the pills
     # above it share the same `data-event` attribute but no `hidden` flag).

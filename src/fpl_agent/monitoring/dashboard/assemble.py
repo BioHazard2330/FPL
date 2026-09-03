@@ -14,16 +14,15 @@ from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.live_rank import classify_precision
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
-from fpl_agent.ingestion.my_team import get_my_team_entry_id
+from fpl_agent.ingestion.my_team import get_my_team_entry_id, get_used_chips
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.monitoring.dashboard import (
-    benchmark, fixtures, home, injuries, intelligence, live_charts, market, match_centre, opportunity, plan,
-    player_data, points_changes, price_history, squad, template_team,
+    benchmark, command, football, injuries, live_charts, match_centre, myteam,
+    plan, points_changes, scout, squad,
 )
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
-    _PROJECTION_GWS,
     _alternatives_html,
     _analyze_locked_decisions,
     _captain_html,
@@ -35,12 +34,11 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _decision_audit_html,
     _decision_comparison_html,
     _esc,
-    _fixture_projections_html,
     _health_summary_html,
     _humanize,
     _lifecycle_stage_label,
     _live_tracking_html,
-    _match_report_strip_html,
+    _market_divergence_html,
     _model_football_conflict_html,
     _news_html,
     _pitch_html,
@@ -51,8 +49,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _source_chips,
     _source_freshness,
     _squad_live_window,
-    _statistics_html,
-    _team_outlook_html,
     _chip_strategy_html,
 )
 from fpl_agent.monitoring.dashboard.plan import path_confidence, path_descriptor
@@ -153,6 +149,7 @@ def generate_dashboard_html(
             pitch_html = _pitch_html_from_xi(conn, display_xi, cap_id, vc_id, live_payload, reference_event, ta=ta)
     else:
         squad_ids = {c.player_id for c in primary.result.squad} if primary and primary.result.squad else set()
+        display_xi = primary.xi if primary and primary.result.squad else None
         captain_name = report.captain.web_name if report.captain else "n/a"
         vice_name = report.vice.web_name if report.vice else "n/a"
         risks_list = report.risks
@@ -343,22 +340,36 @@ def generate_dashboard_html(
             "build_live_snapshot failed while rendering the SYSTEM LIVE strip - falling back to the unpolled shell"
         )
 
-    home_section_html = home.render_hero(
-        gw_label_html=gw_label_html,
+    # Real (2026-09-02, Phase 6A) - chips available THIS gameweek, not yet
+    # burned this season. `SUPPORTED_CHIP_NAMES` is this project's own real
+    # 4-chip catalog (transfers.py/chips.py); `get_used_chips` is the same
+    # real, already-used-elsewhere function `fpl strategic-plan` itself uses
+    # to exclude burned chips from the search - never a second, competing
+    # eligibility check.
+    from fpl_agent.optimization.chips import SUPPORTED_CHIP_NAMES
+
+    used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
+    chips_available = [c for c in SUPPORTED_CHIP_NAMES if c not in used_chip_names]
+
+    command_section_html = command.render_command_screen(
+        conn=conn, gw_label_html=gw_label_html, gw_label_plain=gw_label,
         current_rec=current_rec, ta=ta, ca=ca, ft_value=ft_tile_value, ft_title=ft_tile_title,
         actual_points=my_live_score.points if my_live_score is not None else None,
-        next_xp=headline_xp, bank_m=bank_m, captain_name=captain_name, rank_tile_html=live_rank_tile_html,
+        next_xp=headline_xp, bank_m=bank_m, squad_value_m=squad_value_m,
+        captain_name=captain_name, rank_tile_html=live_rank_tile_html, chips_available=chips_available,
         freshness=freshness, cross_check=cross_check, live_snapshot=live_snapshot_for_strip,
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
   {plan.render_plan_workspace(conn, sd, locked, squad_ids)}
 </section>"""
-    squad_section_html = squad.render_squad_workspace(
-        conn, locked=locked, sd=sd, pitch_heading=pitch_heading, pitch_html=pitch_html,
-        squad_error_html=squad_error_html, headline_xp=headline_xp, squad_value_m=squad_value_m,
-        bank_m=bank_m, captain_name=captain_name, vice_name=vice_name,
-        xp_summary_label=xp_summary_label, actual_points_label=actual_points_label,
+    switcher_html, projected_view = squad.build_projected_switcher(conn, locked=locked, sd=sd)
+    squad_section_html = myteam.render_my_team_screen(
+        pitch_heading=pitch_heading, pitch_html=pitch_html, squad_error_html=squad_error_html,
+        squad_value_m=squad_value_m, bank_m=bank_m, captain_name=captain_name, vice_name=vice_name,
+        xp_summary_label=xp_summary_label, actual_points_label=actual_points_label, headline_xp=headline_xp,
+        risks=risks_list, switcher_html=switcher_html, projected_view=projected_view,
+        free_transfers=ft_tile_value, xi=display_xi,
     )
 
     workspace_payload = build_workspace_payload(
@@ -387,14 +398,14 @@ def generate_dashboard_html(
       </div>
     </details>"""
 
-    intelligence_summary_section_html = f"""<section class="panel panel-intelligence-summary" id="intelligence-summary" data-cat="intelligence">
-  <h2>Intelligence <span class="panel-subtitle">real match data turned into an FPL briefing - league-wide, not just your squad</span></h2>
-  {intelligence.render_intelligence_workspace(conn, squad_ids, reference_event, ta, ca)}
-</section>"""
-    market_summary_section_html = f"""<section class="panel panel-market-summary" id="market-signals" data-cat="data">
-  <h2>Market <span class="panel-subtitle">model vs consensus, price movement, ownership momentum</span></h2>
-  {market.render_market_workspace(conn, squad_ids)}
-</section>"""
+    # Real (2026-09-02, Phase 6) - the new FOOTBALL screen replaces
+    # Intelligence/Team Outlook/Match Reports outright (one real signal
+    # feed, `football.py`, not three separately-rendered views of largely
+    # the same real data). Squad-scoped "who benefits"/"risk monitor"/"what
+    # would change this" content moved to Command/My Team, where the
+    # decision those signals actually inform now lives - never duplicated
+    # here too.
+    football_section_html = football.render_football_screen(conn, squad_ids, ca=ca)
     # Real "was this player considered by the strategic optimizer" set
     # (2026-08-29, direct P1 spec line) - every player_in_id appearing
     # anywhere across the real diverse top-N paths (`sd['paths']`, each a
@@ -412,10 +423,7 @@ def generate_dashboard_html(
             if step.get("player_in_id") is not None
         }
 
-    opportunity_board_section_html = f"""<section class="panel panel-opportunity" id="opportunities" data-cat="intelligence">
-  <h2>Opportunity Board <span class="panel-subtitle">a real scouting board - breakout, fixture swing, role change, value, trap</span></h2>
-  {opportunity.render_opportunity_workspace(conn, squad_ids, optimizer_considered_ids, ta)}
-</section>"""
+    scout_section_html = scout.render_scout_screen(conn, squad_ids, optimizer_considered_ids, ta, locked=locked)
     live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
   <h2>Live Tracking</h2>
   {_live_tracking_html(conn, squad_ids, live_payload, captain_id=(locked.xi.captain.player_id if locked is not None and locked.xi.captain else None), by_player=(my_live_score.by_player if my_live_score is not None else None))}
@@ -425,21 +433,6 @@ def generate_dashboard_html(
     <ul class="live-changes-feed" id="live-changes-feed"></ul>
   </div>
 </section>"""
-    match_report_inner = _match_report_strip_html(conn, squad_ids)
-    match_report_section_html = f"""<section class="panel panel-match-intelligence" id="match-reports" data-cat="intelligence">
-  <h2>Match Reports <span class="panel-subtitle">upcoming fixtures + qualitative analysis for finished matches - genuinely live matches are in Live Football above</span></h2>
-  <div class="outlook-grid">
-{match_report_inner}
-  </div>
-</section>"""
-    team_outlook_inner = _team_outlook_html(conn, squad_ids)
-    team_outlook_section_html = f"""<section class="panel panel-outlook" id="football-intelligence" data-cat="intelligence">
-  <h2>Team Outlook <span class="panel-subtitle">churn, manager news, formation, tactical signal - Tier 1 + 2-4 + qualitative</span></h2>
-  <div class="outlook-table-wrap">
-{team_outlook_inner}
-  </div>
-</section>"""
-
     # Real live Match Centre (2026-08-29, "live command centre" pass) - score/
     # minute/team-stats/momentum/shot-map/my-players for any genuinely LIVE/
     # HALFTIME match, single-sourced from `live_snapshot._active_matches_block`
@@ -453,20 +446,12 @@ def generate_dashboard_html(
     # whenever nothing is genuinely live right now.
     match_centre_section_html = match_centre.render_match_centre(conn, squad_ids)
 
-    if dash_state == "LIVE":
-        panel_order = [live_section_html, match_report_section_html,
-                        team_outlook_section_html, intelligence_summary_section_html,
-                        opportunity_board_section_html, market_summary_section_html]
-    elif dash_state == "POST_MATCH":
-        panel_order = [live_section_html, match_report_section_html, team_outlook_section_html,
-                        intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html, compare_panel]
+    if dash_state == "POST_MATCH":
+        panel_order = [live_section_html, compare_panel]
     else:
-        panel_order = [intelligence_summary_section_html, opportunity_board_section_html, market_summary_section_html, live_section_html]
+        panel_order = [live_section_html]
     ordered_panels_html = "\n\n".join(p for p in panel_order if p)
-    match_intelligence_promoted = dash_state in ("LIVE", "POST_MATCH")
 
-    fixtures_fresh = _source_freshness(conn, "fpl_api_fixtures")
-    fixtures_fresh_html = f"<span class='freshness-tag'>Updated {_esc(fixtures_fresh)}</span>" if fixtures_fresh else ""
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
     news_fresh_html = f"<span class='panel-subtitle freshness-tag'>Updated {_esc(news_fresh)}</span>" if news_fresh else ""
 
@@ -521,52 +506,39 @@ def generate_dashboard_html(
 </header>
 
 <nav class="site-nav" aria-label="Section navigation">
-  <a href="#home" class="site-nav-primary">Home</a>
-  <a href="#live-match-centre" class="site-nav-primary">Live</a>
+  <!-- Real product architecture (2026-09-02/03, Phase 6 complete rebuild) -
+       the six real screens, primary. COMMAND/MY TEAM/FOOTBALL/SCOUT each
+       have their own real screen-owned renderer (`command.py`/`myteam.py`/
+       `football.py`/`scout.py`); PLAN/ADVANCED are composed directly in
+       this file (`plan.py`'s workspace, and the still-real `legacy.py`
+       Advanced panels respectively) rather than their own module - real
+       content either way, never a placeholder anchor. -->
+  <a href="#screen-command" class="site-nav-primary">Command</a>
+  <a href="#squad" class="site-nav-primary">My Team</a>
   <a href="#plan" class="site-nav-primary">Plan</a>
-  <a href="#squad" class="site-nav-primary">Squad</a>
-  <a href="#intelligence-summary" class="site-nav-primary">Intelligence</a>
-  <a href="#market-signals" class="site-nav-primary">Market</a>
+  <a href="#screen-football" class="site-nav-primary">Football</a>
+  <a href="#screen-scout" class="site-nav-primary">Scout</a>
+  <a href="#advanced" class="site-nav-primary">Advanced</a>
   <span class="site-nav-sep"></span>
-  <a href="#opportunities" class="site-nav-secondary">Opportunities</a>
-  <a href="#fixtures" class="site-nav-secondary">Fixtures</a>
-  <a href="#template-team" class="site-nav-secondary">Template</a>
-  <a href="#price-history" class="site-nav-secondary">Prices</a>
-  <a href="#advanced" class="site-nav-secondary">Advanced</a>
+  <a href="#live-match-centre" class="site-nav-secondary">Live</a>
 </nav>
 
-{home_section_html}
+{command_section_html}
 {payload_script_html}
 
 {match_centre_section_html}
 
+{squad_section_html}
+
 {plan_section_html}
 
-{squad_section_html}
+{football_section_html}
+
+{scout_section_html}
 
 {ordered_panels_html}
 
-<section class="panel panel-ticker" id="fixtures" data-cat="data">
-  <h2>Fixture Tool <span class="panel-subtitle">green easy, red hard, real FPL strength ratings</span>{fixtures_fresh_html}</h2>
-{fixtures.render_fixture_tool_html(conn, squad_ids)}
-</section>
-
-{"" if match_intelligence_promoted else team_outlook_section_html}
-{"" if match_intelligence_promoted else match_report_section_html}
-
 <div class="panel-grid" id="market-detail">
-  <section class="panel panel-fixture-projections" data-cat="data">
-    <h2>Fixture Projections <span class="panel-subtitle">real projected goals + clean sheet %, next {_PROJECTION_GWS} GWs</span></h2>
-{_fixture_projections_html(conn, squad_ids)}
-  </section>
-
-  <section class="panel panel-statistics" data-cat="data">
-    <h2>Statistics <span class="panel-subtitle">real current-season stat leaders</span></h2>
-    <div class="stats-table">
-{_statistics_html(conn, squad_ids)}
-    </div>
-  </section>
-
   <section class="panel panel-news" data-cat="data">
     <h2>FPL Market / Player News <span class="panel-subtitle">journalism, Tier 2-4, filtered to real player/team matches</span>{news_fresh_html}</h2>
     <div class="news-list">
@@ -579,26 +551,11 @@ def generate_dashboard_html(
 {injuries.render_injuries_html(conn)}
   </section>
 
-  <section class="panel panel-expected-data" data-cat="data">
-    <h2>Expected Data <span class="panel-subtitle">real current-season xG/xA/xGI, total and per-90</span></h2>
-{player_data.render_expected_data_html(conn)}
-  </section>
-
   <section class="panel panel-points-changes" id="points-changes" data-cat="data">
     <h2>Points Changes <span class="panel-subtitle">post-match revisions to Bonus Points and DefCon</span></h2>
 {points_changes.render_points_changes_html(conn, squad_ids)}
   </section>
-
-  <section class="panel panel-template-team" id="template-team" data-cat="intelligence">
-    <h2>Template Team <span class="panel-subtitle">highest-owned XI, sampled top-10k-league EO where available</span></h2>
-{template_team.render_template_team_html(conn, squad_ids)}
-  </section>
 </div>
-
-<section class="panel panel-price-history" id="price-history" data-cat="data">
-  <h2>Price History <span class="panel-subtitle">real price-change forecast + confirmed change ledger, league-wide</span></h2>
-{price_history.render_price_history_html(conn, squad_ids)}
-</section>
 
 <section class="panel panel-advanced-hub" id="advanced" data-cat="data">
   <h2>Advanced &amp; System <span class="panel-subtitle">diagnostic detail, from-scratch rebuild comparison, raw feeds, system health - real data</span></h2>
@@ -609,6 +566,13 @@ def generate_dashboard_html(
       <summary><h3>Chip Strategy <span class="panel-subtitle">single-decision-point value (is using this chip worth it RIGHT NOW, in isolation) - a different, narrower question from Plan's chip timing above (jointly timed against the winning transfer path)</span></h3></summary>
       <div class="chip-strategy-list">
 {_chip_strategy_html(conn, squad_ids)}
+      </div>
+    </details>
+
+    <details class="panel-advanced">
+      <summary><h3>Model vs Market Divergence <span class="panel-subtitle">real expected-goals model vs devigged bookmaker consensus - a decision cross-check, not a scouting signal</span></h3></summary>
+      <div class="market-section">
+{_market_divergence_html(conn, squad_ids)}
       </div>
     </details>
 
@@ -772,15 +736,22 @@ def generate_dashboard_html(
         {{ key: 'worst', color: cssVar('--bad'), label: 'Worst', offsetY: 18 }},
         {{ key: 'best', color: cssVar('--ok'), label: 'Best', offsetY: -18 }},
       ];
+      var n = rawValues.length;
       defs.forEach(function(d) {{
         var idx = payload.markers[d.key];
         if (idx === null || idx === undefined) return;
+        // Real edge fix (2026-09-03, direct user finding: the label box for
+        // an edge point - almost guaranteed with only 2-3 real early-season
+        // GWs - centers on the point and clips off the plot area, colliding
+        // with the y-axis). Nudge inward horizontally at either edge; no
+        // effect on an interior point (offsetX stays 0).
+        var offsetX = idx === 0 ? 42 : (idx === n - 1 ? -42 : 0);
         points.push({{
           x: isDatetime ? payload.x[idx] : payload.labels[idx], y: payload.values[idx],
           marker: {{ size: 4, fillColor: d.color, strokeColor: surface2, strokeWidth: 2 }},
           label: {{
             text: d.label + ' ' + fmtVal(payload.values[idx], valueFmt),
-            borderColor: d.color, offsetY: d.offsetY,
+            borderColor: d.color, offsetY: d.offsetY, offsetX: offsetX,
             style: {{ color: fg, background: surface2, fontSize: '11px', fontWeight: 700, padding: {{ left: 7, right: 7, top: 4, bottom: 4 }} }},
           }},
         }});
@@ -799,6 +770,13 @@ def generate_dashboard_html(
       }};
     }});
 
+    // Real sparse-series fix (2026-09-03, direct user finding: early-season
+    // charts with only 2-3 real GWs render as a bare line with invisible
+    // markers - reads as broken, not "intentionally sparse"). A real, always-
+    // visible dot per data point once the series is thin enough that a
+    // hover-only marker would leave the chart looking empty; dense
+    // (intragame) series keep hover-only, unchanged.
+    var markerSize = rawValues.length <= 8 ? 5 : 0;
     return baseChart({{
       type: 'area',
       series: series,
@@ -806,7 +784,7 @@ def generate_dashboard_html(
       stroke: {{ curve: curveType, width: isDual ? 2 : 2.5 }},
       fill: {{ type: 'gradient', gradient: {{ shadeIntensity: 1, opacityFrom: isDual ? 0.25 : 0.4, opacityTo: 0.03, stops: [0, 95, 100] }} }},
       dataLabels: {{ enabled: false }},
-      markers: {{ size: 0, hover: {{ size: 5 }} }},
+      markers: {{ size: markerSize, strokeWidth: 2, strokeColors: surface2, hover: {{ size: markerSize + 2 }} }},
       grid: baseGrid(),
       legend: {{ show: isDual, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600, markers: {{ size: 5 }} }},
       xaxis: Object.assign(
@@ -855,19 +833,43 @@ def generate_dashboard_html(
   // --- column / grouped column (captain contribution, actual vs expected) -
   function buildColumn(payload) {{
     var valueFmt = payload.valueFmt || 'float';
-    var colors = payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
+    var distributed = !!payload.barColors;
+    var colors = distributed ? payload.barColors.map(function(c) {{ return cssVar(c); }})
+      : payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
     var pct = payload.captainPct;
     return baseChart({{
       type: 'bar',
       stacked: !!payload.stacked,
       series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.values }}; }}),
       colors: colors,
-      plotOptions: {{ bar: {{ columnWidth: payload.stacked ? '55%' : (payload.series.length > 1 ? '65%' : '45%'), borderRadius: payload.stacked ? 0 : 3 }} }},
-      dataLabels: {{ enabled: false }},
+      plotOptions: {{ bar: {{ columnWidth: payload.stacked ? '55%' : (payload.series.length > 1 ? '65%' : '45%'), borderRadius: payload.stacked ? 0 : 3, distributed: distributed }} }},
+      // Real value-on-bar labels (2026-09-03, direct user finding: a plain
+      // unlabeled bar chart with only 2-3 real GW columns reads as bare/
+      // unfinished) - a real FotMob-style density touch, skipped only for a
+      // stacked chart (labels would overlap the segment boundary).
+      dataLabels: {{
+        enabled: !payload.stacked,
+        // Real captain-share-of-squad label (2026-09-03) - the tooltip
+        // already carried this real, already-computed percent; surfacing it
+        // directly on the bar too means the chart's own subtitle promise
+        // ("real % of your real squad total") is actually visible without
+        // hovering, on a chart that otherwise renders as bare single bars.
+        formatter: function(v, opts) {{
+          var text = fmtVal(v, valueFmt);
+          if (pct && opts.seriesIndex === 0 && pct[opts.dataPointIndex] != null) {{
+            text += ' (' + pct[opts.dataPointIndex] + '%)';
+          }}
+          return text;
+        }},
+        offsetY: -20,
+        style: {{ fontSize: '11px', fontWeight: 700, colors: [cssVar('--fg')] }},
+        background: {{ enabled: false }},
+      }},
       grid: baseGrid(),
-      legend: {{ show: payload.series.length > 1, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
+      legend: {{ show: payload.series.length > 1 && !distributed, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
       xaxis: {{ categories: payload.labels, labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
-      yaxis: {{ labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, valueFmt); }} }} }},
+      yaxis: {{ min: (typeof payload.yMin === 'number' ? payload.yMin : undefined),
+        labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, valueFmt); }} }} }},
       tooltip: {{
         theme: 'dark',
         y: {{
@@ -915,14 +917,47 @@ def generate_dashboard_html(
     }});
   }}
 
-  // --- scatter (real xG vs xA per squad player) ---------------------------
+  // --- scatter (real xG vs xA per squad player; also real price vs xP,
+  // squad vs breakout candidates, when `groupColors` splits points into
+  // named real series - see live_charts.py::render_recruitment_scatter_chart) ---
   function buildScatter(payload) {{
-    var color = cssVar(payload.colorVar);
+    var groupColors = payload.groupColors;
+    var series, colors, legend, pointsBySeries;
+    if (groupColors) {{
+      var groups = Object.keys(groupColors);
+      pointsBySeries = groups.map(function(g) {{ return payload.points.filter(function(p) {{ return p.group === g; }}); }});
+      series = groups.map(function(g, i) {{
+        return {{ name: g.charAt(0).toUpperCase() + g.slice(1), data: pointsBySeries[i].map(function(p) {{ return {{ x: p.x, y: p.y }}; }}) }};
+      }});
+      colors = groups.map(function(g) {{ return cssVar(groupColors[g]); }});
+      legend = {{ show: true, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }};
+    }} else {{
+      pointsBySeries = [payload.points];
+      series = [{{ name: 'Players', data: payload.points.map(function(p) {{ return {{ x: p.x, y: p.y }}; }}) }}];
+      colors = [cssVar(payload.colorVar)];
+      legend = {{ show: false }};
+    }}
     return baseChart({{
       type: 'scatter',
-      series: [{{ name: 'Players', data: payload.points.map(function(p) {{ return {{ x: p.x, y: p.y }}; }}) }}],
-      colors: [color],
+      series: series,
+      colors: colors,
+      legend: legend,
       markers: {{ size: 6, strokeWidth: 2, strokeColors: cssVar('--surface') }},
+      // Real per-point name labels (2026-09-03, direct user finding: a
+      // scatter of ~10-15 real squad players with no visible name read as
+      // sparse/anonymous dots) - only for a small enough series that labels
+      // stay legible; a real large candidate pool (recruitment scatter) is
+      // exempted and keeps the hover-only tooltip.
+      dataLabels: {{
+        enabled: payload.points.length <= 20,
+        formatter: function(v, opts) {{
+          var p = pointsBySeries[opts.seriesIndex][opts.dataPointIndex];
+          return p ? p.name : '';
+        }},
+        offsetY: -10,
+        style: {{ fontSize: '10px', fontWeight: 600, colors: [cssVar('--muted')] }},
+        background: {{ enabled: false }},
+      }},
       grid: baseGrid(),
       xaxis: {{
         type: 'numeric', tickAmount: 5,
@@ -937,7 +972,7 @@ def generate_dashboard_html(
       tooltip: {{
         theme: 'dark',
         custom: function(opts) {{
-          var p = payload.points[opts.dataPointIndex];
+          var p = pointsBySeries[opts.seriesIndex][opts.dataPointIndex];
           // Real contextual tooltip (2026-08-29, direct user spec: club/
           // position/price/xP alongside xG/xA) - `club`/`position`/`price`/
           // `xp` are only present when a real `PlayerCandidate` was found
@@ -974,9 +1009,20 @@ def generate_dashboard_html(
       series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.values }}; }}),
       colors: colors,
       plotOptions: {{ bar: {{ horizontal: true, barHeight: '70%' }} }},
-      dataLabels: {{ enabled: false }},
+      // Real value-on-bar labels (2026-09-03) - same density fix as the
+      // vertical column chart, scoped to a single-series bar (Player Value)
+      // where a label per bar reads cleanly; a 2-series grouped chart (Team
+      // Strength) keeps its own legend/tooltip as the real value source
+      // instead, to avoid crowding two adjacent thin bars per category.
+      dataLabels: {{
+        enabled: payload.series.length === 1,
+        formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }},
+        style: {{ fontSize: '11px', fontWeight: 700, colors: [cssVar('--fg')] }},
+        background: {{ enabled: false }},
+        offsetX: 8,
+      }},
       grid: baseGrid(),
-      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
+      legend: {{ show: payload.series.length > 1, labels: {{ colors: cssVar('--muted') }}, fontSize: '12px', fontWeight: 600 }},
       xaxis: {{ categories: payload.labels, labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
       yaxis: {{ labels: {{ style: {{ colors: labelColors, fontSize: '11px' }} }} }},
       tooltip: {{ theme: 'dark', y: {{ formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
@@ -1025,15 +1071,20 @@ def generate_dashboard_html(
   // --- per-player form (real xG+xA per match, one line per squad player) --
   function buildMultiLine(payload) {{
     var palette = payload.series.map(function(s) {{ return cssVar(s.colorVar); }});
+    // Real dashed-repeat fix (2026-09-03) - `dash` (set server-side, see
+    // this payload's own Python builder) marks a series past the first
+    // pass through the 7-color palette so a repeated color still reads as
+    // a genuinely different line, not a duplicate.
+    var dashArray = payload.series.map(function(s) {{ return s.dash || 0; }});
     return baseChart({{
       type: 'line',
       series: payload.series.map(function(s) {{ return {{ name: s.label, data: s.points.map(function(p) {{ return {{ x: new Date(p.x).getTime(), y: p.y }}; }}) }}; }}),
       colors: palette,
-      stroke: {{ curve: 'straight', width: 2 }},
-      markers: {{ size: 4 }},
+      stroke: {{ curve: 'straight', width: 2.5, dashArray: dashArray }},
+      markers: {{ size: 4, strokeWidth: 2, strokeColors: cssVar('--surface') }},
       dataLabels: {{ enabled: false }},
       grid: baseGrid(),
-      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '11px', fontWeight: 600 }},
+      legend: {{ labels: {{ colors: cssVar('--muted') }}, fontSize: '11px', fontWeight: 600, markers: {{ size: 5 }} }},
       xaxis: {{ type: 'datetime', labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
       // Real per-match xG+xA values are sub-1 and often close together
       // (e.g. 0.71 vs 0.74) - the shared `fmtVal` 1-decimal float format
@@ -1046,45 +1097,109 @@ def generate_dashboard_html(
     }});
   }}
 
-  // --- fixture-difficulty heatmap (real teams x GWs, single analytical object) -
-  function buildHeatmap(payload) {{
-    var bad = cssVar('--bad'), warn = cssVar('--warn'), ok = cssVar('--ok'), faint = cssVar('--faint');
-    var series = payload.rowLabels.map(function(row, i) {{
+  // --- strategic trajectory (Plan's central chart, 2026-09-02) - real
+  // cumulative gw_ev per path, real chip/transfer x-axis annotations, real
+  // Roll baseline as 3 dashed anchor points (see live_charts.py's own
+  // docstring for why not a per-GW roll line). `window.setPlanTrajectoryEmphasis`
+  // is the one real hook `plan.py`'s own path-selection JS calls - never a
+  // second, independent chart-selection mechanism.
+  // Real "no visual clutter" fix (2026-09-02, found live via an actual
+  // browser screenshot) - annotating EVERY shown path's real chip/transfer
+  // events at once produced overlapping label rows the moment two paths
+  // shared a nearby GW (a real, common case - most alternative paths here
+  // ALSO play WILDCARD/FREEHIT, just with different later transfers). Only
+  // ONE real path's own events are ever annotated at a time - this same
+  // function is called both at initial render (the leading path) and on
+  // every real path selection (`setPlanTrajectoryEmphasis` below), so the
+  // chart never shows two paths' events at once.
+  function trajectoryAnnotationsForPath(payload, pathIdx) {{
+    var accent = cssVar('--accent'), muted = cssVar('--muted'), faint = cssVar('--faint'), fg = cssVar('--fg'), surface2 = cssVar('--surface-2');
+    var roleColor = {{ leading: accent, alt: muted, roll: faint }};
+    var s = payload.series.find(function(s) {{ return String(s.pathIdx) === String(pathIdx); }}) || payload.series[0];
+    if (!s) return [];
+    return (s.events || []).map(function(e) {{
       return {{
-        name: row,
-        data: payload.colLabels.map(function(col, j) {{ return {{ x: col, y: payload.values[i][j] }}; }}),
+        x: e.x, borderColor: roleColor[s.role] || muted, strokeDashArray: 3,
+        label: {{
+          text: e.label, orientation: 'horizontal', offsetY: -6,
+          style: {{ color: fg, background: surface2, fontSize: '10px', fontWeight: 700, padding: {{ left: 5, right: 5, top: 2, bottom: 2 }} }},
+        }},
       }};
     }});
-    return baseChart({{
-      type: 'heatmap',
+  }}
+  function buildTrajectory(payload) {{
+    var accent = cssVar('--accent'), muted = cssVar('--muted'), faint = cssVar('--faint');
+    var roleColor = {{ leading: accent, alt: muted, roll: faint }};
+    var series = payload.series.map(function(s) {{
+      return {{ name: s.name, data: s.points.map(function(p) {{ return {{ x: p.x, y: p.y }}; }}) }};
+    }});
+    var colors = payload.series.map(function(s) {{ return roleColor[s.role] || muted; }});
+    var widths = payload.series.map(function(s) {{ return s.role === 'leading' ? 3 : (s.role === 'roll' ? 2 : 1.5); }});
+    var dashes = payload.series.map(function(s) {{ return s.role === 'roll' ? 6 : 0; }});
+    var leadingSeries = payload.series.find(function(s) {{ return s.role === 'leading'; }});
+    var xAnnotations = leadingSeries ? trajectoryAnnotationsForPath(payload, leadingSeries.pathIdx) : [];
+    var options = baseChart({{
+      type: 'line',
       series: series,
+      colors: colors,
+      stroke: {{ curve: 'straight', width: widths, dashArray: dashes }},
+      markers: {{ size: 3, hover: {{ size: 5 }} }},
       dataLabels: {{ enabled: false }},
-      plotOptions: {{
-        heatmap: {{
-          radius: 2,
-          colorScale: {{
-            ranges: [
-              {{ from: 0, to: 2.4, name: 'Easy', color: ok }},
-              {{ from: 2.4, to: 3.4, name: 'Average', color: warn }},
-              {{ from: 3.4, to: 6, name: 'Hard', color: bad }},
-            ],
+      grid: baseGrid(),
+      legend: {{ show: true, labels: {{ colors: cssVar('--muted') }}, fontSize: '11px', fontWeight: 600 }},
+      xaxis: {{
+        type: 'numeric', tickAmount: Math.min(payload.series[0].points.length - 1, 8),
+        labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return 'GW' + Math.round(v); }} }},
+        axisBorder: {{ show: false }}, axisTicks: {{ show: false }},
+      }},
+      yaxis: {{ labels: {{ style: axisLabelStyle(), formatter: function(v) {{ return fmtVal(v, payload.valueFmt); }} }} }},
+      tooltip: {{
+        theme: 'dark', shared: true, intersect: false,
+        x: {{ formatter: function(v) {{ return 'GW' + Math.round(v); }} }},
+        y: {{ formatter: function(v) {{ return v == null ? '' : fmtVal(v, payload.valueFmt) + ' pts'; }} }},
+      }},
+      annotations: {{ xaxis: xAnnotations }},
+      chart: {{
+        events: {{
+          dataPointSelection: function(event, chartContext, config) {{
+            var s = payload.series[config.seriesIndex];
+            if (!s || s.pathIdx == null) return;
+            var pt = s.points[config.dataPointIndex];
+            if (pt && window.planTrajectoryGwSelect) window.planTrajectoryGwSelect(s.pathIdx, pt.x);
           }},
         }},
       }},
-      grid: {{ borderColor: cssVar('--gridline'), padding: {{ left: 8, right: 8 }} }},
-      xaxis: {{ labels: {{ style: axisLabelStyle() }}, axisBorder: {{ show: false }}, axisTicks: {{ show: false }} }},
-      yaxis: {{ labels: {{ style: {{ colors: faint, fontSize: '10px' }} }} }},
-      tooltip: {{
-        theme: 'dark',
-        y: {{ formatter: function(v) {{ return v == null ? 'Blank GW' : 'FDR ' + v.toFixed(0); }} }},
-      }},
     }});
+    return options;
   }}
+  // Real per-series emphasis on path selection (2026-08-27 click contract,
+  // extended 2026-09-02) - `updateOptions` on the EXISTING persistent
+  // instance, never destroy/recreate. Selected path gets full width/color,
+  // every other real path (not Roll, which always stays its own dashed
+  // reference regardless of selection) dims to a faint stroke.
+  window.setPlanTrajectoryEmphasis = function(pathIdx) {{
+    var chart = window.dashboardCharts['plan-trajectory'];
+    var payload = window.dashboardChartPayloads && window.dashboardChartPayloads['plan-trajectory'];
+    if (!chart || !payload) return;
+    var accent = cssVar('--accent'), muted = cssVar('--muted'), faint = cssVar('--faint');
+    var colors = payload.series.map(function(s) {{
+      if (s.role === 'roll') return faint;
+      return String(s.pathIdx) === String(pathIdx) ? accent : muted;
+    }});
+    var widths = payload.series.map(function(s) {{
+      if (s.role === 'roll') return 2;
+      return String(s.pathIdx) === String(pathIdx) ? 3 : 1;
+    }});
+    chart.updateOptions({{
+      colors: colors, stroke: {{ width: widths }},
+      annotations: {{ xaxis: trajectoryAnnotationsForPath(payload, pathIdx) }},
+    }}, false, false);
+  }};
 
   var BUILDERS = {{
     single: buildTimeSeries, dual: buildTimeSeries, column: buildColumn, range: buildRange,
     scatter: buildScatter, bar: buildBar, momentum: buildMomentum, multi_line: buildMultiLine,
-    heatmap: buildHeatmap,
+    trajectory: buildTrajectory,
   }};
 
   window.fplInitCharts = function(root) {{
@@ -1104,7 +1219,11 @@ def generate_dashboard_html(
       try {{
         var chart = new ApexCharts(el, builder(payload));
         chart.render();
-        if (chartId) {{ window.dashboardCharts[chartId] = chart; window.dashboardCharts[chartId + 'LastX'] = null; }}
+        if (chartId) {{
+          window.dashboardCharts[chartId] = chart; window.dashboardCharts[chartId + 'LastX'] = null;
+          window.dashboardChartPayloads = window.dashboardChartPayloads || {{}};
+          window.dashboardChartPayloads[chartId] = payload;
+        }}
         if (matchId) {{ window.dashboardCharts.momentum[matchId] = chart; }}
       }} catch (e) {{
         console.error('fplInitCharts: chart kind=' + payload.kind + ' failed to render', e);
@@ -1881,6 +2000,40 @@ def generate_dashboard_html(
   }});
 }})();
 
+// Real PLAYER SEARCH filter (2026-09-03) - client-side substring match on
+// name/team plus a position toggle, over the one real server-rendered row
+// set (`player_search.py`) - no fabricated remote search API.
+(function() {{
+  var input = document.getElementById('player-search-input');
+  var table = document.getElementById('player-search-table');
+  var countEl = document.getElementById('player-search-count');
+  if (!input || !table) return;
+  var rows = Array.prototype.slice.call(table.querySelectorAll('.player-search-row'));
+  var posButtons = document.querySelectorAll('.psr-pos-btn');
+  var activePos = 'ALL';
+  function applyFilter() {{
+    var q = input.value.trim().toLowerCase();
+    var visible = 0;
+    rows.forEach(function(row) {{
+      var matchesText = !q || row.getAttribute('data-name').indexOf(q) !== -1 || row.getAttribute('data-team').indexOf(q) !== -1;
+      var matchesPos = activePos === 'ALL' || row.getAttribute('data-position') === activePos;
+      var show = matchesText && matchesPos;
+      row.classList.toggle('psr-hidden', !show);
+      if (show) visible++;
+    }});
+    if (countEl) countEl.textContent = visible + ' player' + (visible === 1 ? '' : 's');
+  }}
+  input.addEventListener('input', applyFilter);
+  posButtons.forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+      posButtons.forEach(function(b) {{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      activePos = btn.getAttribute('data-pos');
+      applyFilter();
+    }});
+  }});
+}})();
+
 // Fixture Tool: range / metric / filter controls (2026-08-28, frontend
 // redesign Phase 2) - all real client-side reveals over the one real 8-GW
 // server render (every cell already carries its own real overall/attack/
@@ -2023,6 +2176,41 @@ def generate_dashboard_html(
 // and switches Squad out of CURRENT automatically so the selection is
 // always visible.
 (function() {{
+  // Real Gameweek contextual detail region (2026-09-02, Phase 4C/4D
+  // section 7) - reads the SAME `.path-step-btn` element's own real
+  // data-* attributes (action/chip/gw_ev/hit, set once server-side by
+  // `plan.py`) that already drive the visible timeline node - never a
+  // second data store, never a client-side recomputation of what the
+  // optimizer already decided.
+  function updateGwContext(pathIdx, event) {{
+    var panel = document.getElementById('plan-gw-context');
+    if (!panel) return;
+    var btn = document.querySelector(
+      '.path-step-btn[data-path="' + pathIdx + '"][data-event="' + event + '"]'
+    );
+    if (!btn) {{ panel.hidden = true; return; }}
+    var action = btn.getAttribute('data-action') || 'ROLL';
+    var chip = btn.getAttribute('data-chip');
+    var gwEv = btn.getAttribute('data-gw-ev');
+    var hit = btn.getAttribute('data-hit') === '1';
+    var inId = btn.getAttribute('data-in-player-id');
+    var bits = [];
+    bits.push('<span class="plan-gw-context-gw">GW' + event + '</span>');
+    bits.push('<span class="plan-gw-context-action">' + (chip ? chip.toUpperCase() : action) + (hit ? ' (hit)' : '') + '</span>');
+    if (gwEv) bits.push('<span class="plan-gw-context-ev">' + (parseFloat(gwEv) >= 0 ? '+' : '') + parseFloat(gwEv).toFixed(1) + ' pts this GW</span>');
+    // Real PLAN -> PLAYER link (section 13) - only offered when the real
+    // transfer target is actually findable on this page right now (see
+    // `openPlayerDrawerById`'s own honest no-op otherwise).
+    if (inId && window.openPlayerDrawerById && document.querySelector(".player-card[data-player-id='" + inId + "']")) {{
+      bits.push('<button type="button" class="plan-gw-context-player-link" data-in-player-id="' + inId + '">View player</button>');
+    }}
+    panel.innerHTML = bits.join('');
+    var playerLink = panel.querySelector('.plan-gw-context-player-link');
+    if (playerLink) {{
+      playerLink.addEventListener('click', function() {{ window.openPlayerDrawerById(playerLink.getAttribute('data-in-player-id')); }});
+    }}
+    panel.hidden = false;
+  }}
   function showSquadState(pathIdx, event) {{
     document.querySelectorAll('.squad-state-block[data-path]').forEach(function(block) {{
       var match = block.getAttribute('data-path') === String(pathIdx) && block.getAttribute('data-event') === String(event);
@@ -2041,30 +2229,37 @@ def generate_dashboard_html(
         b.classList.toggle('is-active', b.getAttribute('data-path') === String(pathIdx) && b.getAttribute('data-event') === String(event));
       }});
     }}
+    updateGwContext(pathIdx, event);
   }}
-  function showPath(pathIdx) {{
+  function selectPath(pathIdx) {{
     document.querySelectorAll('.plan-path-card[data-path]').forEach(function(card) {{
       card.hidden = card.getAttribute('data-path') !== String(pathIdx);
     }});
     document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(btn) {{
       btn.classList.toggle('is-active', btn.getAttribute('data-path') === String(pathIdx));
     }});
+    if (window.setPlanTrajectoryEmphasis) window.setPlanTrajectoryEmphasis(pathIdx);
+  }}
+  function showPath(pathIdx) {{
+    selectPath(pathIdx);
     var firstStep = document.querySelector('.path-step-btn[data-path="' + pathIdx + '"]');
     if (firstStep) showSquadState(pathIdx, firstStep.getAttribute('data-event'));
   }}
+  // The trajectory chart's own click handler (`buildTrajectory`'s
+  // `dataPointSelection`) calls this - one real shared GW-selection
+  // context with the timeline/squad/context-panel, never a second one.
+  window.planTrajectoryGwSelect = function(pathIdx, event) {{
+    selectPath(pathIdx);
+    showSquadState(pathIdx, event);
+  }};
   document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(btn) {{
     btn.addEventListener('click', function() {{ showPath(btn.getAttribute('data-path')); }});
   }});
   document.querySelectorAll('.path-step-btn[data-path][data-event]').forEach(function(btn) {{
     btn.addEventListener('click', function() {{
       var pathIdx = btn.getAttribute('data-path');
+      selectPath(pathIdx);
       showSquadState(pathIdx, btn.getAttribute('data-event'));
-      document.querySelectorAll('.path-tab-btn[data-path]').forEach(function(t) {{
-        t.classList.toggle('is-active', t.getAttribute('data-path') === pathIdx);
-      }});
-      document.querySelectorAll('.plan-path-card[data-path]').forEach(function(card) {{
-        card.hidden = card.getAttribute('data-path') !== pathIdx;
-      }});
     }});
   }});
   var currentBtn = document.querySelector('.squad-switcher-btn[data-squad-view="current"]');
@@ -2117,6 +2312,21 @@ def generate_dashboard_html(
   if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
   backdrop.addEventListener('click', closeDrawer);
   document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closeDrawer(); }});
+  // Real PLAN -> PLAYER link (2026-09-02, Phase 4C/4D section 13) - the ONE
+  // real player system (`.player-card`'s own already-rendered inspector
+  // content), never a second one. `id` is real (`c.player_id`, now on every
+  // `.player-card`'s own `data-player-id`) - finds whichever real card on
+  // THIS page already has that player's data (a squad/current-GW card,
+  // wherever one exists) and opens the SAME drawer. No match (the real
+  // transfer target isn't rendered anywhere on this specific page state) is
+  // a genuine, honest no-op - never a fabricated second player lookup.
+  window.openPlayerDrawerById = function(id) {{
+    if (id == null) return false;
+    var card = document.querySelector(".player-card[data-player-id='" + id + "']");
+    if (!card) return false;
+    openDrawer(card);
+    return true;
+  }};
 }})();
 </script>
 </body>
@@ -2125,8 +2335,258 @@ def generate_dashboard_html(
 
 
 _CSS_WORKSPACE = """
+  /* MY TEAM screen (2026-09-02, Phase 6) - the pitch (`.pitch`, unchanged
+     real CSS football pitch below) is the primary interface; this block
+     only owns the thin status line and the compact intelligence strip
+     above it. No `.panel`/card grammar. */
+  .mt-screen { padding: 30px clamp(16px, 4vw, 48px) 40px; }
+  /* Real broadcast scoreboard-strip (2026-09-03, direct user correction -
+     matches COMMAND's own scoreboard bar so every screen opens on the same
+     graphic language, not a plain bottom-ruled text line). */
+  .mt-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    padding: 12px 18px; margin-bottom: 8px; background: var(--surface-2); border-radius: 8px;
+    font-size: 0.8rem; color: var(--muted); }
+  .mt-status-heading { font-weight: 800;
+    font-size: 1.3rem; color: var(--fg); letter-spacing: 0.01em; margin-right: 6px; }
+  .mt-status-item { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mt-intel { margin: 14px 0 26px; display: flex; flex-direction: column; gap: 6px; }
+  .mt-intel-row { font-size: 0.84rem; color: var(--muted); padding-left: 14px; position: relative; }
+  .mt-intel-row::before { content: ""; position: absolute; left: 0; top: 0.5em; width: 6px; height: 6px;
+    border-radius: 999px; background: #f0c419; }
+  .mt-intel-clear::before { background: var(--accent-2); }
+  .mt-pitch-wrap { margin-top: 4px; min-width: 0; }
+
+  /* Real pitch-flanking squad intelligence (Part 17, 2026-09-03 visual
+     rebuild) - SQUAD value/bank/FT on the left, WEAK LINKS (the real
+     lowest-median starters, `myteam._weak_links_html`) on the right. The
+     pitch stays the dominant visual element (`minmax(0,1fr)` centre column
+     always wins the real remaining space); side panels collapse below it
+     on narrow viewports rather than compressing the pitch. */
+  .mt-field { display: grid; grid-template-columns: 148px minmax(0, 1fr) 148px; gap: 22px; align-items: start; }
+  .mt-side { padding-top: 18px; }
+  .mt-side-heading { font-size: 0.7rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--faint); font-weight: 700; margin-bottom: 12px; }
+  .mt-side-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+  .mt-side-label { font-size: 0.7rem; letter-spacing: 0.06em; color: var(--faint); font-weight: 700; }
+  .mt-side-value { font-weight: 800; font-size: 1.1rem;
+    color: var(--fg); font-variant-numeric: tabular-nums; }
+  .mt-weak-row { display: flex; flex-direction: column; gap: 1px; padding: 8px 0; border-bottom: 1px solid var(--gridline); }
+  .mt-weak-row:last-child { border-bottom: none; }
+  .mt-weak-name { font-weight: 700; font-size: 0.84rem; color: var(--fg); }
+  .mt-weak-team { font-size: 0.68rem; color: var(--faint); }
+  .mt-weak-stat { font-size: 0.72rem; color: var(--bad); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .mt-weak-empty { font-size: 0.78rem; color: var(--faint); }
+  /* Real dense stat-tile grid + paired verdict cards (2026-09-03, direct
+     reference research pass) - real FPL-tracking products pack many small,
+     real per-item numbers into tight tiles rather than a spaced-out label/
+     value list; adopted here with our own already-computed real numbers,
+     never fabricated ones. */
+  .mt-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mt-stat-tile { display: flex; flex-direction: column; gap: 2px; background: var(--surface-2);
+    border-radius: 8px; padding: 8px 10px; }
+  .mt-stat-value { font-weight: 800; font-size: 1rem; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .mt-stat-label { font-size: 0.7rem; letter-spacing: 0.03em; text-transform: uppercase; color: var(--faint); }
+  .mt-verdict-card { border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .mt-verdict-label { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; margin-bottom: 6px; }
+  .mt-verdict-name { font-weight: 800; font-size: 0.92rem; color: var(--fg); }
+  .mt-verdict-stat { font-size: 0.74rem; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .mt-verdict-star { background: color-mix(in srgb, var(--accent-2) 10%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--accent-2) 30%, var(--border)); }
+  .mt-verdict-star .mt-verdict-label { color: var(--accent-2); }
+  .mt-verdict-flop { background: var(--surface-2); border: 1px solid var(--border); }
+  .mt-verdict-flop .mt-verdict-label { color: var(--faint); }
+  .mt-verdict-flop .mt-weak-row:last-child { border-bottom: none; }
+  @media (max-width: 1080px) {
+    .mt-field { grid-template-columns: 1fr; }
+    .mt-side { display: flex; gap: 24px; padding-top: 0; order: 2; }
+    .mt-side-right { order: 3; }
+  }
+
+  /* COMMAND screen (2026-09-02, Phase 6A). v4 - the decision as a visual
+     state-transition scene, not text. Real, deliberate grammar: no
+     `.panel`/`.card`/bordered boxes - a single vertical rule separates
+     action from counter-argument; real player shirts + a real captain
+     armband badge (`.armband.cap`, the SAME real class the squad pitch
+     already uses - not duplicated) carry football identity; the decision
+     margin is a direct proportional-length comparison, not an axis chart.
+     Verdict colors reuse the SAME real palette the rest of this app already
+     established (#00ff87 roll, #04f5ff transfer/chip, #f0c419 review/watch)
+     - pink (#ff2882, this project's own real captaincy accent) stays
+     reserved for the captain verdict word only. */
+  .cmd-screen { padding: 30px clamp(16px, 4vw, 48px) 52px; }
+
+  /* Real broadcast scoreboard-strip treatment (2026-09-03, direct user
+     correction - this row read as a plain engineering meta line, nothing
+     like a match-graphics scoreboard bug). A tinted, padded strip with a
+     solid GW chip on the left carries the same "score bug" feel a live
+     broadcast keeps pinned in-frame - real data, bolder frame. */
+  .cmd-matchday-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 22px;
+    padding: 12px 18px; margin-bottom: 34px; background: var(--surface-2); border-radius: 8px;
+    font-size: 0.8rem; color: var(--muted); }
+  .cmd-bar-zone { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .cmd-bar-center { flex: 1; justify-content: center; }
+  .cmd-bar-right { margin-left: auto; }
+  .cmd-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
+  .cmd-dot-ok { background: var(--accent-2); } .cmd-dot-warn { background: #f0c419; }
+  .cmd-bar-gw { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; color: var(--bg);
+    background: var(--accent-2); letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.78rem;
+    padding: 4px 10px; border-radius: 4px; }
+  .cmd-bar-item { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Real discrete stat pills (2026-09-03, direct reference: the official
+     FPL site's own Transfers page renders "15/15 Players"/"£0.0m Budget"/
+     "2 Free transfers" as separate rounded boxes, never one flat text
+     strip - corrects the earlier "single background bar" guess). */
+  .cmd-bar-pill { display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+    background: var(--surface); border-radius: 6px; padding: 4px 12px; line-height: 1.2; }
+  .cmd-bar-pill-value { font-weight: 800; font-size: 0.88rem; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .cmd-bar-pill-label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.03em; }
+  .cmd-bar-chips { color: var(--faint); }
+  .cmd-chip-none { font-style: italic; }
+  .cmd-bar-item .home-metric { display: inline-flex; align-items: baseline; gap: 5px; }
+  .cmd-bar-item .home-metric-label { font-size: inherit; text-transform: none; letter-spacing: normal; opacity: 1; color: var(--muted); }
+  .cmd-bar-item .home-metric-value { font-family: inherit; font-weight: 700; font-size: inherit; margin-top: 0; color: var(--fg); }
+  .cmd-bar-item .home-metric-value-muted { font-size: inherit; }
+  .cmd-bar-item .home-metric-delta { display: none; }
+
+  .cmd-hero { display: grid; grid-template-columns: 1fr 1px minmax(220px, 0.34fr); column-gap: clamp(28px, 4vw, 60px); }
+  /* Real, confirmed fix (2026-09-03, Playwright sweep P0): a grid item's
+     default `min-width: auto` refuses to shrink below its content's
+     intrinsic width - `.cmd-trajectory-line`'s own `overflow-x: auto`
+     (7 fixed-width nodes, ~900px+ of real content) never got the chance to
+     scroll internally because this track kept growing to fit it instead,
+     pushing the whole page 103px past the viewport at 1080px (measured:
+     `section#screen-command` internal overflow 127px). `min-width: 0` lets
+     the track honor the grid's own sizing and hands the overflow to the
+     trajectory's own scrollbar, where it belongs. */
+  .cmd-hero-main { min-width: 0; }
+  .cmd-hero-rule { background: var(--gridline); align-self: stretch; }
+  .cmd-action-word { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800;
+    font-size: clamp(2.4rem, 4.6vw, 3.8rem); letter-spacing: 0.01em; line-height: 1; color: var(--fg); }
+  .cmd-action-review { color: #f0c419; }
+
+  /* Decision edge - the huge real number leads; two proportional bars back
+     it up visually, no axis to read. */
+  .cmd-edge { margin-top: 16px; }
+  .cmd-edge-number { font-weight: 800;
+    font-size: 2.6rem; line-height: 1; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+  .cmd-edge-unit { font-size: 0.9rem; font-weight: 700; color: var(--accent-2); margin-left: 6px; letter-spacing: 0.04em; }
+  .cmd-edge-context { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+  /* Real single head-to-head bar (2026-09-03, direct user correction - two
+     independently-scaled stacked bars never read as a comparison; this is
+     the same real two-sided mechanic `.mc-stat-bar-home`/`-away` already
+     proves out in Match Centre, brought somewhere it's actually visible
+     every regen instead of gated behind a genuinely live match). Thick
+     (14px) so it reads as a real stat bar, not a thin progress sliver. */
+  .cmd-edge-h2h { margin-top: 16px; max-width: 460px; }
+  .cmd-edge-h2h-labels { display: flex; justify-content: space-between; margin-bottom: 6px;
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; }
+  .cmd-edge-h2h-label-chosen { color: var(--accent-2); }
+  .cmd-edge-h2h-label-alt { color: var(--muted); }
+  .cmd-edge-h2h-label strong { font-size: 0.92rem; margin-left: 6px; font-variant-numeric: tabular-nums; }
+  .cmd-edge-h2h-track { display: flex; height: 14px; border-radius: 3px; overflow: hidden; background: var(--gridline); }
+  .cmd-edge-h2h-chosen { background: var(--accent-2); }
+  .cmd-edge-h2h-alt { background: var(--faint); opacity: 0.55; }
+
+  /* Trajectory scene: current squad (real shirts) -> the action -> real
+     future legs, fading. A fragile-path leg carries a real watch marker. */
+  .cmd-trajectory { margin-top: 26px; }
+  .cmd-trajectory-label { font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint);
+    margin-bottom: 14px; }
+  .cmd-trajectory-line { display: flex; align-items: flex-start; gap: 0; overflow-x: auto; padding-bottom: 6px; }
+  .cmd-node { flex: 0 0 auto; width: 112px; position: relative; padding-top: 14px; border-top: 2px solid var(--gridline); }
+  .cmd-node-current { width: 108px; border-top: 2px solid var(--muted); }
+  .cmd-node-now { width: 140px; border-top: 2px solid #04f5ff; }
+  .cmd-node-fragile { border-top-color: #f0c419; }
+  .cmd-node-dot { position: absolute; top: -4px; left: 0; width: 7px; height: 7px; border-radius: 999px; background: var(--faint); }
+  .cmd-node-dot-current { background: var(--muted); }
+  .cmd-node-dot-now { width: 9px; height: 9px; top: -5px; background: #04f5ff; }
+  .cmd-node-gw { font-size: 0.7rem; color: var(--faint); font-weight: 700; letter-spacing: 0.05em; }
+  .cmd-node-now .cmd-node-gw { color: var(--muted); }
+  .cmd-node-watch { color: #f0c419; margin-left: 3px; font-size: 0.7rem; }
+  .cmd-node-label { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 4px; line-height: 1.35; overflow-wrap: break-word; }
+  .cmd-node-now .cmd-node-label { color: var(--fg); font-size: 0.92rem; font-weight: 600; }
+  .cmd-node-chip { display: block; font-weight: 800;
+    font-size: 0.84rem; letter-spacing: 0.03em; color: var(--muted); margin-top: 4px; }
+  .cmd-node-now .cmd-node-chip { color: #04f5ff; font-size: 1.05rem; }
+  .cmd-node-squad { display: flex; gap: 3px; margin-top: 5px; }
+  .cmd-shirt-mini { display: block; }
+  .cmd-node-current .cmd-node-label { font-size: 0.7rem; margin-top: 3px; color: var(--faint); }
+
+  .cmd-why { margin-top: 18px; max-width: 56ch; }
+  .cmd-why-line { margin: 0 0 6px; font-size: 0.86rem; color: var(--muted); line-height: 1.5; }
+  .cmd-tag { font-weight: 700; letter-spacing: 0.03em; }
+  .cmd-tag-ok { color: var(--accent-2); } .cmd-tag-warn { color: #f0c419; }
+  .cmd-captain-verdict { color: #ff2882; }
+  .cmd-freshness { margin-top: 14px; font-size: 0.7rem; }
+
+  /* Real, disclosed fix (2026-09-03, Phase 7 visual audit P1): this column's
+     real content (a short WHY + a 3-row stat table) is much shorter than
+     its grid sibling (the trajectory) - `align-self: stretch` (grid's
+     default) was forcing its box to the sibling's full height, reading as
+     a real empty panel with nothing in it at 1440px. `start` sizes the box
+     to its own real content instead - the gap below it is now plain page
+     background, not a labeled-but-empty region. */
+  .cmd-alt-col { padding-top: 3px; align-self: start; }
+  .cmd-alt-label { font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint);
+    font-weight: 700; margin-bottom: 12px; }
+  .cmd-alt-chip { font-weight: 800; font-size: 0.95rem;
+    letter-spacing: 0.03em; color: var(--muted); margin-bottom: 4px; }
+  .cmd-alt-name { font-size: 1.1rem; font-weight: 700; color: var(--muted); margin-bottom: 10px; overflow-wrap: break-word; }
+  .cmd-alt-line { margin: 0 0 8px; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+  .cmd-alt-stats { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--gridline);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+  .cmd-alt-stat { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px;
+    background: var(--surface-2); border-radius: 6px; }
+  .cmd-alt-stat-label { color: var(--faint); letter-spacing: 0.05em; font-size: 0.7rem; text-transform: uppercase; order: 2; }
+  .cmd-alt-stat-value { color: var(--fg); font-weight: 700; font-size: 0.92rem; order: 1; }
+
+  /* Tactical band: captain matchup + live monitor, two quiet columns. */
+  /* Real layout fix (2026-09-03, direct user correction on COMMAND's own
+     empty-right-column look) - CAPTAIN and WHAT WOULD CHANGE THIS now flow
+     inside their own real column (left/right respectively, see
+     `.cmd-hero-side` below) instead of a separate full-width row; `.cmd-col`
+     itself now carries the section-divider styling `.cmd-band` used to. */
+  .cmd-hero-side { display: flex; flex-direction: column; gap: 34px; }
+  .cmd-col { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--gridline); }
+  .cmd-col-label { font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint);
+    font-weight: 700; margin-bottom: 16px; }
+  .cmd-matchup { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .cmd-matchup-side { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .cmd-shirt-wrap { position: relative; }
+  .cmd-shirt { display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35)); }
+  .cmd-shirt-empty { width: 64px; height: 64px; }
+  .cmd-shirt-second { opacity: 0.6; }
+  .cmd-matchup-vs { font-size: 0.66rem; color: var(--faint); font-weight: 700; align-self: center; margin: 0 2px; }
+  .cmd-matchup-name { font-size: 1.2rem; font-weight: 800; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .cmd-matchup-name-second { color: var(--faint); font-weight: 600; font-size: 0.82rem; }
+  .cmd-matchup-side-second .cmd-matchup-xp { font-size: 0.68rem; }
+  .cmd-matchup-xp { font-size: 0.8rem; color: var(--muted); }
+  /* Real winner-pill badge (2026-09-03, direct FotMob reference) - the
+     leading number gets a solid color-filled pill, the trailing number
+     stays plain text next to it. */
+  .cmd-matchup-xp-winner { display: inline-block; background: var(--accent-2); color: var(--bg);
+    font-weight: 800; border-radius: 999px; padding: 2px 10px; margin-top: 2px; }
+  .cmd-matchup-delta { font-size: 0.85rem; font-weight: 700; color: var(--accent-2); align-self: center; }
+  .cmd-col-verdict { margin-top: 14px; display: flex; gap: 12px; font-size: 0.76rem; }
+
+  .cmd-monitor { display: flex; flex-direction: column; gap: 10px; }
+  .cmd-monitor-row { font-size: 0.78rem; color: var(--muted); display: flex; gap: 7px; align-items: baseline; flex-wrap: wrap; }
+  .cmd-monitor-current { color: var(--fg); }
+  .cmd-monitor-dep { font-variant-numeric: tabular-nums; }
+  .cmd-monitor-arrow { color: var(--faint); }
+  .cmd-monitor-consequence { color: var(--faint); }
+
+  @media (max-width: 900px) {
+    .cmd-hero { grid-template-columns: 1fr; row-gap: 24px; }
+    .cmd-hero-rule { display: none; }
+    .cmd-alt-col { padding-top: 18px; border-top: 1px solid var(--gridline); }
+  }
+
   /* HOME workspace (2026-08-27, frontend redesign) - first viewport, six
-     metrics only, no competing content. */
+     metrics only, no competing content. Superseded on-screen by the
+     COMMAND section above (2026-09-02) - CSS kept only because other,
+     not-yet-rebuilt screens still reuse `.risk-row`/`.cross-check-*`
+     styles defined further down this same block. */
   /* Real fix (2026-08-29, "live command centre" pass, direct user finding:
      "the stylesheet's own visual language claims flat/zero-gradients [see
      the header's own 2026-08-27 'flat rebuild - a plain dark bar, no
@@ -2153,7 +2613,7 @@ _CSS_WORKSPACE = """
      `panel_order` in `assemble.py`) get the primary visual weight instead. */
   .state-live .home-hero-action { font-size: clamp(1.4rem, 3.4vw, 2rem); }
   .state-live .home-hero-reason { font-size: 0.88rem; max-width: 560px; }
-  .home-hero-roll .home-hero-action { color: #00ff87; }
+  .home-hero-roll .home-hero-action { color: var(--accent-2); }
   .home-hero-transfer .home-hero-action, .home-hero-chip .home-hero-action { color: #04f5ff; }
   .home-hero-review .home-hero-action { color: #f0c419; }
   .home-hero-reason { font-size: clamp(0.95rem, 2vw, 1.15rem); margin-top: 8px; max-width: 640px; opacity: 0.92; }
@@ -2246,47 +2706,117 @@ _CSS_WORKSPACE = """
   .home-hero-actions { display: flex; gap: 10px; margin-top: 24px; }
   .home-action-btn { padding: 9px 18px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg);
     text-decoration: none; font-weight: 600; font-size: 0.9rem; }
-  .home-action-primary { background: #00ff87; color: #14002b; border-color: transparent; }
+  .home-action-primary { background: var(--accent-2); color: #14002b; border-color: transparent; }
   @media (max-width: 480px) {{ .home-hero {{ border-radius: 0; padding: 20px 16px; }} }}
 
-  /* PLAN workspace - 5 strategy-choice boxes + large timeline. */
-  .plan-path-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
-  /* A tied-group leader gets a "currently viewing" outline, not a solid
-     fill (2026-08-27, visual QA pass) - a solid green block on Path 1 while
-     its own subtitle says "statistically equivalent" visually claimed a
-     uniqueness the copy explicitly disclaims. Every tied card still shows
-     its own real TOP TIER badge; only the CURRENTLY SELECTED one also gets
-     this outline, and it never implies "the answer" the way a solid fill did. */
-  .path-box.is-active.path-box-tied,
-  .path-box.is-active.path-box-tied .path-box-score,
-  .path-box.is-active.path-box-tied .path-box-sub { background: var(--surface); border: 2px solid var(--accent-2); color: var(--fg); }
-  /* Real strategy-family grouping (2026-08-29, "final product-completion
-     pass" P0 fix) - collapses paths that share the exact same real
-     descriptor (chip+timing+transfer-count) under one primary tab, so the
-     user sees genuinely different strategic choices, not near-duplicate
-     beam-search tail variants presented as separate philosophies. */
+  /* PLAN workspace (2026-09-02, Phase 4C/4D visual-language rebuild) - the
+     reference implementation for the whole dashboard's new information
+     hierarchy: one editorial leading-strategy header (not a card among
+     equals), a real central trajectory chart, a compact text-forward path
+     selector (never a "box wall" of equally-weighted CTAs), the per-path
+     real sequence kept as a genuinely distinct bounded object, and real
+     sensitivity - no universal rounded boxes, no glow, no gradient. */
+  .plan-lead { padding: 0 0 16px; border-bottom: 1px solid var(--gridline); margin-bottom: 18px; }
+  .plan-lead-kicker { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  .plan-lead-descriptor { font-weight: 700;
+    font-size: clamp(1.3rem, 3vw, 1.8rem); margin-top: 4px; color: var(--fg); }
+  .plan-lead-metrics { display: flex; align-items: baseline; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+  .plan-lead-score { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 1.4rem; color: var(--accent-2); }
+  .plan-lead-vs-roll, .plan-lead-confidence { font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+  /* Real near-tie honesty (section 10) - a flat status word, never a solid
+     accent-filled badge that would read as "the answer" when the real
+     margin says otherwise. */
+  .plan-lead-tie { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px;
+    border: 1px solid currentColor; }
+  .plan-lead-tie-clear-lead { color: var(--ok-text); }
+  .plan-lead-tie-likely-best { color: var(--warn); }
+  .plan-lead-tie-near-tie { color: var(--bad); }
+  .plan-lead-tie-note { font-size: 0.78rem; color: var(--faint); margin-top: 6px; max-width: 60ch; }
+
+  /* Central trajectory chart + real GW contextual detail (sections 5-7). */
+  .plan-trajectory-wrap { margin-bottom: 18px; }
+  .plan-trajectory-canvas-wrap .live-chart-canvas { height: 280px; }
+  .plan-contribution-wrap { margin-bottom: 4px; max-width: 420px; }
+  .plan-contribution-wrap .live-chart-canvas { height: 140px; }
+  .plan-gw-context { margin-top: 10px; padding: 8px 12px; background: var(--surface-2); border-radius: 6px;
+    display: flex; align-items: baseline; gap: 12px; font-size: 0.85rem; }
+  .plan-gw-context-gw { font-weight: 800; color: var(--fg); }
+  .plan-gw-context-action { font-weight: 700; color: var(--accent-2); text-transform: uppercase; letter-spacing: 0.02em; font-size: 0.78rem; }
+  .plan-gw-context-ev { color: var(--muted); }
+  .plan-gw-context-player-link { margin-left: auto; background: transparent; border: 1px solid var(--border);
+    color: var(--accent-2); font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 4px;
+    cursor: pointer; font-family: inherit; }
+  .plan-gw-context-player-link:hover { border-color: var(--accent-2); }
+
+  /* Compact path selector (section 4/17) - text-forward, underline active
+     state, never a rounded "box" per path. */
+  .plan-selector { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+  .plan-select-item { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+    padding: 8px 4px; border: none; border-bottom: 1px solid var(--gridline); background: transparent;
+    border-radius: 0; color: var(--muted); font-family: inherit; cursor: pointer; }
+  .plan-select-item:hover { background: transparent; color: var(--fg); }
+  /* Real fix (2026-09-02, found live via browser screenshot) - the shared
+     `.path-tab-btn.is-active` pill rule (legacy.py's base `_CSS`, still used
+     by the Squad workspace's own GW-pill switcher) fills a solid accent
+     background - exactly the "AI slop" block-pill this compact selector was
+     built to avoid. Explicit reset here, since equal-specificity selectors
+     only override properties they actually declare. */
+  .plan-select-item.is-active { background: transparent; border-color: transparent; color: var(--fg);
+    border-bottom-color: var(--accent-2); font-weight: 700; }
+  .plan-select-idx { font-weight: 800; font-size: 0.85rem;
+    color: var(--faint); min-width: 14px; }
+  .plan-select-item.is-active .plan-select-idx { color: var(--accent-2); }
+  .plan-select-body { display: flex; flex-direction: column; gap: 1px; flex: 1; }
+  .plan-select-descriptor { font-size: 0.88rem; font-weight: 600; }
+  .plan-select-meta { font-size: 0.72rem; color: var(--faint); }
+  .plan-select-score-win { display: inline-block; background: var(--accent-2); color: var(--bg); font-weight: 800;
+    border-radius: 999px; padding: 1px 8px; }
+  .plan-select-item-sibling { padding: 6px 4px; opacity: 0.8; }
   .path-family-group { display: flex; flex-direction: column; }
-  .path-family-more { margin-top: 4px; }
+  .path-family-more { margin-top: 2px; margin-left: 24px; }
   .path-family-more summary { cursor: pointer; font-size: 0.72rem; color: var(--faint); padding: 4px 2px; list-style: none; }
   .path-family-more summary::-webkit-details-marker { display: none; }
   .path-family-more summary::before { content: "+ "; }
   .path-family-more[open] summary::before { content: "− "; }
-  .path-family-members { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-  .path-box-family-member { padding: 8px 10px; opacity: 0.85; }
-  .path-box.is-active.path-box-tied .path-box-sub { color: var(--accent-2); }
-  .path-box-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 0.75rem; opacity: 0.75; }
+  .path-family-members { display: flex; flex-direction: column; margin-top: 2px; }
+
+  /* Real, shared "broadcast section divider" (2026-09-03, DESIGN.md Match
+     Graphics Package direction) - a full-width tinted bar with bold
+     uppercase Oswald replaces the old quiet muted-grey label line shared
+     by plan/football/scout. Same recipe wherever a section divider
+     appears across those three screens (see `.fb-section-label`/
+     `.scout-section-label` below). */
+  /* Real reference correction (2026-09-03, direct comparison against
+     FotMob's own Opta-powered match pages) - real sports-stat UI headers
+     use a clean bold standard sans, not a condensed display face; Oswald
+     stays reserved for the brand wordmark and the one true hero verdict
+     word (see "One Verdict Rule"). */
+  .plan-section-label { font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg); background: var(--surface-2);
+    border-radius: 5px; padding: 7px 12px; margin: 24px 0 10px; }
   .plan-path-grid { margin-top: 16px; }
-  .plan-path-card { padding: 14px 0; }
+  .plan-path-card { padding: 14px 0 0; border-top: 1px solid var(--gridline); }
   .plan-path-header { font-size: 0.85rem; color: var(--muted); margin-bottom: 10px; }
   .plan-timeline-track { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
   .timeline-node { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 1px solid var(--border);
-    border-radius: 10px; background: transparent; cursor: pointer; font-family: inherit; color: var(--fg); }
-  .timeline-node-decision { padding: 14px 18px; border-width: 2px; border-color: var(--accent-2); font-weight: 700; font-size: 1rem; }
+    border-radius: 6px; background: transparent; cursor: pointer; font-family: inherit; color: var(--fg); }
+  .timeline-node-decision { padding: 12px 16px; border-width: 1px; border-color: var(--accent-2); font-weight: 700; font-size: 0.95rem; }
   .timeline-node-roll { padding: 7px 10px; opacity: 0.55; font-size: 0.78rem; }
-  .timeline-node.is-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; opacity: 1; }
+  /* Real emphasis without glow (2026-09-02, section 27: "no glow") - a
+     filled background + darker text on the accent, not a box-shadow ring. */
+  .timeline-node.is-active { background: var(--accent); border-color: var(--accent); color: #06110b; opacity: 1; font-weight: 800; }
   .timeline-node-gw { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
   .timeline-node-dot { display: none; }
   .timeline-arrow { width: 18px; height: 2px; background: var(--border); flex-shrink: 0; }
+  /* Real LOCKED NOW vs CONDITIONAL distinction (2026-09-02, Phase 6 rebuild
+     Part 8) - only this path's own first real step is today's actual
+     instruction; every later step is real but not yet locked in. Reuses the
+     SAME cyan-accent-for-"now" language Command already established (never
+     a second, competing visual vocabulary for the same real concept). */
+  .timeline-node-locked { border-color: #04f5ff; }
+  .timeline-node-locked-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; color: #04f5ff; }
+  .timeline-node-conditional { border-style: dashed; }
   /* Real per-path 3/5/8GW breakdown (2026-08-29, P0 audit). */
   .horizon-breakdown-row { display: flex; gap: 10px; flex-wrap: wrap; }
   .horizon-breakdown-cell { display: flex; flex-direction: column; padding: 8px 12px; border: 1px solid var(--border);
@@ -2294,6 +2824,15 @@ _CSS_WORKSPACE = """
   .horizon-breakdown-gw { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
   .horizon-breakdown-total { font-weight: 700; font-size: 1rem; margin-top: 2px; }
   .horizon-breakdown-sub { font-size: 0.7rem; color: var(--muted); }
+
+  /* Real sensitivity visual (section 11) - a horizontal threshold track,
+     never a giant prose block. Sorted most-fragile first. */
+  .sensitivity-list { display: flex; flex-direction: column; gap: 10px; }
+  .sensitivity-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(120px, 200px); gap: 12px; align-items: center; }
+  .sensitivity-label { font-size: 0.8rem; color: var(--muted); }
+  .sensitivity-track { position: relative; height: 6px; background: var(--gridline); border-radius: 3px; flex: 1; }
+  .sensitivity-fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--warn); border-radius: 3px; }
+  .sensitivity-pct { font-size: 0.72rem; font-weight: 700; color: var(--faint); white-space: nowrap; }
 
   /* SQUAD workspace - CURRENT/GW switcher. */
   .squad-switcher { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -2310,7 +2849,7 @@ _CSS_WORKSPACE = """
      comparably dense list context, measured live against fpl.page's own
      price-changes table). */
   .intel-card-head .outlook-badge { width: 40px; height: 40px; }
-  .intel-card-team { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.02em; }
+  .intel-card-team { font-weight: 800; font-size: 0.95rem; letter-spacing: 0.02em; }
   .intel-card-squad-tag { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-2);
     border: 1px solid var(--accent-2); border-radius: 999px; padding: 1px 6px; margin-left: auto; }
   .intel-card-why { font-weight: 600; font-size: 0.88rem; margin-bottom: 4px; }
@@ -2318,7 +2857,7 @@ _CSS_WORKSPACE = """
   .intel-card-impact { font-size: 0.82rem; margin-bottom: 8px; }
   .intel-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
-  .intel-confidence-high, .intel-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
+  .intel-confidence-high, .intel-confidence-very_high { background: color-mix(in srgb, var(--accent-2) 15%, transparent); color: var(--accent-2); }
   .intel-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
   .intel-confidence-low, .intel-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
   .intel-card-details { margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
@@ -2326,14 +2865,17 @@ _CSS_WORKSPACE = """
   /* OPPORTUNITY workspace - scouting-board cards, one visible per category by default. */
   .opp-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; align-items: start; }
   .opp-category { display: flex; flex-direction: column; gap: 6px; }
-  .opp-card-shirt { width: 44px; height: 44px; object-fit: contain; display: block; margin-bottom: 4px;
+  .opp-card-shirt-wrap { position: relative; width: 44px; margin-bottom: 4px; }
+  .opp-card-shirt { width: 44px; height: 44px; object-fit: contain; display: block;
     filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+  .opp-card-crest { position: absolute; top: -2px; left: -2px; width: 16px; height: 16px;
+    background: #fff; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   .opp-card-badge { width: 32px; height: 32px; }
   .opp-card-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
   .opp-card-metric { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
   .opp-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-top: 6px; }
-  .opp-confidence-high, .opp-confidence-very_high { background: rgba(0,255,135,0.15); color: #00ff87; }
+  .opp-confidence-high, .opp-confidence-very_high { background: color-mix(in srgb, var(--accent-2) 15%, transparent); color: var(--accent-2); }
   .opp-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
   .opp-confidence-low, .opp-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
   /* Real "considered by optimizer" flag (2026-08-29, P1 opportunity-engine
@@ -2380,7 +2922,7 @@ _CSS_WORKSPACE = """
   .squad-state-net { font-size: 0.8rem; font-weight: 700; color: var(--accent); margin: -4px 0 8px; }
   .projected-tile-in { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid var(--accent); }
   .projected-tile-in-badge { position: absolute; top: -2px; right: 2px; background: var(--accent); color: #06110b;
-    font-size: 0.62rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
+    font-size: 0.7rem; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
   /* Real per-GW captain/vice badges (2026-08-29, P0 audit fix - the
      projected squad's captain/vice are now actually resolved per GW, not
      carried over from the current squad, so they need their own real
@@ -2409,4 +2951,135 @@ _CSS_WORKSPACE = """
   .xdata-table td { padding: 6px 8px; border-bottom: 1px solid var(--gridline); }
   .xdata-player { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
   .momentum-name { display: inline-flex; align-items: center; gap: 6px; }
+  .momentum-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 7px 0; border-bottom: 1px solid var(--gridline); font-size: 0.84rem; }
+  .momentum-row:last-child { border-bottom: none; }
+  .momentum-ok { color: var(--accent-2); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .momentum-bad { color: var(--bad); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* FOOTBALL screen (2026-09-02/03, Phase 6) - a real signal feed, category-
+     ranked by genuine decision strength, never a news list. Same status-
+     line/section-label grammar `.mt-*`/`.scout-*` share - no card walls. */
+  .fb-screen { padding: 30px clamp(16px, 4vw, 48px) 52px; }
+  .fb-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    padding: 12px 18px; margin-bottom: 22px; background: var(--surface-2); border-radius: 8px;
+    font-size: 0.8rem; color: var(--muted); }
+  .fb-status-heading { font-weight: 800;
+    font-size: 1.3rem; color: var(--fg); letter-spacing: 0.01em; margin-right: 6px; }
+  .fb-status-item { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .fb-section-label { font-size: 0.74rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--fg); font-weight: 800; background: var(--surface-2);
+    border-radius: 5px; padding: 7px 12px; margin: 30px 0 12px; }
+  .fb-feed { display: flex; flex-direction: column; gap: 20px; }
+  /* Real fix (2026-09-03, DESIGN.md "no side-stripe borders" rule -
+     `impeccable`'s own shared design law bans a colored border-left/right
+     accent on any card or row). A broadcast-style colored label BADGE
+     carries the same category-role signal a stripe used to - full
+     background block, not a thin accent line - and doubles as a real
+     "broadcast category tag" look (see DESIGN.md's Match Graphics Package
+     north star) instead of the old engineering-report side-rule. */
+  .fb-category, .fb-category-quiet { padding-left: 0; }
+  .fb-category-quiet summary { cursor: pointer; }
+  .fb-category-label, .fb-category-quiet summary { display: inline-block; font-size: 0.7rem; font-weight: 800;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg); margin-bottom: 10px;
+    background: var(--surface-2); border-radius: 4px; padding: 4px 10px; }
+  .fb-category-strong .fb-category-label { background: color-mix(in srgb, #04f5ff 22%, var(--surface-2)); color: #b6f6ff; }
+  .fb-category-tactical .fb-category-label { background: color-mix(in srgb, #9d5cff 22%, var(--surface-2)); color: #c9a3ff; }
+  .fb-category-count { color: var(--faint); font-weight: 600; margin-left: 4px; }
+  .fb-signal-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+    padding: 7px 0; border-bottom: 1px solid var(--gridline); font-size: 0.84rem; }
+  .fb-signal-row:last-child { border-bottom: none; }
+  .fb-signal-row-mine { background: linear-gradient(90deg, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 40%); }
+  .fb-signal-icon { width: 18px; flex-shrink: 0; text-align: center; font-size: 0.82rem; align-self: center; line-height: 1; }
+  .fb-signal-dot-ok { color: var(--accent-2); } .fb-signal-dot-bad { color: var(--bad); }
+  .fb-signal-dot-warn { color: #f0c419; } .fb-signal-dot-muted { color: var(--faint); }
+  .fb-signal-crest { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+  .fb-signal-entity { font-weight: 700; color: var(--fg); }
+  .fb-signal-mine { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2);
+    border: 1px solid var(--accent-2); border-radius: 3px; padding: 1px 4px; align-self: center; }
+  .fb-signal-evidence { color: var(--fg); flex: 1 1 260px; font-weight: 500; }
+  .fb-signal-effect { font-size: 0.76rem; color: var(--muted); font-style: italic; }
+  .fb-signal-confidence { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em; color: var(--faint); }
+  .fb-signal-expiry { font-size: 0.7rem; color: var(--faint); font-style: italic; }
+  .fb-category-more summary, .fb-category-more { font-size: 0.76rem; color: var(--accent); cursor: pointer; margin-top: 6px; }
+  .fb-status-mine { color: var(--accent-2); font-weight: 700; }
+  .fb-changes { font-size: 0.86rem; }
+  .fb-fixture-ticker { margin-top: 4px; }
+  .fb-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 8px; }
+  .fb-block h3 { font-size: 0.9rem; margin: 0 0 10px; }
+  .fb-evidence { margin-top: 30px; }
+  .fb-evidence summary { cursor: pointer; }
+  @media (max-width: 900px) { .fb-grid-2 { grid-template-columns: 1fr; } }
+
+  /* Real TEAM STATE cards (Part 4/5, 2026-09-03 visual rebuild) -
+     ATTACK/DEFENCE/TACTICAL rows carry real numeric team_match_state
+     data, never a flat "team name + up-arrow". */
+  .fb-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 4px; }
+  .fb-team-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .fb-team-card-mine { border-color: var(--accent-2); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 25%, transparent) inset; }
+  .fb-team-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  /* Real crest-forward sizing (2026-09-03, direct user direction: "crest-
+     forward" identity) - big enough to actually read as the club badge,
+     not a tiny favicon-sized afterthought next to the team name. */
+  .fb-team-crest { width: 32px; height: 32px; object-fit: contain; }
+  .fb-team-name { font-weight: 800; font-size: 0.94rem;
+    letter-spacing: 0.02em; color: var(--fg); }
+  .fb-team-squad-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2);
+    border: 1px solid var(--accent-2); border-radius: 3px; padding: 1px 4px; margin-left: auto; }
+  .fb-team-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.78rem; padding: 3px 0; }
+  .fb-team-row-label { color: var(--faint); font-weight: 700; letter-spacing: 0.03em; font-size: 0.66rem; align-self: center; }
+  .fb-team-row-value { color: var(--fg); font-variant-numeric: tabular-nums; text-align: right; }
+  .fb-team-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 4px; }
+  .fb-team-stat-tile { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;
+    background: var(--surface); border-radius: 6px; }
+  .fb-team-stat-value { color: var(--fg); font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  .fb-team-stat-label { color: var(--faint); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; }
+  .fb-team-effect { font-size: 0.76rem; color: var(--muted); margin-top: 8px; font-style: italic; }
+  .fb-team-risk { font-size: 0.68rem; color: var(--uncertainty-amber); margin-top: 6px; }
+
+  /* SCOUT screen (2026-09-03, Phase 6) - the real recruitment board
+     (`opportunity.py`'s existing categorized cards, unchanged) plus the
+     real league-wide reference tables it used to share a nav item with. */
+  .scout-screen { padding: 30px clamp(16px, 4vw, 48px) 52px; }
+  .scout-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    padding: 12px 18px; margin-bottom: 22px; background: var(--surface-2); border-radius: 8px;
+    font-size: 0.8rem; color: var(--muted); }
+  .scout-status-heading { font-weight: 800;
+    font-size: 1.3rem; color: var(--fg); letter-spacing: 0.02em; margin-right: 6px; }
+  .scout-section-label { font-size: 0.74rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--fg); font-weight: 800; background: var(--surface-2);
+    border-radius: 5px; padding: 7px 12px; margin: 34px 0 12px; }
+  .scout-block { margin-top: 4px; }
+
+  /* Real PLAYER SEARCH panel (2026-09-03, direct reference: the official
+     FPL Transfers page's own "Player Selection" list - search + position
+     filter over every real active player, client-side, no fabricated
+     backend search API). */
+  .player-search { margin-top: 4px; }
+  .psr-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .psr-input { flex: 1 1 220px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; color: var(--fg); font-size: 0.88rem; }
+  .psr-input:focus { outline: none; border-color: var(--accent-2); }
+  .psr-pos-row { display: flex; gap: 6px; }
+  .psr-pos-btn { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; color: var(--muted);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px;
+    cursor: pointer; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+  .psr-pos-btn:hover { color: var(--fg); }
+  .psr-pos-btn.is-active { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2));
+    color: var(--fg); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .psr-count { font-size: 0.76rem; color: var(--faint); white-space: nowrap; }
+  .psr-table-wrap { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .player-search-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  .player-search-table thead th { position: sticky; top: 0; background: var(--surface); text-align: left;
+    padding: 8px 12px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint);
+    border-bottom: 1px solid var(--border); z-index: 1; }
+  .player-search-table td { padding: 7px 12px; border-bottom: 1px solid var(--gridline); }
+  .player-search-row:hover { background: var(--surface-2); }
+  .player-search-row.psr-mine { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .player-search-row.psr-hidden { display: none; }
+  .psr-player { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
+  .psr-crest { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+  .scout-block h3 { font-size: 0.9rem; margin: 0 0 10px; }
+  .scout-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 900px) { .scout-grid-2 { grid-template-columns: 1fr; } }
 """

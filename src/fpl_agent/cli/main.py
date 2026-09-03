@@ -3566,6 +3566,7 @@ def strategic_plan_cmd(
     the path (that's the joint beam search above). All `beam_width` paths
     (not just the winner) are logged in full, so a dashboard/consumer can
     read the complete top-N without re-running this ~1-minute search."""
+    from fpl_agent.optimization.authoritative_decision import serialize_authoritative_decision
     from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
     from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
     from fpl_agent.optimization.strategic_planner import build_strategic_plan, synthesize_current_recommendation
@@ -3821,9 +3822,56 @@ def strategic_plan_cmd(
                         "immediate_vs_strategic_differ": current_rec.immediate_vs_strategic_differ,
                         "evidence_confidence": current_rec.evidence_confidence, "reason": current_rec.reason,
                         "starting_action_options": [
-                            {"label": o.label, "kind": o.kind, "path_total": o.path_total, "chip_name": o.chip_name}
+                            {
+                                "label": o.label, "kind": o.kind, "path_total": o.path_total, "chip_name": o.chip_name,
+                                # Real (2026-09-02, Phase 5E) - real player
+                                # identity for THIS option, so a reader that
+                                # matches on `label` (e.g. `decision_snapshot.py`
+                                # resolving the authoritative pick) never has
+                                # to fall back to a DIFFERENT cached path
+                                # (`best_path`) for the actual out/in/chip -
+                                # the exact competing-source bug this phase
+                                # closes.
+                                "player_out_id": o.player_out_id, "player_out_name": o.player_out_name,
+                                "player_in_id": o.player_in_id, "player_in_name": o.player_in_name,
+                                "uses_hit": o.uses_hit,
+                            }
                             for o in current_rec.starting_action_options
                         ],
+                        # Real (2026-09-02, Phase 5E) - the Phase 5D forensic
+                        # authoritative decision this recommendation was
+                        # actually selected from (`serialize_authoritative_
+                        # decision`). `None` only in the honest edge case
+                        # where no options existed to decide between.
+                        "authoritative": (
+                            serialize_authoritative_decision(current_rec.authoritative)
+                            if current_rec.authoritative is not None else None
+                        ),
+                        # Real (2026-09-02, Phase 5E) - the CHOSEN candidate's
+                        # own raw credibility/robustness/optionality numbers,
+                        # the exact same real assessment `select_authoritative_
+                        # candidate` used to make its decision - carried here
+                        # so `decision_snapshot.py` reads these, rather than
+                        # re-deriving a second, possibly-disagreeing set from
+                        # `best_path`.
+                        "authoritative_diagnostics": (
+                            {
+                                "path_robustness_verdict": current_rec.chosen_assessment.path_robustness_verdict,
+                                "reachable_successor_count": current_rec.chosen_assessment.reachable_successor_count,
+                                "optionality_delta_vs_baseline": current_rec.chosen_assessment.optionality_delta_vs_baseline,
+                            } if current_rec.chosen_assessment is not None else None
+                        ),
+                        # Real (2026-09-02, Phase 6A COMMAND redesign) - the
+                        # real ALTERNATIVE's own diagnostics, same shape as
+                        # above - lets the dashboard say what the runner-up
+                        # genuinely does better/worse, never invented text.
+                        "runner_up_diagnostics": (
+                            {
+                                "path_robustness_verdict": current_rec.runner_up_assessment.path_robustness_verdict,
+                                "price_robust": current_rec.runner_up_assessment.price_robust,
+                                "credibility_label": current_rec.runner_up_assessment.credibility_label,
+                            } if current_rec.runner_up_assessment is not None else None
+                        ),
                     } if current_rec is not None else None
                 ),
             },

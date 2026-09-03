@@ -207,11 +207,15 @@ def test_generate_dashboard_html_composes_without_crashing(db_conn):
     assert "Recommended Squad" in result
     assert "Strategic Plan" in result
     assert "Live Tracking" in result
-    assert "Risk Monitor" in result
-    assert "Squad Changes" in result
+    # Real (2026-09-02/03, Phase 6 six-screen rebuild) - "Risk Monitor"/
+    # "Squad Changes"/"Price Moves"/"Team Outlook" were pre-Phase-6 legacy
+    # panel headings; the same real underlying data now renders under the
+    # new MY TEAM/FOOTBALL/SCOUT screens' own copy.
+    assert "mt-intel" in result  # MY TEAM's real squad-risk strip container
+    assert "MANAGER / XI / AVAILABILITY" in result  # real squad-changes feed, under FOOTBALL
     assert "FPL Market / Player News" in result
-    assert "Price Moves" in result
-    assert "Team Outlook" in result
+    assert "Predicted Price Changes" in result  # real price-forecast panel, under SCOUT
+    assert "TEAM STATE" in result  # real team-outlook cards, under FOOTBALL
     assert "Chip Strategy" in result
     assert "Latest Recommendations" not in result  # removed 2026-08-21, direct user request
     assert "System health" in result
@@ -277,7 +281,9 @@ def test_dashboard_price_moves_panel_honest_empty_state_preseason(db_conn):
 
     result = generate_dashboard_html(db_conn)
 
-    assert "No price changes yet" in result
+    # Real (price_history.py) current honest-empty-state copy - replaces the
+    # pre-Phase-6 "No price changes yet" wording.
+    assert "No price data synced yet." in result or "No confirmed price changes recorded yet this season." in result
 
 
 
@@ -1200,8 +1206,10 @@ def test_dashboard_shows_optimizer_recommendation_heading_when_nothing_locked(db
 
     result = generate_dashboard_html(db_conn)
 
-    assert "Optimizer Recommendation" in result
-    assert "My Locked Squad" not in result
+    # Real (2026-09-02, MY TEAM rebuild): the pitch heading renders
+    # uppercase as a status-line label (`.mt-status-heading`).
+    assert "OPTIMIZER RECOMMENDATION" in result
+    assert "MY LOCKED SQUAD" not in result
 
 
 def test_dashboard_shows_my_locked_squad_heading_and_real_squad_once_locked(db_conn):
@@ -1212,8 +1220,8 @@ def test_dashboard_shows_my_locked_squad_heading_and_real_squad_once_locked(db_c
 
     result = generate_dashboard_html(db_conn)
 
-    assert "My Locked Squad" in result
-    assert "Optimizer Recommendation" not in result
+    assert "MY LOCKED SQUAD" in result
+    assert "OPTIMIZER RECOMMENDATION" not in result
     assert "P30" in result  # the real synced captain (id 30) from the locked picks
 
 
@@ -1228,17 +1236,19 @@ def test_dashboard_explicit_override_still_shows_optimizer_recommendation_even_w
 
     result = generate_dashboard_html(db_conn, must_include_ids={20})
 
-    assert "Optimizer Recommendation" in result
+    assert "OPTIMIZER RECOMMENDATION" in result
 
 
 def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain(db_conn, monkeypatch):
-    """Real end-to-end test of the Home hero's own CAPTAIN verdict line
-    (2026-08-27, frontend redesign - `analyze_captain_decision`'s real
-    KEEP/CHANGE/REVIEW verdict now renders as a structured-fact sentence in
-    Home's hero, not the old `<strong>CAPTAIN</strong> <span
-    class="decision-action">KEEP</span>` badge markup from the removed
-    Strategic Plan panel - same real decision-analysis result, new copy
-    shape per the redesign's own copy rule)."""
+    """Real end-to-end test of the Command screen's own CAPTAIN matchup
+    (2026-08-27, frontend redesign; re-platformed onto `command.py` 2026-09-02,
+    Phase 6A, then redesigned again same day after direct rejection of the
+    first Command pass - `analyze_captain_decision`'s real KEEP/CHANGE/REVIEW
+    verdict now renders as a real head-to-head matchup
+    (`command.py::_captain_matchup_html`: best vs second, real delta,
+    robustness), not a single prose sentence and not a labeled mini-panel -
+    same real decision-analysis result, new copy shape per Command's own
+    "no generic prose" rule)."""
     from test_optimization_locked_squad import _seed_real_picks
 
     _seed(db_conn, budget_tenths=950, club_limit=4)
@@ -1246,8 +1256,8 @@ def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain
 
     result = generate_dashboard_html(db_conn)
 
-    assert "Captain: keep" in result
-    assert "home-hero-captain-verdict" in result
+    assert "KEEP" in result
+    assert "cmd-matchup" in result
 
 
 def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squad(db_conn, monkeypatch):
@@ -1790,15 +1800,17 @@ def test_pitch_never_shows_xp_as_current_performance_once_a_match_has_played(db_
 # quote/card treatment... make it a compact table") ---------------------
 
 
-def test_team_outlook_renders_as_a_real_table(db_conn):
+def test_team_outlook_renders_as_real_cards_under_football(db_conn):
+    """Real (2026-09-02, Phase 6): the old squad-scoped outlook TABLE was
+    replaced by FOOTBALL's own league-wide team-signal card grid
+    (`intelligence._team_signal_card`, reused unchanged) - one real card per
+    tracked team, not a table."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
     result = generate_dashboard_html(db_conn)
 
-    assert "outlook-table" in result
-    assert "<th>Tactical signal</th>" in result
-    assert "<th>Fixture quality</th>" in result
-    assert "<th>FPL signal</th>" in result
+    assert "TEAM STATE" in result
+    assert "intel-team-grid" in result
 
 
 def test_team_outlook_is_league_wide_and_flags_squad_teams(db_conn):
@@ -2007,12 +2019,19 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
             ],
             "best_path": {
                 "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                "delta_vs_second_best": 0.16,
                 "final_free_transfers": 1, "final_bank_tenths": 5,
                 "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
             },
             "paths": [
                 {
                     "total_net_ev": 12.06, "path_total": 12.06, "delta_vs_roll": 3.0, "delta_vs_leader": 0.0,
+                    # Real, precise runner-up margin (2026-09-02, Phase 4C/4D -
+                    # `near_tie_state` now reads this real optimizer-computed
+                    # field directly instead of plan.py's old local 5%-of-total
+                    # heuristic; 0.16 is a genuine near-tie under its real,
+                    # disclosed <1.0 threshold).
+                    "delta_vs_second_best": 0.16,
                     "final_free_transfers": 1, "final_bank_tenths": 5,
                     "steps": [{"event": 2, "action": "PLAY WILDCARD", "chip_played": "wildcard", "player_out_id": None, "player_in_id": None, "uses_hit": False}],
                 },
@@ -2040,8 +2059,13 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
 
     assert "Path 1" in result and "Path 2" in result
     assert "WILDCARD" in result  # chip badge, uppercased
-    assert "statistically equivalent" in result  # 12.06 vs 11.9 is well within 5%
-    assert "TOP TIER" in result  # never crown Path 1 "BEST" alone when tied
+    # Real near-tie honesty (2026-09-02, Phase 4C/4D) - reads the optimizer's
+    # own `delta_vs_second_best` (0.16, a genuine near-tie) via `near_tie_state`,
+    # shown once in the editorial leading-strategy header - never a per-box
+    # "TOP TIER" badge duplicated across every tied path (that concept was
+    # removed with the old "path box wall").
+    assert "NEAR TIE" in result
+    assert "too close to call a single winner" in result
 
 
 def test_plan_workspace_groups_same_descriptor_paths_into_one_family(db_conn):

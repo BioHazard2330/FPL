@@ -860,6 +860,8 @@ def build_scorecard(
         final_decision, confidence = "REVIEW", "LOW"
     elif ta.decision_kind == "review":
         final_decision, confidence = "REVIEW", "LOW"
+    elif ta.decision_kind == "wait":
+        final_decision, confidence = "WAIT", "LOW"
     elif winner.kind == "roll":
         final_decision, confidence = "ROLL", ta.decision_confidence or "MEDIUM"
     else:

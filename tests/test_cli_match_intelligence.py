@@ -1,6 +1,31 @@
+import pytest
 from click.testing import CliRunner
 
+import fpl_agent.cli.main as main_mod
 from fpl_agent.cli.main import cli
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dashboard_write(tmp_path, monkeypatch):
+    """Real, confirmed production bug (2026-09-02) - THE exact, byte-for-byte
+    confirmed source of a real live incident: the real `data/dashboard.html`
+    was found overwritten with this file's own fixture content verbatim
+    ("Real full-time headline", "won at home", "Coventry City"/"COV", GW1,
+    NO SQUAD) after a full test-suite run. `test_match_report_cmd_prints_
+    qualitative_analysis_and_user_observations` invokes the real `match-
+    analyze` CLI command (`cli/main.py::match_analyze_cmd`), which calls the
+    real `_write_dashboard()` whenever `change_events_written > 0` - this
+    file never isolated `DATA_DIR` the way `test_cli_live_match_poll.py`'s
+    own `_isolated_live_poll_lock` fixture already does for the identical
+    bug class there (see that fixture's own docstring - same root cause,
+    different file). The read side was already correctly isolated (`db_conn`
+    patches `database.connection.DATA_DIR`/`DB_PATH`, so `_write_dashboard`'s
+    own `get_connection()` read this file's own Arsenal/Coventry City
+    fixture, not real production data) - only the WRITE destination was not,
+    so the real dashboard got silently overwritten with fixture content on
+    every full-suite run that reached this test. Every test in this file now
+    gets its own per-test tmp_path instead."""
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
 
 
 def test_sync_match_cmd_reports_result(monkeypatch, db_conn):

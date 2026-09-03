@@ -50,6 +50,8 @@ def _action_reason(current_rec: dict | None, ta) -> str:
         return "No transfer clears the bar this week - hold your transfer."
     if ta.decision_kind == "review":
         return "Evidence is too thin to recommend a move with confidence right now."
+    if ta.decision_kind == "wait":
+        return "A real move clears the bar, but only narrowly - worth waiting for more evidence before committing."
     if ta.chosen is not None:
         c = ta.chosen.candidate
         return f"{c.player_in_name} in for {c.player_out_name} - the strongest move this week."
@@ -76,6 +78,8 @@ def _action_word(current_rec: dict | None, ta) -> tuple[str, str]:
         return "ROLL", "roll"
     if ta.decision_kind == "review":
         return "REVIEW", "review"
+    if ta.decision_kind == "wait":
+        return "WAIT", "review"
     return "TRANSFER", "transfer"
 
 

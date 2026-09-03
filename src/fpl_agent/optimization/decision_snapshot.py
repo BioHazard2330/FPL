@@ -31,6 +31,8 @@ from datetime import datetime, timezone
 from fpl_agent.database.decisions import Decision
 from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
+from fpl_agent.optimization.path_credibility import assess_path_credibility
+from fpl_agent.optimization.strategy_robustness import assess_path_robustness
 from fpl_agent.optimization.transfers import resolve_gw_xi
 
 
@@ -77,6 +79,57 @@ class DecisionSnapshot:
 
     is_stale: bool | None = None
     stale_reason: str | None = None
+    # Real whole-path credibility/robustness (2026-09-02, Phase 5 optimizer
+    # forensic rebuild PART 9/10/20 - the RISKS field of the structured
+    # decision explanation). `robustness` above stays the single-swap
+    # Monte-Carlo label (unchanged real meaning); these two are the whole-
+    # PATH equivalents - see `path_credibility.py`/`strategy_robustness.py`.
+    path_credibility: str | None = None  # LOW_FRICTION | MODERATE_FRICTION | HIGH_FRICTION
+    path_robustness: str | None = None  # ROBUST | MODERATE | FRAGILE | UNSTRESSED
+    risks: tuple[str, ...] = ()
+    # Real future-optionality effect (2026-09-02, PART 2/8; semantics fixed
+    # Phase 5C PART 1) - see `future_optionality.py`'s own docstring for the
+    # real, disclosed, non-cosmetic definition. Every quantity below has
+    # exactly one real meaning - `reachable_successors`/`baseline_reachable_
+    # successors` are absolute counts (never negative); `optionality_delta`
+    # is a signed delta (CAN be negative - a real, honest "this path narrows
+    # future options" finding, not a bug); `optionality_percent_change` is
+    # `None` (never a fabricated 0%) when the baseline is genuinely zero.
+    reachable_successors: int | None = None
+    baseline_reachable_successors: int | None = None
+    optionality_delta: int | None = None
+    optionality_percent_change: float | None = None
+    optionality_note: str | None = None
+
+    # Real (2026-09-02, Phase 5E - "wire the authoritative decision into
+    # production"): the Phase 5D forensic `AuthoritativeDecision`'s own
+    # fields, read STRAIGHT from the persisted `current_recommendation.
+    # authoritative` JSON this snapshot's underlying `strategic_plan`
+    # decision already carries - never re-derived here, and never a second,
+    # independently-reasoned number. `None` only for a real, honest
+    # pre-Phase-5E cached decision (`authoritative_is_fresh=False` marks
+    # that case explicitly - see below).
+    decision_state: str | None = None
+    action_type: str | None = None
+    immediate_action: str | None = None
+    best_alternative: str | None = None
+    nominal_ev_advantage: float | None = None
+    robustness_class: str | None = None
+    price_robustness: bool | None = None
+    optionality_effect: str | None = None
+    critical_dependencies: tuple[str, ...] = ()
+    captain_decision: str | None = None
+    future_conditional_plan: tuple[str, ...] = ()
+    decision_reason: str | None = None
+    # Real provenance (Phase 5E PART 4/9) - True only when THIS snapshot's
+    # `decision_state`/etc above came from a real, freshly-computed
+    # `AuthoritativeDecision` persisted on the underlying decision row.
+    # False means the underlying `strategic_plan` decision predates the
+    # Phase 5E wiring (no `authoritative` key in its own detail JSON) - the
+    # fields above are honestly `None`, never backfilled with a guess, and
+    # every legacy field above falls back to the pre-Phase-5E `best_path`-
+    # based computation instead (still real, just the OLDER source).
+    authoritative_is_fresh: bool = False
 
 
 # Real, disclosed near-tie threshold (2026-09-02) - not fitted to data (no
@@ -112,6 +165,32 @@ def _state_version(locked: LockedSquadState) -> str:
     without needing a separate versioning table."""
     ids = ",".join(str(i) for i in sorted(locked.squad_ids))
     return f"squad:{ids}|bank:{locked.bank_tenths}|ft:{locked.free_transfers}"
+
+
+def _path_adapter(conn: sqlite3.Connection, best_path: dict):
+    """Real adapter (2026-09-02, Phase 5) - `path_credibility.py`/
+    `strategy_robustness.py` are written against a real `TransferSequence`
+    (attribute access, real player names on each step); the cached
+    `strategic_plan` decision JSON's `best_path` is a plain dict whose own
+    `steps` entries carry ids but no name fields (see `transfers.py`'s own
+    JSON-serialization comment - names were only ever added for `player_
+    out_name`/`player_in_name` display convenience elsewhere, not this raw
+    dict). Resolves real names via the SAME `_player_name` helper this
+    module already uses everywhere else, wraps in `SimpleNamespace` so the
+    Phase 5 modules' own dataclass-shaped attribute access works unchanged -
+    never a second, parallel data model."""
+    from types import SimpleNamespace
+
+    steps = []
+    for s in best_path.get("steps", []):
+        steps.append(SimpleNamespace(
+            event=s.get("event"), chip_played=s.get("chip_played"),
+            player_out_id=s.get("player_out_id"), player_in_id=s.get("player_in_id"),
+            player_out_name=_player_name(conn, s.get("player_out_id")),
+            player_in_name=_player_name(conn, s.get("player_in_id")),
+            uses_hit=bool(s.get("uses_hit")), gw_ev=s.get("gw_ev", 0.0),
+        ))
+    return SimpleNamespace(steps=steps, final_bank_tenths=best_path.get("final_bank_tenths", 0))
 
 
 def _player_name(conn: sqlite3.Connection, player_id: int | None) -> str | None:
@@ -309,7 +388,7 @@ def evaluate_user_scenario(
     )
 
 
-def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8) -> DecisionSnapshot | None:
+def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8, ca=None) -> DecisionSnapshot | None:
     """The one function every dashboard surface and CLI command should call
     for "what is the system's recommendation" - never re-reads
     `strategic_plan`/`post_gw_plan` detail JSON independently. Read-only:
@@ -317,7 +396,18 @@ def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8) -> De
     gated cadence, `cli/main.py::_maybe_trigger_strategic_plan_recompute`) -
     returns `None` only when no real locked squad exists yet or no
     strategic_plan decision has ever been logged (both real, honest empty
-    states, never fabricated)."""
+    states, never fabricated).
+
+    `ca` (2026-09-02, Phase 5C PART 6) is an optional, already-computed real
+    `CaptainDecisionAnalysis` (`analyze_captain_decision`'s own output) - a
+    caller that already has one (the same real "pass ta/ca in, never
+    re-scan" pattern `evaluate_locked_squad(ta=, ca=)` already established)
+    can pass it to avoid a redundant real re-computation; `None` (the
+    default) computes it fresh here. Its own already-real Monte-Carlo
+    robustness (`_attach_captain_robustness`, built in an earlier session)
+    is folded into this snapshot's `risks` when FRAGILE - "a fragile
+    captain decision must be visible at path level when it materially
+    drives path EV", per this phase's own explicit instruction."""
     from fpl_agent.models.decision_freshness import assess_recommendation_freshness
     from fpl_agent.models.decision_hysteresis import stable_current_recommendation
     from fpl_agent.models.fixtures import live_or_reference_event
@@ -365,10 +455,36 @@ def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8) -> De
 
     action_kind = cr.get("action_kind", "roll")
     label = cr.get("label", "ROLL")
-    player_out_id = best_path.get("steps", [{}])[0].get("player_out_id") if best_path.get("steps") else None
-    player_in_id = best_path.get("steps", [{}])[0].get("player_in_id") if best_path.get("steps") else None
-    chip_name = best_path.get("steps", [{}])[0].get("chip_played") if best_path.get("steps") else None
-    uses_hit = bool(best_path.get("steps", [{}])[0].get("uses_hit")) if best_path.get("steps") else False
+
+    # Real (2026-09-02, Phase 5E - "wire the authoritative decision into
+    # production", "remove stale-cache authority"): the actual transfer/chip
+    # IDENTITY for the recommended action must come from the SAME real
+    # option `synthesize_current_recommendation` actually chose (matched by
+    # `label` against the now identity-carrying `starting_action_options`),
+    # never from `best_path` - `best_path` is the RAW beam's own naive
+    # top-by-EV path (`plan.best`), a genuinely DIFFERENT, un-authoritative
+    # source that could silently disagree with `label`/`action_kind` above
+    # (the real, confirmed bug this phase exists to close: `label` could say
+    # "PLAY WILDCARD" while `chip` still read "freehit" off `best_path`).
+    authoritative_raw = cr.get("authoritative")
+    authoritative_diag = cr.get("authoritative_diagnostics")
+    authoritative_is_fresh = authoritative_raw is not None
+    chosen_option = next((o for o in options if o.get("label") == label and "player_out_id" in o), None)
+    if chosen_option is not None:
+        player_out_id = chosen_option.get("player_out_id")
+        player_in_id = chosen_option.get("player_in_id")
+        chip_name = chosen_option.get("chip_name")
+        uses_hit = bool(chosen_option.get("uses_hit"))
+    else:
+        # Real, honest legacy fallback - only for a pre-Phase-5E cached
+        # decision whose `starting_action_options` never carried player
+        # identity (no `authoritative` key either, by construction - both
+        # were added in the same change). Never used once a fresh
+        # authoritative pick exists.
+        player_out_id = best_path.get("steps", [{}])[0].get("player_out_id") if best_path.get("steps") else None
+        player_in_id = best_path.get("steps", [{}])[0].get("player_in_id") if best_path.get("steps") else None
+        chip_name = best_path.get("steps", [{}])[0].get("chip_played") if best_path.get("steps") else None
+        uses_hit = bool(best_path.get("steps", [{}])[0].get("uses_hit")) if best_path.get("steps") else False
 
     # Real fix: `horizon_breakdown` lives on the diverse-paths list entries
     # (`sd.detail["paths"]`), not on `best_path` itself (a separate, narrower
@@ -398,7 +514,132 @@ def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8) -> De
         conn, action_kind, player_in_id, leader_total, second_total, locked.bank_tenths,
     )
 
+    # Real whole-path credibility/robustness (2026-09-02, Phase 5 optimizer
+    # forensic rebuild PART 9/10; re-sourced 2026-09-02 Phase 5E). When a
+    # fresh `authoritative` decision is present on this row, EVERY one of
+    # these comes straight from IT (`authoritative_raw`/`authoritative_diag`)
+    # - the real, already-computed assessment of the SAME chosen path, never
+    # a second re-derivation from `best_path` (a genuinely different,
+    # un-authoritative path - the real "two disagreeing sources" bug Phase
+    # 5E closes). Only a pre-Phase-5E cached row (no `authoritative` key)
+    # falls back to the OLD `_path_adapter(best_path)` computation - real,
+    # honestly labeled `authoritative_is_fresh=False`, never silently
+    # presented as equivalent to a fresh one.
+    risks: tuple[str, ...] = ()
+    path_credibility_label: str | None = None
+    path_robustness_label: str | None = None
+    if authoritative_is_fresh:
+        path_credibility_label = authoritative_raw.get("path_credibility")
+        path_robustness_label = authoritative_diag.get("path_robustness_verdict") if authoritative_diag else None
+        if path_credibility_label and path_credibility_label != "LOW_FRICTION":
+            risks = risks + (f"path credibility: {path_credibility_label} - see critical_dependencies for the specific legs",)
+        if authoritative_raw.get("robustness_class") == "FRAGILE":
+            risks = risks + (f"path robustness class: FRAGILE - {authoritative_raw.get('decision_reason')}",)
+        if authoritative_raw.get("price_robustness") is False:
+            risks = risks + ("at least one real transfer step in this path has zero/thin price margin - a real adverse price move before that gameweek could make it unaffordable",)
+    elif best_path.get("steps"):
+        try:
+            path_obj = _path_adapter(conn, best_path)
+            credibility = assess_path_credibility(conn, path_obj)
+            path_credibility_label = credibility.credibility_label
+            path_robustness = assess_path_robustness(conn, path_obj)
+            path_robustness_label = path_robustness.verdict
+            if credibility.credibility_label != "LOW_FRICTION":
+                risks = risks + credibility.reasons
+            if path_robustness.verdict == "FRAGILE":
+                risks = risks + (path_robustness.reason,)
+        except Exception:
+            pass
+
+    # Real future-optionality effect (2026-09-02, Phase 5B PART 2, semantics
+    # fixed 2026-09-02 Phase 5C PART 1; re-sourced 2026-09-02 Phase 5E). When
+    # `authoritative_is_fresh`, `reachable_successors`/`optionality_delta`
+    # come straight from `authoritative_diag` (the SAME real assessment of
+    # the chosen path) - `baseline_reachable_successors`/`optionality_
+    # percent_change` are real, exact arithmetic derived from those two
+    # (`reachable - delta`, `delta/baseline*100`), the identical formula
+    # `compare_optionality` itself uses, never a second, independently-run
+    # optionality check. `optionality_note` is just `authoritative_raw`'s
+    # own `optionality_effect` string. Falls back to the OLD `best_path`-
+    # based recomputation only for a pre-Phase-5E cached row.
+    optionality_note: str | None = None
+    reachable_successors: int | None = None
+    baseline_reachable_successors: int | None = None
+    optionality_delta: int | None = None
+    optionality_percent_change: float | None = None
+    if authoritative_is_fresh and authoritative_diag:
+        reachable_successors = authoritative_diag.get("reachable_successor_count")
+        optionality_delta = authoritative_diag.get("optionality_delta_vs_baseline")
+        if reachable_successors is not None and optionality_delta is not None:
+            baseline_reachable_successors = reachable_successors - optionality_delta
+            optionality_percent_change = (
+                round(optionality_delta / baseline_reachable_successors * 100, 1)
+                if baseline_reachable_successors else None
+            )
+        optionality_note = authoritative_raw.get("optionality_effect")
+    elif best_path.get("steps"):
+        try:
+            from fpl_agent.optimization.future_optionality import assess_future_optionality, compare_optionality
+
+            current_oa = assess_future_optionality(conn, list(locked.squad_ids), locked.bank_tenths or 0, locked.free_transfers or 0)
+            last_step = best_path["steps"][-1]
+            final_squad = last_step.get("resulting_squad_ids") or list(locked.squad_ids)
+            final_bank = best_path.get("final_bank_tenths", locked.bank_tenths or 0)
+            after_oa = assess_future_optionality(conn, list(final_squad), final_bank)
+            comparison = compare_optionality(current_oa, after_oa)
+
+            reachable_successors = comparison.reachable_successors
+            baseline_reachable_successors = comparison.baseline_reachable_successors
+            optionality_delta = comparison.optionality_delta
+            optionality_percent_change = comparison.optionality_percent_change
+
+            direction = "expands" if comparison.optionality_delta > 0 else (
+                "shrinks" if comparison.optionality_delta < 0 else "leaves unchanged"
+            )
+            pct_bit = f" ({comparison.optionality_percent_change:+.1f}%)" if comparison.optionality_percent_change is not None else ""
+            optionality_note = (
+                f"this path {direction} the real reachable-successor count from {comparison.baseline_reachable_successors} "
+                f"to {comparison.reachable_successors} legal future single transfers ({comparison.optionality_delta:+d}{pct_bit}), "
+                f"and real premium-player access from {comparison.baseline_premium_access} to {comparison.premium_access}"
+            )
+        except Exception:
+            optionality_note = None
+
+    # Real captain-robustness integration (2026-09-02, Phase 5C PART 6) - the
+    # captain engine's own real Monte-Carlo robustness (`_attach_captain_
+    # robustness`, already built, not rebuilt here) was never connected to
+    # path-level output before this. A FRAGILE captain lead is real evidence
+    # about the SAME gameweek this path's own `path_total` counts on -
+    # folded into `risks` only when it's actually FRAGILE, never a
+    # duplicated ROBUST/MODERATE note nobody needs to act on.
+    if ca is None:
+        try:
+            from fpl_agent.optimization.decision_analysis import analyze_captain_decision
+
+            ca = analyze_captain_decision(conn, locked)
+        except Exception:
+            ca = None
+    if ca is not None and getattr(ca, "robustness", None) == "FRAGILE" and ca.current is not None:
+        risks = risks + (
+            f"captain {ca.current.web_name}: real Monte-Carlo trials show this pick's lead does not reliably "
+            f"hold up under sampled variance (robustness: FRAGILE) - this affects the SAME gameweek this "
+            f"path's own real EV counts on",
+        )
+
     freshness = assess_recommendation_freshness(conn, sd, set(locked.squad_ids))
+
+    # Real (2026-09-02, Phase 5E PART 6) - captain stays its own real axis,
+    # built fresh from the SAME `ca` this function already computed above
+    # (never from a possibly-stale persisted string) - never overwrites or
+    # contradicts `verdict`/`action_kind` above, which describe the
+    # transfer/chip axis only.
+    captain_decision_text: str | None = None
+    if ca is not None and ca.current is not None:
+        median_bit = f" (median {ca.current.median})" if getattr(ca.current, "median", None) is not None else ""
+        kind_bit = f", decision={ca.decision_kind}" if getattr(ca, "decision_kind", None) is not None else ""
+        captain_decision_text = (
+            f"{ca.current.web_name}{median_bit}{kind_bit}, robustness={getattr(ca, 'robustness', None)}"
+        )
 
     return DecisionSnapshot(
         decision_id=sd.id, state_version=_state_version(locked), model_version=sd.model_version or MODEL_VERSION,
@@ -416,4 +657,21 @@ def build_decision_snapshot(conn: sqlite3.Connection, horizon_gw: int = 8) -> De
         alternatives=alternatives, reasons=reasons, reversal_conditions=reversal_conditions,
         is_stale=freshness.is_stale if freshness else None,
         stale_reason=freshness.stale_reason if freshness else None,
+        path_credibility=path_credibility_label, path_robustness=path_robustness_label, risks=risks,
+        reachable_successors=reachable_successors, baseline_reachable_successors=baseline_reachable_successors,
+        optionality_delta=optionality_delta, optionality_percent_change=optionality_percent_change,
+        optionality_note=optionality_note,
+        decision_state=authoritative_raw.get("decision_state") if authoritative_is_fresh else None,
+        action_type=authoritative_raw.get("action_type") if authoritative_is_fresh else None,
+        immediate_action=authoritative_raw.get("immediate_action") if authoritative_is_fresh else None,
+        best_alternative=authoritative_raw.get("best_alternative") if authoritative_is_fresh else None,
+        nominal_ev_advantage=authoritative_raw.get("nominal_ev_advantage") if authoritative_is_fresh else None,
+        robustness_class=authoritative_raw.get("robustness_class") if authoritative_is_fresh else None,
+        price_robustness=authoritative_raw.get("price_robustness") if authoritative_is_fresh else None,
+        optionality_effect=authoritative_raw.get("optionality_effect") if authoritative_is_fresh else None,
+        critical_dependencies=tuple(authoritative_raw.get("critical_dependencies", ())) if authoritative_is_fresh else (),
+        captain_decision=captain_decision_text,
+        future_conditional_plan=tuple(authoritative_raw.get("future_conditional_plan", ())) if authoritative_is_fresh else (),
+        decision_reason=authoritative_raw.get("decision_reason") if authoritative_is_fresh else None,
+        authoritative_is_fresh=authoritative_is_fresh,
     )

@@ -105,16 +105,18 @@ def test_dashboard_keeps_original_panel_order_when_pre_deadline(db_conn):
     result = generate_dashboard_html(db_conn)
 
     assert result.index('id="squad"') < result.index('id="live"')
-    assert "Optimizer Recommendation" in result or "My Locked Squad" in result
+    # Real (2026-09-02, MY TEAM rebuild): the pitch heading now renders
+    # uppercase as a status-line label, consistent with every other screen's
+    # own status heading (`.cmd-status-heading`/`.fb-status-heading`).
+    assert "OPTIMIZER RECOMMENDATION" in result or "MY LOCKED SQUAD" in result
 
 
 def test_dashboard_promotes_live_panel_when_a_squad_fixture_is_live(db_conn):
-    """Squad is now a fixed top-level workspace (2026-08-27, frontend
-    redesign - HOME/PLAN/SQUAD/INTELLIGENCE/MARKET, a stable task-oriented
-    nav, not reordered by match state) - what genuinely still promotes on a
-    live fixture is Live Tracking/Match Intelligence moving ahead of the
-    OTHER secondary panels (intelligence-summary/opportunities/market), and
-    the live-emphasis class/state on the page and hero."""
+    """Real (2026-09-03, Phase 6 six-screen rebuild): FOOTBALL/SCOUT are now
+    fixed top-level screens, not panels that reorder relative to each other
+    on match state - the only thing a live squad fixture still changes is
+    the live-emphasis class/state on the page and hero, and Live Tracking's
+    own promoted styling."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn, captain_id=30, vice_id=20)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
@@ -122,51 +124,48 @@ def test_dashboard_promotes_live_panel_when_a_squad_fixture_is_live(db_conn):
     result = generate_dashboard_html(db_conn, live_payload={"elements": []})
 
     assert 'class="state-live"' in result
-    assert result.index('id="live"') < result.index('id="intelligence-summary"')
     assert "panel-live-emphasis" in result
     assert "GW1 &middot; LIVE" in result
 
 
-# --- Match Intelligence / Team Outlook promotion (2026-08-22, tonight's-
-# matches visual pass, spec section N) ---------------------------------
+# --- Six-screen architecture: real isolation (2026-09-03, Phase 6 rebuild) ---
+# FOOTBALL/Match Reports/Team Outlook used to be three separately-promoted
+# legacy panels reordered by `dash_state`; they are now ONE real screen
+# (`football.py`) that never moves and never renders twice, regardless of
+# match state - this replaces the old promotion-ordering tests above.
 
 
-def test_match_intelligence_and_team_outlook_promoted_when_live(db_conn):
+def test_football_screen_renders_exactly_once_when_live(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _seed_real_picks(db_conn, captain_id=30, vice_id=20)
     _seed_fixture_between(db_conn, event=1, team_h=1, team_a=2, started=1, finished=0)
 
     result = generate_dashboard_html(db_conn, live_payload={"elements": []})
 
-    # Real, live promotion: both cards move up next to Live Tracking/AI
-    # Decisions instead of sitting below the fixture ticker.
-    assert result.index('id="match-reports"') < result.index('id="fixtures"')
-    assert result.index('id="football-intelligence"') < result.index('id="fixtures"')
-    # Never rendered twice.
-    assert result.count('id="match-reports"') == 1
-    assert result.count('id="football-intelligence"') == 1
+    assert result.count('id="screen-football"') == 1
 
 
-def test_match_intelligence_and_team_outlook_stay_put_when_pre_deadline(db_conn):
+def test_football_screen_renders_exactly_once_when_pre_deadline(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
     result = generate_dashboard_html(db_conn)
 
-    # Original position: inside the fixed Intelligence grid, after fixtures.
-    assert result.index('id="fixtures"') < result.index('id="match-reports"')
-    assert result.index('id="fixtures"') < result.index('id="football-intelligence"')
+    assert result.count('id="screen-football"') == 1
 
 
-def test_panels_carry_a_real_data_intelligence_decision_category(db_conn):
+def test_dashboard_exposes_the_six_real_screens_exactly_once(db_conn):
+    """Real, disclosed six-screen architecture (Phase 6 master rebuild) -
+    each primary screen's container renders exactly once, never left
+    duplicated under an old legacy id alongside the new one."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
     result = generate_dashboard_html(db_conn)
 
-    assert 'id="squad" data-cat="data"' in result
-    assert 'id="plan" data-cat="decision"' in result
-    assert 'id="intelligence-summary" data-cat="intelligence"' in result
-    assert 'id="football-intelligence" data-cat="intelligence"' in result
-    assert 'id="match-reports" data-cat="intelligence"' in result
+    for screen_id in ("screen-command", "squad", "plan", "screen-football", "screen-scout", "advanced"):
+        assert result.count(f'id="{screen_id}"') == 1, f"id={screen_id!r} did not render exactly once"
+    # Legacy ids these screens replaced must never reappear.
+    for legacy_id in ("intelligence-summary", "match-reports", "football-intelligence", "opportunities", "market-signals"):
+        assert f'id="{legacy_id}"' not in result
 
 
 def test_squad_live_window_treats_match_intelligence_full_time_as_finished(db_conn):
@@ -333,3 +332,27 @@ def test_compare_panel_falls_back_to_projected_xp_before_any_match_played(db_con
 
     assert "Projected xP" in result
     assert "GW1 pts" not in result
+
+
+def test_primary_nav_links_all_resolve_to_a_real_id_on_the_page(db_conn):
+    """Real navigation integrity (Phase 6 six-screen rebuild) - every
+    `site-nav-primary`/`site-nav-secondary` href must point at an id that
+    genuinely exists in the rendered page, never a stale/renamed anchor."""
+    import re
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    hrefs = re.findall(r'class="site-nav-(?:primary|secondary)"[^>]*href="#([\w-]+)"|href="#([\w-]+)"[^>]*class="site-nav-(?:primary|secondary)"', result)
+    targets = [a or b for a, b in hrefs]
+    assert len(targets) >= 6  # the 6 primary screens + at least 1 secondary
+    # `#live-match-centre` (`match_centre.py`) is real but genuinely
+    # conditional - it renders `''` (a real empty section, by design) unless
+    # a squad fixture is LIVE/HALFTIME right now, which this bare seed never
+    # is - never a broken link, just not present in an unconditional regen.
+    conditional_targets = {"live-match-centre"}
+    for target in targets:
+        if target in conditional_targets:
+            continue
+        assert f'id="{target}"' in result, f"nav href #{target} has no matching id in the page"

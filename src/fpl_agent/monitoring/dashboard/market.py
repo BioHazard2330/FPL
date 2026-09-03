@@ -1,25 +1,14 @@
-"""MARKET workspace (2026-08-27, frontend redesign Phase 2) - real
-aggregation only, per the direct spec: MODEL / MARKET / DIVERGENCE, PRICE /
-OWNERSHIP / MOMENTUM - never a raw bookmaker-row dump. Reuses the existing,
-already-correct legacy renderers (`_market_divergence_html`/
-`_transfer_momentum_html` - model-vs-devigged-consensus and transfer
-momentum as a share of all registered managers, which already covers
-"ownership" in the form that's real and available) - this module just gives
-them the workspace framing the new IA needs instead of re-deriving
-anything. Squad-scoped price forecasting used to live here too
-(`_price_predictions_html`) - superseded by the real, league-wide,
-search/filter-capable `price_history.py` panel (dashboard-level, not squad-
-scoped) and removed rather than left as a duplicate, narrower view of the
-same data."""
+"""Real market-data renderers (2026-08-27, frontend redesign Phase 2; folded
+into SCOUT/FOOTBALL/ADVANCED outright 2026-09-03, Phase 6 six-screen
+rebuild - no standalone Market screen any more). `render_team_odds_html`
+feeds FOOTBALL; `render_top_transfers_html` feeds SCOUT's Transfer Momentum
+section; the real Model-vs-Market divergence table
+(`legacy._market_divergence_html`) is read directly by ADVANCED - a decision
+cross-check, not a scouting signal, so it never lived in this module's own
+composition to begin with."""
 from fpl_agent.models.blend import clean_sheet_probability
 from fpl_agent.models.fixtures import team_fixture_ticker
-from fpl_agent.monitoring.dashboard.legacy import (
-    _cached_fixture_goals_for,
-    _crest_html,
-    _esc,
-    _market_divergence_html,
-    _transfer_momentum_html,
-)
+from fpl_agent.monitoring.dashboard.legacy import _cached_fixture_goals_for, _crest_html, _esc
 
 _TEAM_ODDS_LIMIT = 12
 _TOP_TRANSFERS_LIMIT = 10
@@ -80,19 +69,3 @@ def render_top_transfers_html(conn, direction: str = "in", limit: int = _TOP_TRA
         for r in rows if r["n"]
     )
     return body or "<div class='empty-state'>No real transfer-momentum data synced yet.</div>"
-
-
-def render_market_workspace(conn, squad_ids: set[int]) -> str:
-    divergence = _market_divergence_html(conn, squad_ids)
-    momentum = _transfer_momentum_html(conn, squad_ids)
-    team_odds = render_team_odds_html(conn)
-    transfers_in = render_top_transfers_html(conn, "in")
-    transfers_out = render_top_transfers_html(conn, "out")
-    return f"""<div class="market-section"><h3>Model vs Market <span class="panel-subtitle">DIVERGENCE - real expected-goals model vs devigged bookmaker consensus</span></h3>{divergence}</div>
-<div class="market-section"><h3>Ownership / Momentum <span class="panel-subtitle">real net transfers as a share of all registered managers</span></h3>{momentum}</div>
-<div class="market-section"><h3>Team Odds <span class="panel-subtitle">league-wide next-fixture clean sheet % / projected goals, ranked</span></h3>{team_odds}</div>
-<div class="market-grid-2">
-  <div class="market-section"><h3>Top Transfers In <span class="panel-subtitle">league-wide, real counts this gameweek</span></h3>{transfers_in}</div>
-  <div class="market-section"><h3>Top Transfers Out <span class="panel-subtitle">league-wide, real counts this gameweek</span></h3>{transfers_out}</div>
-</div>
-<div class="panel-subtitle" style="margin-top:10px">Full price-change forecast + confirmed-change ledger: see the <a href="#price-history">Price History</a> section below.</div>"""

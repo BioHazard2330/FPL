@@ -465,12 +465,31 @@ def search_transfer_sequences(
             ))
 
             # Option 2: single transfer this GW, for each current squad player
+            #
+            # Real, confirmed candidate-pruning bug fixed 2026-09-02 (Phase
+            # 5B optimizer forensic rebuild, PART 1) - this call used to rank
+            # candidates by `n_gw=1` (this SINGLE gameweek's isolated EV
+            # only). Live-verified against production: for 4 of 6 real
+            # squad players tested, the real top-3 candidate under a real
+            # 3-GW window (N.Williams, Barry, Wieffer, Rogers) was NOT
+            # present in the real 1-GW top-3 pool this call actually used -
+            # a genuinely different, worse candidate set silently reaching
+            # the beam. Real, free fix: `evaluate_transfer` (called inside
+            # `best_transfer_for_player` for every candidate regardless of
+            # this parameter) ALREADY computes `net_ev_1gw`/`net_ev_3gw`/
+            # `net_ev_5gw` for every real candidate every time - `n_gw` only
+            # selects which already-computed field is used to RANK/slice
+            # `top_n`, so `n_gw=3` here costs zero additional real
+            # computation, only a better real ranking lens. `n_gw=3` matches
+            # this project's own established 3-GW materiality convention
+            # (`decision_analysis.py::_TRANSFER_DELTA_THRESHOLD`'s own
+            # window) rather than inventing a new horizon.
             is_hit = state.free_transfers < 1
             for player_out_id in state.squad_ids:
                 player_out_falling = classify_price_change(conn, player_out_id).direction == "FALL_LIKELY"
                 for cand in best_transfer_for_player(
                     conn, player_out_id, list(state.squad_ids), state.bank_tenths, is_hit,
-                    n_gw=1, top_n=3, from_event=event, cache=cache,
+                    n_gw=3, top_n=3, from_event=event, cache=cache,
                 ):
                     new_squad = tuple(pid for pid in state.squad_ids if pid != player_out_id) + (cand.player_in_id,)
                     gw_ev = _squad_gw_ev(conn, new_squad, event, cache)

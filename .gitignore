@@ -35,3 +35,7 @@ logs/*.log.*
 # OS
 .DS_Store
 Thumbs.db
+
+# Dev-only Playwright visual-QA tooling (2026-09-03, Phase 7)
+node_modules/
+package-lock.json

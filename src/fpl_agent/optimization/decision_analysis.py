@@ -117,7 +117,7 @@ class TransferDecisionAnalysis:
     event: int
     roll: RollOption | None
     candidates: tuple[TransferOption, ...]
-    decision_kind: str  # "roll" | "transfer" | "review"
+    decision_kind: str  # "roll" | "transfer" | "review" | "wait"
     chosen: TransferOption | None
     expected_advantage_3gw: float | None
     robustness: str | None
@@ -150,10 +150,16 @@ class TransferDecisionAnalysis:
     decision_confidence: str | None = None
     margin_ratio: float | None = None
     # Real, disclosed value-of-information check (2026-08-27, "audit against
-    # real GW2 expert reasoning") - informational only, never a second gate
-    # on top of the evidence_confidence one above (the user's own explicit
-    # "do not hard-code a hold" constraint). See models/value_of_information.py.
+    # real GW2 expert reasoning"; made load-bearing 2026-09-02, Phase 5
+    # optimizer forensic rebuild PART 8 - see the real, narrow "wait" branch
+    # in `analyze_transfer_decision` above for the only case where this now
+    # actually changes `decision_kind`, never a blanket hold). See
+    # models/value_of_information.py.
     information_value_note: str | None = None
+    # Real market-signal note (2026-09-02, PART 5) - informational
+    # conviction context only, never a direct xP adjustment. See
+    # models/market_signal.py.
+    market_signal_note: str | None = None
     # Real FT state used to price this decision's hit cost (2026-08-27,
     # Part 3) - None/False only when genuinely undeterminable (see
     # models.free_transfers.compute_real_free_transfers's own docstring),
@@ -317,11 +323,61 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
 
     evidence_ok = evidence_confidence is None or _LEVEL_RANK[evidence_confidence] >= _LEVEL_RANK[_MIN_EVIDENCE_CONFIDENCE_FOR_ACTION]
 
+    # Real margin + value-of-information, computed BEFORE the verdict branch
+    # below (2026-09-02, Phase 5 optimizer forensic rebuild, PART 7/8/21) -
+    # `value_of_information.py` used to be purely informational (computed
+    # AFTER the verdict, never read by it - see that module's own docstring,
+    # written under an explicit "do not hard-code a hold" constraint from an
+    # earlier pass). This phase's own explicit instruction supersedes that:
+    # make it load-bearing for a real, narrow, disclosed WAIT case only -
+    # never a blanket hold, never overriding a comfortable-margin TRANSFER.
+    margin_ratio = round(best.candidate.net_ev_3gw / _TRANSFER_DELTA_THRESHOLD, 2) if best is not None else None
+    out_voi = in_voi = None
+    if best is not None:
+        try:
+            from fpl_agent.models.value_of_information import assess_information_value
+
+            out_voi = assess_information_value(conn, best.candidate.player_out_id)
+            in_voi = assess_information_value(conn, best.candidate.player_in_id)
+        except Exception:
+            out_voi = in_voi = None
+    waiting_has_real_value = out_voi is not None and in_voi is not None and (
+        out_voi.data_confidence_would_upgrade or out_voi.minutes_would_likely_improve_by_waiting
+        or in_voi.data_confidence_would_upgrade or in_voi.minutes_would_likely_improve_by_waiting
+    )
+    is_narrow_margin = margin_ratio is not None and margin_ratio < _DECISION_CONFIDENCE_NARROW_MARGIN
+
     if best is None:
         decision_kind = "roll"
         reason = "no real transfer candidate exists for this squad under the current budget/club-limit constraints"
         chosen = None
         expected_advantage = None
+    elif threshold_cleared and evidence_ok and is_narrow_margin and waiting_has_real_value:
+        # Real WAIT verdict (PART 7/21) - the candidate clears the real bar
+        # and the evidence is real-enough to act on, but only narrowly
+        # (margin_ratio < the same real _DECISION_CONFIDENCE_NARROW_MARGIN
+        # this module already used for labelling), AND real, additional
+        # evidence is genuinely likely to arrive before the deadline
+        # (`value_of_information.py`'s own real, disclosed sample-size/
+        # rotation-risk check - never a fabricated "AI wait score"). A
+        # comfortable-margin transfer is NEVER downgraded to WAIT by this
+        # branch, regardless of information value - waiting only matters
+        # when the decision is close enough that new evidence could
+        # plausibly flip it.
+        decision_kind = "wait"
+        which = []
+        if out_voi.data_confidence_would_upgrade or out_voi.minutes_would_likely_improve_by_waiting:
+            which.append(f"{best.candidate.player_out_name} (OUT)")
+        if in_voi.data_confidence_would_upgrade or in_voi.minutes_would_likely_improve_by_waiting:
+            which.append(f"{best.candidate.player_in_name} (IN)")
+        reason = (
+            f"{best.candidate.player_out_name} -> {best.candidate.player_in_name} clears the real "
+            f"{_TRANSFER_DELTA_THRESHOLD} xP bar only narrowly ({margin_ratio}x) and real additional evidence for "
+            f"{' and '.join(which)} is genuinely likely before the deadline - worth waiting for it rather than "
+            f"committing to a real hit/swap on a margin this thin"
+        )
+        chosen = best
+        expected_advantage = best.candidate.net_ev_3gw
     elif threshold_cleared and evidence_ok:
         decision_kind = "transfer"
         reason = (
@@ -354,22 +410,33 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         chosen = None
         expected_advantage = best.candidate.net_ev_3gw
 
-    margin_ratio = round(best.candidate.net_ev_3gw / _TRANSFER_DELTA_THRESHOLD, 2) if best is not None else None
     decision_confidence = _decision_confidence(evidence_confidence, robustness_label, margin_ratio) if best is not None else None
 
     information_value_note = None
+    if out_voi is not None and in_voi is not None:
+        information_value_note = (
+            f"OUT ({best.candidate.player_out_name}): {out_voi.summary} | "
+            f"IN ({best.candidate.player_in_name}): {in_voi.summary}"
+        )
+
+    # Real market-signal note (PART 5) - informational/conviction context
+    # only, exactly per that part's own explicit instruction ("never
+    # directly multiply xP by transfers-in"). Only surfaced when the real
+    # signal actually clears its own abnormal-velocity bar - a normal
+    # transfer count says nothing and is correctly omitted.
+    market_signal_note = None
     if best is not None:
         try:
-            from fpl_agent.models.value_of_information import assess_information_value
+            from fpl_agent.models.market_signal import assess_market_signal
 
-            out_voi = assess_information_value(conn, best.candidate.player_out_id)
-            in_voi = assess_information_value(conn, best.candidate.player_in_id)
-            information_value_note = (
-                f"OUT ({best.candidate.player_out_name}): {out_voi.summary} | "
-                f"IN ({best.candidate.player_in_name}): {in_voi.summary}"
-            )
+            ms = assess_market_signal(conn, best.candidate.player_in_id, event=event)
+            if ms is not None and ms.is_abnormal:
+                market_signal_note = (
+                    f"{best.candidate.player_in_name} real transfer-in velocity is {ms.velocity_ratio}x "
+                    f"this player's own recent baseline - {ms.likely_cause.replace('_', ' ').lower()} ({ms.evidence})"
+                )
         except Exception:
-            information_value_note = None
+            market_signal_note = None
 
     return TransferDecisionAnalysis(
         event=event, roll=roll, candidates=tuple(options), decision_kind=decision_kind, chosen=chosen,
@@ -378,7 +445,7 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         evidence_confidence=evidence_confidence, evidence_reasons=evidence_reasons,
         data_confidence=evidence_confidence, model_confidence=robustness_label,
         decision_confidence=decision_confidence, margin_ratio=margin_ratio,
-        information_value_note=information_value_note,
+        information_value_note=information_value_note, market_signal_note=market_signal_note,
         free_transfers=real_free_transfers, free_transfers_known=real_free_transfers is not None,
     )
 
@@ -462,6 +529,18 @@ def analyze_captain_decision(conn: sqlite3.Connection, locked: LockedSquadState)
             reason = (
                 f"{action.current.web_name} stays captain - the real best alternative "
                 f"({options[0].web_name}) is only +{gap} xP, below the real 0.5 xP materiality bar"
+            )
+        # Real, disclosed addition (2026-09-02, Phase 5B optimizer forensic
+        # rebuild PART 4/20) - `action.robustness` (real Monte-Carlo
+        # best-vs-runner-up trial comparison, `_attach_captain_robustness`)
+        # already existed but was only ever surfaced as a bare field, never
+        # in the reason text itself. A FRAGILE lead is real, disclosed
+        # evidence a reader should see in the one sentence they're most
+        # likely to actually read - never silently dropped.
+        if action.robustness == "FRAGILE":
+            reason += (
+                " - real Monte-Carlo trials show this lead does not reliably hold up under sampled "
+                "variance (robustness: FRAGILE)"
             )
     else:
         current_name = action.current.web_name if action.current else "the current captain"
