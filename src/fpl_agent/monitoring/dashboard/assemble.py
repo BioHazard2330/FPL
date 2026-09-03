@@ -78,6 +78,19 @@ def generate_dashboard_html(
     payload) - see the pre-redesign docstring this carries forward unchanged:
     locked-squad-first product architecture, Mode-A override semantics,
     single `ta`/`ca` computation shared across every panel that needs it."""
+    # Real page-level freshness stamp (2026-09-03, direct user ask: "each
+    # module should say when it last updated so I can make sure the system
+    # is always up to date") - every static screen (COMMAND's own layout/
+    # MY TEAM/FOOTBALL/SCOUT/PLAN/ADVANCED) regenerates together in this one
+    # call, so ONE real "dashboard generated at" timestamp, ticking live in
+    # the topbar, honestly answers "is this up to date" for all of them at
+    # once - never a per-panel timestamp implying they could independently
+    # drift when they can't. Live Tracking/Match Centre have their own,
+    # faster-cadence freshness (the live_snapshot poll, wired in separately
+    # below); the optimizer's own decision freshness is COMMAND's existing
+    # "Computed Xh ago" banner - this is neither of those, the third real
+    # freshness axis this dashboard needed a visible answer for.
+    generated_at_iso = datetime.now(timezone.utc).isoformat()
     default_call = (
         gw_window == 1 and must_include_ids is None and must_start_ids is None and exclude_ids is None
     )
@@ -497,6 +510,15 @@ def generate_dashboard_html(
     <div class="brand-sub">Personal FPL Optimization Engine</div>
   </div>
   <div class="topbar-right">
+    <span class="topbar-freshness" title="When this page was last regenerated - every screen except Live Tracking/Match Centre only changes on a real regen">
+      <span class="topbar-freshness-dot"></span>
+      Dashboard <b id="dashboard-generated-age" data-generated="{_esc(generated_at_iso)}">just now</b>
+    </span>
+    <span class="topbar-freshness topbar-freshness-live" id="topbar-live-freshness" hidden>
+      <span class="topbar-freshness-dot topbar-freshness-dot-live"></span>
+      Live <b id="system-live-snapshot-age">-</b>
+    </span>
+    <span class="system-live-degraded" id="system-live-degraded" hidden></span>
     <span class="gw-badge">{_esc(gw_label)}</span>
     <a class="btn-refresh" href="" title="Reload now">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.05-6.77"/><path d="M21 3v6h-6"/></svg>
@@ -1377,8 +1399,23 @@ def generate_dashboard_html(
     return 'no decision logged yet';
   }}
   function tickLiveStrip() {{
-    var strip = document.getElementById('system-live-strip');
-    if (!strip) return;
+    // Real fix (2026-09-03, direct user ask: "make sure the system is
+    // always up to date" / "each module should say when it last updated") -
+    // this function's own updates below were each already correctly null-
+    // guarded per element, but a single early-return here on the retired
+    // HOME screen's `#system-live-strip` wrapper (gone since the Phase 6
+    // six-screen rebuild) silently killed EVERY one of them - the live
+    // snapshot freshness indicator, decision status, rank/news/projection
+    // ages, degraded-source health - all real, all correctly wired, none
+    // of it had run since that rebuild. No wrapper requirement any more;
+    // each update below already only touches an element that exists.
+    var topbarFresh = document.getElementById('dashboard-generated-age');
+    if (topbarFresh) {{
+      var genMs = Date.parse(topbarFresh.dataset.generated);
+      if (!isNaN(genMs)) topbarFresh.textContent = fmtAgo(genMs);
+    }}
+    var liveFreshWrap = document.getElementById('topbar-live-freshness');
+    if (liveFreshWrap && liveState.snapshotAt != null) liveFreshWrap.hidden = false;
     var snapEl = document.getElementById('system-live-snapshot-age');
     if (snapEl && liveState.snapshotAt != null) snapEl.textContent = fmtAgo(liveState.snapshotAt);
     var decEl = document.getElementById('system-live-decision-age');
@@ -2660,6 +2697,20 @@ _CSS_WORKSPACE = """
   .system-live-degraded summary::-webkit-details-marker { display: none; }
   .system-live-degraded-list { margin: 6px 0 0; padding-left: 16px; color: var(--muted); font-size: 0.72rem; }
   .system-live-degraded-raw { color: var(--faint); }
+  .system-live-degraded .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; margin-right: 2px; }
+  /* Real topbar freshness strip (2026-09-03, direct user ask: "each module
+     should say when it last updated") - reconnects the already-correct
+     `tickLiveStrip()` update logic (found dead: it early-returned on a
+     retired HOME-screen wrapper element that no longer exists in the six-
+     screen page) to two real, always-visible signals: when this whole page
+     was last regenerated, and - only shown once a live match genuinely
+     starts polling - how fresh the live snapshot channel is. */
+  .topbar-freshness { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; color: var(--faint);
+    white-space: nowrap; }
+  .topbar-freshness b { color: var(--muted); font-weight: 700; }
+  .topbar-freshness-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
+  .topbar-freshness-dot-live { background: var(--fpl-pink); animation: freshness-pulse 1.6s ease-in-out infinite; }
+  @keyframes freshness-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   @media (max-width: 480px) {
     .system-live-more-grid { left: 0; right: 0; min-width: 0; }
   }
