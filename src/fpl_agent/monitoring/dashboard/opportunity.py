@@ -15,7 +15,9 @@ assess_projection_confidence` (already used by `plan.py` for the same
 purpose) - no new model."""
 import json
 
-from fpl_agent.models.breakouts import find_breakouts
+from fpl_agent.models.breakouts import MAX_OWNERSHIP_PERCENT, MIN_VALUE_RATIO, find_breakouts
+from fpl_agent.models.expected_minutes import expected_minutes
+from fpl_agent.models.expected_points import expected_points
 from fpl_agent.models.projection_confidence import assess_projection_confidence
 from fpl_agent.models.traps import find_traps
 from fpl_agent.monitoring.dashboard.legacy import (
@@ -38,9 +40,37 @@ def _confidence_label(conn, player_id: int) -> str:
         return "MEDIUM"
 
 
+def _real_expected_minutes(conn, player_id: int) -> float | None:
+    try:
+        return expected_minutes(conn, player_id).expected_minutes
+    except Exception:
+        return None
+
+
+def _real_median_xp(conn, player_id: int) -> float | None:
+    try:
+        return expected_points(conn, player_id).median
+    except Exception:
+        return None
+
+
+def _risk_from_confidence(confidence: str) -> str | None:
+    """Real, non-fabricated risk disclosure (2026-09-07, Phase 7.3 Part 17)
+    - reuses the SAME `assess_projection_confidence` result every card
+    already computes for its own confidence badge, rather than inventing a
+    second, speculative risk score. Only LOW/VERY_LOW clears the bar - a
+    MEDIUM/HIGH/VERY_HIGH confidence pick has nothing real to flag, and
+    stays silent rather than padding every card with a risk line."""
+    if confidence in ("LOW", "VERY_LOW"):
+        return f"projection confidence is {confidence.replace('_', ' ').lower()} - based on limited real evidence so far"
+    return None
+
+
 def _card(kind: str, name: str, position: str, price_m: float | None, ownership_pct: float | None,
           key_metric: str, why_now: str, confidence: str, team_code: int | None = None,
-          considered_by_optimizer: bool | None = None, squad_impact: str | None = None) -> str:
+          considered_by_optimizer: bool | None = None, squad_impact: str | None = None,
+          xp: float | None = None, expected_minutes: float | None = None, risk: str | None = None,
+          what_would_change: str | None = None) -> str:
     # Real, honest missing-data label (2026-08-29, "final product-completion
     # pass" P1 fix: a bare "?" reads as a broken card, not a real "we don't
     # have this" disclosure).
@@ -75,14 +105,35 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
         f"<div class='opp-card-squad-impact'>Would replace <strong>{_esc(squad_impact)}</strong></div>"
         if squad_impact else ""
     )
+    # Real PLAYER/PRICE/xP/MINUTES/ROLE/OWNERSHIP/RISK/WHAT-WOULD-CHANGE
+    # field set (2026-09-07, Phase 7.3 Part 17 - "no generic prose, a
+    # player should be interesting because of measurable evidence"). Every
+    # one is optional and individually omitted (never a fabricated "?") -
+    # not every category has cheap access to all of them yet (see this
+    # module's own callers for which fields each category currently
+    # populates).
+    stat_bits = []
+    if xp is not None:
+        stat_bits.append(f"<span class='opp-card-stat'><b>{xp:.1f}</b> xP</span>")
+    if expected_minutes is not None:
+        stat_bits.append(f"<span class='opp-card-stat'><b>{expected_minutes:.0f}&prime;</b> exp.</span>")
+    stats_html = f"<div class='opp-card-stats'>{''.join(stat_bits)}</div>" if stat_bits else ""
+    risk_html = f"<div class='opp-card-risk'><strong>Risk</strong> {_esc(risk)}</div>" if risk else ""
+    change_html = (
+        f"<div class='opp-card-change'><strong>What would change this</strong> {_esc(what_would_change)}</div>"
+        if what_would_change else ""
+    )
     return (
         f"<div class='opp-card opp-card-{_esc(kind.lower().replace(' ', '-'))}'>"
         f"{shirt_html}"
         f"<div class='opp-card-kind'>{_esc(kind)}</div>"
         f"<div class='opp-card-title'>{name} <span class='opp-pos'>{_esc(position)}</span></div>"
         f"<div class='opp-card-meta'>{price_bit}{' &middot; ' + own_bit if own_bit else ''}</div>"
+        f"{stats_html}"
         f"<div class='opp-card-metric'>{_esc(key_metric)}</div>"
         f"<div class='opp-card-why'><strong>Why now</strong> {_esc(why_now)}</div>"
+        f"{risk_html}"
+        f"{change_html}"
         f"<div class='opp-card-confidence opp-confidence-{_esc(confidence.lower())}'>{_esc(confidence)}</div>"
         f"{considered_html}"
         f"{squad_impact_html}"
@@ -211,44 +262,63 @@ def render_opportunity_workspace(
     for b in breakouts:
         team_code = team_lookup.get(b.player_id, {}).get("team_code")
         own_bit = f"{b.ownership_percent:.1f}% owned" if b.ownership_percent is not None else "low ownership"
+        confidence = _confidence_label(conn, b.player_id)
+        # Real, mechanical "what would change this" (Part 17) - the EXACT
+        # real thresholds `find_breakouts` itself gates on
+        # (`MAX_OWNERSHIP_PERCENT`/`MIN_VALUE_RATIO`), never a guessed
+        # number - this candidate genuinely drops out of Breakout the
+        # instant either real condition stops holding.
+        own_txt = f"{b.ownership_percent:.1f}%" if b.ownership_percent is not None else "ownership"
+        change_txt = f"ownership rises above {MAX_OWNERSHIP_PERCENT:.0f}% (currently {own_txt}) or value ratio falls below {MIN_VALUE_RATIO:.1f} xP/£m"
         breakout_cards.append(_card(
             "Breakout", _esc(b.web_name), b.position, None, b.ownership_percent,
             f"{b.value_ratio:.2f} xP/£m value ratio",
             "; ".join(b.reasons) if b.reasons else f"{b.value_ratio:.2f} xP/£m, {own_bit}",
-            _confidence_label(conn, b.player_id), team_code=team_code,
+            confidence, team_code=team_code,
             considered_by_optimizer=_considered(b.player_id), squad_impact=impact_by_player.get(b.player_id),
+            xp=b.median, expected_minutes=_real_expected_minutes(conn, b.player_id),
+            risk=_risk_from_confidence(confidence), what_would_change=change_txt,
         ))
 
     for t in traps:
         team_code = team_lookup.get(t.player_id, {}).get("team_code")
         own_bit = f"{t.ownership_percent:.1f}% owned" if t.ownership_percent is not None else "high ownership"
+        confidence = _confidence_label(conn, t.player_id)
         trap_cards.append(_card(
             "Trap", _esc(t.web_name), t.position, None, t.ownership_percent,
             f"{t.eo_source} ownership source",
             "; ".join(t.reasons) if t.reasons else f"{own_bit}, case weakening",
-            _confidence_label(conn, t.player_id), team_code=team_code,
+            confidence, team_code=team_code,
             considered_by_optimizer=_considered(t.player_id), squad_impact=impact_by_player.get(t.player_id),
+            xp=_real_median_xp(conn, t.player_id), expected_minutes=_real_expected_minutes(conn, t.player_id),
+            risk=_risk_from_confidence(confidence),
         ))
 
     for r in role_rows:
         team_code = team_lookup.get(r["entity_id"], {}).get("team_code")
         order_bit = _setpiece_order_change_text(r["old_value"], r["new_value"])
+        confidence = _confidence_label(conn, r["entity_id"])
         role_cards.append(_card(
             "Role Change", _esc(r["web_name"]), r["position"], None, None,
             f"set-piece {order_bit}, {_esc(_relative_time(r['detected_at']))}",
             order_bit,
-            _confidence_label(conn, r["entity_id"]), team_code=team_code,
+            confidence, team_code=team_code,
             considered_by_optimizer=_considered(r["entity_id"]), squad_impact=impact_by_player.get(r["entity_id"]),
+            xp=_real_median_xp(conn, r["entity_id"]), expected_minutes=_real_expected_minutes(conn, r["entity_id"]),
+            risk=_risk_from_confidence(confidence),
         ))
 
     for r in value_rows:
         team_code = team_lookup.get(r["player_id"], {}).get("team_code")
+        confidence = _confidence_label(conn, r["player_id"])
         value_cards.append(_card(
             "Value", _esc(r["web_name"]), r["position"], r["new_value"] / 10, None,
             f"£{r['old_value']/10:.1f}m -> £{r['new_value']/10:.1f}m",
             f"price rise {_esc(_relative_time(r['changed_at']))}",
-            _confidence_label(conn, r["player_id"]), team_code=team_code,
+            confidence, team_code=team_code,
             considered_by_optimizer=_considered(r["player_id"]), squad_impact=impact_by_player.get(r["player_id"]),
+            xp=_real_median_xp(conn, r["player_id"]), expected_minutes=_real_expected_minutes(conn, r["player_id"]),
+            risk=_risk_from_confidence(confidence),
         ))
 
     try:
@@ -279,7 +349,7 @@ def render_opportunity_workspace(
                 f"<div class='opp-card-kind'>Fixture Swing</div>"
                 f"<div class='opp-card-title'>{_esc(short_name)}</div>"
                 f"<div class='opp-card-metric'>5-GW average difficulty {avg:.1f} ({_esc(label)})</div>"
-                f"<div class='opp-card-why'><strong>Why now</strong> a genuinely easy run not currently in your squad</div>"
+                f"<div class='opp-card-why'><strong>Why now</strong> {_esc(label)} fixture run, not currently in your squad</div>"
                 f"</div>"
             )
     except Exception:

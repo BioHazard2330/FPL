@@ -47,6 +47,88 @@ def test_shrink_rate_pulls_small_sample_toward_prior():
     assert abs(large_sample.shrunk_per90 - large_sample.raw_per90) < abs(small_sample.shrunk_per90 - small_sample.raw_per90)
 
 
+def test_shrink_rate_prior_strength_override_pulls_harder_toward_the_prior():
+    """`prior_strength` (2026-09-07, Phase 7.3 Part 4) - a real, opt-in
+    override of the module default. A higher value must shrink harder
+    (result closer to the prior, further from the player's own raw rate)."""
+    default = shrink_rate(player_total=5.0, player_minutes=450, position_avg_per90=0.3)  # raw=1.0, prior=0.3
+    stronger = shrink_rate(player_total=5.0, player_minutes=450, position_avg_per90=0.3, prior_strength=30.0)
+    assert stronger.raw_per90 == default.raw_per90 == 1.0  # same real raw rate either way
+    assert abs(stronger.shrunk_per90 - 1.0) > abs(default.shrunk_per90 - 1.0)
+
+
+def test_goals_shrinkage_uses_the_real_fwd_override_not_other_positions(db_conn):
+    """Real regression test for the Phase 7.3 Part 4 fix: a cross-season-
+    validated walk-forward sweep (2025-26 AND 2024-25 seasons independently)
+    found FWD goals need materially stronger shrinkage (k=30) than the
+    project-wide default (k=10) - GKP/DEF/MID goals, and every position for
+    assists/xG/xA, showed only noise-level differences and were NOT changed.
+    This proves the override is scoped correctly: a FWD and a MID with the
+    IDENTICAL raw goals rate and sample size must shrink to DIFFERENT values
+    (the FWD pulled harder toward the prior), while their assists (not
+    overridden) shrink identically."""
+    from fpl_agent.models.player_regression import PRIOR_STRENGTH_MATCHES, shrink_rate
+
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0'), (2,'Midfielder','MID','Midfielders','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    conn.execute("INSERT INTO market_teams (id, canonical_name, fpl_team_id) VALUES (1, 'Team A', 1)")
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (1,201,'FwdPlayer',1,1,'a','t0'), (2,202,'MidPlayer',1,2,'a','t0'), "
+        "(3,203,'FwdPeer',1,1,'a','t0'), (4,204,'MidPeer',1,2,'a','t0')"
+    )
+    # Player 1 (FWD) and player 2 (MID): identical 5-match record (1 goal, 1 assist per
+    # match) - only position differs. A "peer" at each position with 0 goals/0 assists gives
+    # each position's own real population prior a genuine gap from the target's raw rate
+    # (without a peer, a single-player position's own prior trivially equals its own raw
+    # rate, making shrinkage a no-op regardless of k - the real bug the first version of
+    # this test had).
+    for pid in (1, 2):
+        rows = [
+            (f"m{pid}-{i}", f"p{pid}-{i}", pid, 1, "2024-25", f"2024-09-{i+1:02d}", 90, 1, 1, 3, 0.5, 0.3, 2, 0, 0)
+            for i in range(5)
+        ]
+        conn.executemany(
+            "INSERT INTO player_match_stats_history "
+            "(understat_match_id, understat_player_id, player_id, market_team_id, season, match_date, "
+            "minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'t0')",
+            rows,
+        )
+    for pid in (3, 4):
+        rows = [
+            (f"m{pid}-{i}", f"p{pid}-{i}", pid, 1, "2024-25", f"2024-09-{i+1:02d}", 90, 0, 0, 0, 0.0, 0.0, 0, 0, 0)
+            for i in range(5)
+        ]
+        conn.executemany(
+            "INSERT INTO player_match_stats_history "
+            "(understat_match_id, understat_player_id, player_id, market_team_id, season, match_date, "
+            "minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'t0')",
+            rows,
+        )
+    conn.commit()
+
+    fwd_rates = player_shrunk_rates(conn, player_id=1, season="2024-25")
+    mid_rates = player_shrunk_rates(conn, player_id=2, season="2024-25")
+
+    assert fwd_rates["goals"].raw_per90 == mid_rates["goals"].raw_per90  # identical real raw rate
+    # Same real position-average prior (both positions pool identical data here) but the FWD's
+    # own goals shrink harder (k=30 vs k=10) - the two shrunk values must genuinely differ.
+    assert fwd_rates["goals"].shrunk_per90 != mid_rates["goals"].shrunk_per90
+    prior = position_average_per90(conn, "FWD", "goals", "2024-25")
+    expected_fwd = shrink_rate(5.0, 450, prior, prior_strength=30.0).shrunk_per90
+    expected_mid = shrink_rate(5.0, 450, prior, prior_strength=PRIOR_STRENGTH_MATCHES).shrunk_per90
+    assert fwd_rates["goals"].shrunk_per90 == expected_fwd
+    assert mid_rates["goals"].shrunk_per90 == expected_mid
+    # Assists are NOT overridden for either position - must shrink identically.
+    assert fwd_rates["assists"].shrunk_per90 == mid_rates["assists"].shrunk_per90
+
+
 def test_player_shrunk_rates_small_sample_closer_to_average(db_conn):
     _seed_players_and_matches(db_conn)
     rates = player_shrunk_rates(db_conn, player_id=2, season="2024-25")
@@ -55,13 +137,16 @@ def test_player_shrunk_rates_small_sample_closer_to_average(db_conn):
     # unsatisfiable given this fixture -- see task-10-report.md "Bug found" section for the proof.
     # shrunk_per90 is a convex combination of raw_per90 (2.0) and the position-average prior,
     # which (per the brief's un-excluded, population-mean form) is 17 goals / 16 matches =
-    # 1.0625 -- that is the floor, so shrunk_per90 can never fall below 1.0625 for any
-    # PRIOR_STRENGTH_MATCHES > 0. With PRIOR_STRENGTH_MATCHES=10 the exact value is
-    # (1*2.0 + 10*1.0625) / 11 = 12.625/11 = 1.1477. Asserting against the player's own
+    # 1.0625 -- that is the floor, so shrunk_per90 can never fall below 1.0625 for any positive
+    # shrinkage strength. This fixture is FWD (`_seed_players_and_matches`'s own element_type),
+    # so it now uses the real, cross-season-validated goals+FWD override (2026-09-07, Phase 7.3
+    # Part 4 - `_GOALS_SHRINKAGE_STRENGTH_BY_POSITION`, k=30 not the module default k=10):
+    # (1*2.0 + 30*1.0625) / 31 = 33.875/31 = 1.0927. Asserting against the player's own
     # raw_per90 instead of a magic constant tests the actual intended property: the 1-match
-    # hot streak gets pulled down, well away from its raw rate, toward the position average.
+    # hot streak gets pulled down, well away from its raw rate, toward the position average -
+    # MORE aggressively than the old k=10 value (1.1477) would have, per that real evidence.
     assert rates["goals"].shrunk_per90 < rates["goals"].raw_per90
-    assert rates["goals"].shrunk_per90 == 1.1477
+    assert rates["goals"].shrunk_per90 == 1.0927
     assert rates["goals"].shrunk_per90 < 1.5  # meaningfully pulled down, not just barely
 
 
@@ -97,8 +182,11 @@ def test_player_shrunk_rates_as_of_date_excludes_future_rows(db_conn):
     assert rates_live["goals"].matches_played == 16.0
     assert rates_live["goals"].raw_per90 == (15 + 10) / 16
     # position-average prior (population mean, no exclusion) over all rows in the pool:
-    # (15 + 10 + 2) goals / 17 matches = 27/17 -> shrunk_per90 = (16*1.5625 + 10*27/17)/26 = 1.5724
-    assert rates_live["goals"].shrunk_per90 == 1.5724
+    # (15 + 10 + 2) goals / 17 matches = 27/17. This fixture is FWD, so goals shrinkage now
+    # uses the real, cross-season-validated k=30 override (2026-09-07, Phase 7.3 Part 4 -
+    # `_GOALS_SHRINKAGE_STRENGTH_BY_POSITION`), not the module default k=10:
+    # shrunk_per90 = (16*1.5625 + 30*27/17)/46 = 1.5793
+    assert rates_live["goals"].shrunk_per90 == 1.5793
 
     # as_of_date="2024-10-01" must see only the 15 September matches, strictly excluding
     # the December row (both from the player's own totals and from the position-average prior)
@@ -107,9 +195,10 @@ def test_player_shrunk_rates_as_of_date_excludes_future_rows(db_conn):
     assert rates_asof["goals"].raw_per90 < rates_live["goals"].raw_per90
     # prior computed via a separate query path than the player's own totals -- assert on
     # shrunk_per90 to prove that query is *also* date-filtered, not just the player's own totals.
-    # With the Dec row excluded, prior = 17 goals / 16 matches = 1.0625 (not 27/17 = 1.5882),
-    # so shrunk_per90 = (15*1.0 + 10*1.0625)/25 = 1.025, well below the live value.
-    assert rates_asof["goals"].shrunk_per90 == 1.025
+    # With the Dec row excluded, prior = 17 goals / 16 matches = 1.0625 (not 27/17 = 1.5882).
+    # This fixture is FWD, so goals shrinkage uses the k=30 override (see above):
+    # shrunk_per90 = (15*1.0 + 30*1.0625)/45 = 1.0417, well below the live value.
+    assert rates_asof["goals"].shrunk_per90 == 1.0417
     assert rates_asof["goals"].shrunk_per90 < rates_live["goals"].shrunk_per90
 
 

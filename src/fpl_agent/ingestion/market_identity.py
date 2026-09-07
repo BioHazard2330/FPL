@@ -94,9 +94,17 @@ def get_or_create_market_team(conn: sqlite3.Connection, source: str, source_name
             market_team_id = row["id"]
             break
     else:
-        fpl_team = conn.execute(
-            "SELECT id FROM teams WHERE LOWER(name)=? OR LOWER(short_name)=?", (norm, norm)
-        ).fetchone()
+        # Real, same-class fix as `resolve_player_id`'s own (Phase 7.4 Part
+        # 1/2) - SQLite's LOWER() is ASCII-only, so this would silently
+        # never match a team name carrying a non-ASCII letter (English top-
+        # flight club names are practically all ASCII today, so the real-
+        # world impact here is low, but the SAME bug class deserves the
+        # SAME fix rather than leaving one broken instance uncorrected).
+        fpl_team = None
+        for row in conn.execute("SELECT id, name, short_name FROM teams"):
+            if norm == _normalize(row["name"]) or norm == _normalize(row["short_name"]):
+                fpl_team = row
+                break
         cur = conn.execute(
             "INSERT INTO market_teams (canonical_name, fpl_team_id) VALUES (?, ?)",
             (source_name, fpl_team["id"] if fpl_team else None),
@@ -110,6 +118,47 @@ def get_or_create_market_team(conn: sqlite3.Connection, source: str, source_name
     conn.commit()
     _market_team_cache[cache_key] = (conn, market_team_id)
     return market_team_id
+
+
+def _resolve_player_id_uncached(
+    conn: sqlite3.Connection, source_name: str, team_id: int | None,
+) -> tuple[int, str] | None:
+    """Real resolution attempt, bypassing `player_name_aliases` entirely -
+    factored out 2026-09-07 (Phase 7.4 Part 2) so the historical repair
+    pass (`understat_source.py::repair_unresolved_player_ids`) can record
+    WHICH method actually resolved a given row (`player_id_resolution_log`,
+    migration 0038) without duplicating this logic. Returns `(player_id,
+    method)` - method is `"exact_match"` or `"team_scoped_fuzzy"` - never
+    consults or writes the alias cache itself; the caller decides that.
+
+    Real, confirmed bug fixed here 2026-09-07 (Phase 7.4 Part 1 forensic
+    audit) - the exact-match step used to compare via SQL `LOWER(...)=?`
+    against a Python-side `_normalize()`d parameter. SQLite's built-in
+    LOWER() is ASCII-only (no ICU extension loaded) and leaves a non-ASCII
+    capital letter untouched - confirmed directly: `SELECT LOWER(
+    'Ødegaard')` returns 'Ødegaard' (Ø still capital), while Python's own
+    'Ødegaard'.lower() correctly returns 'ødegaard'. The two sides could
+    never match for any player with a non-ASCII letter FPL's own name
+    fields carry uppercase (confirmed live: a real, prominent, current
+    squad player - Ødegaard - had never once resolved in this project's
+    entire Understat history as a direct result). Fixed by doing the whole
+    comparison in Python instead of relying on SQLite's own broken LOWER()
+    at all - a full players-table scan (~600-700 rows) is cheap."""
+    norm = _normalize(source_name)
+    for row in conn.execute("SELECT id, first_name, second_name, web_name FROM players"):
+        full_name = _normalize(f"{row['first_name'] or ''} {row['second_name'] or ''}".strip())
+        web_name = _normalize(row["web_name"] or "")
+        if norm == full_name or norm == web_name:
+            return row["id"], "exact_match"
+
+    if team_id is not None:
+        from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
+
+        matched_id = match_player_in_team(conn, team_id, source_name)
+        if matched_id is not None:
+            return matched_id, "team_scoped_fuzzy"
+
+    return None
 
 
 def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str, team_id: int | None = None) -> int | None:
@@ -136,20 +185,10 @@ def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str, t
     if alias:
         return alias["player_id"]
 
-    norm = _normalize(source_name)
-    match = conn.execute(
-        "SELECT id FROM players WHERE LOWER(TRIM(first_name || ' ' || second_name))=? OR LOWER(web_name)=?",
-        (norm, norm),
-    ).fetchone()
-    matched_id = match["id"] if match is not None else None
-
-    if matched_id is None and team_id is not None:
-        from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
-
-        matched_id = match_player_in_team(conn, team_id, source_name)
-
-    if matched_id is None:
+    resolved = _resolve_player_id_uncached(conn, source_name, team_id)
+    if resolved is None:
         return None
+    matched_id, _method = resolved
 
     conn.execute(
         "INSERT OR IGNORE INTO player_name_aliases (player_id, source, source_name) VALUES (?, ?, ?)",
@@ -157,3 +196,33 @@ def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str, t
     )
     conn.commit()
     return matched_id
+
+
+def resolve_player_id_with_method(
+    conn: sqlite3.Connection, source: str, source_name: str, team_id: int | None = None,
+) -> tuple[int, str] | None:
+    """Same real resolution `resolve_player_id` performs (identical alias
+    cache, identical fallback order), but also reports WHICH method
+    resolved it - `"alias_cache"` (already resolved by a prior call),
+    `"exact_match"`, or `"team_scoped_fuzzy"`. Added 2026-09-07 (Phase 7.4
+    Part 2) for the historical repair pass to build its own real, per-
+    mapping audit trail (`player_id_resolution_log`) - not used by any
+    live ingestion caller, which has no real use for the method label."""
+    alias = conn.execute(
+        "SELECT player_id FROM player_name_aliases WHERE source=? AND source_name=?",
+        (source, source_name),
+    ).fetchone()
+    if alias:
+        return alias["player_id"], "alias_cache"
+
+    resolved = _resolve_player_id_uncached(conn, source_name, team_id)
+    if resolved is None:
+        return None
+    matched_id, method = resolved
+
+    conn.execute(
+        "INSERT OR IGNORE INTO player_name_aliases (player_id, source, source_name) VALUES (?, ?, ?)",
+        (matched_id, source, source_name),
+    )
+    conn.commit()
+    return matched_id, method

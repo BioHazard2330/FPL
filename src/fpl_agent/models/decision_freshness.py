@@ -17,7 +17,6 @@ status crossing the squad-selection gate) - reusing that existing severity
 taxonomy rather than inventing a second one."""
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 
 @dataclass(frozen=True)

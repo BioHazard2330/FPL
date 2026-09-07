@@ -5,7 +5,7 @@ actually composes build_player_pool/optimise_squad/captaincy_report/
 differentials/traps/breakouts/template without crashing and handles real
 manual-entry mistakes (duplicate ids, illegal squads) correctly."""
 from fpl_agent.optimization.rate_team import rate_team
-from test_optimization_squad import _PLAYERS, _seed
+from test_optimization_squad import _seed
 
 
 def test_rate_team_composes_end_to_end_for_a_valid_squad(db_conn):

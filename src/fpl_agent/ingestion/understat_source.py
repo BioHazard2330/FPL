@@ -35,6 +35,7 @@ from fpl_agent.ingestion.market_identity import (
     get_or_create_market_team,
     normalize_common_team_name,
     resolve_player_id,
+    resolve_player_id_with_method,
 )
 from fpl_agent.ingestion.sync import update_source_health
 from fpl_agent.models.minutes_distribution import invalidate_cache_for_connection as invalidate_minutes_bucket_cache
@@ -211,7 +212,7 @@ def repair_unresolved_player_ids(
         }
 
         unresolved_rows = conn.execute(
-            "SELECT id, understat_player_id, market_team_id FROM player_match_stats_history "
+            "SELECT id, understat_player_id, market_team_id, season FROM player_match_stats_history "
             "WHERE understat_match_id=? AND player_id IS NULL", (match_id,),
         ).fetchall()
         for row in unresolved_rows:
@@ -223,10 +224,26 @@ def repair_unresolved_player_ids(
                 "SELECT fpl_team_id FROM market_teams WHERE id=?", (row["market_team_id"],)
             ).fetchone()
             fpl_team_id = team_row["fpl_team_id"] if team_row else None
-            new_player_id = resolve_player_id(conn, "understat", name, team_id=fpl_team_id)
-            if new_player_id is not None:
+            resolved = resolve_player_id_with_method(conn, "understat", name, team_id=fpl_team_id)
+            if resolved is not None:
+                new_player_id, method = resolved
                 conn.execute(
                     "UPDATE player_match_stats_history SET player_id=? WHERE id=?", (new_player_id, row["id"]),
+                )
+                # Real, persistent per-mapping audit trail (Phase 7.4 Part 2)
+                # - `INSERT OR IGNORE` since the SAME (player, understat_id,
+                # season) can legitimately be re-resolved across multiple
+                # matches within one repair run (a season has many matches,
+                # each contributing its own unresolved row for the same real
+                # player) - only the FIRST real resolution for this exact
+                # triple is worth recording, not one row per match.
+                conn.execute(
+                    "INSERT OR IGNORE INTO player_id_resolution_log "
+                    "(player_id, understat_player_id, season, source_name, resolution_method, confidence, resolved_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (new_player_id, row["understat_player_id"], row["season"], name, method,
+                     "high" if method in ("exact_match", "alias_cache") else "medium",
+                     datetime.now(timezone.utc).isoformat()),
                 )
                 rows_resolved += 1
             else:

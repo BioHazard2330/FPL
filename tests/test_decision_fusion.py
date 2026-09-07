@@ -2,10 +2,9 @@ from types import SimpleNamespace
 
 import fpl_agent.models.decision_fusion as decision_fusion_mod
 from fpl_agent.models.decision_fusion import captain_cross_check, compare_captain_views, compare_transfer_views
-from fpl_agent.optimization import captaincy as captaincy_mod
 from fpl_agent.optimization.transfers import TransferCandidate
 
-from test_optimization_captaincy import _EP, _patch, _seed
+from test_optimization_captaincy import _patch, _seed
 
 
 def _candidate(player_out_id=3, player_in_id=99, net_ev_3gw=2.0):

@@ -11,7 +11,6 @@ from fpl_agent.ingestion.change_detection import (
     snapshot_player_state,
     snapshot_price_state,
     snapshot_setpiece_state,
-    snapshot_start_percent_state,
 )
 from fpl_agent.ingestion.sync import _upsert_many, sync_setpiece_history
 from fpl_agent.normalization.fpl_core import (

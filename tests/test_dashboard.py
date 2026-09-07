@@ -1593,6 +1593,41 @@ def _pitch_test_xi():
     return StartingXI(starting=[played, not_started], bench=[], captain=None, vice_captain=None)
 
 
+def test_pitch_marks_core_weak_link_and_minutes_risk_starters(db_conn):
+    """Real regression test, Phase 7.3 Part 14 ("differentiate CORE/WATCH/
+    WEAK LINK/MINUTES RISK... don't give every player equal visual weight").
+    3 real starters: the highest-median one gets CORE, a genuinely
+    low-output one (below the real 3.0 xP floor) gets WEAK_LINK, and one
+    starting with under 60 real expected minutes gets MINUTES_RISK - all
+    computed from the SAME PlayerCandidate data the tile already renders,
+    never a second projection pass."""
+    from fpl_agent.monitoring.dashboard.legacy import _pitch_html_from_xi
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    core = PlayerCandidate(
+        player_id=1, web_name="CoreP", position="GKP", team_id=1, team_short="T1",
+        price_tenths=45, xp=8.0, median=8.0, floor=5.0, ceiling=12.0, confidence="high",
+        expected_minutes=90.0,
+    )
+    weak = PlayerCandidate(
+        player_id=10, web_name="WeakP", position="DEF", team_id=1, team_short="T1",
+        price_tenths=45, xp=1.5, median=1.5, floor=0.0, ceiling=3.0, confidence="medium",
+        expected_minutes=90.0,
+    )
+    minrisk = PlayerCandidate(
+        player_id=20, web_name="RiskP", position="MID", team_id=1, team_short="T1",
+        price_tenths=45, xp=4.0, median=4.0, floor=2.0, ceiling=7.0, confidence="medium",
+        expected_minutes=45.0,
+    )
+    xi = StartingXI(starting=[core, weak, minrisk], bench=[], captain=None, vice_captain=None)
+
+    result = _pitch_html_from_xi(db_conn, xi, None, None, None, None)
+
+    assert "player-card-core" in result
+    assert "player-card-weak" in result
+    assert "player-card-minrisk" in result
+
+
 def test_pitch_shows_a_real_per_player_football_signal_when_one_exists(db_conn):
     """fpl.page-parity pass: the Player Inspector drawer gains a real
     FOOTBALL section, reusing `models.player_intelligence.player_intelligence`'s
@@ -2066,6 +2101,80 @@ def test_plan_workspace_shows_real_top_paths(db_conn):
     # removed with the old "path box wall").
     assert "NEAR TIE" in result
     assert "too close to call a single winner" in result
+
+
+def test_plan_workspace_shows_reevaluate_marker_after_a_real_conditional_leg(db_conn):
+    """Real regression test, Phase 7.3 Part 15 ("path should visually
+    communicate NOW -> DECISION -> CONDITIONAL FUTURE -> RE-EVALUATE").
+    A path with a real 2nd (conditional, not-yet-locked-in) step must show
+    the RE-EVALUATE closer; a genuinely single-step path (nothing beyond
+    GW1 to be conditional about) must not."""
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+    log_decision(
+        db_conn, "strategic_plan", "ROLL then transfer",
+        {
+            "horizon_gw": 5, "note": "n/a", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 5, "opening_action": "ROLL", "total_net_ev": 6.0}],
+            "best_path": {
+                "total_net_ev": 6.0, "path_total": 6.0, "final_free_transfers": 2, "final_bank_tenths": 5,
+                "steps": [
+                    {"event": 2, "action": "ROLL", "uses_hit": False},
+                    {"event": 3, "action": "P1 -> P2", "player_out_id": 1, "player_in_id": 2, "uses_hit": False},
+                ],
+            },
+            "paths": [{
+                "total_net_ev": 6.0, "path_total": 6.0, "final_free_transfers": 2, "final_bank_tenths": 5,
+                "steps": [
+                    {"event": 2, "action": "ROLL", "uses_hit": False},
+                    {"event": 3, "action": "P1 -> P2", "player_out_id": 1, "player_in_id": 2, "uses_hit": False},
+                ],
+            }],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
+
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
+
+    assert "timeline-node-reevaluate" in result
+    assert "RE-EVALUATE" in result
+
+
+def test_plan_workspace_no_reevaluate_marker_for_a_single_step_path(db_conn):
+    from fpl_agent.database.decisions import latest_decision_of_type, log_decision
+    from fpl_agent.monitoring.dashboard.legacy import _normalize_strategic_detail
+    from fpl_agent.monitoring.dashboard import plan
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    locked, decision = _locked_and_decision(db_conn)
+    log_decision(
+        db_conn, "strategic_plan", "ROLL",
+        {
+            "horizon_gw": 1, "note": "n/a", "immediate_vs_strategic_differ": False,
+            "horizon_comparison": [{"horizon_gw": 1, "opening_action": "ROLL", "total_net_ev": 2.0}],
+            "best_path": {
+                "total_net_ev": 2.0, "path_total": 2.0, "final_free_transfers": 1, "final_bank_tenths": 5,
+                "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            },
+            "paths": [{
+                "total_net_ev": 2.0, "path_total": 2.0, "final_free_transfers": 1, "final_bank_tenths": 5,
+                "steps": [{"event": 2, "action": "ROLL", "uses_hit": False}],
+            }],
+            "chip_schedule": None,
+        },
+    )
+    db_conn.commit()
+    sd = _normalize_strategic_detail(latest_decision_of_type(db_conn, "strategic_plan").detail)
+
+    result = plan.render_plan_workspace(db_conn, sd, locked, set(locked.squad_ids))
+
+    assert "timeline-node-reevaluate" not in result
 
 
 def test_plan_workspace_groups_same_descriptor_paths_into_one_family(db_conn):

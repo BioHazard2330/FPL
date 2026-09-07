@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import fpl_agent.models.external_benchmark as bench_mod
 from fpl_agent.models.expected_points import ComponentBreakdown, ExpectedPoints, TeamFixtureProjection
 from fpl_agent.models.external_benchmark import (
-    CaptainBenchmarkComparison, classify_divergence, compare_all_matched_players, compare_captain_pick,
+    classify_divergence, compare_all_matched_players, compare_captain_pick,
     compare_components, compare_player, compare_team_outlooks, compare_transfer_target, latest_solio_snapshot,
     top_divergences,
 )

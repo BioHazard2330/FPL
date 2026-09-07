@@ -56,8 +56,8 @@ _RIDGE_LAMBDA = 2.5  # real, disclosed shrinkage strength - see fit_dixon_coles'
 
 def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda):
     n = len(team_ids)
-    attack = dict(zip(team_ids[:-1], params[: n - 1]))
-    defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)]))
+    attack = dict(zip(team_ids[:-1], params[: n - 1], strict=True))
+    defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)], strict=True))
     attack[team_ids[-1]] = 0.0
     defence[team_ids[-1]] = 0.0
     gamma, rho = params[-2], params[-1]
@@ -139,8 +139,8 @@ def fit_dixon_coles(
         raise RuntimeError(f"Dixon-Coles fit did not converge: {result.message}")
     params = result.x
 
-    attack = dict(zip(team_ids[:-1], params[: n - 1]))
-    defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)]))
+    attack = dict(zip(team_ids[:-1], params[: n - 1], strict=True))
+    defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)], strict=True))
     attack[team_ids[-1]] = 0.0
     defence[team_ids[-1]] = 0.0
 

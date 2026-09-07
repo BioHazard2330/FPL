@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.optimization import transfers as transfers_mod
 from fpl_agent.optimization.decision_snapshot import (
-    UserScenarioResult,
     _state_version,
     _tie_classification,
     build_decision_snapshot,
@@ -313,7 +312,6 @@ class TestPathCredibilityAndRobustness:
         _seed_event(db_conn)
         _patch_squad_gw_ev_fake(monkeypatch)
         _seed_strategic_plan_decision(db_conn)
-        import fpl_agent.optimization.decision_snapshot as ds_mod
 
         import fpl_agent.optimization.future_optionality as fo_mod
 

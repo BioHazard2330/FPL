@@ -39,4 +39,4 @@ class FplDataProvider(Protocol):
 # real, concrete `FplDataProvider` implementation; this name lets calling
 # code express "I depend on the provider abstraction" without reaching
 # into `ingestion.fpl_api` directly, with zero duplicated logic.
-from fpl_agent.ingestion.fpl_api import FPLApiAdapter as OfficialFplProvider  # noqa: E402
+from fpl_agent.ingestion.fpl_api import FPLApiAdapter as OfficialFplProvider  # noqa: E402, F401

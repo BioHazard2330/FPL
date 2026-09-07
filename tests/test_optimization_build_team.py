@@ -2,7 +2,6 @@ from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.optimization.build_team import (
     LockedDecisionIncomplete,
-    LockedSquadConstraints,
     resolve_locked_constraints,
 )
 

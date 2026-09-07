@@ -9,7 +9,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from fpl_agent.models.effective_ownership import get_all_sample_eo
-from fpl_agent.models.expected_points import expected_points
+from fpl_agent.models.expected_points import ComponentBreakdown, expected_points
 from fpl_agent.models.fixtures import _reference_event
 
 
@@ -29,6 +29,13 @@ class CaptainOption:
     selected_by_percent: float | None
     effective_ownership_percent: float | None
     eo_source: str  # "sampled" or "unavailable"
+    # Real per-component xP decomposition (2026-09-07, Phase 7.3 Part 13 -
+    # "show the primary reason [for this captain pick], not merely
+    # 'Haaland 5.3 xP'") - the SAME `ExpectedPoints.components` every other
+    # consumer already reads, never a second, independently-computed
+    # breakdown. See `captain_edge_driver`'s own docstring for how this
+    # becomes a real, evidence-grounded "why" rather than a bare number.
+    components: "ComponentBreakdown | None" = None
 
 
 def _next_opponent(conn: sqlite3.Connection, team_id: int, event: int | None = None) -> tuple[str | None, bool | None]:
@@ -88,10 +95,51 @@ def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int], event: in
                 opponent_short=opponent, is_home=is_home,
                 selected_by_percent=player["selected_by_percent"],
                 effective_ownership_percent=eo_percent, eo_source=eo_source,
+                components=ep.components,
             )
         )
     options.sort(key=lambda o: o.median, reverse=True)
     return options
+
+
+_COMPONENT_LABELS = {
+    "appearance": "minutes",
+    "goals": "goal probability",
+    "assists": "assist probability",
+    "clean_sheet": "fixture (defence)",
+    "conceded": "fixture (defence)",
+    "bonus": "match involvement",
+    "defcon": "defensive actions",
+    "cards": "card risk",
+}
+
+
+def captain_edge_driver(current: CaptainOption, alternative: CaptainOption) -> tuple[str, float] | None:
+    """Real, evidence-grounded "why does the model prefer this captain"
+    (2026-09-07, Phase 7.3 Part 13) - a valid counterfactual read, not a
+    manufactured additive decomposition (see Part 11's own "only expose
+    contribution metrics that are mathematically defensible"): the single
+    `ComponentBreakdown` field with the largest real per-90-equivalent
+    magnitude difference between the two players' own already-computed
+    projections. `None` when either side has no `components` (the honest
+    "not computable" case, e.g. a blank-gameweek fallback projection - see
+    `ExpectedPoints.components`'s own docstring), never a fabricated driver.
+
+    This is a real DIFFERENCE-of-components read, not a decomposition of the
+    gap into parts that sum to it - two players' components don't isolate a
+    single edge value the way a counterfactual remove/recompute would (that
+    would mean re-running `expected_points` with one component forced to the
+    other player's value, a real but substantially heavier computation this
+    function deliberately does not attempt) - it answers "which single real
+    factor differs most between these two projections", which is what
+    "primary reason: fixture / goal probability / assist probability /
+    minutes" (spec) actually asks for."""
+    if current.components is None or alternative.components is None:
+        return None
+    fields = ("appearance", "goals", "assists", "clean_sheet", "conceded", "bonus", "defcon", "cards")
+    deltas = {f: getattr(current.components, f) - getattr(alternative.components, f) for f in fields}
+    driver_field = max(deltas, key=lambda f: abs(deltas[f]))
+    return _COMPONENT_LABELS[driver_field], round(deltas[driver_field], 2)
 
 
 @dataclass(frozen=True)

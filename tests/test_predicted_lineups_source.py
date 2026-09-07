@@ -1,4 +1,5 @@
 from fpl_agent.ingestion.predicted_lineups_source import (
+    _fold,
     match_player_in_team,
     parse_team_news_html,
     sync_predicted_lineups,
@@ -80,6 +81,68 @@ def test_match_player_in_team_is_scoped_to_the_team_and_folds_diacritics(db_conn
     assert match_player_in_team(db_conn, team_id=1, name_raw="Test Player") == 1
     assert match_player_in_team(db_conn, team_id=1, name_raw="Second") == 2
     assert match_player_in_team(db_conn, team_id=1, name_raw="Nobody Here") is None
+
+
+def test_fold_transliterates_letters_that_nfkd_does_not_decompose():
+    """Real, confirmed bug fixed 2026-09-07 (Phase 7.4 Part 1/2 forensic
+    audit): NFKD-strip-combining-marks alone only reaches TRUE diacritics
+    (a base letter + a separately-encoded combining mark). Confirmed
+    directly: unicodedata.normalize("NFKD", "O with stroke") returns the
+    letter unchanged, not a plain "o" - so `_fold("Ødegaard")` used to
+    return "ødegaard" (still the real Ø shape, just lowercased), never
+    "odegaard" - the real, confirmed reason a real, prominent, current
+    squad player (Ødegaard) had never once resolved against Understat's
+    own plain-ASCII "Odegaard" in this project's entire history."""
+    assert _fold("Ødegaard") == "odegaard"  # Ø
+    assert _fold("Gyökeres") == "gyokeres"  # a TRUE diacritic (combining) - must still work
+    assert _fold("Blæge") == "blaege"  # æ
+    assert _fold("Straße") == "strasse"  # ß
+
+
+def test_match_player_in_team_matches_scandinavian_letter_transliteration(db_conn):
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','t0')")
+    db_conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Midfielder','MID','Midfielders','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, first_name, second_name, team_id, element_type, status, updated_at) "
+        "VALUES (1,1,'Ødegaard','Martin','Ødegaard',1,1,'a','t0')"
+    )
+    db_conn.commit()
+
+    assert match_player_in_team(db_conn, team_id=1, name_raw="Odegaard") == 1
+
+
+def test_match_player_in_team_does_not_merge_a_bare_first_name_collision(db_conn):
+    """Real, confirmed bug fixed 2026-09-07 (Phase 7.4 Part 1/2 forensic
+    audit) - "Gabriel" (Magalhães' own real web_name) is a real substring
+    of "Gabriel Jesus" (a genuinely DIFFERENT real teammate's full raw
+    name) - maximal munch alone doesn't catch this because G.Jesus's own
+    web_name ("G.Jesus") has no textual overlap with the raw text at all,
+    so the short, wrong "Gabriel" match wins uncontested. Confirmed live:
+    63 real, distinct Understat player ids were silently merged into
+    Gabriel Magalhães' player_id via exactly this path across one real
+    historical season, including a real match showing 4 goals/6 shots
+    attributed to a centre-back. The real, collision-safe surname (last-
+    word) signal must correctly redirect to the real Jesus player instead."""
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','t0')")
+    db_conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, second_name, team_id, element_type, status, updated_at) "
+        "VALUES (4,4,'Gabriel','dos Santos Magalhaes',1,1,'a','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, second_name, team_id, element_type, status, updated_at) "
+        "VALUES (27,27,'G.Jesus','Fernando de Jesus',1,1,'a','t0')"
+    )
+    db_conn.commit()
+
+    assert match_player_in_team(db_conn, team_id=1, name_raw="Gabriel Jesus") == 27
+    assert match_player_in_team(db_conn, team_id=1, name_raw="Gabriel Magalhaes") == 4
 
 
 def test_match_player_in_team_prefers_the_longest_match_not_the_first(db_conn):

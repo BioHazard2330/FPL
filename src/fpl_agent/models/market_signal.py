@@ -126,7 +126,6 @@ def _regime(conn: sqlite3.Connection, event: int | None) -> MarketRegime:
     current_total = conn.execute(
         "SELECT SUM(transfers_in_event) AS s FROM player_transfer_momentum_history WHERE valid_until IS NULL"
     ).fetchone()["s"] or 0
-    week_ago = (datetime.now(timezone.utc)).isoformat()
     prior_row = conn.execute(
         "SELECT SUM(transfers_in_event) AS s FROM player_transfer_momentum_history "
         "WHERE valid_from <= datetime('now', '-6 days')"

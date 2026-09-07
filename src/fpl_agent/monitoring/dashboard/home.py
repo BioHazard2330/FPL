@@ -225,7 +225,7 @@ def _degraded_health_html(degraded: list[str]) -> str:
         f"<li><span class='dot dot-{_CRITICALITY_DOT[tier]}'></span>{_esc(_readable_source_impact(s))} "
         f"&mdash; {_esc(_CRITICALITY_EXPLANATION[tier])} "
         f"<span class='system-live-degraded-raw'>({_esc(s)})</span></li>"
-        for s, tier in zip(visible, tiers)
+        for s, tier in zip(visible, tiers, strict=True)
     )
     return (
         f"<span class='system-live-field system-live-degraded' id='system-live-degraded'>"

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.ingestion.my_team import set_my_team_entry_id
 from fpl_agent.optimization.locked_squad import get_locked_squad, is_locked
-from test_optimization_squad import _PLAYERS, _patch_expected_points, _seed
+from test_optimization_squad import _patch_expected_points, _seed
 
 _STARTING_11 = [1, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32]
 _BENCH_4 = [2, 14, 23, 33]

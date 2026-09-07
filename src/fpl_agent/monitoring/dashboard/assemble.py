@@ -25,7 +25,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
     _alternatives_html,
     _analyze_locked_decisions,
-    _captain_html,
     _compare_panel_html,
     _compute_my_live_score,
     _compute_primary_verdict,
@@ -35,7 +34,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _decision_comparison_html,
     _esc,
     _health_summary_html,
-    _humanize,
     _lifecycle_stage_label,
     _live_tracking_html,
     _market_divergence_html,
@@ -52,7 +50,6 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _chip_strategy_html,
 )
 from fpl_agent.monitoring.dashboard.plan import path_confidence, path_descriptor
-from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
 from fpl_agent.optimization.build_team import generate_build_team_report
 from fpl_agent.optimization.decision_engine import evaluate_locked_squad
@@ -127,7 +124,6 @@ def generate_dashboard_html(
         conn, gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
         exclude_ids=exclude_ids,
     )
-    now = datetime.now(timezone.utc).isoformat()
     primary = report.structures[0] if report.structures else None
     my_team_entry_id = get_my_team_entry_id(conn)
 
@@ -371,6 +367,7 @@ def generate_dashboard_html(
         next_xp=headline_xp, bank_m=bank_m, squad_value_m=squad_value_m,
         captain_name=captain_name, rank_tile_html=live_rank_tile_html, chips_available=chips_available,
         freshness=freshness, cross_check=cross_check, live_snapshot=live_snapshot_for_strip,
+        paths=(sd.get("paths") if sd else None),
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
@@ -1462,14 +1459,20 @@ def generate_dashboard_html(
         }}
       }}
     }}
-    // "live" only within 90s of a REAL successful poll that itself proved a
-    // snapshot exists - never claimed just because the page is open, and
-    // never claimed if the underlying snapshot itself has gone stale.
-    if (liveState.snapshotAt != null && (Date.now() - liveState.snapshotAt) < 90000) {{
-      strip.setAttribute('data-live-state', 'live');
-    }} else if (liveState.snapshotAt != null) {{
-      strip.setAttribute('data-live-state', 'stale');
-    }}
+    // Real dead-code removal (2026-09-07, found live via the browser
+    // console while verifying an unrelated Phase 7.3 change: a
+    // `ReferenceError: strip is not defined` fired on every 1s tick).
+    // This block used to set `data-live-state` on the retired HOME
+    // screen's `#system-live-strip` wrapper (see this function's own
+    // comment above - "gone since the Phase 6 six-screen rebuild") via a
+    // `strip` variable that only ever existed in a DIFFERENT function's
+    // scope (`home._system_live_html`'s own hero, confirmed never called
+    // from this file's real page composition any more) - doubly dead:
+    // wrong scope, and the target element no longer exists either way.
+    // COMMAND's own live status dot (`command.py::_status_dot_html`,
+    // `.cmd-dot-ok`/`.cmd-dot-warn`/`.cmd-dot-unknown`) is the real,
+    // current equivalent and needs no JS tick - it's server-rendered
+    // fresh every regen from the same live snapshot.
   }}
   // Real "next poll" timestamp (2026-08-29, "final product-completion
   // pass" P0 fix: "do NOT use nextCheckRemaining--/any local pretend
@@ -2524,6 +2527,36 @@ _CSS_WORKSPACE = """
   .cmd-edge-h2h-chosen { background: var(--accent-2); }
   .cmd-edge-h2h-alt { background: var(--faint); opacity: 0.55; }
 
+  /* Real CHOSEN vs ALTERNATIVE at 3/5/8GW (2026-09-07, Phase 7.2 Part E) -
+     answers "when" the edge bar above can't: immediate, growing, or
+     entirely long-horizon. A plain table - three real numbers per row
+     don't earn a chart. */
+  .cmd-checkpoint-table-wrap { margin-top: 14px; max-width: 460px; overflow-x: auto; }
+  .cmd-checkpoint-table { border-collapse: collapse; font-size: 0.8rem; width: 100%; }
+  .cmd-checkpoint-table th, .cmd-checkpoint-table td { padding: 5px 10px; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  .cmd-checkpoint-table th[scope="row"] { text-align: left; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.03em; }
+  .cmd-checkpoint-table thead th { color: var(--faint); font-weight: 700; font-size: 0.68rem;
+    text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--gridline); }
+  .cmd-checkpoint-table tbody tr:first-child th[scope="row"] { color: var(--accent-2); }
+  .cmd-checkpoint-alt-row td, .cmd-checkpoint-alt-row th { opacity: 0.75; }
+  .cmd-checkpoint-edge-row { border-top: 1px solid var(--gridline); }
+  .cmd-checkpoint-edge-row th[scope="row"] { color: var(--faint); }
+  .cmd-checkpoint-edge-pos { color: var(--ok); font-weight: 700; }
+  .cmd-checkpoint-edge-neg { color: var(--bad); font-weight: 700; }
+
+  /* "WHY THE MODEL PREFERS THIS" contribution layer (2026-09-07, Phase 7.3
+     Part 12) - 3-5 real driver rows, each its own real unit (pts or a
+     reachable-state count) - never forced into one fake shared scale. */
+  .cmd-contrib { max-width: 460px; }
+  .cmd-contrib-rows { display: flex; flex-direction: column; gap: 8px; }
+  .cmd-contrib-row { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 0.82rem; padding: 4px 0; border-bottom: 1px solid var(--gridline); }
+  .cmd-contrib-label { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.03em;
+    text-transform: uppercase; font-weight: 700; }
+  .cmd-contrib-value { color: var(--accent-2); font-weight: 700; font-variant-numeric: tabular-nums; }
+
   /* Trajectory scene: current squad (real shirts) -> the action -> real
      future legs, fading. A fragile-path leg carries a real watch marker. */
   .cmd-trajectory { margin-top: 26px; }
@@ -2604,6 +2637,10 @@ _CSS_WORKSPACE = """
   .cmd-matchup-xp-winner { display: inline-block; background: var(--accent-2); color: var(--bg);
     font-weight: 800; border-radius: 999px; padding: 2px 10px; margin-top: 2px; }
   .cmd-matchup-delta { font-size: 0.85rem; font-weight: 700; color: var(--accent-2); align-self: center; }
+  /* Real floor-ceiling range + "why this captain" driver line (2026-09-07,
+     Phase 7.3 Part 13) - both real model outputs, never invented text. */
+  .cmd-matchup-range { font-size: 0.68rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .cmd-matchup-why { margin-top: 10px; font-size: 0.74rem; color: var(--muted); }
   .cmd-col-verdict { margin-top: 14px; display: flex; gap: 12px; font-size: 0.76rem; }
 
   .cmd-monitor { display: flex; flex-direction: column; gap: 10px; }
@@ -2868,6 +2905,14 @@ _CSS_WORKSPACE = """
   .timeline-node-locked { border-color: #04f5ff; }
   .timeline-node-locked-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; color: #04f5ff; }
   .timeline-node-conditional { border-style: dashed; }
+  /* Real "RE-EVALUATE" chain closer (2026-09-07, Phase 7.3 Part 15) - makes
+     explicit what the dashed conditional nodes above already imply: this
+     path's future legs are real but not locked in, and get re-checked
+     against fresh data rather than executed blindly. Quieter than a real
+     timeline node (no border, no background) - it's a closing label, not
+     another decision. */
+  .timeline-node-reevaluate { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
+    color: var(--faint); text-transform: uppercase; align-self: center; white-space: nowrap; }
   /* Real per-path 3/5/8GW breakdown (2026-08-29, P0 audit). */
   .horizon-breakdown-row { display: flex; gap: 10px; flex-wrap: wrap; }
   .horizon-breakdown-cell { display: flex; flex-direction: column; padding: 8px 12px; border: 1px solid var(--border);
@@ -2923,6 +2968,13 @@ _CSS_WORKSPACE = """
     background: #fff; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   .opp-card-badge { width: 32px; height: 32px; }
   .opp-card-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
+  /* Real PLAYER/PRICE/xP/MINUTES/RISK/WHAT-WOULD-CHANGE field set
+     (2026-09-07, Phase 7.3 Part 17) - each its own real, measurable value,
+     never generic prose. */
+  .opp-card-stats { display: flex; gap: 10px; font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
+  .opp-card-stats b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .opp-card-risk { font-size: 0.74rem; color: #ff9b6b; margin-top: 4px; }
+  .opp-card-change { font-size: 0.74rem; color: var(--faint); margin-top: 4px; }
   .opp-card-metric { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
   .opp-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-top: 6px; }
@@ -3022,6 +3074,14 @@ _CSS_WORKSPACE = """
     text-transform: uppercase; color: var(--fg); font-weight: 800; background: var(--surface-2);
     border-radius: 5px; padding: 7px 12px; margin: 30px 0 12px; }
   .fb-feed { display: flex; flex-direction: column; gap: 20px; }
+  /* Real "WHAT CHANGED FOR MY SQUAD?" module (2026-09-07, Phase 7.3 Part
+     16) - a bounded, visually distinct box (unlike the general feed's own
+     flat category list) since it's the first, highest-priority thing on
+     the screen; reuses `.fb-signal-row`/`.fb-signal-row-mine` exactly, no
+     new row styling. */
+  .fb-squad-changes { border: 1px solid var(--border); border-radius: 10px; padding: 4px 16px 12px;
+    margin-bottom: 26px; background: var(--surface-2); }
+  .fb-squad-changes .fb-section-label { margin-top: 14px; background: transparent; padding: 0; }
   /* Real fix (2026-09-03, DESIGN.md "no side-stripe borders" rule -
      `impeccable`'s own shared design law bans a colored border-left/right
      accent on any card or row). A broadcast-style colored label BADGE

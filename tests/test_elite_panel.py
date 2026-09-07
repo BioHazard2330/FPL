@@ -34,7 +34,7 @@ def test_snapshot_elite_panel_is_idempotent_per_season_unless_forced(db_conn, mo
     def fake_fetch_league_standings(self, league_id, page):
         calls["n"] += 1
         results = [{"entry": i, "rank": i} for i in range(1, 51)]
-        return _fake_raw(f"x", {"standings": {"results": results}})
+        return _fake_raw("x", {"standings": {"results": results}})
 
     monkeypatch.setattr(fpl_api_mod.FPLApiAdapter, "fetch_league_standings", fake_fetch_league_standings)
 

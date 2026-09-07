@@ -19,6 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.16",
+    "mypy>=2.3",
 ]
 
 [project.scripts]
@@ -33,3 +35,33 @@ where = ["src"]
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# Real, correctness-focused subset only (2026-09-07) - not the full default
+# rule set, which would surface thousands of pure-style findings across a
+# 35k-line codebase in one pass. F = pyflakes (unused imports/vars, undefined
+# names, real bugs), E9 = syntax/indentation errors, B = flake8-bugbear (real
+# footguns: mutable default args, bare except, etc). Style rules (E/W line-
+# length, import order) deliberately excluded - this project's own existing
+# formatting is consistent enough that a mechanical reformat would be pure
+# churn with no correctness payoff.
+select = ["F", "E9", "B"]
+ignore = [
+    "B008",  # function call in default arg - click options use this idiom throughout main.py
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# Real, incremental adoption (2026-09-07) - this codebase has extensive type
+# hints already but was never actually checked. Starting in non-strict mode
+# (no --strict, no disallow_untyped_defs) so this is a real, immediately-
+# runnable safety net rather than a wall of thousands of pre-existing
+# findings that would need triaging before the tool is usable at all.
+warn_unused_ignores = false
+warn_redundant_casts = true
+check_untyped_defs = false

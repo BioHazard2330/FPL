@@ -908,10 +908,34 @@ _FLOOR_PERCENTILE = 10
 _CEILING_PERCENTILE = 90
 
 
+@dataclass(frozen=True)
+class OutcomeProbabilities:
+    """Real threshold-crossing probabilities (2026-09-07, Phase 7.3 Part 1 -
+    "better separation between BASELINE EXPECTATION and UPSIDE PROBABILITY").
+    Read directly off the SAME Monte-Carlo trial array `_sampled_floor_
+    ceiling` already generates for floor/ceiling (Poisson-correlated Dixon-
+    Coles scorelines, `scenario_engine.py`'s own per-trial minutes-bucket/
+    goals/assists/cards/bonus draws) - zero new simulation cost, these are
+    just additional percentile-style reads of an array already computed.
+    `prob_blank` is P(this player's real total FPL points this window <= 0)
+    - a genuine "returned nothing" outcome (didn't play, or played and
+    contributed no scoring/bonus/CS event), not merely "scored 0 goals".
+    `prob_Nplus` is P(total >= N). These are real frequencies over
+    `_FLOOR_CEILING_TRIALS` trials of the SAME already-validated simulation
+    this project's season-long Monte Carlo (`scenario_engine.py`) and
+    floor/ceiling already trust - not a separately-fit distribution, so
+    there is no second, potentially-disagreeing probability model to keep
+    in sync with the point estimate."""
+    prob_blank: float
+    prob_2plus: float
+    prob_5plus: float
+    prob_10plus: float
+
+
 def _sampled_floor_ceiling(
     conn: sqlite3.Connection, rates: dict, fixtures_with_goals: list[tuple], median: float,
     effective_minutes_fraction: float, ceiling_matches: int,
-) -> tuple[float, float]:
+) -> tuple[float, float, OutcomeProbabilities | None]:
     """Real P10/P90 from the same Monte-Carlo per-trial point model
     scenario_engine.py already uses for season-long simulation (Poisson-
     correlated Dixon-Coles scorelines, per-trial minutes-bucket/goals/
@@ -921,7 +945,10 @@ def _sampled_floor_ceiling(
     data" since Pillar 1 Plan 1b. Falls back to that same heuristic only when
     there's no real fixture to sample from (a genuine blank gameweek) -
     fabricating a Dixon-Coles rho with no fixture to fit it from would be
-    less honest than the disclosed heuristic it replaces.
+    less honest than the disclosed heuristic it replaces - the third return
+    value (`OutcomeProbabilities`, Phase 7.3 Part 1) is honestly `None` in
+    that same fallback branch, never a fabricated probability read off a
+    heuristic that was never actually simulated.
 
     Home/away orientation matters here and is easy to get backwards:
     `_fixture_goals_for` returns (team, opponent) goals, but
@@ -939,7 +966,7 @@ def _sampled_floor_ceiling(
     if not fixtures_with_goals:
         floor = round(median * 0.5, 2)
         ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction * ceiling_matches, 2)
-        return floor, ceiling
+        return floor, ceiling, None
 
     conceded_rate = get_rule(conn, rates["rules_season"], f"scoring.goals_conceded.{rates['position']}", 0) or 0
     if rates["position"] not in ("DEF", "GKP"):
@@ -960,7 +987,14 @@ def _sampled_floor_ceiling(
 
     floor = round(float(np.percentile(total, _FLOOR_PERCENTILE)), 2)
     ceiling = round(float(np.percentile(total, _CEILING_PERCENTILE)), 2)
-    return floor, ceiling
+    n = total.shape[0]
+    outcome_probs = OutcomeProbabilities(
+        prob_blank=round(float(np.count_nonzero(total <= 0)) / n, 4),
+        prob_2plus=round(float(np.count_nonzero(total >= 2)) / n, 4),
+        prob_5plus=round(float(np.count_nonzero(total >= 5)) / n, 4),
+        prob_10plus=round(float(np.count_nonzero(total >= 10)) / n, 4),
+    )
+    return floor, ceiling, outcome_probs
 
 
 @dataclass(frozen=True)
@@ -984,6 +1018,11 @@ class ExpectedPoints:
     # almost every player - only a real PERSISTENT_TREND signal ever sets these.
     qualitative_adjustment: float = 0.0
     qualitative_note: str | None = None
+    # Real threshold-crossing probabilities (2026-09-07, Phase 7.3 Part 1) -
+    # see OutcomeProbabilities' own docstring. `None` (never fabricated) in
+    # the disclosed blank-gameweek fallback branch, where no real Monte
+    # Carlo trial ever ran to read a probability off.
+    outcome_probs: "OutcomeProbabilities | None" = None
 
 
 def expected_points(
@@ -1059,8 +1098,14 @@ def expected_points(
         median = combined.total
         ceiling_matches = 1
 
-    floor, ceiling = _sampled_floor_ceiling(
-        conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,
+    # Deliberately not strict=True (2026-09-07 lint pass): the blank-fixture
+    # fallback above sets goals_pairs to a single league-average pair while
+    # fixtures stays empty ([]) - a genuine, intentional length mismatch
+    # (zip's own truncate-to-shortest silently produces an empty list here,
+    # which _sampled_floor_ceiling already handles). strict=True would turn
+    # that legitimate blank-GW case into a crash.
+    floor, ceiling, outcome_probs = _sampled_floor_ceiling(
+        conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,  # noqa: B905
     )
 
     # Real, bounded, evidence-gated qualitative signal (2026-08-26, P0 item 3) -
@@ -1084,6 +1129,7 @@ def expected_points(
         ceiling=ceiling, confidence=em.confidence, expected_minutes=em.expected_minutes,
         model_version=MODEL_VERSION, components=combined,
         qualitative_adjustment=qual_adjustment, qualitative_note=qual_note,
+        outcome_probs=outcome_probs,
     )
 
 

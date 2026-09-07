@@ -2,7 +2,7 @@ from click.testing import CliRunner
 
 from fpl_agent.cli.main import cli
 
-from test_decision_calibration import _ca_keep, _seed_actual_points, _seed_players, _ta_transfer
+from test_decision_calibration import _seed_actual_points, _seed_players, _ta_transfer
 from fpl_agent.models.decision_calibration import record_decision_snapshot, reveal_decision_outcomes
 
 

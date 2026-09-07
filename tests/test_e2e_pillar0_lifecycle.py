@@ -4,9 +4,7 @@ backtest -> persist -> query - not just each module passing in isolation,
 same bar test_e2e_lifecycle.py already set for Phase 8."""
 import json
 
-from click.testing import CliRunner
 
-from fpl_agent.cli.main import cli
 from fpl_agent.ingestion.football_data_source import backfill_football_data
 from fpl_agent.ingestion.understat_source import backfill_understat
 

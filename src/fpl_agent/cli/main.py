@@ -29,6 +29,7 @@ from fpl_agent.ingestion.change_detection import (
 )
 from fpl_agent.ingestion.cross_league_source import backfill_cross_league_priors
 from fpl_agent.ingestion.football_data_source import backfill_football_data
+from fpl_agent.ingestion.fotmob_results_backfill import backfill_match_results_from_fotmob
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.history_sync import sync_player_season_history
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference, sample_live_rank_reference
@@ -44,7 +45,7 @@ from fpl_agent.ingestion.my_team import (
     sync_my_team,
 )
 from fpl_agent.ingestion.raw_store import prune_raw
-from fpl_agent.ingestion.news_source import NewsFetchError, list_recent_news, sync_all_news_sources
+from fpl_agent.ingestion.news_source import list_recent_news, sync_all_news_sources
 from fpl_agent.ingestion.predicted_lineups_source import (
     PredictedLineupFetchError,
     get_predicted_lineup_for_squad,
@@ -205,7 +206,7 @@ def sync():
         summary = run_sync()
     except (SourceFetchError, ValidationError) as e:
         click.echo(f"sync failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     click.echo(f"season          {summary['season']}")
     click.echo(f"teams           {summary['teams']}")
     click.echo(f"players         {summary['players']}")
@@ -251,7 +252,7 @@ def sync_eo(event: int, sample_size: int, force: bool):
         result = sample_effective_ownership(conn, event=event, target_sample_size=sample_size, force=force)
     except ValueError as e:
         click.echo(f"sync-eo failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
 
@@ -348,7 +349,7 @@ def sync_live_odds_cmd():
         result = sync_live_odds(conn)
     except OddsLiveFetchError as e:
         click.echo(f"sync-live-odds failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
     click.echo(f"fetched          {result['fetched']}")
@@ -369,7 +370,7 @@ def sync_player_odds_cmd():
         result = sync_player_odds(conn, tracked_squad_ids)
     except PlayerOddsFetchError as e:
         click.echo(f"sync-player-odds failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
     click.echo(f"fetched (fresh)  {result['fetched']}")
@@ -506,7 +507,7 @@ def sync_predicted_lineups_cmd():
         result = sync_predicted_lineups(conn)
     except PredictedLineupFetchError as e:
         click.echo(f"sync-predicted-lineups failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
     click.echo(f"teams            {result['teams']}")
@@ -529,7 +530,7 @@ def sync_lineup_probability_cmd():
         result = sync_lineup_probabilities(conn)
     except LineupProbabilityFetchError as e:
         click.echo(f"sync-lineup-probability failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
     click.echo(f"teams            {result['teams']}")
@@ -555,7 +556,7 @@ def sync_match_cmd(home_team: str, away_team: str, date_str: str | None):
         result = sync_match(conn, home_team, away_team, day)
     except FotMobFetchError as e:
         click.echo(f"sync-match failed: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     finally:
         conn.close()
     click.echo(f"fotmob match id   {result['fotmob_match_id']}")
@@ -781,7 +782,7 @@ def match_analyze_cmd(fotmob_match_id: str, phase: str, payload_path: str):
     except QualitativeAnalysisError as e:
         click.echo(f"match-analyze failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     mark_job_done_for_match_phase(conn, match["id"], phase.upper())
     click.echo(f"phase                  {result['phase']}")
     click.echo(f"observations written   {result['observations_written']}")
@@ -837,7 +838,7 @@ def match_note_cmd(player_id: int | None, team_id: int | None, sentiment: str | 
     except QualitativeAnalysisError as e:
         click.echo(f"match-note failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     conn.close()
     click.echo(f"recorded USER_OBSERVATION #{obs_id}")
 
@@ -932,7 +933,7 @@ def player_intelligence_cmd(player_id: int):
     except ValueError as e:
         click.echo(f"player-intelligence failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     conn.close()
 
     click.echo(f"{pi.web_name} (player_id={pi.player_id})")
@@ -966,7 +967,7 @@ def manager_intelligence_cmd(team_id: int):
     except ValueError as e:
         click.echo(f"manager-intelligence failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     conn.close()
 
     click.echo(f"{mi.team_name} (team_id={mi.team_id}) - {mi.matches_observed} real FULL_TIME match(es) observed")
@@ -1201,6 +1202,46 @@ def backtest(season: str, model_version: str | None, differentials: bool, bonus:
             )
 
 
+@cli.command("season-backtest")
+@click.option("--season", required=True, help="e.g. 2025-26 - needs real seeded scoring rules + player_season_history prices (2021-22 through 2025-26 currently qualify)")
+def season_backtest_cmd(season: str):
+    """Real season-level DECISION backtest (2026-09-07) - the biggest
+    previously-disclosed validation gap this project had: `fpl backtest`
+    only ever scored per-player point-prediction MAE, never the actual
+    squad-build + week-to-week transfer/captain decision LOOP as a whole.
+    Replays a real historical season: builds a squad from scratch (real
+    historical prices), then each round either takes the single best
+    available transfer (if it clears a real materiality bar) or rolls,
+    captains the round's own top predicted starter, and sums REAL
+    reconstructed actual points - compared against a real "same starting
+    squad, never transferred, but still repicks XI/captain every round"
+    baseline. See `backtesting/season_backtest.py`'s own module docstring
+    for the full, disclosed scope (single-swap-or-roll only, core points
+    only, current-club-only for the club-limit constraint) - absolute
+    totals run well below a real full-rules FPL season (no bonus/clean-
+    sheets/DefCon, matching `fpl backtest`'s own established scope), so
+    read the DELTA between the two columns as the real signal, not either
+    total in isolation."""
+    from fpl_agent.backtesting.season_backtest import run_season_backtest
+
+    conn = get_connection()
+    try:
+        result = run_season_backtest(conn, season)
+    finally:
+        conn.close()
+
+    click.echo(f"season                  {result.season}")
+    click.echo(f"rounds evaluated        {result.rounds_evaluated}")
+    click.echo(f"transfers made          {result.transfers_made}")
+    click.echo(f"decision-layer total    {result.decision_total_points}")
+    click.echo(f"static (no-transfer)    {result.static_total_points}")
+    click.echo(f"delta (decision-static) {result.delta_vs_static}")
+    click.echo(f"{'decision layer beats' if result.delta_vs_static > 0 else 'static hold beats'} the alternative this season")
+    click.echo("round-by-round (round, decision, static):")
+    for i, decision_pts, static_pts in result.round_scores:
+        click.echo(f"  {i:>2}  {decision_pts:>6}  {static_pts:>6}")
+
+
 @cli.command("calibration-report")
 @click.option("--season", default=None, help="defaults to the live season")
 @click.option("--min-samples", default=3, type=int, help="omit a cohort with fewer real rows than this")
@@ -1361,7 +1402,7 @@ def run_scheduled():
         logger.error("run-scheduled sync failed: %s", e)
         click.echo(f"sync failed: {e}", err=True)
         release_singleton_lock(run_scheduled_lock_path)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     logger.info(
         "run-scheduled sync ok: %d lifecycle events, %d setpiece events, %d price events, retrieved_at=%s",
@@ -1395,13 +1436,29 @@ def run_scheduled():
     # means the Dixon-Coles team-strength fit never incorporated a single
     # real 2026-27 result, and every player's goals/assists rate ran through
     # the season-fallback path instead of the richer shot-level primary one,
-    # for the entire live season so far. football-data.co.uk publishes one
-    # small CSV per season that's cheap to re-fetch every cycle (its own
-    # upsert is already idempotent). Understat needed a real fix first (see
-    # backfill_understat's own docstring) - it had no skip-already-backfilled
-    # guard at all, unsafe to call on a cadence without it; now idempotent,
-    # so a normal cycle only ever fetches genuinely NEW finished matches.
-    # Both keyed off the live current_season() - never a hardcoded year.
+    # for the entire live season so far. Understat needed a real fix first
+    # (see backfill_understat's own docstring) - it had no skip-already-
+    # backfilled guard at all, unsafe to call on a cadence without it; now
+    # idempotent, so a normal cycle only ever fetches genuinely NEW finished
+    # matches. Both keyed off the live current_season() - never a hardcoded
+    # year.
+    #
+    # REPLACED 2026-09-07: this originally called
+    # football_data_source.py::backfill_football_data (football-data.co.uk's
+    # CSV) every cycle. Confirmed live that day that football-data.co.uk was
+    # returning a real 503 on its CSV endpoint AND its own site root (an
+    # external outage, not a scraper bug) - `fpl doctor` correctly flagged
+    # `sources FAIL` because this was the only writer keeping the live-season
+    # Dixon-Coles fit current. Replaced with
+    # `fotmob_results_backfill.py::backfill_match_results_from_fotmob`, which
+    # derives the identical result rows from `match_intelligence` -
+    # already populated by `fpl sync-match`/match discovery every cycle
+    # anyway, source="fotmob", already the trusted always-OK status in `fpl
+    # source-status` - so the live-season top-up no longer depends on a
+    # second external site at all. `football_data_source.py` is kept for its
+    # own real remaining jobs (multi-season historical backfill, odds,
+    # Championship data for promoted-team calibration via `fpl backfill-
+    # odds`) but is no longer part of this automatic cycle.
     season_for_backfill = None
     try:
         from fpl_agent.models.rules import current_season as _current_season_for_backfill
@@ -1411,10 +1468,13 @@ def run_scheduled():
         logger.exception("run-scheduled could not resolve the live season - skipping match/xg backfill this cycle")
     if season_for_backfill is not None:
         try:
-            odds_backfill = backfill_football_data(conn, season_for_backfill)
-            logger.info("run-scheduled odds backfill: %d match(es) upserted", odds_backfill["matches_inserted"])
+            results_backfill = backfill_match_results_from_fotmob(conn, season_for_backfill)
+            logger.info(
+                "run-scheduled fotmob results backfill: %d match(es) upserted",
+                results_backfill["matches_inserted"],
+            )
         except Exception:
-            logger.exception("run-scheduled odds backfill failed - not fatal to the sync itself")
+            logger.exception("run-scheduled fotmob results backfill failed - not fatal to the sync itself")
         try:
             xg_backfill = backfill_understat(conn, season_for_backfill)
             logger.info(
@@ -2322,7 +2382,7 @@ def live_bonus_cmd(event_num: int | None):
         update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
         click.echo(f"live-bonus failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
 
     rows = compute_live_bonus(conn, payload)
@@ -2408,7 +2468,7 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
     except SourceFetchError as e:
         click.echo(f"my-team sync failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     my_picks = [
         (r["player_id"], r["multiplier"])
@@ -2436,7 +2496,7 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
         update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
         click.echo(f"live-rank failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
 
     pre_gw_total = gw_summary["total_points"] - (gw_summary["points"] or 0)
@@ -2453,7 +2513,7 @@ def live_rank_cmd(entry_id_opt: int | None, event_num: int | None, sample_size: 
         except ValueError as e:
             click.echo(f"live-rank failed: {e}", err=True)
             conn.close()
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         click.echo(
             f"reference sample: {sample_result['sample_size']} managers "
             f"({sample_result['managers_failed']} failed" +
@@ -2543,10 +2603,10 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
     if squad_arg:
         try:
             squad_ids = {int(x) for x in squad_arg.split(",") if x.strip()}
-        except ValueError:
+        except ValueError as e:
             click.echo("--squad must be a comma-separated list of player ids", err=True)
             conn.close()
-            raise SystemExit(1)
+            raise SystemExit(1) from e
     else:
         # Same real gap as the scheduled-dashboard squad mismatch (see
         # optimization/build_team.py::resolve_locked_constraints) - a bare
@@ -2996,8 +3056,21 @@ def alerts(deliver: bool):
 
 
 def _parse_squad_option(squad: str | None) -> list[int] | None:
-    if not squad:
+    # `None` (option genuinely omitted) is a real, legitimate "use the
+    # locked squad" signal every optional-squad caller already checks for
+    # explicitly (`if squad is not None:`) - kept as-is. An empty/whitespace
+    # STRING (`--squad ""`, or `--squad` on a required option that Click
+    # itself doesn't reject as long as the value is present) is different -
+    # real bug found 2026-09-07 via mypy: it silently fell through the same
+    # `not squad` check and returned `None` too, which every one of this
+    # helper's 8 real call sites (captain/transfers/season-sim/final-check/
+    # rate-team all REQUIRE a squad) then passed straight into `len()`/
+    # `frozenset()`/`in` - a confusing `TypeError: 'NoneType' object is not
+    # iterable` instead of a clear message naming the actual problem.
+    if squad is None:
         return None
+    if not squad.strip():
+        raise SystemExit("--squad must be a non-empty comma-separated list of player ids")
     return [int(x) for x in squad.split(",")]
 
 
@@ -3017,7 +3090,7 @@ def build_team(sync: bool, gw_window: int, must_include: str | None, must_start:
             run_sync()
         except (SourceFetchError, ValidationError) as e:
             click.echo(f"sync failed: {e}", err=True)
-            raise SystemExit(1)
+            raise SystemExit(1) from e
 
     conn = get_connection()
     checks = run_checks()
@@ -3439,7 +3512,7 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
 
     if minutes_dist is not None:
         click.echo()
-        click.echo(f"MINUTES DISTRIBUTION (real, empirical where enough current-season matches exist):")
+        click.echo("MINUTES DISTRIBUTION (real, empirical where enough current-season matches exist):")
         mo, mi = minutes_dist["out"], minutes_dist["in"]
         click.echo(
             f"  OUT {a.chosen.candidate.player_out_name:15s} p(0min)={mo.p_zero:.2f}  p(1-59min)={mo.p_partial:.2f}  "
@@ -3568,7 +3641,7 @@ def strategic_plan_cmd(
     read the complete top-N without re-running this ~1-minute search."""
     from fpl_agent.optimization.authoritative_decision import serialize_authoritative_decision
     from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
-    from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
+    from fpl_agent.optimization.locked_squad import get_locked_squad
     from fpl_agent.optimization.strategic_planner import build_strategic_plan, synthesize_current_recommendation
 
     # Real "no stale recommendation overrides" guard (2026-08-28, direct
@@ -3892,7 +3965,7 @@ def strategic_plan_cmd(
             click.echo(f"    {o.label}  path_total={o.path_total}")
 
     click.echo()
-    click.echo(f"HORIZON COMPARISON (immediate vs strategic optimum):")
+    click.echo("HORIZON COMPARISON (immediate vs strategic optimum):")
     for c in horizon_comparison_detail:
         roll_bit = f", delta vs roll={c['delta_vs_roll']:+.1f}" if c["delta_vs_roll"] is not None else ""
         click.echo(f"  {c['horizon_gw']}GW-horizon opening action: {c['opening_action']}  (path total={c['path_total']}{roll_bit})")
@@ -3959,7 +4032,16 @@ def decision_audit_cmd(horizons: str, continuation_beam_width: int, players: str
             horizons=horizon_tuple, continuation_beam_width=continuation_beam_width,
         )
 
-        winner = audit.action_audit[0] if audit.action_audit else None
+        # Real fix (2026-09-07, Phase 7.1) - the persisted summary headline
+        # must name the same row `build_scorecard`'s own `final_decision`
+        # was computed from (the authoritative reference row, marked by its
+        # own `main_reason_rejected is None`), never blindly `action_audit
+        # [0]` - this audit's own narrower search can rank a DIFFERENT row
+        # #1, which would otherwise log a summary line naming one action
+        # next to a `final_decision` badge for a different one.
+        winner = next((r for r in audit.action_audit if r.main_reason_rejected is None), None) or (
+            audit.action_audit[0] if audit.action_audit else None
+        )
         summary = f"{winner.label if winner else 'REVIEW'}  [{audit.scorecard.final_decision}/{audit.scorecard.confidence}]  robustness={audit.scorecard.decision_robustness}"
         log_decision(
             conn, "decision_audit", summary=summary,
@@ -4463,7 +4545,7 @@ def final_check(squad: str, bank: float, free_transfers: int, sync: bool):
             run_sync()
         except (SourceFetchError, ValidationError) as e:
             click.echo(f"sync failed: {e}", err=True)
-            raise SystemExit(1)
+            raise SystemExit(1) from e
 
     squad_ids = _parse_squad_option(squad)
     conn = get_connection()
@@ -4545,7 +4627,7 @@ def rate_team_cmd(squad: str, sync: bool):
             run_sync()
         except (SourceFetchError, ValidationError) as e:
             click.echo(f"sync failed: {e}", err=True)
-            raise SystemExit(1)
+            raise SystemExit(1) from e
 
     squad_ids = _parse_squad_option(squad)
     conn = get_connection()
@@ -4622,7 +4704,7 @@ def my_team_cmd(entry_id: int | None, event: int | None, force: bool):
     except SourceFetchError as e:
         click.echo(f"my-team failed: {e}", err=True)
         conn.close()
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     click.echo(f"entry_id       {resolved_id}")
     click.echo(f"manager        {result['manager_name']}")

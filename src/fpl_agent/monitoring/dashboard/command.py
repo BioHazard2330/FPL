@@ -20,8 +20,9 @@ never fabricated ones) when absent (pre-Phase-5E cached decision)."""
 import re
 import sqlite3
 
-from fpl_agent.monitoring.dashboard.home import _action_reason, _action_word, _freshness_html
+from fpl_agent.monitoring.dashboard.home import _action_word, _cross_check_html, _freshness_html
 from fpl_agent.monitoring.dashboard.legacy import _chip_display_name, _esc, _official_shirt_url
+from fpl_agent.optimization.captaincy import captain_edge_driver
 
 _GW_RE = re.compile(r"GW(\d+)")
 
@@ -216,6 +217,63 @@ def _edge_html(auth: dict, chosen_total: float | None, current_gw: int | None) -
   </div>"""
 
 
+def _checkpoint_table_html(paths: list[dict] | None, chosen_label: str | None, alt_label: str | None) -> str:
+    """Real CHOSEN vs STRONGEST ALTERNATIVE at 3/5/8GW, side by side
+    (2026-09-07, Phase 7.2 Part E) - the single edge bar above answers "how
+    much" at the FULL horizon only; this answers "when" - whether the real
+    margin is immediate, grows, shrinks, or is entirely long-horizon, a
+    genuinely different, decision-relevant question a single number can't
+    carry. Zero new computation: `paths` is `sd["paths"]`, already carrying
+    a real `horizon_breakdown` per path (`build_diverse_paths`, computed
+    once per dashboard regen for the PLAN screen's own trajectory chart) -
+    this reads the SAME already-computed numbers, never a second search. A
+    plain table, not a chart - three real numbers per row don't need one."""
+    if not paths:
+        return ""
+
+    def _find(label: str | None):
+        if label is None:
+            return None
+        for p in paths:
+            steps = p.get("steps") or []
+            if steps and steps[0].get("action") == label:
+                return p
+        return None
+
+    chosen = _find(chosen_label) or (paths[0] if paths else None)
+    alt = _find(alt_label)
+    if alt is None:
+        alt = next((p for p in paths if p is not chosen), None)
+    if chosen is None or alt is None:
+        return ""
+    chosen_bd = chosen.get("horizon_breakdown") or {}
+    alt_bd = alt.get("horizon_breakdown") or {}
+    horizons = sorted(set(chosen_bd) & set(alt_bd))
+    if not horizons:
+        return ""
+
+    chosen_name = (chosen.get("steps") or [{}])[0].get("action", "This pick")
+    alt_name = (alt.get("steps") or [{}])[0].get("action", "Alternative")
+    header = "".join(f"<th>{h}GW</th>" for h in horizons)
+    chosen_cells = "".join(f"<td>{chosen_bd[h]['path_total']:.1f}</td>" for h in horizons)
+    alt_cells = "".join(f"<td>{alt_bd[h]['path_total']:.1f}</td>" for h in horizons)
+    edge_cells = "".join(
+        f"<td class='cmd-checkpoint-edge-{'pos' if (chosen_bd[h]['path_total'] - alt_bd[h]['path_total']) >= 0 else 'neg'}'>"
+        f"{chosen_bd[h]['path_total'] - alt_bd[h]['path_total']:+.1f}</td>"
+        for h in horizons
+    )
+    return f"""<div class="cmd-checkpoint-table-wrap">
+    <table class="cmd-checkpoint-table">
+      <thead><tr><th></th>{header}</tr></thead>
+      <tbody>
+        <tr><th scope="row">{_esc(chosen_name)}</th>{chosen_cells}</tr>
+        <tr class="cmd-checkpoint-alt-row"><th scope="row">{_esc(alt_name)}</th>{alt_cells}</tr>
+        <tr class="cmd-checkpoint-edge-row"><th scope="row">Edge</th>{edge_cells}</tr>
+      </tbody>
+    </table>
+  </div>"""
+
+
 def _why_lines(auth: dict, alt_label: str | None) -> str:
     lines = []
     robustness = auth.get("robustness_class")
@@ -269,6 +327,24 @@ def _captain_matchup_html(conn: sqlite3.Connection, ca) -> str:
     <div class="cmd-matchup-delta">+{diff:.1f}</div>"""
 
     robustness_html = f"<span class='cmd-tag cmd-tag-{'warn' if ca.robustness == 'FRAGILE' else 'ok'}'>{_esc(ca.robustness)}</span>" if ca.robustness else ""
+
+    # Real "why this captain" line (2026-09-07, Phase 7.3 Part 13) - floor/
+    # ceiling are the SAME Monte-Carlo-derived range `expected_points()`
+    # already computes (never a second, independently-estimated spread);
+    # the driver label comes from `captain_edge_driver` (a real difference-
+    # read over the two players' own already-computed component breakdown,
+    # not a fabricated decomposition - see its own docstring). Both are
+    # honestly omitted (not blanked with a placeholder) when the underlying
+    # data isn't there - `second` absent (no real alternative to compare
+    # against) or `components` unavailable.
+    range_html = f"<div class=\"cmd-matchup-range\">{best.floor:.1f}&ndash;{best.ceiling:.1f} range</div>"
+    why_html = ""
+    if second is not None:
+        driver = captain_edge_driver(best, second)
+        if driver is not None:
+            label, value = driver
+            why_html = f"<div class=\"cmd-matchup-why\">edge driven by {_esc(label)} ({value:+.1f})</div>"
+
     return f"""<div class="cmd-col">
     <div class="cmd-col-label">CAPTAIN</div>
     <div class="cmd-matchup">
@@ -276,10 +352,64 @@ def _captain_matchup_html(conn: sqlite3.Connection, ca) -> str:
         <div class="cmd-shirt-wrap">{_shirt_html(conn, best.player_id, size=88, css_class='cmd-shirt cmd-shirt-armband')}<span class="armband cap" title="Captain">C</span></div>
         <div class="cmd-matchup-name">{_esc(best.web_name)}</div>
         <div class="{best_xp_cls}">{best.median:.1f}xP</div>
+        {range_html}
       </div>
       {second_html}
     </div>
+    {why_html}
     <div class="cmd-col-verdict">{robustness_html}<span class="cmd-tag cmd-captain-verdict">{verdict} {_esc(verdict_name).upper()}</span></div>
+  </div>"""
+
+
+def _contribution_row(label: str, value_html: str) -> str:
+    return (
+        f"<div class='cmd-contrib-row'>"
+        f"<span class='cmd-contrib-label'>{_esc(label)}</span>"
+        f"<span class='cmd-contrib-value'>{value_html}</span>"
+        f"</div>"
+    )
+
+
+def _contribution_layer_html(auth: dict | None, ca) -> str:
+    """Real "WHY THE MODEL PREFERS THIS" layer (2026-09-07, Phase 7.3 Part
+    12) - 3-5 real drivers, each a genuine already-computed model output,
+    never a manufactured additive decomposition (Part 11's own explicit
+    rule: "only expose contribution metrics that are mathematically
+    defensible"). Every row here traces to a field this project already
+    computes and already trusts elsewhere on this same screen:
+
+    - TRANSFER/CHIP EDGE: `nominal_ev_advantage` - the chosen path's real
+      total_net_ev margin over the runner-up, the exact number the edge bar
+      above already renders (never re-derived here, just re-surfaced).
+    - CAPTAIN EDGE: `ca.options[0]` vs `ca.options[1]`'s real median gap -
+      the same real number the captain matchup's own delta pill shows.
+    - OPTIONALITY: `optionality_delta` - a real signed COUNT of reachable
+      next-GW transfer states vs the do-nothing baseline (`future_
+      optionality.py`) - deliberately shown in its own real unit (a count),
+      never forced into a fake "+X.X pts" to match the other rows, which
+      would misrepresent what it actually measures.
+
+    Rows are individually omitted (not zero-filled) when their own source
+    data isn't available - a real, honest "3 drivers today" is preferred
+    over a "4 drivers" row set where one is padding."""
+    if not auth:
+        return ""
+    rows = []
+    ev = auth.get("nominal_ev_advantage")
+    if ev is not None:
+        rows.append(_contribution_row("TRANSFER / CHIP EDGE", f"{'+' if ev >= 0 else ''}{ev:.1f} pts"))
+    if ca is not None and ca.options and len(ca.options) > 1:
+        cap_gap = round(ca.options[0].option.median - ca.options[1].option.median, 2)
+        rows.append(_contribution_row("CAPTAIN EDGE", f"+{cap_gap:.1f} pts"))
+    opt_delta = auth.get("optionality_delta")
+    if opt_delta is not None:
+        sign = "+" if opt_delta >= 0 else ""
+        rows.append(_contribution_row("OPTIONALITY", f"{sign}{opt_delta} reachable states"))
+    if len(rows) < 2:  # not enough real drivers to say anything meaningful
+        return ""
+    return f"""<div class="cmd-col cmd-contrib">
+    <div class="cmd-col-label">WHY THE MODEL PREFERS THIS</div>
+    <div class="cmd-contrib-rows">{''.join(rows)}</div>
   </div>"""
 
 
@@ -329,9 +459,9 @@ def render_command_screen(
     ft_value: str, ft_title: str, actual_points: float | None, next_xp: float, bank_m: float, squad_value_m: float,
     captain_name: str, rank_tile_html: str, chips_available: list[str],
     freshness=None, cross_check=None, live_snapshot: dict | None = None,
+    paths: list[dict] | None = None,
 ) -> str:
     word, cls = _action_word(current_rec, ta)
-    reason = _action_reason(current_rec, ta)
     freshness_html = _freshness_html(freshness)
     if freshness is not None and freshness.is_stale:
         word = "RECOMPUTING"
@@ -344,6 +474,12 @@ def render_command_screen(
     trajectory_html = _trajectory_html(conn, gw_label_plain, auth, ca) if auth else ""
     why_html = _why_lines(auth, None) if auth else ""
     edge_html = _edge_html(auth, (current_rec or {}).get("path_total"), current_gw) if auth else ""
+    checkpoint_table_html = (
+        _checkpoint_table_html(
+            paths, (current_rec or {}).get("label"),
+            (auth.get("best_alternative") or "").partition(": ")[0] or None,
+        ) if auth else ""
+    )
 
     alt_col_html = ""
     if auth:
@@ -380,6 +516,17 @@ def render_command_screen(
   </div>""" if alt_label else ""
 
     captain_html = _captain_matchup_html(conn, ca)
+    contribution_html = _contribution_layer_html(auth, ca)
+    # Real regression fix (2026-09-07, Phase 7.1 - Part 11 "KEY FOOTBALL
+    # REASON"): `render_command_screen` has taken a real, already-computed
+    # `cross_check` (`decision_fusion.captain_cross_check` - MODEL vs
+    # FOOTBALL/MARKET/TEMPLATE agreement, "right under the captain verdict"
+    # per this project's own 2026-08-29 spec) as a parameter since the
+    # Phase 6 COMMAND rebuild, but never actually rendered it - a real,
+    # confirmed silent drop during that rebuild (`home.py`'s own superseded
+    # hero still renders it via `_cross_check_html`, reused here rather
+    # than reimplemented).
+    cross_check_html = _cross_check_html(cross_check)
     monitor_html = _monitor_html(auth) if auth else ""
     # Real layout fix (2026-09-03, direct user correction: "the main command
     # centre looks fucking terrible" - traced to the ALTERNATIVE column
@@ -416,10 +563,13 @@ def render_command_screen(
     <div class="cmd-hero-main">
       <div class="cmd-action-word cmd-action-{_esc(cls)}">{_esc(word)}</div>
       {edge_html}
+      {checkpoint_table_html}
+      {contribution_html}
       {trajectory_html}
       <div class="cmd-why">{why_html}</div>
       <div class="cmd-freshness">{freshness_html}</div>
       {captain_html}
+      {cross_check_html}
     </div>
     <div class="cmd-hero-rule"></div>
     <div class="cmd-hero-side">

@@ -130,7 +130,7 @@ def compute_live_bonus(conn: sqlite3.Connection, live_payload: dict) -> list[Liv
         entries.sort(key=lambda e: e["stats"].get("bps", 0), reverse=True)
         bps_list = [e["stats"].get("bps", 0) for e in entries]
         bonus_list = _assign_bonus(bps_list)
-        for entry, provisional in zip(entries, bonus_list):
+        for entry, provisional in zip(entries, bonus_list, strict=True):
             player_id = entry["player_id"]
             stats = entry["stats"]
             web_name, position, team_code = player_rows.get(player_id, (f"#{player_id}", "", None))

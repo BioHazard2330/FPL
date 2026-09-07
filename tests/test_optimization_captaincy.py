@@ -3,9 +3,9 @@ from types import SimpleNamespace
 from fpl_agent.optimization import captaincy as captaincy_mod
 
 _EP = {
-    1: SimpleNamespace(position="MID", floor=3.0, median=6.0, ceiling=10.0, confidence="MEDIUM", expected_minutes=85.0),
-    2: SimpleNamespace(position="DEF", floor=4.0, median=5.0, ceiling=9.0, confidence="HIGH", expected_minutes=90.0),
-    3: SimpleNamespace(position="FWD", floor=1.0, median=3.0, ceiling=14.0, confidence="LOW", expected_minutes=45.0),
+    1: SimpleNamespace(position="MID", floor=3.0, median=6.0, ceiling=10.0, confidence="MEDIUM", expected_minutes=85.0, components=None),
+    2: SimpleNamespace(position="DEF", floor=4.0, median=5.0, ceiling=9.0, confidence="HIGH", expected_minutes=90.0, components=None),
+    3: SimpleNamespace(position="FWD", floor=1.0, median=3.0, ceiling=14.0, confidence="LOW", expected_minutes=45.0, components=None),
 }
 
 
@@ -135,3 +135,38 @@ def test_captaincy_player_absent_from_the_sample_is_unavailable_not_a_fabricated
     assert report.best.eo_source == "unavailable"
     assert report.best.effective_ownership_percent is None
     assert report.differential_captain_note is None
+
+
+def _opt(player_id, **components_kwargs):
+    from fpl_agent.models.expected_points import ComponentBreakdown
+    from fpl_agent.optimization.captaincy import CaptainOption
+
+    defaults = dict(appearance=2.0, goals=0.0, assists=0.0, bonus=0.0, clean_sheet=0.0, cards=0.0, conceded=0.0, defcon=0.0)
+    defaults.update(components_kwargs)
+    return CaptainOption(
+        player_id=player_id, web_name=f"P{player_id}", position="MID", floor=1.0, median=5.0, ceiling=10.0,
+        confidence="HIGH", expected_minutes=90.0, is_penalty_taker=False, opponent_short="ARS", is_home=True,
+        selected_by_percent=10.0, effective_ownership_percent=8.0, eo_source="sampled",
+        components=ComponentBreakdown(**defaults),
+    )
+
+
+def test_captain_edge_driver_identifies_the_real_largest_component_gap():
+    """Real, Phase 7.3 Part 13 ("why this captain, not merely N.N xP") - the
+    single ComponentBreakdown field with the largest real difference between
+    two players' own already-computed projections, not a fabricated
+    additive decomposition."""
+    current = _opt(1, goals=4.0, assists=0.5)  # a real goal-threat-driven projection
+    alternative = _opt(2, goals=0.5, assists=0.5)  # same appearance/assists, much lower goal threat
+
+    driver = captaincy_mod.captain_edge_driver(current, alternative)
+
+    assert driver == ("goal probability", 3.5)
+
+
+def test_captain_edge_driver_none_when_components_are_unavailable():
+    current = _opt(1)
+    alternative = _opt(2)
+    object.__setattr__(current, "components", None)
+
+    assert captaincy_mod.captain_edge_driver(current, alternative) is None

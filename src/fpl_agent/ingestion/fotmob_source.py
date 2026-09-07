@@ -4,8 +4,12 @@ no auth/key required - live-verified 2026-08-21 (see docs/superpowers/specs/
 resolved via the date-scoped fixture list, never hardcoded."""
 from datetime import date as date_cls
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import requests
+
+if TYPE_CHECKING:
+    from fpl_agent.providers.football import FootballDataProvider
 
 from fpl_agent.events.bus import Event, bus as _event_bus
 from fpl_agent.events.types import EventType
@@ -281,7 +285,7 @@ def sync_match(
     provider, per the standing free-resources-only constraint this session
     already resolved to keep FotMob as the sole real implementation) can
     inject a different one without touching this function's own logic."""
-    from fpl_agent.providers.football import FootballDataProvider, FotMobProvider
+    from fpl_agent.providers.football import FotMobProvider
 
     provider = provider or FotMobProvider()
     try:

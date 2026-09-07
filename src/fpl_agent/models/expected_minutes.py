@@ -176,7 +176,7 @@ def _blended_recent_seasons_per_gw(conn: sqlite3.Connection, player_id: int) -> 
         return None
     weights = _RECENT_SEASON_BLEND_WEIGHTS[: len(usable)]
     total_weight = sum(weights)
-    return sum(w * min(m / 38, 90) for w, m in zip(weights, usable)) / total_weight
+    return sum(w * min(m / 38, 90) for w, m in zip(weights, usable, strict=True)) / total_weight
 
 
 @dataclass(frozen=True)

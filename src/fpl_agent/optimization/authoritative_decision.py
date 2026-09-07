@@ -16,7 +16,7 @@ CONDITIONAL plan rather than silently locked in. It is not a new search
 method and does not replace `decision_snapshot.py`'s own existing single
 source of truth for the routine per-regen transfer/captain verdict."""
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from fpl_agent.optimization.decision_ontology import (
     advantage_survives_haircut,
@@ -58,6 +58,16 @@ class AuthoritativeDecision:
     captain_decision: str  # real, human-readable captain verdict + robustness
     future_conditional_plan: tuple[str, ...]  # real, GW-ordered, explicitly NOT locked in
     decision_reason: str  # mechanical, references the real numbers above - never generic
+    # Real, raw numeric companion to `optionality_effect`'s own prose
+    # (2026-09-07, Phase 7.3 Part 12 - COMMAND's "WHY THE MODEL PREFERS
+    # THIS" contribution layer needs a real NUMBER to render, not a string
+    # to re-parse). The exact same `chosen.optionality_delta_vs_baseline`
+    # `optionality_effect`'s own text already embeds - a real signed COUNT
+    # of reachable next-state transfers (never points, never conflated with
+    # `nominal_ev_advantage`'s own pts unit). `None` only for an
+    # AuthoritativeDecision deserialized from a cached decision recorded
+    # before this field existed - never a fabricated 0.
+    optionality_delta: int | None = None
 
 
 def _immediate_step_label(path) -> str:
@@ -121,6 +131,7 @@ def serialize_authoritative_decision(decision: AuthoritativeDecision) -> dict:
         "captain_decision": decision.captain_decision,
         "future_conditional_plan": list(decision.future_conditional_plan),
         "decision_reason": decision.decision_reason,
+        "optionality_delta": decision.optionality_delta,
     }
 
 
@@ -140,6 +151,7 @@ def deserialize_authoritative_decision(data: dict) -> AuthoritativeDecision:
         captain_decision=data["captain_decision"],
         future_conditional_plan=tuple(data.get("future_conditional_plan", ())),
         decision_reason=data["decision_reason"],
+        optionality_delta=data.get("optionality_delta"),
     )
 
 
@@ -299,4 +311,5 @@ def build_authoritative_decision(
         price_robustness=chosen.price_robust, optionality_effect=optionality_effect,
         critical_dependencies=critical_dependencies, captain_decision=captain_decision,
         future_conditional_plan=future_conditional_plan, decision_reason=reason,
+        optionality_delta=chosen.optionality_delta_vs_baseline,
     )

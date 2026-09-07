@@ -19,7 +19,6 @@ shared handler drives both."""
 from fpl_agent.monitoring.dashboard.legacy import (
     _POSITION_ORDER,
     _bulk_player_lookup,
-    _captain_html,
     _chip_display_name,
     _esc,
     _official_shirt_url,
@@ -176,8 +175,8 @@ def build_projected_switcher(conn, *, locked, sd: dict | None) -> tuple[str, str
         # of times over within one dashboard regen).
         xp_cache: dict = {}
         blocks = []
-        for i, (p, by_event) in enumerate(zip(paths, per_path_squads), start=1):
-            for j, step in enumerate(p.get("steps") or []):
+        for i, (p, by_event) in enumerate(zip(paths, per_path_squads, strict=True), start=1):
+            for step in p.get("steps") or []:
                 event = step["event"]
                 squad_here = by_event.get(event, set(locked.squad_ids))
                 xi = resolve_projected_xi(conn, squad_here, event, xp_cache=xp_cache)

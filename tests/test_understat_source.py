@@ -159,6 +159,31 @@ def test_repair_unresolved_player_ids_resolves_a_real_row(db_conn, monkeypatch):
     assert fixed["player_id"] == 999
 
 
+def test_repair_unresolved_player_ids_writes_a_real_audit_log_row(db_conn, monkeypatch):
+    """Real regression test, Phase 7.4 Part 2 ('for every repaired mapping
+    record: player/FPL ID/Understat ID/season/resolution method/
+    confidence/source')."""
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    _seed_haaland_player(db_conn)
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    log = db_conn.execute(
+        "SELECT player_id, understat_player_id, season, source_name, resolution_method, confidence "
+        "FROM player_id_resolution_log"
+    ).fetchall()
+    assert len(log) == 1
+    row = log[0]
+    assert row["player_id"] == 999
+    assert row["understat_player_id"] == "101"
+    assert row["season"] == "2024-25"
+    assert row["resolution_method"] in ("exact_match", "team_scoped_fuzzy")
+    assert row["confidence"] in ("high", "medium")
+
+
 def test_repair_unresolved_player_ids_never_fabricates_when_the_real_player_still_cant_be_found(db_conn, monkeypatch):
     import fpl_agent.ingestion.understat_source as us_mod
 

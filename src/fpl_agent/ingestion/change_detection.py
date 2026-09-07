@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fpl_agent.events.bus import Event, bus as _event_bus
 from fpl_agent.events.types import EventType

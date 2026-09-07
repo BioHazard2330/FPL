@@ -122,13 +122,16 @@ class CausalChainStep:
 def build_causal_chain(locked: LockedSquadState, ta, ca, action_audit: "list[ActionAuditRow]") -> list[CausalChainStep]:
     """The real, ordered explanation chain the task asked for - every step
     reads a field `decision_analysis`/`alternative_action_audit` already
-    computed, nothing re-derived. `action_audit` is the full-horizon (max
-    horizon in the caller's `horizons`) alternative comparison - its winner
-    is "starting action" here, consistent with `synthesize_current_
-    recommendation`'s own real winner-picking rule (best full-horizon
-    path_total, evidence-gated)."""
+    computed, nothing re-derived. "STARTING ACTION"/"FINAL DECISION" use the
+    row `alternative_action_audit` itself marked as the reference (its own
+    `main_reason_rejected is None`) - the real authoritative recommendation
+    when one was available to anchor against (2026-09-07, Phase 7.1 fix),
+    never blindly `action_audit[0]` (this audit's own narrower, beam-limited
+    search can rank a DIFFERENT row #1 than the authoritative multi-GW
+    search - see `alternative_action_audit`'s own docstring). Falls back to
+    index 0 only when the audit genuinely found nothing (empty list)."""
     steps: list[CausalChainStep] = []
-    winner = action_audit[0] if action_audit else None
+    winner = next((r for r in action_audit if r.main_reason_rejected is None), None) or (action_audit[0] if action_audit else None)
 
     steps.append(CausalChainStep(
         "STARTING ACTION",
@@ -176,56 +179,62 @@ def build_causal_chain(locked: LockedSquadState, ta, ca, action_audit: "list[Act
     ))
     steps.append(CausalChainStep(
         "FINAL DECISION",
-        f"{winner.label if winner else 'REVIEW'} - {winner.main_reason_rejected or 'real full-horizon winner, evidence-gate passed' if winner else 'no legal action found'}",
+        f"{winner.label if winner else 'REVIEW'} - {winner.main_reason_rejected or 'the authoritative recommendation this audit is stress-testing' if winner else 'no legal action found'}",
     ))
     return steps
 
 
 def cross_check_against_strategic_plan(conn: sqlite3.Connection, action_audit: "list[ActionAuditRow]") -> str | None:
-    """Real, disclosed self-check, kept as a permanent safety net (2026-08-27
-    follow-up pass, "close the search-space gap"). Originally added after
-    this audit's own first live production runs found a false disagreement
-    with the cached `fpl strategic-plan` CURRENT RECOMMENDED ACTION - root-
-    caused to two real, confirmed gaps between `alternative_action_audit`'s
-    plain per-horizon `compare_starting_actions` calls and what
-    `strategic_planner.synthesize_current_recommendation` actually does: (1)
-    a chip's per-step value comes from a full unconstrained ILP rebuild
-    while ROLL/TRANSFER's continuation was beam-limited, and (2)
-    `synthesize_current_recommendation` cross-references a wider
-    `beam_width=5` main search (`known_paths`) for a better lower bound that
-    `alternative_action_audit` didn't compute (confirmed live: ROLL scored
-    642.1 there vs 611.55 in this audit's own unboosted call - a ~30pt real
-    gap from the missing cross-reference, not beam-width magnitude alone).
+    """Real diagnostic-only discrepancy check (rewritten 2026-09-07, Phase
+    7.1 - closes a real dashboard contradiction: this used to say "this
+    audit found X wins... TRUST the OTHER engine instead", i.e. it asserted
+    a competing recommendation in the same breath as telling the reader not
+    to trust it. `alternative_action_audit` is now called with
+    `authoritative_label` (`run_adversarial_audit`) so every one of its own
+    rows is already framed relative to the real authoritative pick, not
+    relative to its own narrower ranking - this function's only remaining
+    job is to surface the single largest such discrepancy, if any clears a
+    real materiality bar, as a disclosed methodology caveat. It never names
+    a "winner" and never tells the reader which engine to trust - there is
+    only one authoritative recommendation (`fpl strategic-plan`'s CURRENT
+    RECOMMENDED ACTION / the dashboard's COMMAND screen), and this function
+    does not compete with it.
 
-    FIXED in the same follow-up pass: `alternative_action_audit` now runs
-    the identical real `known_paths` cross-reference itself
-    (`_known_paths_boost`, one extra `search_transfer_sequences` call at the
-    max horizon only - see that function's own docstring), so the two
-    mechanisms use genuinely comparable search depth. This function is kept
-    running on every audit regardless - not because the gap is expected to
-    reappear, but because a REAL disagreement can still occur (the DB/squad
-    state moved between the two runs, a close real margin resolves
-    differently under independent random tie-breaking, etc.) and must never
-    be silently swallowed. A disagreement surfacing now is real information,
-    not a known artifact to explain away."""
+    Real, disclosed cause when a discrepancy DOES surface: this audit's
+    chip valuations use a full unconstrained ILP rebuild while its ROLL/
+    TRANSFER continuations are beam-limited (`continuation_beam_width`) -
+    an asymmetry the authoritative multi-GW search does not carry. A real
+    state drift between the two runs (DB/squad changed) or independent
+    random tie-breaking on a close margin can also produce one."""
     strategic = latest_strategic_plan_with_recommendation(conn)
     if strategic is None or not action_audit:
         return None
     cr = (strategic.detail or {}).get("current_recommendation")
     if cr is None:
         return None
-    winner_label = action_audit[0].label
-    if cr.get("label") == winner_label:
+    authoritative_label = cr.get("label")
+    if not any(row.label == authoritative_label for row in action_audit):
+        return None  # the authoritative pick wasn't even a legal row here - nothing to compare
+
+    # The row(s) this audit's own search scored ABOVE the authoritative pick
+    # - `alternative_action_audit` encodes this as a negative `opp_cost`
+    # prefix already carrying the "+X.X pts vs the authoritative
+    # recommendation" text; parse the largest real gap rather than
+    # re-deriving it a second way.
+    above = [row for row in action_audit if row.label != authoritative_label and row.opportunity_cost.startswith("+")]
+    if not above:
         return None
+    worst = max(above, key=lambda r: float(r.opportunity_cost.split(" pts", 1)[0]))
+    gap_text = worst.opportunity_cost.split(" pts", 1)[0]
+    if abs(float(gap_text)) < _TRANSFER_DELTA_THRESHOLD:
+        return None  # below this project's own real materiality bar - noise, not a real discrepancy worth surfacing
+
     return (
-        f"DISAGREES with the cached `fpl strategic-plan` result ({_relative_time_hint(strategic.created_at)}): "
-        f"that run found {cr.get('label')} wins (path_total={cr.get('path_total')}), while this audit's own "
-        f"alternative-action search found {winner_label} wins ({action_audit[0].horizon_results}). Two confirmed "
-        f"real causes (see this function's own docstring): a chip's value comes from a full ILP rebuild this "
-        f"audit's beam-limited ROLL/TRANSFER continuation can't match, AND `fpl strategic-plan` cross-references "
-        f"a wider beam_width=5 main search this audit does not run. TRUST `fpl strategic-plan`'s CURRENT "
-        f"RECOMMENDED ACTION over this audit's own action_audit ranking when they disagree - this audit's ranking "
-        f"is not independently reliable for ROLL-vs-chip specifically."
+        f"This audit's own independent search ({_relative_time_hint(strategic.created_at)} vs the compared "
+        f"`fpl strategic-plan` run) scored {worst.label} {gap_text} pts above the authoritative recommendation "
+        f"({authoritative_label}) over its full horizon - a real methodology discrepancy (see this function's own "
+        f"docstring), not a confirmed reversal. The authoritative recommendation is unchanged; re-run `fpl "
+        f"decision-audit` if this persists across multiple runs."
     )
 
 
@@ -521,8 +530,8 @@ def derive_falsifiers(
                 f"{out_name} -> {in_name} reverts to ROLL if {group.replace('_', ' ').lower()} moves "
                 f"~{k_star:.0%} against the swap ({out_name} up / {in_name} down, real linear extrapolation "
                 f"of the same components `expected_points_window` already computed)",
-                f"analytic threshold from the real component breakdown - exact under the stated linear model, "
-                f"not independently verified beyond the model's own linearity assumption",
+                "analytic threshold from the real component breakdown - exact under the stated linear model, "
+                "not independently verified beyond the model's own linearity assumption",
             ))
         else:
             falsifiers.append(Falsifier(
@@ -581,7 +590,7 @@ def _known_paths_boost(options: list, known_paths) -> list:
 def alternative_action_audit(
     conn: sqlite3.Connection, squad_ids: list[int], free_transfers: int, bank_tenths: int,
     used_chip_names: frozenset[str], horizons: tuple[int, ...] = (3, 5, 8), continuation_beam_width: int = 3,
-    known_paths_beam_width: int = _KNOWN_PATHS_BEAM_WIDTH,
+    known_paths_beam_width: int = _KNOWN_PATHS_BEAM_WIDTH, authoritative_label: str | None = None,
 ) -> list[ActionAuditRow]:
     """Real, independent `compare_starting_actions` call per horizon
     (same cost-bounding pattern `build_strategic_plan`'s own
@@ -604,7 +613,29 @@ def alternative_action_audit(
     methodology match rather than a stricter standard invented for this
     audit alone. One extra search, not one per horizon - the real added
     cost this task's own "avoid unnecessary repeated expensive searches"
-    constraint asks to bound."""
+    constraint asks to bound.
+
+    `authoritative_label` (2026-09-07, Phase 7.1 - closing the "my audit
+    says X but trust another engine" contradiction): every row's gap/
+    opportunity-cost text is now framed RELATIVE TO the real authoritative
+    pick (`strategic_planner.synthesize_current_recommendation`'s own
+    `current_recommendation.label`, passed in by the caller), never
+    relative to whichever row THIS audit's own narrower, beam-limited
+    search happens to rank #1. This audit's chip valuations use a full
+    unconstrained ILP rebuild while its ROLL/TRANSFER continuations are
+    beam-limited (`continuation_beam_width`) - a real, disclosed
+    methodology asymmetry that can rank a different row #1 than the
+    authoritative multi-GW search, which does not carry that asymmetry.
+    Previously this function (and its callers) treated its own #1 row as
+    "the winning action" outright, producing a genuine contradiction on
+    the dashboard when the two disagreed. Now this function never asserts
+    its own winner - a row scoring higher than the authoritative pick
+    under this audit's own search is disclosed as exactly that (a real,
+    worth-double-checking discrepancy), never relabeled as a rival
+    recommendation. Omitting `authoritative_label` (or it not appearing
+    among this audit's own legal rows) falls back to the old self-ranked
+    framing, explicitly flagged in `main_reason_rejected` so a reader
+    never mistakes it for an authoritative comparison."""
     by_horizon: dict[int, list] = {}
     for h in horizons:
         by_horizon[h] = compare_starting_actions(
@@ -630,16 +661,43 @@ def alternative_action_audit(
                 opportunity_cost="", confidence=None, robustness=None, main_reason_rejected=None,
             )
 
-    winner_at_max = by_horizon[max_h][0] if by_horizon.get(max_h) else None
     ranked = sorted(rows_by_label.values(), key=lambda r: r.horizon_results.get(max_h, float("-inf")), reverse=True)
 
+    reference_row = next((r for r in ranked if r.label == authoritative_label), None) if authoritative_label else None
+    self_ranked_fallback = reference_row is None
+    if reference_row is None:
+        reference_row = ranked[0] if ranked else None
+    reference_total = reference_row.horizon_results.get(max_h) if reference_row is not None else None
+
     finished: list[ActionAuditRow] = []
-    for i, row in enumerate(ranked):
+    for row in ranked:
+        is_reference = reference_row is not None and row.label == reference_row.label
         gap = None
-        if winner_at_max is not None and max_h in row.horizon_results:
-            gap = round(winner_at_max.path_total - row.horizon_results[max_h], 2)
-        reason = None if i == 0 else f"real full-horizon ({max_h}GW) path_total is {gap:+.1f} pts behind the winner" if gap is not None else "not evaluated at the full horizon"
-        opp_cost = f"{gap:+.1f} pts vs the winner over {max_h}GW" if gap is not None and i > 0 else "n/a - this is the winning action"
+        if reference_total is not None and max_h in row.horizon_results:
+            gap = round(reference_total - row.horizon_results[max_h], 2)  # positive = row scores below reference
+
+        if is_reference:
+            reason = None
+            opp_cost = (
+                "n/a - this is the authoritative recommendation" if not self_ranked_fallback
+                else "n/a - this audit's own top-ranked option (no authoritative pick available to anchor against)"
+            )
+        elif gap is None:
+            reason = "not evaluated at the full horizon"
+            opp_cost = "not evaluated at the full horizon"
+        elif gap >= 0:
+            anchor = "authoritative recommendation" if not self_ranked_fallback else "this audit's own top-ranked option"
+            reason = f"real full-horizon ({max_h}GW) path_total is {gap:.1f} pts below the {anchor}"
+            opp_cost = f"{-gap:+.1f} pts vs the {anchor} over {max_h}GW"
+        else:
+            # This audit's own (narrower/asymmetric) search scored this row ABOVE the
+            # authoritative pick - a real discrepancy, disclosed as exactly that, never
+            # relabeled as this audit "winning" (see this function's own docstring).
+            reason = (
+                f"this audit's own independent search scores this {-gap:.1f} pts ABOVE the authoritative "
+                f"recommendation over {max_h}GW - a real methodology discrepancy (see docstring), not a confirmed reversal"
+            )
+            opp_cost = f"{-gap:+.1f} pts vs the authoritative recommendation over {max_h}GW"
 
         confidence = None
         robustness = None
@@ -854,7 +912,18 @@ def build_scorecard(
     market_evidence = "TRAP FLAG ON CHOSEN CANDIDATE" if league_wide.chosen_in_is_trap else "NO TRAP FLAG"
     counterfactual_stability = stress_verdict
 
-    winner = action_audit[0] if action_audit else None
+    # Real fix (2026-09-07, Phase 7.1) - "FINAL DECISION" must reflect the
+    # row `alternative_action_audit` itself marked as the authoritative
+    # reference (its own `main_reason_rejected is None`), never blindly
+    # `action_audit[0]` - this audit's own narrower, beam-limited search can
+    # rank a DIFFERENT row #1 than the authoritative recommendation, which
+    # would otherwise make this scorecard badge contradict COMMAND's own
+    # verdict (see `alternative_action_audit`'s own docstring). `action_
+    # audit[0]`/`[1]` (this audit's own self-ranked top two) are still used
+    # below purely for the "margin over the runner-up" diagnostic - a
+    # legitimate, separate question ("how close is the field under this
+    # audit's own search") from "what is the decision."
+    winner = next((r for r in action_audit if r.main_reason_rejected is None), None) or (action_audit[0] if action_audit else None)
     runner_up = action_audit[1] if len(action_audit) > 1 else None
     if winner is None:
         final_decision, confidence = "REVIEW", "LOW"
@@ -953,9 +1022,19 @@ def run_adversarial_audit(
     entry_id = get_my_team_entry_id(conn)
     used_chip_names = frozenset(get_used_chips(conn, entry_id)) if entry_id is not None else frozenset()
 
+    # Real authoritative anchor (2026-09-07, Phase 7.1 fix) - the SAME
+    # `current_recommendation.label` COMMAND's own hero renders, fetched
+    # once here so `alternative_action_audit`'s every row is framed
+    # relative to it rather than this audit's own narrower search ranking
+    # itself #1. See `alternative_action_audit`'s own docstring.
+    strategic = latest_strategic_plan_with_recommendation(conn)
+    authoritative = (strategic.detail or {}).get("current_recommendation") if strategic is not None else None
+    authoritative_label = authoritative.get("label") if authoritative else None
+
     action_audit = alternative_action_audit(
         conn, squad_ids, real_ft, bank_tenths, used_chip_names,
         horizons=horizons, continuation_beam_width=continuation_beam_width,
+        authoritative_label=authoritative_label,
     )
     cross_check_note = cross_check_against_strategic_plan(conn, action_audit)
 

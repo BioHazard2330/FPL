@@ -94,7 +94,7 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
                 f"</div>"
             )
         blanks = _RANGE_MAX_GW - len(entries)
-        cells.append(f"<div class='fdr-cell fdr-blank' data-event='' data-fdr-overall='blank' data-fdr-attack='blank' data-fdr-defence='blank'>-</div>" * blanks)
+        cells.append("<div class='fdr-cell fdr-blank' data-event='' data-fdr-overall='blank' data-fdr-attack='blank' data-fdr-defence='blank'>-</div>" * blanks)
         row_cls = "fdr-row fdr-row-squad" if r["id"] in squad_team_ids else "fdr-row"
         avg_fdr = sum(e.difficulty for e in entries) / len(entries) if entries else 5.0
         crest_html = _crest_html(r["code"], r["short_name"], css_class="fdr-badge")
@@ -115,7 +115,7 @@ def render_fixture_tool_html(conn, squad_ids: set[int]) -> str:
         "metrics until real splits are available.</div>" if any_fallback else ""
     )
 
-    controls = f"""<div class="fixture-tool-controls">
+    controls = """<div class="fixture-tool-controls">
   <div class="fixture-tool-control-group" role="group" aria-label="Gameweek range">
     <span class="fdr-sort-label">Range</span>
     <button type="button" class="fdr-range-btn" data-range="3">3 GW</button>

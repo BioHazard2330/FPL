@@ -40,7 +40,6 @@ def build_paths_payload(conn, sd: dict | None, locked, confidence_fn, descriptor
     if sd is None or not sd.get("paths") or locked is None:
         return []
     paths = sd["paths"]
-    leader_total = paths[0].get("path_total")
     out = []
     for i, p in enumerate(paths, start=1):
         by_event = _squad_state_by_event(set(locked.squad_ids), p.get("steps") or [])

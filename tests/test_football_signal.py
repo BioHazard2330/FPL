@@ -3,11 +3,31 @@ football-intelligence forensic audit)."""
 from types import SimpleNamespace
 
 from fpl_agent.models.football_signal import (
+    _clean_evidence_text,
     classify_decision_effect,
     classify_fpl_relevance,
     football_signals_for_entity,
     squad_football_signals,
 )
+
+
+def test_clean_evidence_text_strips_the_stale_versioned_suffix():
+    """Real bug found 2026-09-07 on the FOOTBALL dashboard screen: a retired
+    detector version left `match_observations.observed` rows ending in a raw,
+    unreadable "(versioned <iso> -> <iso>)" clause - the CURRENT detector no
+    longer writes this, but old rows with no newer detection since still
+    render it as-is."""
+    raw = (
+        "Real penalty order changed from 2 to 1 (versioned "
+        "2026-08-12T19:21:52.132797+00:00 -> 2026-08-24T05:32:59.705779+00:00)."
+    )
+    assert _clean_evidence_text(raw) == "Real penalty order changed from 2 to 1."
+
+
+def test_clean_evidence_text_leaves_normal_evidence_untouched():
+    assert _clean_evidence_text("penalty order 2 -> 1") == "penalty order 2 -> 1"
+    assert _clean_evidence_text("3 goals, 8 shots, 1.95 xG.") == "3 goals, 8 shots, 1.95 xG."
+    assert _clean_evidence_text(None) is None
 
 
 def _seed_match(conn, fotmob_id="m1", home=1, away=2, kickoff="2026-08-01T15:00:00Z"):

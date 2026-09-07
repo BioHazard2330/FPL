@@ -61,6 +61,10 @@ def invalidate_cache_for_connection(conn: sqlite3.Connection) -> None:
     key = id(conn)
     for cache_key in [k for k in _position_avg_bucket_cache if k[0] == key]:
         del _position_avg_bucket_cache[cache_key]
+    for cache_key in [k for k in _position_tier_avg_bucket_cache if k[0] == key]:
+        del _position_tier_avg_bucket_cache[cache_key]
+    for cache_key in [k for k in _returning_avg_bucket_cache if k[0] == key]:
+        del _returning_avg_bucket_cache[cache_key]
 
 
 def _position_average_minutes_buckets(
@@ -73,7 +77,13 @@ def _position_average_minutes_buckets(
     `defensive_contribution.py`'s sibling function is. Falls back to a flat
     (0, 0, 1) - i.e. "assume a full match" - only in the genuinely
     unreachable case of zero rows existing for the position at all (would
-    mean this season's data hasn't synced yet), never a fabricated split."""
+    mean this season's data hasn't synced yet), never a fabricated split.
+
+    Kept as the real, disclosed FALLBACK prior when a tier-conditioned one
+    (`_position_tier_average_minutes_buckets` below) doesn't have enough
+    real players to compute from - see that function's own docstring for
+    why it's now the primary prior `minutes_bucket_probabilities` blends
+    toward."""
     key = (id(conn), position, season, as_of_date)
     cached = _position_avg_bucket_cache.get(key)
     if cached is not None and cached[0] is conn:
@@ -98,6 +108,220 @@ def _position_average_minutes_buckets(
         row["zero_n"] / total, row["partial_n"] / total, row["full_n"] / total,
     )
     _position_avg_bucket_cache[key] = (conn, result)
+    return result
+
+
+_MIN_ROWS_FOR_TIER_PRIOR = 20  # below this, a tier prior would itself be a thin, unstable sample - fall back honestly
+
+_position_tier_avg_bucket_cache: dict[tuple[int, str, str, str, str | None], tuple[sqlite3.Connection, tuple | None]] = {}
+
+# Real, cross-season-validated threshold (2026-09-07, Phase 7.4 Part 8 minutes
+# audit - `backtesting/minutes_audit.py::classify_round_segment` uses this
+# same real value, kept in sync via the shared `_is_returning_after_absence`
+# below rather than a second, independently-tuned constant) - ~3 real match-
+# rounds' worth of silence, not fit to data.
+_ABSENCE_GAP_DAYS = 21
+
+_returning_avg_bucket_cache: dict[tuple[int, str, str | None], tuple[sqlite3.Connection, tuple | None]] = {}
+
+
+def _is_returning_after_absence(conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None) -> bool:
+    """Real check: did this player's own last real match end at least
+    `_ABSENCE_GAP_DAYS` before `as_of_date`? Shared by the live model
+    (below) and `backtesting/minutes_audit.py`'s own segment audit - one
+    real definition of "returning", not two independently-tuned ones.
+
+    `as_of_date=None` (live mode - "as of right now") uses the real current
+    UTC date as the cutoff, matching every other genuinely-live (undated)
+    read this project already makes (e.g. `expected_minutes()`'s own live
+    `players.status`/newest-snapshot reads) - this is the one real case
+    this function is MOST valuable for (a real current squad player just
+    back from a real injury), so it is deliberately not skipped in live
+    mode the way a leakage-sensitive backtest read would be."""
+    from datetime import date, datetime, timezone
+
+    clause, params = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
+    row = conn.execute(
+        f"SELECT match_date FROM player_match_stats_history WHERE player_id=? AND season=? {clause} "
+        "ORDER BY match_date DESC LIMIT 1",
+        (player_id, season) + params,
+    ).fetchone()
+    if row is None:
+        return False
+    cutoff = date.fromisoformat(as_of_date[:10]) if as_of_date else datetime.now(timezone.utc).date()
+    gap_days = (cutoff - date.fromisoformat(row["match_date"][:10])).days
+    return gap_days >= _ABSENCE_GAP_DAYS
+
+
+def _returning_after_absence_average_minutes_buckets(
+    conn: sqlite3.Connection, position: str, season: str, as_of_date: str | None = None,
+) -> tuple[float, float, float] | None:
+    """Real, measured fix (2026-09-07, Phase 7.4 Part 8 minutes audit) - a
+    real walk-forward segment audit found RETURNING_AFTER_ABSENCE the single
+    largest, most consistent minutes-bias segment of any tested, across
+    EVERY real backtestable season checked: +19.48 (2023-24), +10.75
+    (2024-25), +10.49 (2025-26) average minutes overprediction - roughly
+    2x the MAE of an established starter, the model's real single worst
+    calibration gap. Real football interpretation: a player just back from
+    a real injury/suspension absence is very commonly eased back in
+    (reduced minutes, tactical caution) rather than immediately restored to
+    their pre-absence workload - but `minutes_bucket_probabilities`'s own
+    trailing-<=10-match raw sample is dominated by STALE pre-absence rows
+    for a player who has only just returned, so neither the raw estimate
+    nor the established/rotational/fringe tier it gets classified into (see
+    `_minutes_tier`) reflects the real return-to-fitness pattern at all.
+
+    Real, not-arbitrary construction, the SAME real pattern `_position_tier_
+    average_minutes_buckets` already established: every OTHER real player at
+    this position has their OWN match sequence walked (Python, not SQL - a
+    per-player sequential gap check isn't expressible as a single real join)
+    to find matches that THEMSELVES directly followed a real `_is_returning_
+    after_absence`-qualifying gap for that player - the prior is the real
+    bucket-frequency average across only those genuinely-returning real
+    match instances, never a fabricated split. `None` (the caller falls back
+    to the blanket position average, matching the established-tier
+    precedent) when fewer than `_MIN_ROWS_FOR_TIER_PRIOR` real qualifying
+    rows exist."""
+    key = (id(conn), position, season, as_of_date)
+    cached = _returning_avg_bucket_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
+    clause, params = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
+    rows = conn.execute(
+        "SELECT psh.player_id, psh.match_date, psh.minutes FROM player_match_stats_history psh "
+        "JOIN players p ON p.id = psh.player_id "
+        "JOIN element_types et ON et.id = p.element_type "
+        f"WHERE et.singular_name_short = ? AND psh.season = ? {clause} "
+        "ORDER BY psh.player_id, psh.match_date ASC",
+        (position, season) + params,
+    ).fetchall()
+
+    from datetime import date
+
+    by_player: dict[int, list] = {}
+    for r in rows:
+        by_player.setdefault(r["player_id"], []).append(r)
+
+    zero_n = partial_n = full_n = total_n = 0
+    for _pid, matches in by_player.items():
+        for i in range(1, len(matches)):
+            prev_date = date.fromisoformat(matches[i - 1]["match_date"][:10])
+            cur_date = date.fromisoformat(matches[i]["match_date"][:10])
+            if (cur_date - prev_date).days < _ABSENCE_GAP_DAYS:
+                continue
+            m = matches[i]["minutes"]
+            total_n += 1
+            if m == 0:
+                zero_n += 1
+            elif m < 60:
+                partial_n += 1
+            else:
+                full_n += 1
+
+    result = (
+        (zero_n / total_n, partial_n / total_n, full_n / total_n)
+        if total_n >= _MIN_ROWS_FOR_TIER_PRIOR else None
+    )
+    _returning_avg_bucket_cache[key] = (conn, result)
+    return result
+
+
+def _minutes_tier(full_rate: float) -> str:
+    """Same real, disclosed tier boundaries the 2026-09-07 walk-forward
+    diagnostic below used to MEASURE the bug this fixes - not re-tuned here,
+    reused exactly so the fix targets the same segments the evidence came
+    from."""
+    if full_rate >= 0.75:
+        return "established"
+    if full_rate >= 0.25:
+        return "rotational"
+    return "fringe"
+
+
+def _position_tier_average_minutes_buckets(
+    conn: sqlite3.Connection, position: str, tier: str, season: str, as_of_date: str | None = None,
+) -> tuple[float, float, float] | None:
+    """Real, tier-conditioned (zero, partial, full) bucket-frequency prior -
+    fixes a real, measured calibration bug found 2026-09-07 (Phase 7.3
+    minutes-model diagnostic, walk-forward against the real 2025-26 season):
+    blending EVERY player toward the SAME blanket position-wide average
+    (`_position_average_minutes_buckets` above) systematically overpredicts
+    minutes for rotation-risk/fringe players (measured +10.2/+17.4 real
+    average minutes bias) - because that pooled average is dominated by
+    established-starter rows (most real minutes played at any position
+    come from the 11 who start, not the handful of used subs), so shrinking
+    a genuinely fringe player's own correctly-low empirical rate toward it
+    pulls the estimate UP regardless of whether this specific player is
+    actually fringe.
+
+    Real, measured, NOT applied to the "established" tier: established
+    starters were already well-calibrated under the OLD blanket prior
+    (measured bias -0.02) - a first version of this fix applied the SAME
+    tier-conditioning to every tier and found it introduced a NEW +6.15
+    average-minutes bias for established players (the established tier's
+    own prior, e.g. 92.2% real full-match rate for MID vs the blanket
+    prior's 63.8%, sits at the high end of that tier's own real spread -
+    blending a player who only just crossed the >=75% established
+    threshold toward it pulls their estimate up more than the old, lower
+    blanket prior did). `minutes_bucket_probabilities` below only calls
+    this for the rotational/fringe tiers where a real miscalibration was
+    actually measured, keeping the established tier on the original
+    blanket prior it was already correct under - this is why `tier`
+    callers should never pass `"established"` here.
+
+    Real, not-arbitrary construction: every OTHER real player at this
+    position is itself classified into the same three tiers
+    (`_minutes_tier`) by their OWN real full-match rate over their last <=10
+    pre-`as_of_date` matches (`_MIN_MATCHES_FOR_EMPIRICAL`-gated, same real
+    bar the caller's own empirical branch requires) - the prior is the real
+    bucket-frequency average across only the players who share the target
+    player's own tier, never a fabricated split. `None` (the caller falls
+    back to the blanket position average) when fewer than
+    `_MIN_ROWS_FOR_TIER_PRIOR` real match-rows exist in that tier - an
+    honest "not enough real players in this tier yet" rather than a prior
+    built from a handful of rows."""
+    key = (id(conn), position, tier, season, as_of_date)
+    cached = _position_tier_avg_bucket_cache.get(key)
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+
+    clause, params = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
+    rows = conn.execute(
+        "SELECT psh.player_id, psh.minutes FROM player_match_stats_history psh "
+        "JOIN players p ON p.id = psh.player_id "
+        "JOIN element_types et ON et.id = p.element_type "
+        f"WHERE et.singular_name_short = ? AND psh.season = ? {clause} "
+        "ORDER BY psh.player_id, psh.match_date DESC",
+        (position, season) + params,
+    ).fetchall()
+
+    by_player: dict[int, list[int]] = {}
+    for r in rows:
+        by_player.setdefault(r["player_id"], []).append(r["minutes"])
+
+    zero_n = partial_n = full_n = total_n = 0
+    for _pid, minutes_list in by_player.items():
+        recent = minutes_list[:10]  # already DESC by match_date - same real <=10-match window the caller uses
+        if len(recent) < _MIN_MATCHES_FOR_EMPIRICAL:
+            continue
+        full_rate = sum(1 for m in recent if m >= 60) / len(recent)
+        if _minutes_tier(full_rate) != tier:
+            continue
+        for m in recent:
+            total_n += 1
+            if m == 0:
+                zero_n += 1
+            elif m < 60:
+                partial_n += 1
+            else:
+                full_n += 1
+
+    result = (
+        (zero_n / total_n, partial_n / total_n, full_n / total_n)
+        if total_n >= _MIN_ROWS_FOR_TIER_PRIOR else None
+    )
+    _position_tier_avg_bucket_cache[key] = (conn, result)
     return result
 
 
@@ -130,9 +354,45 @@ def minutes_bucket_probabilities(
             "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
             (player_id,),
         ).fetchone()["position"]
-        prior_zero, prior_partial, prior_full = _position_average_minutes_buckets(
-            conn, position, season, as_of_date,
+        # Real fix 2026-09-07 (Phase 7.3 Part 2 - measured minutes-model
+        # diagnostic) - blend toward the real tier-conditioned prior for the
+        # rotational/fringe tiers, where the blanket position-wide prior
+        # below was measurably overpredicting minutes by +10.2/+17.4 real
+        # average minutes (starter-dominated pool). Established players stay
+        # on the original blanket prior - a first version that also tier-
+        # conditioned "established" measurably introduced a NEW +6.15 bias
+        # there (see `_position_tier_average_minutes_buckets`'s own
+        # docstring for why); the blanket prior was already correct for that
+        # tier (measured bias -0.02), so it's kept, not replaced.
+        # Real fix 2026-09-07 (Phase 7.4 Part 8 minutes audit) - checked
+        # FIRST, ahead of the established/rotational/fringe tier below: a
+        # player's own trailing-<=10-match raw sample is dominated by STALE
+        # pre-absence rows immediately after a real return, so the tier
+        # classification itself (computed from that same stale sample)
+        # cannot be trusted to identify this case - the real gap since their
+        # own last match is the honest, direct signal instead. See
+        # `_returning_after_absence_average_minutes_buckets`'s own docstring
+        # for the real, measured evidence (the single largest cross-season
+        # minutes bias this project has found: +19.48/+10.75/+10.49).
+        returning_prior = (
+            _returning_after_absence_average_minutes_buckets(conn, position, season, as_of_date)
+            if _is_returning_after_absence(conn, player_id, season, as_of_date)
+            else None
         )
+        if returning_prior is not None:
+            prior_zero, prior_partial, prior_full = returning_prior
+        else:
+            tier = _minutes_tier(raw_full)
+            tier_prior = (
+                _position_tier_average_minutes_buckets(conn, position, tier, season, as_of_date)
+                if tier != "established" else None
+            )
+            if tier_prior is not None:
+                prior_zero, prior_partial, prior_full = tier_prior
+            else:
+                prior_zero, prior_partial, prior_full = _position_average_minutes_buckets(
+                    conn, position, season, as_of_date,
+                )
 
         k = PRIOR_STRENGTH_MATCHES
         zero = (n * raw_zero + k * prior_zero) / (n + k)

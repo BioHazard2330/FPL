@@ -21,12 +21,40 @@ is the real bridge - it reads the ALREADY-COMPUTED alternatives/margins on
 the canonical decision (never re-runs the beam search) to answer that
 honestly, including "DECISION-CHANGING" only when the real numbers say so.
 """
+import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Literal
 
 from fpl_agent.models.qualitative_trends import SignalTrend, signal_trends_for_subject
+
+# Real, narrow display cleanup (2026-09-07, dashboard visual pass) - a
+# retired detector version (pre role_signal_detectors.py rewrite) wrote
+# `match_observations.observed` rows with a raw, unreadable trailing
+# "(versioned 2026-08-12T19:21:52.132797+00:00 -> 2026-08-24T05:32:59.
+# 705779+00:00)" clause - confirmed live on the FOOTBALL screen. The
+# CURRENT detector no longer writes this (its own `observed` text is
+# already clean, e.g. "penalty order 2 -> 1"), but old rows with no newer
+# detection since persist as "the latest row" and still render as-is.
+# Rather than rewrite historical DB rows, strip this one known artifact
+# at display time - a narrow pattern that cannot match any other real
+# evidence text (nothing else in this project's evidence strings ends in
+# a parenthetical ISO-timestamp pair).
+_STALE_VERSIONED_SUFFIX = re.compile(r"\s*\(versioned [\d:.+TZ-]+ -> [\d:.+TZ-]+\)\.?\s*$")
+
+
+def _clean_evidence_text(text: str | None) -> str | None:
+    """Real display-time cleanup - strips a known stale-detector-version
+    artifact (see `_STALE_VERSIONED_SUFFIX`'s own docstring history), then
+    the shared rhetorical-filler cleanup every LLM-authored text field on
+    this dashboard now goes through (`models/text_cleanup.py` - Phase 7.4
+    Part 13, "no obvious evidence-free rhetorical language")."""
+    from fpl_agent.models.text_cleanup import clean_display_text
+
+    if text is None:
+        return None
+    cleaned = _STALE_VERSIONED_SUFFIX.sub(".", text).rstrip() if _STALE_VERSIONED_SUFFIX.search(text) else text
+    return clean_display_text(cleaned)
 
 FplRelevance = Literal["FPL_RELEVANT", "FPL_LOW_RELEVANCE", "FPL_IRRELEVANT"]
 DecisionEffect = Literal["NO_DECISION_IMPACT", "MONITOR", "WATCH", "MATERIAL", "DECISION_CHANGING"]
@@ -265,9 +293,9 @@ def build_football_signal(
         detected_at=_first_observed_at(conn, entity_type, entity_id, trend.signal),
         last_confirmed_at=last_confirmed_at,
         source=row["analysis_version"] if row else "unknown",
-        evidence=row["observed"] if row else None,
+        evidence=_clean_evidence_text(row["observed"]) if row else None,
         category=trend.signal, direction=trend.current_direction,
-        interpretation=row["inferred"] if row else None,
+        interpretation=_clean_evidence_text(row["inferred"]) if row else None,
         confidence=row["confidence"] if row else "low",
         persistence=trend.label, times_observed=trend.sample_size,
         novelty=(trend.label == "NEW_SIGNAL"),

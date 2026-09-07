@@ -1,7 +1,6 @@
 from click.testing import CliRunner
 
 from fpl_agent.cli.main import cli
-from fpl_agent.optimization import captaincy as captaincy_mod
 
 from test_optimization_captaincy import _patch, _seed
 

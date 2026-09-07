@@ -25,10 +25,8 @@ it never merges independently-reasoned outputs, only the single strategic_plan
 row plus the cheap live captain/vice resolution."""
 
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 
-from fpl_agent.database.decisions import Decision
 from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
 from fpl_agent.optimization.path_credibility import assess_path_credibility

@@ -307,6 +307,23 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
             if j < len(steps) - 1:
                 node_parts.append("<span class='timeline-arrow' aria-hidden='true'></span>")
 
+        # Real "NOW -> DECISION -> CONDITIONAL FUTURE -> RE-EVALUATE"
+        # closer (2026-09-07, Phase 7.3 Part 15) - every step after the
+        # first was already rendered as visibly conditional (`timeline-
+        # node-conditional`, fading opacity); this static trailing marker
+        # makes the END of that fade explicit rather than implying the
+        # chain just stops - the same real "NOT locked in, re-evaluate
+        # closer to this gameweek" disclosure `future_conditional_plan`
+        # already carries in COMMAND/text form, now visible on the
+        # timeline itself. No new computation - a fixed label, only shown
+        # when this path actually has a real conditional (beyond-GW1) leg.
+        if len(steps) > 1:
+            node_parts.append("<span class='timeline-arrow' aria-hidden='true'></span>")
+            node_parts.append(
+                "<span class='timeline-node timeline-node-reevaluate' title='Not locked in - "
+                "re-run the plan closer to this gameweek with fresh data'>RE-EVALUATE</span>"
+            )
+
         # Real "one object drives everything" fix (2026-08-29, P0 chip-mapping
         # audit): this path's own "Chip timing" line is built from the exact
         # same `chip_steps_this_path` (this path's real `chip_played` steps)

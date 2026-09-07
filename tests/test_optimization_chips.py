@@ -81,7 +81,7 @@ def test_bench_boost_trial_values_sums_only_bench_points(db_conn, monkeypatch):
 
     # Force a known starting XI / bench split rather than depending on live xP -
     # keeps this a pure wiring test of the trial-summing logic.
-    from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
+    from fpl_agent.optimization.squad import StartingXI
 
     def fake_pick_xi(conn, squad):
         starter = next(c for c in squad if c.player_id == 2)

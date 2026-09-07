@@ -96,7 +96,9 @@ def compute_qualitative_adjustment(conn: sqlite3.Connection, player_id: int, com
     sign = 1.0 if row["direction"] == "POSITIVE" else -1.0
     delta = round(sign * abs(base_value) * MAX_ADJUSTMENT_FRACTION, 4)
 
+    from fpl_agent.models.text_cleanup import clean_display_text
+
     return QualitativeAdjustment(
         component=component_name, delta=delta, direction=row["direction"],
-        reason=row["reason"], signal=row["signal"],
+        reason=clean_display_text(row["reason"]), signal=row["signal"],
     )

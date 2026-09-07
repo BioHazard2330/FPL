@@ -94,6 +94,35 @@ def _category_block_html(conn, category: str, signals: list, crest_by_team: dict
   </div>"""
 
 
+_DECISION_EFFECT_RANK = {
+    "DECISION_CHANGING": 4, "MATERIAL": 3, "WATCH": 2, "MONITOR": 1, "NO_DECISION_IMPACT": 0,
+}
+
+
+def _squad_change_module_html(signals: list, squad_ids: set[int], crest_by_player: dict) -> str:
+    """Real "WHAT CHANGED FOR MY SQUAD?" module (2026-09-07, Phase 7.3 Part
+    16) - a dedicated squad-only view, ranked by real estimated FPL
+    relevance (the SAME `decision_effect` ordinal `models/football_signal.py`
+    already computes - DECISION_CHANGING > MATERIAL > WATCH > MONITOR >
+    NO_DECISION_IMPACT - never arbitrary recency, per the spec's own explicit
+    instruction). Reuses `_signal_row_html` exactly as the general feed below
+    does (same real EVENT -> EVIDENCE -> FPL EFFECT row, no second render
+    path) - only the SELECTION and ORDERING are different here. `None`
+    entity_id (a team-level signal) is included when the team is a squad
+    team; direct comparison against `squad_ids` (player ids) only matches
+    player-scoped signals, matching this module's own name - team-wide
+    signals stay in TEAM STATE below, not duplicated here."""
+    mine = [s for s in signals if s.entity_id in squad_ids]
+    if not mine:
+        return ""
+    mine.sort(key=lambda s: _DECISION_EFFECT_RANK.get(s.decision_effect, 0), reverse=True)
+    rows_html = "".join(_signal_row_html(s, crest_by_player, squad_ids) for s in mine[:10])
+    return f"""<div class="fb-squad-changes">
+    <div class="fb-section-label">WHAT CHANGED FOR MY SQUAD? <span class="panel-subtitle">ranked by real estimated FPL relevance</span></div>
+    {rows_html}
+  </div>"""
+
+
 def _team_recent_form(conn, team_id: int, n: int = 3) -> dict | None:
     """Real recent attack/defence numbers (Part 4) - `team_match_state`'s
     own real per-match xG/shots for this team, joined to the SAME match's
@@ -211,6 +240,8 @@ def render_football_screen(conn, squad_ids: set[int], ca=None) -> str:
     for s in signals:
         by_category.setdefault(s.category, []).append(s)
 
+    squad_change_module_html = _squad_change_module_html(signals, squad_ids, crest_by_player)
+
     category_blocks = "".join(
         _category_block_html(conn, cat, by_category.get(cat, []), crest_by_player, squad_ids)
         for cat in _CATEGORY_PRIORITY
@@ -260,6 +291,8 @@ def render_football_screen(conn, squad_ids: set[int], ca=None) -> str:
     <span class="fb-status-item">{len(signals)} signals tracked</span>
     {squad_bit}
   </div>
+
+  {squad_change_module_html}
 
   <div class="fb-feed">{category_blocks}</div>
 

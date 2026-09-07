@@ -1,6 +1,6 @@
 import pytest
 
-from fpl_agent.models.live_rank import LiveRankEstimate, estimate_live_rank, estimate_squad_live_points
+from fpl_agent.models.live_rank import estimate_live_rank, estimate_squad_live_points
 
 
 def test_estimate_squad_live_points_sums_multiplier_weighted_total_points():

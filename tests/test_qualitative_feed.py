@@ -171,6 +171,41 @@ def test_role_change_expected_points_integration_surfaces_the_adjustment(db_conn
     assert round(ep.components.total, 2) == ep.median
 
 
+def test_role_change_adjustment_scales_down_with_lower_minutes_never_an_independent_bump(db_conn):
+    """Real audit finding, Phase 7.3 Part 3 (role x minutes x attacking-
+    involvement interaction) - confirmed via this test that the ROLE_CHANGE
+    goals adjustment is a bounded PROPORTION of the real, already-minutes-
+    scaled `components.goals` value `expected_points()` computed
+    (`effective_minutes_fraction` is baked into that value upstream), never
+    an absolute bump independent of playing time. A player projected far
+    fewer minutes must get a proportionally SMALLER absolute adjustment for
+    the identical real ROLE_CHANGE signal - the exact "high attacking
+    involvement + 55 expected minutes is not equivalent to high attacking
+    involvement + 90 expected minutes" property this audit part asked to be
+    verified, not assumed."""
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    # A thin, mostly-substitute season record - genuinely low expected minutes,
+    # unlike the 3420 (a full 38-match starter's worth) other tests in this file use.
+    _insert_season_history(db_conn, player_id=1, minutes=180, expected_goals=1.0, expected_assists=0.5, bonus=2)
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="ROLE_CHANGE", direction="POSITIVE",
+                       reason="advanced attacking role again", created_at="2026-08-22T15:00:00Z")
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
+    # Same real 15% proportion as the high-minutes case - the RULE never changes...
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
+    # ...but the ABSOLUTE adjustment is real and small here, scaled by this player's
+    # own genuinely low minutes-adjusted goals baseline - not the same absolute size
+    # a nailed 90-minute starter with an identical signal would get (see
+    # test_role_change_expected_points_integration_surfaces_the_adjustment above,
+    # minutes=3420, real goals component an order of magnitude larger).
+    assert ep.qualitative_adjustment < 0.5
+
+
 def test_compute_qualitative_adjustment_returns_none_for_an_unmapped_signal(db_conn):
     """TACTICAL_CHANGE has no honest single-component target - must not be
     forced into the wrong bucket."""

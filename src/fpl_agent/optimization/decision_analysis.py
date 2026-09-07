@@ -27,7 +27,7 @@ from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.projection_confidence import _LEVEL_RANK, _LEVELS, assess_projection_confidence
 from fpl_agent.optimization.captaincy import CaptainOption, evaluate_captaincy
 from fpl_agent.optimization.locked_squad import LockedSquadState
-from fpl_agent.optimization.transfers import HIT_COST, TransferCandidate, best_transfer_for_player
+from fpl_agent.optimization.transfers import TransferCandidate, best_transfer_for_player
 
 _HORIZONS = (1, 3, 5)
 _MAX_HORIZON = 5

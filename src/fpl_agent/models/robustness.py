@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from fpl_agent.models.expected_points import _fixture_date, _player_match_rates
+from fpl_agent.models.expected_points import _player_match_rates
 from fpl_agent.models.rules import get_rule
 from fpl_agent.models.scenario_engine import _draw_fixture_for_team
 from fpl_agent.models.scenario_sampling import sample_player_trial_points

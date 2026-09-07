@@ -158,6 +158,56 @@ def best_transfer_for_player(
     return results[:top_n]
 
 
+_PARETO_RETENTION_K = 3  # real, measured 2026-09-07 (Phase 7.4 Part 9) - see _pareto_frontier's own docstring
+
+
+def _pareto_frontier(candidates: list["TransferCandidate"], k: int = _PARETO_RETENTION_K) -> list["TransferCandidate"]:
+    """Real, measured fix (2026-09-07, Phase 7.3 Part 9 - "test Pareto
+    candidate retention properly"): a single upfront ranking lens (any one of
+    net_ev_1gw/3gw/5gw) can silently discard the candidate that actually wins
+    once its own multi-GW continuation is played out - a live production
+    experiment against the real locked squad (compare_starting_actions'
+    n_gw=5-lens top pick vs each squad player's real 2nd non-dominated
+    candidate, each with a full beam-search continuation) found the n_gw=5
+    default differed from the real continuation-evaluated winner in 5 of 7
+    tested cases, by a real +0.26 to +0.36 pt 8GW path_total margin every
+    time (never negative) - a genuine, consistent, if modest, systematic gap
+    from committing to one candidate before evaluating its future.
+
+    Non-dominated on (net_ev_1gw, net_ev_3gw, net_ev_5gw): a candidate
+    survives unless another candidate in the list is >= it on all three
+    horizons and > it on at least one (i.e. genuinely worse everywhere,
+    not just a different multi-GW tradeoff). `candidates` is already
+    sorted by the caller's own ranking key - this only ever narrows it,
+    never reorders, and caps at `k`.
+
+    K bumped 2 -> 3 (2026-09-07, Phase 7.4 Part 9 - "choose the smallest K
+    that reliably recovers the continuation frontier") after a real,
+    dedicated K=1-vs-2-vs-3-vs-exhaustive experiment against the same 7
+    real squad players with a genuine multi-candidate frontier: K=1 (no
+    Pareto) recovered the real exhaustive-search winner in only 2/7 cases
+    (1.80 total pt gap); K=2 recovered 6/7 (0.32 total pt gap - the
+    original adoption evidence); K=3 recovered 7/7 (0.00 gap - the real
+    exhaustive result among each player's own top-3 n_gw=5-ranked
+    candidates). The real marginal cost is small and bounded: only a
+    player whose OWN candidate pool has a genuine 3rd non-dominated
+    candidate pays for a 3rd continuation at all (measured live: 1 of the
+    7, and only 1 of 15 real squad players overall) - every player whose
+    real frontier tops out at 2 costs exactly the same under K=3 as K=2."""
+    frontier = []
+    for c in candidates:
+        dominated = any(
+            o.net_ev_1gw >= c.net_ev_1gw and o.net_ev_3gw >= c.net_ev_3gw and o.net_ev_5gw >= c.net_ev_5gw
+            and (o.net_ev_1gw, o.net_ev_3gw, o.net_ev_5gw) != (c.net_ev_1gw, c.net_ev_3gw, c.net_ev_5gw)
+            for o in candidates
+        )
+        if not dominated:
+            frontier.append(c)
+        if len(frontier) >= k:
+            break
+    return frontier
+
+
 @dataclass(frozen=True)
 class RollRecommendation:
     action: str  # "roll" or "transfer"
@@ -702,33 +752,88 @@ def compare_starting_actions(
         resulting_used_chip_names=used_chip_names,
     ))
 
-    # Best single replacement for each current squad player
+    # Best single replacement for each current squad player.
+    #
+    # Real, confirmed candidate-selection bug found + fixed 2026-09-07
+    # (Phase 7.1 model audit, Part 3 - "verify the historical n_gw=1
+    # candidate-ranking bug remains fixed everywhere"): this call used
+    # `n_gw=1`, ranking each player's replacement candidate by its
+    # ISOLATED single-GW EV alone - directly contradicting this function's
+    # own stated purpose one paragraph above ("best starting action given
+    # its best future", not "best swap today"). The exact bug class
+    # `search_transfer_sequences`'s own beam step was fixed for on
+    # 2026-09-02 (see that function's own comment) had survived here,
+    # unnoticed, in the ONE function both `synthesize_current_
+    # recommendation` (the real authoritative source) and
+    # `alternative_action_audit` (the diagnostic cross-check) both build
+    # their starting-action comparison from - meaning the authoritative
+    # recommendation itself could silently test the wrong replacement
+    # candidate for a given squad player. Same zero-added-cost fix as
+    # 2026-09-02: `evaluate_transfer` already computes net_ev_1gw/3gw/5gw
+    # for every real candidate regardless of `n_gw` - only the RANKING lens
+    # changes.
+    #
+    # Real, measured refinement 2026-09-07 (Phase 7.2, Part B1 - "test
+    # systematically, implement only the smallest change justified by
+    # measured evidence"): a real production run comparing the 1/3/5-GW
+    # best replacement for all 15 real squad players found the ABOVE fix
+    # (n_gw=1 -> n_gw=3) already resolves 12 of them (their 3GW-best and
+    # 5GW-best candidates already agree) - but 3 real players (Verbruggen,
+    # B.Fernandes, Kinsky) still show a DIFFERENT best replacement between
+    # 3GW and 5GW specifically (e.g. B.Fernandes: Saka at 3GW vs Semenyo at
+    # 5GW). `best_transfer_for_player`'s own ranking key only supports
+    # {1,3,5} (no 8GW option exists), and this function's real decision
+    # horizon (`horizon_gw`, default 8) sits closer to 5 than 3 - n_gw=5 is
+    # the closest available match, at the SAME zero added cost (still one
+    # `evaluate_transfer` pass per candidate, only the ranking lens moves).
+    # Real, measured refinement 2026-09-07 (Phase 7.3 Part 9 - "test Pareto
+    # candidate retention properly, adopt only if material"): the single-
+    # candidate n_gw=5 lens above still commits to one candidate BEFORE
+    # evaluating its own multi-GW continuation - `_pareto_frontier` (see its
+    # own docstring for the real measured evidence) retains up to
+    # `_PARETO_RETENTION_K` non-dominated candidates per player instead, runs
+    # the SAME real `_continue()` beam search for each, and keeps whichever
+    # one actually produces the higher real path_total - never a second,
+    # independently-scored comparison, the exact same continuation search
+    # every other option here already uses. Real, bounded added cost: an
+    # extra continuation only for a player whose own candidate pool has a
+    # genuine 2nd/3rd non-dominated option (measured live: 7 of 15 real
+    # squad players for a 2nd, 1 of 15 for a 3rd), not every player. K
+    # bumped 2 -> 3 (Phase 7.4 Part 9) after a real, dedicated K-comparison
+    # experiment found K=2 only recovered the real exhaustive-search
+    # winner in 6/7 tested cases (K=3 recovered 7/7) - see `_pareto_
+    # frontier`'s own docstring for the full real evidence.
     is_hit = free_transfers < 1
     for player_out_id in squad_ids:
         candidates = best_transfer_for_player(
-            conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=1, top_n=1, from_event=start_event,
+            conn, player_out_id, squad_ids, bank_tenths, is_hit, n_gw=5, top_n=3, from_event=start_event,
         )
         if not candidates:
             continue
-        cand = candidates[0]
-        new_squad = tuple(pid for pid in squad_ids if pid != player_out_id) + (cand.player_in_id,)
-        gw_ev = _squad_gw_ev(conn, new_squad, start_event, cache)
-        hit_cost = HIT_COST if is_hit else 0.0
-        next_ft = min(free_transfers + 1, max_banked) if is_hit else min(free_transfers, max_banked)
-        new_bank = bank_tenths - cand.price_delta_tenths
-        cont = _continue(new_squad, next_ft, new_bank, used_chip_names)
-        options.append(StartingActionOption(
-            label=f"{cand.player_out_name} -> {cand.player_in_name}" + (" (HIT)" if is_hit else ""),
-            kind="transfer", player_out_id=player_out_id, player_out_name=cand.player_out_name,
-            player_in_id=cand.player_in_id, player_in_name=cand.player_in_name, chip_name=None,
-            uses_hit=is_hit,
-            path_total=round(gw_ev - hit_cost + (cont.total_net_ev if cont else 0.0), 2),
-            best_continuation=cont,
-            starting_gw_value=gw_ev - hit_cost, resulting_squad_ids=new_squad,
-            starting_squad_ids=new_squad,
-            resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
-            resulting_used_chip_names=used_chip_names,
-        ))
+        best_option: StartingActionOption | None = None
+        for cand in _pareto_frontier(candidates):
+            new_squad = tuple(pid for pid in squad_ids if pid != player_out_id) + (cand.player_in_id,)
+            gw_ev = _squad_gw_ev(conn, new_squad, start_event, cache)
+            hit_cost = HIT_COST if is_hit else 0.0
+            next_ft = min(free_transfers + 1, max_banked) if is_hit else min(free_transfers, max_banked)
+            new_bank = bank_tenths - cand.price_delta_tenths
+            cont = _continue(new_squad, next_ft, new_bank, used_chip_names)
+            option = StartingActionOption(
+                label=f"{cand.player_out_name} -> {cand.player_in_name}" + (" (HIT)" if is_hit else ""),
+                kind="transfer", player_out_id=player_out_id, player_out_name=cand.player_out_name,
+                player_in_id=cand.player_in_id, player_in_name=cand.player_in_name, chip_name=None,
+                uses_hit=is_hit,
+                path_total=round(gw_ev - hit_cost + (cont.total_net_ev if cont else 0.0), 2),
+                best_continuation=cont,
+                starting_gw_value=gw_ev - hit_cost, resulting_squad_ids=new_squad,
+                starting_squad_ids=new_squad,
+                resulting_free_transfers=next_ft, resulting_bank_tenths=new_bank,
+                resulting_used_chip_names=used_chip_names,
+            )
+            if best_option is None or option.path_total > best_option.path_total:
+                best_option = option
+        assert best_option is not None  # _pareto_frontier never returns [] for a non-empty `candidates`
+        options.append(best_option)
 
     # Each chip that's really eligible right now and not already used
     base_gw_ev = None

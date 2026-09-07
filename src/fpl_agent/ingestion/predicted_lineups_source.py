@@ -139,14 +139,65 @@ def parse_team_news_html(html: str) -> list[dict]:
     return teams
 
 
+_FOLD_TRANSLITERATION_MAP: dict[str, str] = {
+    # Real, confirmed bug fixed 2026-09-07 (Phase 7.4 Part 1/2 forensic
+    # audit): the NFKD-strip-combining-marks technique below only handles
+    # TRUE diacritics (a base letter + a separately-encoded combining mark,
+    # e.g. "é" = "e" + U+0301) - it does nothing for Latin-Extended letters
+    # that are their own distinct Unicode code points with no combining-mark
+    # decomposition, confirmed directly in Python: unicodedata.normalize(
+    # "NFKD", "Ø") ("Ø") returns "Ø" unchanged, not "O" - so
+    # `_fold("Ødegaard")` was silently returning "ødegaard" (still carrying
+    # the real Ø shape, just lowercased), never "odegaard". This is the
+    # REAL, confirmed reason a real, prominent, current squad player
+    # (Ødegaard) has NEVER ONCE resolved in `player_match_stats_history`
+    # in ANY season including the live one (found live via Phase 7.4's own
+    # `data_fidelity.py` diagnostic, which flagged him "no_team_anchor" in
+    # every one of 5 real backtestable seasons) - Understat's own raw name
+    # text uses the plain "Odegaard" ASCII transliteration, which this
+    # fold could never have matched against the real "Ødegaard" stored in
+    # `players`, in EITHER direction, regardless of how many times a
+    # historical re-fetch repair ran. A real, disclosed, non-exhaustive
+    # table of the Latin-Extended letters this project has actually
+    # encountered or reasonably expects in real European football names -
+    # standard transliteration conventions, not invented ones.
+    "ø": "o", "æ": "ae", "đ": "d", "ß": "ss", "œ": "oe", "ł": "l", "ı": "i", "þ": "th", "ð": "d",
+}
+
+
 def _fold(text: str) -> str:
     """Strip diacritics + lowercase - the site's raw text and our own DB disagree
     on accents often enough to matter ("Odegaard" vs "Ødegaard", "Gyokeres" vs
     "Gyökeres", "Muharemovic" vs "Muharemović" - all real, confirmed live misses
-    before this was added)."""
+    before this was added). NFKD-strip-combining-marks alone only reaches TRUE
+    diacritics (see `_FOLD_TRANSLITERATION_MAP`'s own docstring for the real,
+    confirmed gap it closes) - applied first so a letter like "Ø" is already a
+    plain "o" before the NFKD pass runs (order doesn't matter for the letters
+    in the map today, none of them carry a real separate combining mark, but
+    doing the table first keeps the two passes independent and each easy to
+    reason about alone)."""
+    lowered = text.lower()
+    translit = "".join(_FOLD_TRANSLITERATION_MAP.get(c, c) for c in lowered)
     return "".join(
-        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
-    ).lower()
+        c for c in unicodedata.normalize("NFKD", translit) if not unicodedata.combining(c)
+    )
+
+
+def _last_word_match(rows, name_folded: str) -> int | None:
+    """Real, collision-safe surname signal - `rows`' own `second_name`
+    whose LAST word matches the raw text's own last word. Returns the
+    match only when EXACTLY ONE real teammate matches - two real teammates
+    sharing a last-name word is a real, genuine ambiguity (a surname
+    collision, same class of risk Part 2 explicitly names), honestly
+    reported as `None` rather than guessed at by iteration order."""
+    name_last_word = name_folded.split()[-1] if name_folded.split() else ""
+    if not name_last_word:
+        return None
+    matches = [
+        row["id"] for row in rows
+        if row["second_name"] and _fold(row["second_name"]).split()[-1:] == [name_last_word]
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
@@ -165,6 +216,10 @@ def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
         "SELECT id, web_name, second_name FROM players WHERE team_id=? AND removed=0", (team_id,)
     ).fetchall()
 
+    # Real, collision-safe surname signal, computed up front so pass 1 (below)
+    # can cross-check against it - see `_last_word_match`'s own docstring.
+    last_word_id = _last_word_match(rows, name_folded)
+
     # Real bug found 2026-08-21 (ingestion/lineup_probability_source.py's new
     # source exposed it): a short web_name can be a substring of a genuinely
     # DIFFERENT teammate's raw name - "Gabriel" (Magalhaes) is a substring of
@@ -180,6 +235,25 @@ def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
             if len(row["web_name"]) > best_len:
                 best_id, best_len = row["id"], len(row["web_name"])
     if best_id is not None:
+        # Real, confirmed bug fixed 2026-09-07 (Phase 7.4 Part 1/2 forensic
+        # audit) - a SHORT web_name that is really just a common bare FIRST
+        # name (e.g. "Gabriel") is a real substring of MANY different real
+        # players' full names sharing that first name (e.g. "Gabriel Jesus",
+        # a real, different teammate) - "maximal munch" alone doesn't catch
+        # this when the TRUE player's own web_name has no textual overlap
+        # with the raw text at all (e.g. "G.Jesus" vs "Gabriel Jesus"), so
+        # the short, wrong match wins uncontested. Confirmed live: 63 real,
+        # distinct Understat player ids across a single real historical
+        # season had all been silently merged into Gabriel Magalhães'
+        # player_id via exactly this path - including one real match
+        # showing 4 goals/6 shots/2.16xG attributed to a centre-back, a
+        # real, physically implausible tell. Cross-checked against the
+        # independent, collision-safe surname signal above: only override
+        # pass 1's own answer when that signal is unambiguous (exactly one
+        # real teammate) AND disagrees with pass 1 - trusting the more
+        # specific real surname match over a bare first-name coincidence.
+        if last_word_id is not None and last_word_id != best_id:
+            return last_word_id
         return best_id
 
     best_id, best_len = None, -1
@@ -190,11 +264,7 @@ def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
     if best_id is not None:
         return best_id
 
-    name_last_word = name_folded.split()[-1] if name_folded.split() else ""
-    for row in rows:
-        if row["second_name"] and name_last_word and _fold(row["second_name"]).split()[-1:] == [name_last_word]:
-            return row["id"]
-    return None
+    return last_word_id
 
 
 def sync_predicted_lineups(conn, url: str = TEAM_NEWS_URL) -> dict:

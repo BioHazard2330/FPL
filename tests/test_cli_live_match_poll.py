@@ -9,7 +9,7 @@ import fpl_agent.ingestion.fotmob_source as fotmob_mod
 import fpl_agent.scheduler.process_lock as process_lock_mod
 from fpl_agent.cli.main import cli
 from fpl_agent.ingestion.fotmob_source import FotMobFetchError
-from test_fotmob_source import _DETAILS_PAYLOAD, _seed, _seed_match_intelligence_row
+from test_fotmob_source import _DETAILS_PAYLOAD, _seed_match_intelligence_row
 
 
 @pytest.fixture(autouse=True)

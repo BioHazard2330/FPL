@@ -5,7 +5,7 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _squad_play_status_counts,
 )
 from fpl_agent.optimization.locked_squad import get_locked_squad
-from test_optimization_locked_squad import _BENCH_4, _STARTING_11, _seed_real_picks
+from test_optimization_locked_squad import _STARTING_11, _seed_real_picks
 from test_optimization_squad import _seed
 
 

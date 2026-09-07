@@ -121,7 +121,6 @@ def sample_team_group_trial_points(
     computes the way `player_share_of_team_xg` does for goals, so a
     matching joint-attribution fix for those isn't a same-scope change."""
     n_trials = team_goals.shape[0]
-    n_players = len(players)
 
     buckets, weights, played_full_list = [], [], []
     for p in players:
@@ -134,7 +133,7 @@ def sample_team_group_trial_points(
     # A benched-this-trial player can't score - their own share collapses to 0
     # via `weight`, same as the single-player path already does.
     goal_probs = np.stack(
-        [np.clip(p["rates"]["player_share_per90"] * w, 0.0, 1.0) for p, w in zip(players, weights)], axis=1
+        [np.clip(p["rates"]["player_share_per90"] * w, 0.0, 1.0) for p, w in zip(players, weights, strict=True)], axis=1
     )  # shape (n_trials, n_players)
     residual = np.clip(1.0 - goal_probs.sum(axis=1, keepdims=True), 0.0, None)
     pvals = np.concatenate([goal_probs, residual], axis=1)

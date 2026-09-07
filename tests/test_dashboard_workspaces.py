@@ -9,7 +9,6 @@ from fpl_agent.monitoring.dashboard import (
     squad, template_team,
 )
 from test_dashboard import _locked_and_decision, _seed
-from test_optimization_squad import _seed as _seed_squad
 
 
 # --- home.py: structured-fact copy composition -----------------------------

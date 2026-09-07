@@ -29,40 +29,33 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
+if TYPE_CHECKING:
+    from fpl_agent.optimization.decision_analysis import TransferDecisionAnalysis
+
+from fpl_agent.database.decisions import latest_decision_of_type
 from fpl_agent.models.decision_hysteresis import stable_current_recommendation
 from fpl_agent.models.availability import list_availability
 from fpl_agent.models.blend import clean_sheet_probability
-from fpl_agent.models.breakouts import find_breakouts
-from fpl_agent.models.traps import find_traps
 from fpl_agent.optimization.captaincy import captaincy_report
 from fpl_agent.models.expected_points import _fixture_goals_for
 from fpl_agent.models.fixtures import finished_fixture_ids_fast, live_or_reference_event, team_fixture_ticker
-from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.live_bonus import compute_live_bonus
-from fpl_agent.models.live_rank import classify_precision, estimate_squad_live_points
-from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
-from fpl_agent.models.rules import current_season, get_rule
+from fpl_agent.models.live_rank import estimate_squad_live_points
 from fpl_agent.ingestion.crest_assets import cached_crest_relpath
 from fpl_agent.models.team_outlook import all_team_outlooks
 from fpl_agent.models.team_news_risk import flag_squad_rotation_risk
-from fpl_agent.ingestion.my_team import get_latest_squad, get_my_team_entry_id
+from fpl_agent.ingestion.my_team import get_latest_squad
 from fpl_agent.ingestion.news_source import list_recent_news
 from fpl_agent.models.lineup_state import squad_lineup_states
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
-from fpl_agent.optimization.build_team import generate_build_team_report
-from fpl_agent.optimization.decision_engine import evaluate_locked_squad
-from fpl_agent.optimization.locked_squad import get_locked_squad
 from fpl_agent.optimization.rate_team import rate_team
-from fpl_agent.optimization.squad import validate_starting_xi
 from fpl_agent.optimization.chips import (
     bench_boost_value,
     eligible_chips,
-    freehit_value,
     triple_captain_value,
-    wildcard_value,
 )
 
 _CHANGE_EVENT_TYPES = (
@@ -498,6 +491,7 @@ def _player_card(
     football_signal: tuple[str, str] | None = None,
     review_low_confidence: bool = False,
     market_signal: tuple[str, float, float] | None = None,
+    tier: str | None = None,
 ) -> str:
     light, dark = _POSITION_ACCENT.get(c.position, _POSITION_ACCENT["MID"])
     armband = ""
@@ -707,10 +701,34 @@ def _player_card(
 
     flag_marker = "<span class='player-flag' title='Model-recommended outgoing player'>&#9670;</span>" if is_recommended_out else ""
 
-    return f"""<div class="player-card{cap_class}{' player-card-flagged' if is_recommended_out else ''}" style="--accent-l:{light};--accent-d:{dark}" tabindex="0" role="button" aria-haspopup="dialog" data-player-id="{c.player_id}" data-player-name="{_esc(c.web_name)}" data-player-team="{_esc(c.team_short)}">
+    # Real per-tile importance marker (2026-09-07, Phase 7.3 Part 14 -
+    # "differentiate CORE/WATCH/WEAK LINK/MINUTES RISK... only show a
+    # marker when the underlying data supports it... don't give every
+    # player equal visual weight"). `tier` is computed by the CALLER
+    # (`_pitch_html_from_xi`, real median-rank/expected_minutes reads over
+    # the SAME `PlayerCandidate` data this card already renders - never a
+    # second projection pass here) - this function only ever renders
+    # whatever real tier it's handed, `None` (the honest default for most
+    # players - not everyone is a standout or a risk) renders nothing.
+    # WATCH is deliberately not a `tier` value - it's already the existing
+    # `lineup_badge`/inspector-status machinery above, not duplicated here.
+    _TIER_CLASS = {"CORE": "player-card-core", "WEAK_LINK": "player-card-weak", "MINUTES_RISK": "player-card-minrisk"}
+    _TIER_TITLE = {
+        "CORE": "Your top-projected starter this GW",
+        "WEAK_LINK": "Real low-output starter (below 3.0 xP)",
+        "MINUTES_RISK": "Starting, but under 60 real expected minutes",
+    }
+    tier_class = f" {_TIER_CLASS[tier]}" if tier in _TIER_CLASS else ""
+    tier_marker = (
+        f"<span class='player-tier-dot player-tier-dot-{_TIER_CLASS[tier].removeprefix('player-card-')}' "
+        f"title='{_esc(_TIER_TITLE[tier])}'></span>"
+    ) if tier in _TIER_CLASS else ""
+
+    return f"""<div class="player-card{cap_class}{' player-card-flagged' if is_recommended_out else ''}{tier_class}" style="--accent-l:{light};--accent-d:{dark}" tabindex="0" role="button" aria-haspopup="dialog" data-player-id="{c.player_id}" data-player-name="{_esc(c.web_name)}" data-player-team="{_esc(c.team_short)}">
   {bench_badge}
   {armband}
   {flag_marker}
+  {tier_marker}
   <div class="player-photo-wrap">
     {shirt_html}
     {_crest_html(team_code, c.team_short, css_class="player-pitch-crest") if team_code is not None else ""}
@@ -827,6 +845,28 @@ def _pitch_html_from_xi(
     for c in xi.starting:
         by_position.setdefault(c.position, []).append(c)
 
+    # Real per-tile tier classification (2026-09-07, Phase 7.3 Part 14) -
+    # over the STARTING XI only (bench players are already visually
+    # distinct via `bench_badge`/the separate bench row, and "core/weak
+    # link" only means something relative to who's actually playing).
+    # `_WEAK_LINK_FLOOR_XP` matches `monitoring/dashboard/myteam.py`'s own
+    # identical threshold (duplicated, not imported - `myteam.py` already
+    # imports FROM this module, so importing back would be circular; both
+    # constants are kept in sync by this comment, not by shared code).
+    _WEAK_LINK_FLOOR_XP = 3.0
+    _MINUTES_RISK_FLOOR = 60.0
+    tier_by_id: dict[int, str] = {}
+    if xi.starting:
+        top = max(xi.starting, key=lambda c: c.median)
+        tier_by_id[top.player_id] = "CORE"
+        for c in xi.starting:
+            if c.player_id in tier_by_id:
+                continue
+            if c.median < _WEAK_LINK_FLOOR_XP:
+                tier_by_id[c.player_id] = "WEAK_LINK"
+            elif getattr(c, "expected_minutes", None) is not None and c.expected_minutes < _MINUTES_RISK_FLOOR:
+                tier_by_id[c.player_id] = "MINUTES_RISK"
+
     # Zone labels (2026-08-21 direct user request, section 9: "visually
     # separate GK/DEF/MID/FWD... use subtle positional labels") - real
     # position names, not decorative.
@@ -847,7 +887,7 @@ def _pitch_html_from_xi(
                          is_recommended_out=c.player_id == recommended_out_id, out_why=out_why,
                          football_signal=_football_signal_for(c.player_id),
                          review_low_confidence=review_low_confidence and c.player_id == recommended_out_id,
-                         market_signal=_market_signal_for(c.player_id))
+                         market_signal=_market_signal_for(c.player_id), tier=tier_by_id.get(c.player_id))
             for c in players
         )
         rows.append(
@@ -1711,9 +1751,12 @@ def _statistics_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
         "<div class='stats-row stats-header'><span>Player</span><span>Pts</span><span>Mins</span>"
         "<span>G</span><span>A</span><span>Bonus</span><span>xG</span><span>xA</span></div>"
     )
+    def _stat_or_dash(row, key):
+        return row[key] if row[key] is not None else "-"
+
     lines = [header]
     for r in rows:
-        v = lambda key: r[key] if r[key] is not None else "-"
+        v = lambda key, _r=r: _stat_or_dash(_r, key)
         lines.append(
             f"<div class='stats-row'><span><strong>{_esc(r['web_name'])}</strong> "
             f"<span class='fx-teams'>{_esc(r['team'])}</span></span>"
@@ -3827,6 +3870,21 @@ _CSS = """
     display: flex; align-items: center; justify-content: center; color: var(--fpl-pink); font-size: 0.75rem;
     filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
   .player-card-flagged .player-name { color: var(--fpl-pink); }
+  /* Real per-tile importance markers (2026-09-07, Phase 7.3 Part 14) - a
+     small corner dot, not a heavy badge, so visual weight stays
+     proportional (CLAUDE.md: "don't give every player equal visual
+     weight" cuts both ways - a marker shouldn't overwhelm the tile
+     either). CORE gets a subtle lift on the whole tile (this project's
+     single highest-projected real starter); WEAK_LINK/MINUTES_RISK tint
+     just the name, matching the existing `.player-card-flagged` pattern. */
+  .player-card-core { filter: drop-shadow(0 0 8px rgba(4,245,255,0.25)); }
+  .player-card-weak .player-name { color: var(--bad); }
+  .player-card-minrisk .player-name { color: #d9a441; }
+  .player-tier-dot { position: absolute; top: -6px; right: 14px; width: 9px; height: 9px; border-radius: 50%;
+    z-index: 3; box-shadow: 0 0 0 2px rgba(0,0,0,0.5); }
+  .player-tier-dot-core { background: var(--accent); }
+  .player-tier-dot-weak { background: var(--bad); }
+  .player-tier-dot-minrisk { background: #d9a441; }
   .player-inspector-status { display: inline-block; font-size: 0.75rem;
     font-weight: 800; letter-spacing: 0.05em; padding: 3px 10px; border-radius: 5px; margin-bottom: 8px; }
   .player-inspector-status-sell { background: rgba(233,0,82,0.18); color: #ff6b9d; }

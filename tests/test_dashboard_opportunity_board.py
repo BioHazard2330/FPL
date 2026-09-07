@@ -48,10 +48,10 @@ def test_opportunity_board_empty_state_when_nothing_clears_the_bar(db_conn, monk
     assert "No real league-wide opportunities" in result
 
 
-def _breakout(player_id=1, web_name="Mendy", position="DEF", value_ratio=1.2, ownership=2.9, reasons=None):
+def _breakout(player_id=1, web_name="Mendy", position="DEF", value_ratio=1.2, ownership=2.9, reasons=None, median=6.0):
     return SimpleNamespace(
         player_id=player_id, web_name=web_name, position=position, value_ratio=value_ratio,
-        ownership_percent=ownership, reasons=reasons or ["real rising value"],
+        ownership_percent=ownership, reasons=reasons or ["real rising value"], median=median,
     )
 
 
@@ -72,6 +72,36 @@ def test_opportunity_board_renders_a_breakout_card_and_excludes_squad_members(db
     assert "Already Owned" not in result
     assert "opp-card-breakout" in result
     assert "1.20 xP/£m" in result  # real "£" character, never a double-escaped entity
+
+
+def test_card_renders_real_xp_minutes_risk_and_what_would_change_fields():
+    """Real regression test, Phase 7.3 Part 17 ('PLAYER/PRICE/xP/MINUTES/
+    ROLE/OWNERSHIP/WHY INTERESTING/RISK/WHAT WOULD CHANGE THE VIEW... no
+    generic prose'). Each field is independently optional - present when
+    passed, cleanly omitted when not (never a fabricated placeholder)."""
+    html_with = opportunity_mod._card(
+        "Breakout", "Mendy", "DEF", 4.5, 2.9, "1.20 xP/£m value ratio", "real rising value", "LOW",
+        xp=6.3, expected_minutes=88.0, risk="projection confidence is low - based on limited real evidence so far",
+        what_would_change="ownership rises above 10% (currently 2.9%) or value ratio falls below 0.5 xP/£m",
+    )
+    assert "6.3" in html_with and "xP" in html_with
+    assert "88" in html_with and "opp-card-stats" in html_with
+    assert "opp-card-risk" in html_with and "projection confidence is low" in html_with
+    assert "opp-card-change" in html_with and "ownership rises above 10%" in html_with
+
+    html_without = opportunity_mod._card(
+        "Value", "Foden", "MID", 7.0, None, "£7.0m -> £7.1m", "price rise 2h ago", "HIGH",
+    )
+    assert "opp-card-stats" not in html_without
+    assert "opp-card-risk" not in html_without
+    assert "opp-card-change" not in html_without
+
+
+def test_risk_from_confidence_only_flags_low_and_very_low():
+    assert opportunity_mod._risk_from_confidence("HIGH") is None
+    assert opportunity_mod._risk_from_confidence("MEDIUM") is None
+    assert opportunity_mod._risk_from_confidence("LOW") is not None
+    assert opportunity_mod._risk_from_confidence("VERY_LOW") is not None
 
 
 def _fake_transfer_option(player_out_name, player_in_id):

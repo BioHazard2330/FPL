@@ -4,12 +4,9 @@ import fpl_agent.optimization.adversarial_audit as aa_mod
 from fpl_agent.models.expected_points import ComponentBreakdown
 from fpl_agent.optimization.adversarial_audit import (
     ActionAuditRow,
-    CausalChainStep,
-    Falsifier,
     LeagueWideCheck,
     PlayerAudit,
     alternative_action_audit,
-    audit_player,
     build_causal_chain,
     build_scorecard,
     classify_robustness,
@@ -123,9 +120,44 @@ def test_alternative_action_audit_merges_by_label_across_horizons(monkeypatch):
     assert by_label["A -> B"].horizon_results == {3: 28.0, 5: 60.0}
     assert by_label["ROLL"].horizon_results == {3: 30.0, 5: 55.0}
     # Ranked by the MAX horizon (5GW) path_total - "A -> B" (60.0) beats "ROLL" (55.0).
+    # No authoritative_label given here -> self-ranked fallback, explicitly disclosed as such.
     assert rows[0].label == "A -> B"
     assert rows[0].main_reason_rejected is None
-    assert "behind the winner" in rows[1].main_reason_rejected
+    assert "below" in rows[1].main_reason_rejected
+    assert "this audit's own top-ranked option" in rows[1].main_reason_rejected
+
+
+def test_alternative_action_audit_frames_every_row_against_the_authoritative_pick(monkeypatch):
+    """Real regression test for the Phase 7.1 fix: when the authoritative
+    recommendation is given and is a legal row here, every OTHER row's
+    reason/opportunity_cost is framed relative to IT, never relative to
+    whichever row this audit's own narrower search happens to rank #1 -
+    closing the "my audit says X but trust another engine" contradiction."""
+    per_horizon = {
+        3: [_opt("ROLL", "roll", 30.0), _opt("A -> B", "transfer", 28.0, 1, 2)],
+        5: [_opt("ROLL", "roll", 55.0), _opt("A -> B", "transfer", 60.0, 1, 2)],
+    }
+    monkeypatch.setattr(aa_mod, "compare_starting_actions", lambda conn, *a, horizon_gw, **k: per_horizon[horizon_gw])
+    monkeypatch.setattr(aa_mod, "search_transfer_sequences", lambda *a, **k: [])
+    monkeypatch.setattr(aa_mod, "_safe_confidence", lambda conn, pid: None)
+
+    # ROLL is the real authoritative pick even though this audit's own narrower
+    # search ranks "A -> B" higher (60.0 > 55.0 at the max horizon).
+    rows = alternative_action_audit(
+        None, [1, 2, 3], 1, 0, frozenset(), horizons=(3, 5), continuation_beam_width=1,
+        authoritative_label="ROLL",
+    )
+    by_label = {r.label: r for r in rows}
+
+    roll_row = by_label["ROLL"]
+    assert roll_row.main_reason_rejected is None
+    assert roll_row.opportunity_cost == "n/a - this is the authoritative recommendation"
+
+    other_row = by_label["A -> B"]
+    assert "ABOVE the authoritative recommendation" in other_row.main_reason_rejected
+    assert other_row.opportunity_cost.startswith("+")  # scores above, disclosed as a real discrepancy
+    assert "wins" not in other_row.main_reason_rejected.lower()
+    assert "wins" not in roll_row.opportunity_cost.lower()
 
 
 # --------------------------------------------------------------------------
@@ -373,19 +405,32 @@ def test_cross_check_returns_none_when_no_strategic_plan_logged(db_conn):
 
 
 def test_cross_check_flags_a_real_disagreement(db_conn):
+    """Real regression test for the Phase 7.1 rewrite: `action_audit` must
+    contain the authoritative row itself (its own `opportunity_cost` reads
+    "n/a - this is the authoritative recommendation", exactly what
+    `alternative_action_audit` now produces when it's given the real
+    `authoritative_label`) plus another row this audit's own search scored
+    materially above it - the note discloses the discrepancy but never
+    names a "winner" or tells the reader which engine to trust."""
     from fpl_agent.database.decisions import log_decision
 
     log_decision(
         db_conn, "strategic_plan", "ROLL wins",
-        {"current_recommendation": {"label": "ROLL", "path_total": 642.1}},
+        {"current_recommendation": {"label": "ROLL", "path_total": 611.55}},
     )
     db_conn.commit()
-    row = ActionAuditRow("PLAY WILDCARD", "chip", {8: 636.53}, "n/a", None, None, None)
+    rows = [
+        ActionAuditRow("PLAY WILDCARD", "chip", {8: 638.3}, "+26.8 pts vs the authoritative recommendation over 8GW",
+                        None, None, "this audit's own independent search scores this 26.8 pts ABOVE..."),
+        ActionAuditRow("ROLL", "roll", {8: 611.55}, "n/a - this is the authoritative recommendation", None, None, None),
+    ]
 
-    note = cross_check_against_strategic_plan(db_conn, [row])
+    note = cross_check_against_strategic_plan(db_conn, rows)
 
     assert note is not None
     assert "ROLL" in note and "PLAY WILDCARD" in note
+    assert "wins" not in note.lower()
+    assert "trust" not in note.lower() or "authoritative recommendation is unchanged" in note
 
 
 def test_cross_check_returns_none_when_they_agree(db_conn):
@@ -396,9 +441,42 @@ def test_cross_check_returns_none_when_they_agree(db_conn):
         {"current_recommendation": {"label": "ROLL", "path_total": 642.1}},
     )
     db_conn.commit()
-    row = ActionAuditRow("ROLL", "roll", {8: 642.1}, "n/a", None, None, None)
+    row = ActionAuditRow("ROLL", "roll", {8: 642.1}, "n/a - this is the authoritative recommendation", None, None, None)
 
     assert cross_check_against_strategic_plan(db_conn, [row]) is None
+
+
+def test_cross_check_returns_none_when_the_authoritative_pick_isnt_a_legal_row(db_conn):
+    """The authoritative label must genuinely appear among this audit's own
+    rows before any comparison is meaningful - nothing to cross-check
+    against otherwise (a real, disclosed no-op, not a false alarm)."""
+    from fpl_agent.database.decisions import log_decision
+
+    log_decision(
+        db_conn, "strategic_plan", "ROLL wins",
+        {"current_recommendation": {"label": "ROLL", "path_total": 642.1}},
+    )
+    db_conn.commit()
+    row = ActionAuditRow("PLAY WILDCARD", "chip", {8: 636.53}, "n/a", None, None, None)
+
+    assert cross_check_against_strategic_plan(db_conn, [row]) is None
+
+
+def test_cross_check_returns_none_below_the_materiality_bar(db_conn):
+    from fpl_agent.database.decisions import log_decision
+
+    log_decision(
+        db_conn, "strategic_plan", "ROLL wins",
+        {"current_recommendation": {"label": "ROLL", "path_total": 611.55}},
+    )
+    db_conn.commit()
+    rows = [
+        ActionAuditRow("PLAY WILDCARD", "chip", {8: 612.0}, "+0.45 pts vs the authoritative recommendation over 8GW",
+                        None, None, "..."),
+        ActionAuditRow("ROLL", "roll", {8: 611.55}, "n/a - this is the authoritative recommendation", None, None, None),
+    ]
+
+    assert cross_check_against_strategic_plan(db_conn, rows) is None
 
 
 # --------------------------------------------------------------------------

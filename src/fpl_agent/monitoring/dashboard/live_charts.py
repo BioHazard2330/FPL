@@ -658,7 +658,7 @@ def render_captain_impact_chart(conn: sqlite3.Connection, event: int | None) -> 
     total_span_min = max((_epoch_ms(timestamps[-1]) - first_ms) / 60000.0, 1.0)
     bucket_minutes = max(15, int(-(-total_span_min // 10 // 15) * 15))  # ceil to a 15-min multiple, ~10 buckets
     buckets: dict[int, tuple[str, float, float]] = {}
-    for ts, pts, cap in zip(timestamps, points_series.values, captain_series.values):
+    for ts, pts, cap in zip(timestamps, points_series.values, captain_series.values, strict=True):
         elapsed_min = (_epoch_ms(ts) - first_ms) / 60000.0
         bucket = int(elapsed_min // bucket_minutes)
         buckets[bucket] = (ts, pts, cap)  # last real sample in this bucket wins
@@ -692,7 +692,7 @@ def render_captain_contribution_chart(conn: sqlite3.Connection, entry_id: int) -
     labels = [f"GW{e}" for e in captain_series.events]
     pct = [
         round(v / t * 100.0, 1) if t not in (None, 0) else None
-        for v, t in zip(captain_series.values, squad_totals)
+        for v, t in zip(captain_series.values, squad_totals, strict=True)
     ]
     return _column_chart_html(
         labels, [("Captain points", captain_series.values, "--accent-2")], value_fmt="int",
@@ -710,7 +710,7 @@ def render_actual_vs_expected_chart(conn: sqlite3.Connection, entry_id: int) -> 
     if len(actual_series.events) < 2:
         return "<div class='chart-empty'>Not enough real per-GW data yet - needs 2+ finished gameweeks with a real recorded prediction.</div>"
     labels = [f"GW{e}" for e in actual_series.events]
-    diff = [round(a - e, 1) for a, e in zip(actual_series.values, expected_series.values)]
+    diff = [round(a - e, 1) for a, e in zip(actual_series.values, expected_series.values, strict=True)]
     # Real color-collision fix (2026-09-03, same `--accent`/`--accent-2`
     # identical-hex bug as Team Strength/Captain Impact) - Difference gets
     # its own distinct hue, never a second shade of Actual's green.
@@ -977,7 +977,7 @@ def render_player_form_chart(conn: sqlite3.Connection, squad_ids: set[int]) -> s
     # line (an honest, disclosed limit past 7 real concurrent series, not
     # hidden by looking identical) visually separable from the first.
     palette = ["--accent-2", "--structural-cyan", "--captaincy-pink", "--tactical-purple", "--bad", "--uncertainty-amber", "--faint"]
-    for i, (pid, prows) in enumerate(by_player.items()):
+    for i, (_pid, prows) in enumerate(by_player.items()):
         if len(prows) < 2:
             continue
         series.append({

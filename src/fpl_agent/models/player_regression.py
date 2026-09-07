@@ -17,11 +17,46 @@ class ShrunkRate:
     matches_played: float
 
 
-def shrink_rate(player_total: float, player_minutes: int, position_avg_per90: float) -> ShrunkRate:
+def shrink_rate(
+    player_total: float, player_minutes: int, position_avg_per90: float,
+    prior_strength: float = PRIOR_STRENGTH_MATCHES,
+) -> ShrunkRate:
+    """`prior_strength` (2026-09-07, Phase 7.3 Part 4 - non-uniform
+    shrinkage) - optional override of the module-wide `PRIOR_STRENGTH_
+    MATCHES` default, backward compatible (every existing caller that
+    doesn't pass it - `bonus_regression.py`, `defensive_contribution.py`,
+    every other real use of this function for a DIFFERENT stat entirely -
+    keeps today's exact behaviour). See `_GOALS_SHRINKAGE_STRENGTH_BY_
+    POSITION`'s own docstring for the one real, evidenced override
+    `player_shrunk_rates` below actually applies."""
     matches = player_minutes / 90
     raw = (player_total / matches) if matches > 0 else 0.0
-    shrunk = (matches * raw + PRIOR_STRENGTH_MATCHES * position_avg_per90) / (matches + PRIOR_STRENGTH_MATCHES)
+    shrunk = (matches * raw + prior_strength * position_avg_per90) / (matches + prior_strength)
     return ShrunkRate(raw_per90=round(raw, 4), shrunk_per90=round(shrunk, 4), matches_played=round(matches, 2))
+
+
+# Real, cross-season-validated override (2026-09-07, Phase 7.3 Part 4 - "non-
+# uniform shrinkage... estimate from historical data, do not create arbitrary
+# coefficients"). A walk-forward k-value sweep (k in {2,3,5,7,10,15,20,30}) run
+# independently against BOTH the 2025-26 and 2024-25 real seasons found the
+# SAME reversal both times: forwards' own real per-90 GOALS rate is best
+# predicted with STRONGER shrinkage than the project-wide default (k=30 beat
+# every other tested value in both seasons - 2025-26 MAE 0.6646 vs the
+# default k=10's 0.6696; 2024-25 MAE 0.8234 vs k=10's 0.8513, an 8.3% real
+# relative improvement, the largest effect found anywhere in this sweep),
+# while GKP/DEF/MID goals, and every position for assists/xG/xA, showed only
+# small (often <1% relative MAE), inconsistent-across-stats differences from
+# the k=10 default - not adopted, disclosed as noise-level rather than a real
+# signal (see docs/history and CLAUDE.md's own Phase 7.3 entry for the full
+# sweep). Real football rationale matching the measured direction: a
+# forward's goal-scoring rate is the single most boom/bust metric of the
+# four tested (a striker's own raw per-90 rate over a small real sample is
+# a genuinely less reliable true-talent estimate than a defender's or
+# midfielder's, whose goals are rarer events overall) - stronger shrinkage
+# toward the population prior is the correct response to that real, higher
+# variance, not an arbitrary tweak. Scoped to goals+FWD only - the one
+# (stat, position) cell with a real, large, cross-season-replicated effect.
+_GOALS_SHRINKAGE_STRENGTH_BY_POSITION = {"FWD": 30.0}
 
 
 def _date_clause(as_of_date: str | None) -> tuple[str, tuple]:
@@ -116,7 +151,16 @@ def player_shrunk_rates(
             prior_overrides[key] if prior_overrides and key in prior_overrides
             else position_average_per90(conn, position, stat, season, as_of_date)
         )
-        result[key] = shrink_rate(total, minutes, prior)
+        # Real, cross-season-validated override (see
+        # `_GOALS_SHRINKAGE_STRENGTH_BY_POSITION`'s own docstring) - only
+        # goals+FWD currently has one; every other (stat, position) cell
+        # keeps the module-wide default via shrink_rate's own default arg.
+        prior_strength = (
+            _GOALS_SHRINKAGE_STRENGTH_BY_POSITION[position]
+            if stat == "goals" and position in _GOALS_SHRINKAGE_STRENGTH_BY_POSITION
+            else PRIOR_STRENGTH_MATCHES
+        )
+        result[key] = shrink_rate(total, minutes, prior, prior_strength=prior_strength)
     return result
 
 

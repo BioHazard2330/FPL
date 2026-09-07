@@ -54,6 +54,21 @@ def test_get_or_create_market_team_is_idempotent_across_sources(db_conn):
     assert first == second  # same canonical name across sources -> same market_team_id
 
 
+def test_get_or_create_market_team_handles_non_ascii_team_names(db_conn):
+    """Real, same-class fix as `resolve_player_id`'s own (Phase 7.4 Part
+    1/2) - SQLite's LOWER() is ASCII-only, so a real non-ASCII team name
+    would never have matched via the old `LOWER(name)=?` SQL comparison."""
+    db_conn.execute(
+        "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Étoile FC','ÉTO','t0')"
+    )
+    db_conn.commit()
+
+    market_team_id = get_or_create_market_team(db_conn, "football_data", "Étoile FC")
+
+    row = db_conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (market_team_id,)).fetchone()
+    assert row["fpl_team_id"] == 1
+
+
 def test_get_or_create_market_team_handles_unknown_team(db_conn):
     market_team_id = get_or_create_market_team(db_conn, "football_data", "Luton Town")
     row = db_conn.execute("SELECT canonical_name, fpl_team_id FROM market_teams WHERE id=?", (market_team_id,)).fetchone()
@@ -102,6 +117,43 @@ def test_resolve_player_id_without_a_team_id_keeps_the_old_exact_only_behavior(d
     _seed_player(db_conn, player_id=1, team_id=1, first="Bruno", second="Borges Fernandes", web="B.Fernandes")
 
     assert resolve_player_id(db_conn, "understat", "Bruno Fernandes") is None
+
+
+def test_resolve_player_id_exact_match_handles_non_ascii_capital_letters(db_conn):
+    """Real, confirmed bug fixed 2026-09-07 (Phase 7.4 Part 1/2 forensic
+    audit): the exact-match query used to compare via SQL `LOWER(...)=?`
+    against a Python-`_normalize()`d parameter - SQLite's own LOWER() is
+    ASCII-only (confirmed: `SELECT LOWER('Ødegaard')` returns 'Ødegaard'
+    unchanged) while Python's `.lower()` correctly lowercases 'Ø' to 'ø' -
+    the two literal strings could never be equal for a name FPL stores
+    with an uppercase non-ASCII letter. Found live: a real, prominent,
+    current squad player (Ødegaard) had never once resolved in this
+    project's entire Understat history as a direct result. Fixed by doing
+    the whole comparison in Python instead of relying on SQLite's LOWER()."""
+    _seed_player(db_conn, player_id=1, team_id=1, first="Martin", second="Ødegaard", web="Ødegaard")
+
+    resolved = resolve_player_id(db_conn, "understat", "Ødegaard")
+
+    assert resolved == 1
+
+
+def test_resolve_player_id_fuzzy_fallback_transliterates_scandinavian_letters(db_conn):
+    """Real, confirmed bug fixed 2026-09-07 - `_fold()`'s NFKD-strip-
+    combining-marks technique only reaches TRUE diacritics (a base letter
+    + a separately-encoded combining mark); it does nothing for a letter
+    like 'Ø' that is its own distinct Unicode code point with no
+    combining-mark decomposition (confirmed: `unicodedata.normalize(
+    "NFKD", "Ø")` returns "Ø" unchanged). A real external source
+    (Understat) reporting the plain ASCII transliteration ("Odegaard")
+    could never match FPL's own correctly-accented "Ødegaard" via the
+    team-scoped fuzzy fallback either, even after this project's own
+    2026-08-26 diacritic-fold fix - fixed with a real transliteration
+    table for the confirmed non-decomposing Latin-Extended letters."""
+    _seed_player(db_conn, player_id=1, team_id=1, first="Martin", second="Ødegaard", web="Ødegaard")
+
+    resolved = resolve_player_id(db_conn, "understat", "Odegaard", team_id=1)
+
+    assert resolved == 1
 
 
 def test_resolve_player_id_fuzzy_fallback_is_scoped_to_the_given_team(db_conn):

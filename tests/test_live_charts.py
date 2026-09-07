@@ -354,36 +354,3 @@ def test_player_value_chart_empty_without_a_locked_squad():
     assert render_player_value_chart(None) == ""
 
 
-def _insert_team_with_strength(conn, team_id, code, short_name):
-    conn.execute(
-        "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (?,?,?,?,'t0')",
-        (team_id, code, f"Team{team_id}", short_name),
-    )
-
-
-def test_fixture_heatmap_shows_real_teams_and_gws(db_conn):
-    from fpl_agent.monitoring.dashboard.live_charts import render_fixture_heatmap_chart
-
-    _insert_team_with_strength(db_conn, 1, 1, "AAA")
-    _insert_team_with_strength(db_conn, 2, 2, "BBB")
-    db_conn.execute(
-        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, "
-        "is_current, is_next, updated_at) VALUES (2, 'GW2', 't0', 99999999999, 0, 0, 1, 0, 't0')"
-    )
-    db_conn.execute(
-        "INSERT INTO fixtures (id, code, event, team_h, team_a, finished, started, updated_at) "
-        "VALUES (1, 1, 2, 1, 2, 0, 0, 't0')"
-    )
-    db_conn.commit()
-
-    result = render_fixture_heatmap_chart(db_conn, squad_ids=set())
-
-    assert "&quot;kind&quot;: &quot;heatmap&quot;" in result
-    assert "AAA" in result and "BBB" in result
-    assert "GW2" in result
-
-
-def test_fixture_heatmap_empty_without_any_real_teams(db_conn):
-    from fpl_agent.monitoring.dashboard.live_charts import render_fixture_heatmap_chart
-
-    assert render_fixture_heatmap_chart(db_conn, squad_ids=set()) == ""

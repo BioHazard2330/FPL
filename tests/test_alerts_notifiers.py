@@ -168,7 +168,6 @@ def test_windows_toast_notifier_invokes_windows_powershell_with_encoded_command(
     this project's real dev machine. -EncodedCommand (base64), not a
     string-interpolated -Command, is what avoids any shell-quoting
     injection surface for real alert text."""
-    import subprocess as subprocess_module
 
     calls = []
 

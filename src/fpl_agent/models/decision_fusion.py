@@ -78,7 +78,9 @@ def _qualitative_captain_signal(conn, squad_ids: list[int]) -> tuple[int | None,
         if t.signal == row["signal"] and t.label == "PERSISTENT_TREND" and t.current_direction == "POSITIVE":
             is_persistent = True
             break
-    return row["player_id"], row["reason"], is_persistent, row["signal"]
+    from fpl_agent.models.text_cleanup import clean_display_text
+
+    return row["player_id"], clean_display_text(row["reason"]), is_persistent, row["signal"]
 
 
 def _quantify_qualitative_gap(conn, qual_id: int, qual_signal: str | None, qual_reason: str | None) -> str:
@@ -237,7 +239,9 @@ def _qualitative_signal_for_outgoing_player(conn, player_id: int) -> tuple[str |
         if t.signal == row["signal"] and t.label == "PERSISTENT_TREND" and t.current_direction == row["direction"]:
             is_persistent = True
             break
-    return row["direction"], row["reason"], is_persistent
+    from fpl_agent.models.text_cleanup import clean_display_text
+
+    return row["direction"], clean_display_text(row["reason"]), is_persistent
 
 
 def _user_signal_for_player(conn, player_id: int) -> tuple[str | None, str | None]:

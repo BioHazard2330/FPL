@@ -113,6 +113,40 @@ def reconstruct_actual_points(conn, row, season: str) -> float | None:
     )
 
 
+def predict_player_round_points(
+    conn, player_id: int, season: str, as_of_date: str, position: str,
+) -> float | None:
+    """Real, leakage-safe per-player predicted "core" points for one round -
+    factored out 2026-09-07 from `run_backtest`'s own inline loop (below) so
+    `season_backtest.py`'s squad-level simulation can share the IDENTICAL
+    walk-forward-safe formula rather than a second, drift-prone copy. `None`
+    when `minutes_bucket_probabilities` can't stay inside `as_of_date` on its
+    real empirical path (see module docstring's LEAKAGE EXCLUSION section) -
+    the caller decides how to treat a player it can't yet honestly predict
+    for, never silently substituted with 0."""
+    minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date=as_of_date)
+    if minutes_probs.source != "empirical":
+        return None
+
+    unshrunk = player_shrunk_rates(conn, player_id, season, as_of_date=as_of_date)
+    if 0 < unshrunk["goals"].matches_played < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
+        hierarchical_priors = _hierarchical_prior_rates(conn, player_id, season, as_of_date=as_of_date)
+        shrunk = player_shrunk_rates(conn, player_id, season, as_of_date=as_of_date, prior_overrides=hierarchical_priors)
+    else:
+        shrunk = unshrunk
+
+    goals_rate, assists_rate, yellow_card_rate = _scoring_rates(conn, season, position)
+    effective_minutes_fraction = minutes_probs.p_partial * _PARTIAL_MINUTES_FRACTION + minutes_probs.p_full
+    appearance = expected_appearance_points(minutes_probs)
+
+    return (
+        appearance
+        + shrunk["goals"].shrunk_per90 * effective_minutes_fraction * goals_rate
+        + shrunk["assists"].shrunk_per90 * effective_minutes_fraction * assists_rate
+        + shrunk["cards"].shrunk_per90 * effective_minutes_fraction * yellow_card_rate
+    )
+
+
 def _round_start_dates(conn, season: str) -> list[str]:
     dates = [
         r["match_date"] for r in conn.execute(

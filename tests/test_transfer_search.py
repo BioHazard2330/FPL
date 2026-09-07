@@ -893,7 +893,7 @@ def test_build_diverse_paths_wildcard_starting_step_carries_the_real_rebuilt_squ
     wildcard step serialized with no squad information at all, `_synthetic_
     sequence_from_option`'s starting_step never threading `resulting_
     squad_ids` through). This test exercises that real path end to end."""
-    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions, path_detail
+    from fpl_agent.optimization.transfers import build_diverse_paths, compare_starting_actions
 
     xp_map = _seed_wildcard_pool(db_conn)
     _patch_wildcard_pool_expected_points(monkeypatch, xp_map)
@@ -1109,4 +1109,103 @@ def test_build_diverse_paths_no_breakdown_without_conn(db_conn, monkeypatch):
 
     for p in paths:
         assert "horizon_breakdown" not in p
+
+
+def _tc(player_in_name, ev1, ev3, ev5, player_out_id=1, player_in_id=99):
+    from fpl_agent.optimization.transfers import TransferCandidate
+
+    return TransferCandidate(
+        player_out_id=player_out_id, player_out_name="Owned", player_in_id=player_in_id,
+        player_in_name=player_in_name, price_delta_tenths=0,
+        ev_1gw=ev1, ev_3gw=ev3, ev_5gw=ev5, net_ev_1gw=ev1, net_ev_3gw=ev3, net_ev_5gw=ev5, uses_hit=False,
+    )
+
+
+def test_pareto_frontier_keeps_non_dominated_candidates_and_drops_dominated_ones():
+    """Real unit test, Phase 7.3 Part 9 (Pareto candidate retention).
+    A: best at 5GW. B: beats A at 1GW/3GW, loses at 5GW - genuinely
+    non-dominated, must survive. C: loses to A on every horizon - a real
+    dominated candidate, must be dropped even though it would rank above B
+    on a raw 1GW-only reading (nothing here beats it on 1GW alone, but A
+    beats it on every horizon simultaneously, which is what dominance means)."""
+    from fpl_agent.optimization.transfers import _pareto_frontier
+
+    a = _tc("A", ev1=1.0, ev3=5.0, ev5=10.0, player_in_id=1)
+    b = _tc("B", ev1=5.0, ev3=6.0, ev5=9.0, player_in_id=2)
+    c = _tc("C", ev1=0.5, ev3=4.0, ev5=8.0, player_in_id=3)  # dominated by A on every horizon
+
+    frontier = _pareto_frontier([a, b, c])
+
+    names = {c.player_in_name for c in frontier}
+    assert names == {"A", "B"}
+
+
+def test_pareto_frontier_caps_at_k():
+    from fpl_agent.optimization.transfers import _pareto_frontier
+
+    # 3 mutually non-dominated candidates (each wins on exactly one horizon).
+    candidates = [
+        _tc("A", ev1=10.0, ev3=1.0, ev5=1.0, player_in_id=1),
+        _tc("B", ev1=1.0, ev3=10.0, ev5=1.0, player_in_id=2),
+        _tc("C", ev1=1.0, ev3=1.0, ev5=10.0, player_in_id=3),
+    ]
+    assert len(_pareto_frontier(candidates, k=2)) == 2
+
+
+def test_compare_starting_actions_picks_the_pareto_candidate_with_the_better_real_continuation(db_conn, monkeypatch):
+    """Real regression test for the Phase 7.3 Part 9 fix - proves
+    compare_starting_actions no longer commits to the single n_gw=5-lens
+    top candidate before evaluating its own continuation. Fixture: player
+    "Front" ranks #1 by the n_gw=5 lens (10.0 vs "Alt"'s 9.0) but is NOT
+    dominated by Alt (Alt actually beats it on both 1GW and 3GW - a genuine
+    Pareto pair, both must be retained and continued). search_transfer_
+    sequences is patched so continuing from a squad containing Alt reaches a
+    real, much higher total_net_ev than continuing from Front - proving the
+    real, evaluated continuation decides the winner, not the upfront ranking
+    lens alone."""
+    from fpl_agent.optimization.transfers import compare_starting_actions
+
+    _seed_spiky_vs_steady_pool(db_conn)
+    now = "2026-01-01T00:00:00Z"
+    db_conn.execute(
+        f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        f"VALUES (10,10,'Front',2,1,'a',0,'{now}')"
+    )
+    db_conn.execute(
+        f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+        f"VALUES (10, 50, '{now}', NULL)"
+    )
+    db_conn.commit()
+
+    totals = {
+        1: {1: 1.0, 3: 3.0, 5: 5.0},    # Owned
+        10: {1: 1.0, 3: 5.0, 5: 10.0},  # Front - wins the n_gw=5 lens outright
+        6: {1: 5.0, 3: 6.0, 5: 9.0},    # Steady/Alt - beats Front on 1GW and 3GW, genuinely non-dominated
+        5: {1: 0.5, 3: 2.0, 5: 3.0},    # Spiky - dominated by Front on every horizon, must be dropped
+    }
+
+    def fake_window(conn, player_id, n_gw, from_event=None):
+        return SimpleNamespace(total_median=totals[player_id][n_gw])
+
+    monkeypatch.setattr(transfers_mod, "expected_points_window", fake_window)
+
+    real_search = transfers_mod.search_transfer_sequences
+
+    def fake_search(conn, squad_ids, *args, **kwargs):
+        if 6 in squad_ids:  # continuing with Alt reaches a genuinely better real future
+            return [SimpleNamespace(total_net_ev=1000.0, steps=())]
+        return real_search(conn, squad_ids, *args, **kwargs)
+
+    monkeypatch.setattr(transfers_mod, "search_transfer_sequences", fake_search)
+
+    options = compare_starting_actions(
+        db_conn, squad_ids=[1], free_transfers=1, bank_tenths=100, horizon_gw=2, continuation_beam_width=2,
+    )
+
+    transfer_options = [o for o in options if o.kind == "transfer"]
+    assert len(transfer_options) == 1, "one retained option per squad player, not one row per Pareto candidate"
+    assert transfer_options[0].player_in_name == "Steady", (
+        f"expected the Pareto-retained Alt candidate (real continuation total_net_ev=1000.0) to win over "
+        f"Front (the single n_gw=5-lens default), got {transfer_options[0].player_in_name}"
+    )
 

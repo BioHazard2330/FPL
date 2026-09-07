@@ -52,6 +52,45 @@ def test_expected_points_shape_and_bounds(db_conn):
     assert ep.median > 0  # appearance points alone, since FIT with a minutes prior
 
 
+def test_expected_points_exposes_real_outcome_probabilities(db_conn):
+    """Real regression test, Phase 7.3 Part 1 ("better separation between
+    BASELINE EXPECTATION and UPSIDE PROBABILITY") - `outcome_probs` reads
+    real threshold-crossing frequencies off the SAME Monte Carlo trials
+    `_sampled_floor_ceiling` already runs for floor/ceiling, zero new
+    simulation. Must be internally consistent (monotonically decreasing
+    probability at higher thresholds) and genuinely bounded to [0, 1].
+
+    Needs a real unfinished `fixtures` row for player 1's team - without one,
+    `expected_points()` takes the disclosed blank-gameweek fallback branch
+    (a flat multiplicative heuristic, never simulated), where `outcome_probs`
+    is correctly `None` by design rather than a bug (confirmed live: every
+    OTHER test in this file that omits a fixtures row is, in fact, silently
+    exercising that same fallback branch, not the real Monte Carlo one -
+    `_bootstrap_two_teams_full_scoring`/`_insert_fixture` below are this
+    file's own established pattern for reaching the real branch). No DC-model
+    match history or odds seeded: `_blended_fixture_goals`/
+    `_get_or_fit_dc_model` both fall back gracefully to `_LEAGUE_AVERAGE_
+    GOALS`/`rho=0.0` with none, still a real (uncorrelated-Poisson) Monte
+    Carlo simulation, not the heuristic fallback."""
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+
+    ep = expected_points(db_conn, 1)
+
+    assert ep.outcome_probs is not None
+    op = ep.outcome_probs
+    for p in (op.prob_blank, op.prob_2plus, op.prob_5plus, op.prob_10plus):
+        assert 0.0 <= p <= 1.0
+    # A real, monotonic outcome ladder - reaching a higher threshold can never
+    # be more likely than reaching a lower one.
+    assert op.prob_2plus >= op.prob_5plus >= op.prob_10plus
+    # Real, mutually exclusive-ish sanity: blanking and reaching 2+ can't both
+    # be near-certain at once for a genuinely uncertain outcome.
+    assert op.prob_blank + op.prob_2plus <= 1.0 + 1e-9
+
+
 def test_expected_points_zero_for_confirmed_unavailable(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "u"

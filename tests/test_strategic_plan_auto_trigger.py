@@ -9,7 +9,6 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import fpl_agent.cli.main as main_mod
-import fpl_agent.models.decision_freshness as freshness_mod
 import fpl_agent.optimization.locked_squad as locked_squad_mod
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.ingestion.change_detection import record_event
