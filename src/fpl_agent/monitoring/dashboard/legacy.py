@@ -3568,15 +3568,30 @@ _CSS = """
      harmlessly (no mask support = no fade, nav still fully usable) rather
      than a JS scroll-shadow toggle this static single-file dashboard has
      no runtime for. */
-  .site-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 2px; overflow-x: auto;
+  /* Real nav rework (2026-09-08, Phase 8.0 Part 7) - the prior bordered,
+     rounded, padded container made this read as a generic SaaS pill-bar
+     tab strip, indistinguishable from any admin dashboard's own nav. A
+     plain bottom rule line (broadcast lower-third convention, not a
+     boxed control) plus a real per-link active-state underline (driven by
+     the IntersectionObserver below - genuinely tracks which screen is in
+     view on this single continuously-scrolled page, not decorative)
+     replaces it. */
+  .site-nav { position: sticky; top: 0; z-index: 20; display: flex; align-items: stretch; gap: 4px; overflow-x: auto;
     background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px);
-    border: 1px solid var(--border); border-radius: 8px; padding: 4px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border); margin-bottom: 18px;
     mask-image: linear-gradient(to right, black calc(100% - 22px), transparent 100%);
     -webkit-mask-image: linear-gradient(to right, black calc(100% - 22px), transparent 100%); }
   .site-nav a { flex-shrink: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.03em; color: var(--muted); text-decoration: none; padding: 7px 12px; border-radius: 5px;
-    transition: background 0.15s ease, color 0.15s ease; }
-  .site-nav a:hover { color: var(--fg); background: var(--surface-2); }
+    letter-spacing: 0.03em; color: var(--muted); text-decoration: none; padding: 11px 14px;
+    border-bottom: 2px solid transparent; transition: color 0.15s ease, border-color 0.15s ease; }
+  .site-nav a:hover { color: var(--fg); }
+  .site-nav a.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+  .site-nav-sep { flex-shrink: 0; width: 1px; align-self: center; height: 16px; background: var(--border); margin: 0 2px; }
+  /* LIVE is genuinely secondary (Part 7) - smaller, muted by default, and
+     only rendered at all when a real match is live (see assemble.py's own
+     conditional) - this styling is the quiet-by-default half of that. */
+  .site-nav-secondary { font-size: 0.68rem; padding-top: 12px; padding-bottom: 10px; }
+  .site-nav-secondary.is-active { border-bottom-color: var(--captaincy-pink); }
 
   .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0;
     box-shadow: 0 0 0 0 rgba(12,163,12,0.5); animation: pulse 2s infinite; }
@@ -4834,8 +4849,14 @@ _CSS = """
   .advanced-hub-body .panel-compare { border: none; padding: 0; margin: 0; }
 
   /* --- Motion, focus, accessibility (2026-08-21) --- */
-  .panel, .hero-primary, .hero-metric { animation: fade-slide-in 0.35s ease both; }
-  @keyframes fade-slide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  /* Real motion audit (2026-09-08, Phase 8.0 Part 25) - this page-load
+     fade-slide-in fired on every panel every regen, with no real trigger
+     (this is a static, already-fully-rendered HTML document, not content
+     streaming in) - exactly the "animates because premium dashboards
+     animate" pattern the audit named to remove. Kept below: the live-
+     freshness pulse dot (communicates a real live-polling state) and the
+     drawer's own open/close transition (a real state change) - motion
+     that means something, not decorative page-load flourish. */
   a:focus-visible, button:focus-visible, summary:focus-visible, .btn-refresh:focus-visible,
   .site-nav a:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {

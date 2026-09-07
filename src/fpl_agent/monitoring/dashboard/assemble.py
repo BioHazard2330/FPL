@@ -1520,6 +1520,58 @@ def generate_dashboard_html(
   tickNextCheck();
   setInterval(function() {{ tickLiveStrip(); tickNextCheck(); }}, 1000);
 
+  // Real scroll-affordance check (2026-09-08, Phase 8.0 Part 29) - the
+  // trajectory strip's own horizontal scroll has always worked; this only
+  // decides whether the real right-edge fade hint (`.cmd-trajectory-has-
+  // overflow`, CSS above) should show, based on whether there's genuinely
+  // more content than fits. Re-checked on resize since 1440px vs 1080px
+  // (this project's own two supported desktop widths) can disagree.
+  function markTrajectoryOverflow() {{
+    document.querySelectorAll('.cmd-trajectory-line').forEach(function(line) {{
+      var wrap = line.closest('.cmd-trajectory');
+      if (!wrap) return;
+      // Real "is there more to the right" check, not just "does this
+      // overflow at all" - scrolled all the way to the end correctly
+      // clears the hint, since there's genuinely nothing left to reveal.
+      var moreToRight = line.scrollLeft + line.clientWidth < line.scrollWidth - 1;
+      wrap.classList.toggle('cmd-trajectory-has-overflow', moreToRight);
+    }});
+  }}
+  markTrajectoryOverflow();
+  window.addEventListener('resize', markTrajectoryOverflow);
+  document.querySelectorAll('.cmd-trajectory-line').forEach(function(line) {{
+    line.addEventListener('scroll', markTrajectoryOverflow);
+  }});
+
+  // Real active-screen nav indicator (2026-09-08, Phase 8.0 Part 6/7) -
+  // this dashboard is one continuously-scrolled page (no client-side
+  // routing), so "which screen am I on" has never been tracked anywhere -
+  // confirmed live, the nav previously gave zero indication of the
+  // current section. A real IntersectionObserver per nav target, not a
+  // scroll-position guess - whichever real section occupies the most of
+  // a band near the top of the viewport wins.
+  (function() {{
+    var navLinks = Array.prototype.slice.call(document.querySelectorAll('.site-nav a[href^="#"]'));
+    var targets = navLinks.map(function(a) {{
+      return {{ link: a, el: document.getElementById(a.getAttribute('href').slice(1)) }};
+    }}).filter(function(t) {{ return !!t.el; }});
+    if (!targets.length || !('IntersectionObserver' in window)) return;
+    var current = null;
+    function setActive(el) {{
+      if (el === current) return;
+      current = el;
+      targets.forEach(function(t) {{ t.link.classList.toggle('is-active', t.el === el); }});
+    }}
+    var observer = new IntersectionObserver(function(entries) {{
+      var best = null, bestRatio = 0;
+      entries.forEach(function(e) {{
+        if (e.isIntersecting && e.intersectionRatio > bestRatio) {{ best = e.target; bestRatio = e.intersectionRatio; }}
+      }});
+      if (best) setActive(best);
+    }}, {{ rootMargin: '-72px 0px -60% 0px', threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] }});
+    targets.forEach(function(t) {{ observer.observe(t.el); }});
+  }})();
+
   function applySnapshot(snap) {{
     if (!snap) return;
     // Real out-of-order guard (2026-08-29, "live command centre" pass,
@@ -2565,10 +2617,22 @@ _CSS_WORKSPACE = """
 
   /* Trajectory scene: current squad (real shirts) -> the action -> real
      future legs, fading. A fragile-path leg carries a real watch marker. */
-  .cmd-trajectory { margin-top: 26px; }
+  .cmd-trajectory { margin-top: 26px; position: relative; }
   .cmd-trajectory-label { font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint);
     margin-bottom: 14px; }
   .cmd-trajectory-line { display: flex; align-items: flex-start; gap: 0; overflow-x: auto; padding-bottom: 6px; }
+  /* Real, confirmed interaction gap (2026-09-08, Phase 8.0 Part 29) - the
+     line above has always scrolled internally (see the `min-width: 0` fix
+     just above), but nothing ever told a viewer that later GWs exist off
+     the right edge - a real desktop confirmed case: at 1080px the last
+     2-3 real trajectory legs are invisible with zero affordance. A plain
+     right-edge fade, toggled only when there's real overflow to hide
+     (`.cmd-trajectory-has-overflow`, set by JS below) - never shown on a
+     path that already fits, never a fake/decorative fade. */
+  .cmd-trajectory-has-overflow::after {
+    content: ""; position: absolute; top: 14px; right: 0; bottom: 6px; width: 36px; pointer-events: none;
+    background: linear-gradient(to right, transparent, var(--bg) 85%);
+  }
   .cmd-node { flex: 0 0 auto; width: 112px; position: relative; padding-top: 14px; border-top: 2px solid var(--gridline); }
   .cmd-node-current { width: 108px; border-top: 2px solid var(--muted); }
   .cmd-node-now { width: 140px; border-top: 2px solid #04f5ff; }
@@ -2609,10 +2673,18 @@ _CSS_WORKSPACE = """
     letter-spacing: 0.03em; color: var(--muted); margin-bottom: 4px; }
   .cmd-alt-name { font-size: 1.1rem; font-weight: 700; color: var(--muted); margin-bottom: 10px; overflow-wrap: break-word; }
   .cmd-alt-line { margin: 0 0 8px; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+  /* Real card-soup fix (2026-09-08, Phase 8.0 Part 5) - this was 3
+     individually-backgrounded, individually-rounded boxes for what is one
+     real concept (the scouted alternative's own risk profile) - the kind
+     of "everything gets a container" pattern the visual audit named
+     directly. One quiet strip with rule-line dividers between items
+     communicates the same real grouping without three competing card
+     edges - spacing and a shared baseline do the work a background used to. */
   .cmd-alt-stats { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--gridline);
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
-  .cmd-alt-stat { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px;
-    background: var(--surface-2); border-radius: 6px; }
+    display: flex; gap: 0; }
+  .cmd-alt-stat { display: flex; flex-direction: column; gap: 3px; padding: 0 16px; flex: 1 1 0; }
+  .cmd-alt-stat + .cmd-alt-stat { border-left: 1px solid var(--gridline); }
+  .cmd-alt-stat:first-child { padding-left: 0; }
   .cmd-alt-stat-label { color: var(--faint); letter-spacing: 0.05em; font-size: 0.7rem; text-transform: uppercase; order: 2; }
   .cmd-alt-stat-value { color: var(--fg); font-weight: 700; font-size: 0.92rem; order: 1; }
 

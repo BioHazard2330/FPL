@@ -21,6 +21,14 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.16",
     "mypy>=2.3",
+    # Real, working visual-verification tool (2026-09-08, Phase 8.0) - the
+    # Browser pane's own screenshot capture proved unreliable past ~300px
+    # of scroll on this project's own large single-page dashboard;
+    # Playwright driven directly against `python -m http.server` (see
+    # CLAUDE.md's Phase 8.0 entry) is the real, confirmed-reliable
+    # replacement for dashboard visual QA at 1440/1080px. Run
+    # `playwright install chromium` once after installing this.
+    "playwright>=1.62",
 ]
 
 [project.scripts]

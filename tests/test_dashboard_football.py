@@ -26,6 +26,28 @@ def test_football_screen_shows_the_squad_change_module_for_a_squad_players_own_s
     assert "MyPlayer" in result.split("fb-squad-changes")[1].split("fb-feed")[0]
 
 
+def test_squad_change_module_never_shows_the_redundant_my_squad_badge(db_conn):
+    """Real regression test, Phase 8.0 Part 17 - every row in this module
+    is already squad-scoped by definition, so the "MY SQUAD" text badge
+    (real, useful in the general league-wide feed below, where it
+    distinguishes a squad player from 500+ others) adds zero information
+    here and must not render. The row's own subtle highlight styling
+    (`fb-signal-row-mine`) is a separate, non-redundant visual cue and
+    stays."""
+    _seed_player(db_conn, player_id=1, web_name="MyPlayer")
+    mid = _seed_match(db_conn)
+    _seed_observation(db_conn, mid, 1, "ROLE_CHANGE", "POSITIVE")
+
+    result = render_football_screen(db_conn, {1})
+
+    squad_section = result.split("fb-squad-changes")[1].split("fb-feed")[0]
+    assert "fb-signal-mine" not in squad_section
+    # The module's own real heading ("WHAT CHANGED FOR MY SQUAD?") legitimately
+    # contains this substring - only the per-row badge span is checked here.
+    rows_only = squad_section.split("</div>", 1)[1]
+    assert "MY SQUAD" not in rows_only
+
+
 def test_squad_change_module_suppresses_a_redundant_positive_minutes_signal(db_conn):
     """Real regression test, Phase 7.6 Part 13 - a plain "90 minutes played"
     signal for the SAME real match a richer GOAL_THREAT signal already

@@ -36,18 +36,24 @@ _DIRECTION_DOT = {"POSITIVE": "ok", "NEGATIVE": "bad", "NEUTRAL": "muted", "WATC
 _DEFAULT_VISIBLE_PER_CATEGORY = 6
 
 
-def _signal_row_html(s, crest_by_team: dict, squad_ids: set[int]) -> str:
+def _signal_row_html(s, crest_by_team: dict, squad_ids: set[int], show_mine_badge: bool = True) -> str:
     """Real EVENT -> EVIDENCE -> FPL EFFECT row (Part 2/3 of the visual
     rebuild): `s.evidence` (the concrete stat fact - "5 shots, 0.89 xG",
     "corner order 3 -> 1") leads, `s.interpretation` (now a short, concrete
     FPL-consequence clause - never flowery prose, see `statistical_evidence.
     py`/`role_signal_detectors.py`) sits as a small tag next to it - never
-    the other way round."""
+    the other way round.
+
+    `show_mine_badge=False` (Phase 8.0 Part 17, real confirmed redundancy)
+    - the "MY SQUAD" badge is real, useful information in the league-wide
+    feed below (distinguishing a squad player from 500+ others), but pure
+    noise inside `_squad_change_module_html`'s own dedicated squad-only
+    list, where every single row is already squad-scoped by definition."""
     dot = _DIRECTION_DOT.get(s.direction, "muted")
     crest = crest_by_team.get(s.entity_id, "")
     icon = _CATEGORY_ICON.get(s.category, "•")
     expiry = f"<span class='fb-signal-expiry'>expires {_esc(_relative_time(s.expires_at))}</span>" if s.expires_at else ""
-    mine = "<span class='fb-signal-mine'>MY SQUAD</span>" if s.entity_id in squad_ids else ""
+    mine = "<span class='fb-signal-mine'>MY SQUAD</span>" if show_mine_badge and s.entity_id in squad_ids else ""
     effect = f"<span class='fb-signal-effect'>{_esc(s.interpretation)}</span>" if s.interpretation else ""
     return f"""<div class="fb-signal-row{' fb-signal-row-mine' if s.entity_id in squad_ids else ''}">
     <span class="fb-signal-icon fb-signal-dot-{dot}">{icon}</span>
@@ -132,7 +138,7 @@ def _squad_change_module_html(signals: list, squad_ids: set[int], crest_by_playe
         if not (s.category == "MINUTES" and s.direction == "POSITIVE" and (s.entity_id, s.match_id) in richer_player_matches)
     ]
     mine.sort(key=lambda s: _DECISION_EFFECT_RANK.get(s.decision_effect, 0), reverse=True)
-    rows_html = "".join(_signal_row_html(s, crest_by_player, squad_ids) for s in mine[:10])
+    rows_html = "".join(_signal_row_html(s, crest_by_player, squad_ids, show_mine_badge=False) for s in mine[:10])
     return f"""<div class="fb-squad-changes">
     <div class="fb-section-label">WHAT CHANGED FOR MY SQUAD? <span class="panel-subtitle">ranked by estimated FPL relevance</span></div>
     {rows_html}
