@@ -182,3 +182,118 @@ def test_run_season_backtest_raises_without_a_priced_universe(db_conn):
     db_conn.commit()
     with pytest.raises(ValueError, match="no player_season_history rows"):
         sb.run_season_backtest(db_conn, "2099-00")
+
+
+def test_build_candidates_defaults_to_preseason_price(db_conn):
+    _seed_full_season(db_conn, "2025-26")
+    universe, _, _ = sb._candidate_universe(db_conn, "2025-26")
+    candidates, hits, fallbacks = sb._build_candidates(db_conn, universe, "2025-26", "2025-08-01")
+    assert hits == 0 and fallbacks == 0
+    by_id = {c.player_id: c for c in candidates}
+    assert by_id[1].price_tenths == 50  # 45 + (1 % 5) * 5, the fixture's own preseason start_cost
+
+
+def test_candidate_universe_uses_real_historical_club_and_falls_back_when_uncovered(db_conn):
+    """Phase 7.5 Part 4 - a real, recovered historical club affiliation
+    must override the current club for a covered player, and any player
+    the archive doesn't cover must fall back to their current real club,
+    never a fabricated one."""
+    _seed_full_season(db_conn, "2025-26")
+    db_conn.execute(
+        "INSERT INTO historical_player_roster (player_code, season, season_fpl_id, team_short_name, position, "
+        "web_name, first_name, second_name, source, retrieved_at) VALUES "
+        "(1, '2025-26', 1, 'TM99', 'MID', 'Player1', 'Player', 'One', 'test', 't0')"
+    )
+    db_conn.commit()
+
+    universe, hits, fallbacks = sb._candidate_universe(db_conn, "2025-26", team_source="historical")
+
+    assert hits == 1
+    assert fallbacks == len(universe) - 1
+    by_id = {r["player_id"]: r for r in universe}
+    assert by_id[1]["team_short"] == "TM99"           # the real recovered historical club
+    assert by_id[2]["team_short"] == f"TM{1 + (2 % 5)}"  # uncovered player - falls back to its own real current club
+
+
+def test_candidate_universe_defaults_to_current_club(db_conn):
+    _seed_full_season(db_conn, "2025-26")
+    universe, hits, fallbacks = sb._candidate_universe(db_conn, "2025-26")
+    assert hits == 0 and fallbacks == 0
+    by_id = {r["player_id"]: r for r in universe}
+    assert by_id[1]["team_short"] == f"TM{1 + (1 % 5)}"
+
+
+def test_build_candidates_uses_real_historical_gw_price_and_falls_back_when_uncovered(db_conn):
+    """Phase 7.5 Part 3 - a real, recovered per-GW archive price must
+    override the preseason price for a covered player-round, and any
+    player-round the archive doesn't cover must fall back to the existing
+    preseason price rather than crash or fabricate one."""
+    _seed_full_season(db_conn, "2025-26")
+    db_conn.execute(
+        "INSERT INTO historical_gw_snapshot (player_code, season, gw, price_tenths, team_short_name, "
+        "source, retrieved_at) VALUES (1, '2025-26', 1, 999, 'TM1', 'test', 't0')"
+    )
+    db_conn.commit()
+
+    universe, _, _ = sb._candidate_universe(db_conn, "2025-26")
+    candidates, hits, fallbacks = sb._build_candidates(
+        db_conn, universe, "2025-26", "2025-08-01", price_source="historical_gw", gw=1,
+    )
+
+    assert hits == 1
+    assert fallbacks == len(candidates) - 1  # every other real player-round in this fixture is uncovered
+    by_id = {c.player_id: c for c in candidates}
+    assert by_id[1].price_tenths == 999      # the real recovered archive price, not the preseason 50
+    assert by_id[2].price_tenths == 45 + (2 % 5) * 5  # uncovered player - falls back to its own real preseason price
+
+
+def test_run_season_backtest_reports_price_source_and_coverage(db_conn):
+    """Phase 7.5 Part 3/13 - "historical_gw" is now the real, adopted
+    DEFAULT (a measured, quantified, real improvement across all 5
+    backtestable seasons - see the module's own docstring) - `price_source
+    ="preseason"` remains available for an explicit apples-to-apples
+    comparison against the pre-Phase-7.5 baseline."""
+    _seed_full_season(db_conn, "2025-26")
+
+    default_result = sb.run_season_backtest(db_conn, "2025-26")
+    assert default_result.price_source == "historical_gw"
+    assert default_result.historical_price_coverage == (0, 45)  # no real archive row seeded - every candidate falls back (15 players x 3 real rounds)
+
+    preseason_result = sb.run_season_backtest(db_conn, "2025-26", price_source="preseason")
+    assert preseason_result.price_source == "preseason"
+    assert preseason_result.historical_price_coverage == (0, 0)
+
+    db_conn.execute(
+        "INSERT INTO historical_gw_snapshot (player_code, season, gw, price_tenths, team_short_name, "
+        "source, retrieved_at) VALUES (1, '2025-26', 1, 55, 'TM1', 'test', 't0')"
+    )
+    db_conn.commit()
+    historical_result = sb.run_season_backtest(db_conn, "2025-26")
+    hits, fallbacks = historical_result.historical_price_coverage
+    assert hits >= 1  # the one real seeded gw=1 row for player 1 is found at least at round 0
+    assert fallbacks > 0  # every uncovered player-round in this small fixture correctly falls back
+
+
+def test_run_season_backtest_reports_team_source_and_coverage(db_conn):
+    """Phase 7.5 Part 4/13 - "historical" is now the real, adopted DEFAULT -
+    see the price-source test's own docstring for the same reasoning."""
+    _seed_full_season(db_conn, "2025-26")
+
+    default_result = sb.run_season_backtest(db_conn, "2025-26")
+    assert default_result.team_source == "historical"
+    assert default_result.historical_team_coverage == (0, 15)  # no real archive row seeded - every candidate falls back
+
+    current_result = sb.run_season_backtest(db_conn, "2025-26", team_source="current")
+    assert current_result.team_source == "current"
+    assert current_result.historical_team_coverage == (0, 0)
+
+    db_conn.execute(
+        "INSERT INTO historical_player_roster (player_code, season, season_fpl_id, team_short_name, position, "
+        "web_name, first_name, second_name, source, retrieved_at) VALUES "
+        "(1, '2025-26', 1, 'TM99', 'MID', 'Player1', 'Player', 'One', 'test', 't0')"
+    )
+    db_conn.commit()
+    historical_result = sb.run_season_backtest(db_conn, "2025-26")
+    hits, fallbacks = historical_result.historical_team_coverage
+    assert hits == 1
+    assert fallbacks > 0

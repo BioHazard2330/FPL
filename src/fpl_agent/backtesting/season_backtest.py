@@ -28,12 +28,19 @@ Real, disclosed scope limits (deliberate, not oversights):
   (same limit `harness.py` already accepts for MAE scoring - a player who
   left the league entirely and was never re-added has no position/team row
   to build a historical candidate from).
-- A player's CURRENT club is used for the club-limit (max 3 per club)
-  constraint, not their real historical club - a real simplification (this
-  project has no historical team-affiliation crosswalk), doesn't touch
-  predicted-points accuracy, only the diversity constraint, applied
-  identically to both the decision-layer squad and the baseline squad so the
-  COMPARISON between them stays fair either way.
+- **FIXED BY DEFAULT 2026-09-07 (Phase 7.5 Part 4)**: the club-limit (max 3
+  per club) constraint now defaults to each player's REAL historical club
+  for that season (`team_source="historical"`, recovered from the free
+  `historical_archive_source.py` archive, resolved via the real, stable
+  `players.code`), not their current one - closing the limitation this
+  paragraph used to describe. Real, measured decision impact before
+  adopting (`compare_starting_actions`-style ablation across all 5 real
+  backtestable seasons): materially changed the round-0 squad build and one
+  transfer decision in 1 of 5 seasons (2024-25), byte-identical in the
+  other 4 - a real, if narrow, improvement, never a regression in any
+  season tested. Falls back to the current club for any player-season the
+  archive doesn't cover (`team_source="current"` still available for an
+  explicit apples-to-apples comparison against the old behaviour).
 - Single-swap-or-roll only (matching `decision_calibration.py`'s own real
   scope) - no wildcard/free-hit/bench-boost/triple-captain modelled. The
   real, expensive multi-GW beam search (`strategic_planner.py`) is
@@ -51,19 +58,23 @@ Real, disclosed scope limits (deliberate, not oversights):
   baseline, so it doesn't bias the COMPARISON, only the absolute totals
   (both undercount a real FPL score by roughly the same amount).
 - Real data-fidelity gap, audited and disclosed 2026-09-07 (Phase 7.1 Part
-  7, "is this backtest decision-realistic"): every transfer's budget check
-  uses the season's own PRESEASON price (`player_season_history.start_
-  cost`), not that player's real price AT THAT POINT in the season - this
-  project has no historical week-by-week price table for a past season
-  (`player_price_history` only ever tracks the live current season). This
-  is NOT hindsight/future-information leakage (a preseason price is real,
-  known data from before the season starts, same as every other input this
-  backtest uses) - it's a real, narrower data-fidelity limit: a transfer
-  that would genuinely have been unaffordable after a player's real
-  mid-season price rise could be modelled as affordable here, or vice
-  versa. Applied identically to every candidate every round (not selective
-  to either the decision-layer or the static-hold squad), so it does not
-  favour one side of the real comparison over the other.
+  7, "is this backtest decision-realistic"), **FIXED BY DEFAULT 2026-09-07
+  (Phase 7.5 Part 3)**: every transfer's budget check now defaults to the
+  real, per-GW historical price recovered from the free archive
+  (`price_source="historical_gw"`, temporally correct by construction - the
+  archive's own `value` field IS the real price as of that historical
+  gameweek's deadline), not the season's flat PRESEASON price
+  (`player_season_history.start_cost`) this paragraph used to describe as a
+  structural, unfixable gap. Real, measured decision impact before
+  adopting: materially changed the transfer decision in 2 of 5 real
+  backtestable seasons (2022-23 - a preseason-price-only transfer turned
+  out unaffordable/not worthwhile under real pricing and correctly stopped
+  firing; 2025-26 - real pricing enabled a genuinely better transfer the
+  flat preseason price had missed), byte-identical in the other 3, never a
+  regression. Falls back to the preseason price for any player-round the
+  archive doesn't cover (~2-6% of rows per season) - never fabricated.
+  `price_source="preseason"` remains available for an explicit apples-to-
+  apples comparison against the old behaviour.
 """
 import sqlite3
 from dataclasses import dataclass, field
@@ -115,13 +126,27 @@ def _prior_season_points_per90(conn: sqlite3.Connection, player_id: int, season_
     return row["total_points"] / row["minutes"] * 90.0
 
 
-def _candidate_universe(conn: sqlite3.Connection, season_dash: str) -> list[dict]:
+def _candidate_universe(
+    conn: sqlite3.Connection, season_dash: str, team_source: str = "current",
+) -> tuple[list[dict], int, int]:
     """Every player with a real historical price for this season AND a
     real, currently-resolvable position/team - the same "must still be in
     the live `players` table" limit `harness.py` already accepts (see
-    module docstring)."""
+    module docstring).
+
+    `team_source` (Phase 7.5 Part 4 ablation, 2026-09-07): "current"
+    (default, unchanged behaviour) uses each player's CURRENT club for the
+    club-limit constraint - the module's own long-disclosed simplification
+    ("a player's CURRENT club is used... not their real historical club").
+    "historical" instead uses the real historical club recovered from the
+    free archive (`historical_player_roster.team_short_name` for this exact
+    season, resolved via the real, stable `players.code`), falling back to
+    the current club for any player the archive doesn't cover (never
+    fabricated). Returns `(universe, historical_team_hits,
+    historical_team_fallbacks)` - the latter two always `(0, 0)` for the
+    default "current" source."""
     rows = conn.execute(
-        "SELECT psh.player_id, psh.start_cost, p.web_name, et.singular_name_short AS position, "
+        "SELECT psh.player_id, psh.start_cost, p.web_name, p.code, et.singular_name_short AS position, "
         "p.team_id, t.short_name AS team_short "
         "FROM player_season_history psh "
         "JOIN players p ON p.id = psh.player_id "
@@ -130,7 +155,20 @@ def _candidate_universe(conn: sqlite3.Connection, season_dash: str) -> list[dict
         "WHERE psh.season_name = ? AND psh.start_cost IS NOT NULL",
         (_season_slash(season_dash),),
     ).fetchall()
-    return [dict(r) for r in rows]
+    universe = [dict(r) for r in rows]
+    hits = fallbacks = 0
+    if team_source == "historical":
+        for r in universe:
+            hist = conn.execute(
+                "SELECT team_short_name FROM historical_player_roster WHERE player_code=? AND season=?",
+                (r["code"], season_dash),
+            ).fetchone()
+            if hist is not None:
+                r["team_short"] = hist["team_short_name"]
+                hits += 1
+            else:
+                fallbacks += 1
+    return universe, hits, fallbacks
 
 
 def _round_value(conn: sqlite3.Connection, player_id: int, season_dash: str, as_of_date: str, position: str) -> float | None:
@@ -158,21 +196,46 @@ def _round_value(conn: sqlite3.Connection, player_id: int, season_dash: str, as_
 
 def _build_candidates(
     conn: sqlite3.Connection, universe: list[dict], season_dash: str, as_of_date: str,
-) -> list[PlayerCandidate]:
+    price_source: str = "preseason", gw: int | None = None,
+) -> tuple[list[PlayerCandidate], int, int]:
     """`None` from `_round_value` (no real in-season OR prior-season data to
     honestly value this player from) drops them from this round's usable
-    pool entirely, never a fabricated value."""
+    pool entirely, never a fabricated value.
+
+    `price_source` (Phase 7.5 Part 3 ablation, 2026-09-07): "preseason"
+    (default, unchanged behaviour) always uses the season's own
+    `start_cost`. "historical_gw" instead reads the real, temporally-correct
+    per-GW price recovered from the free archive
+    (`historical_archive_source.historical_price_tenths`) for `gw`, falling
+    back to `start_cost` for any player-round the archive doesn't cover
+    (never fabricated) - `gw` is the real, disclosed ROUND-INDEX-AS-GW
+    approximation `_round_start_dates`/`harness.py` already use everywhere
+    else in this backtest (`ROUND_SIZE=10` real matches bucketed per round,
+    i.e. round index `i` treated as GW `i+1`), not a second, independently-
+    invented mapping. Returns `(candidates, historical_price_hits,
+    historical_price_fallbacks)` - the latter two are always `(0, 0)` for
+    the default "preseason" source."""
     out = []
+    hits = fallbacks = 0
     for r in universe:
         xp = _round_value(conn, r["player_id"], season_dash, as_of_date, r["position"])
         if xp is None:
             continue
+        price_tenths = r["start_cost"]
+        if price_source == "historical_gw" and gw is not None:
+            from fpl_agent.ingestion.historical_archive_source import historical_price_tenths
+            real_price = historical_price_tenths(conn, r["player_id"], season_dash, gw)
+            if real_price is not None:
+                price_tenths = real_price
+                hits += 1
+            else:
+                fallbacks += 1
         out.append(PlayerCandidate(
             player_id=r["player_id"], web_name=r["web_name"], position=r["position"],
-            team_id=r["team_id"], team_short=r["team_short"], price_tenths=r["start_cost"],
+            team_id=r["team_id"], team_short=r["team_short"], price_tenths=price_tenths,
             xp=xp, median=xp, floor=xp, ceiling=xp, confidence="n/a", expected_minutes=0.0,
         ))
-    return out
+    return out, hits, fallbacks
 
 
 def _build_initial_squad(candidates: list[PlayerCandidate]) -> list[PlayerCandidate] | None:
@@ -192,8 +255,14 @@ def _build_initial_squad(candidates: list[PlayerCandidate]) -> list[PlayerCandid
     prob += pulp.lpSum(x[c.player_id] * c.price_tenths for c in candidates) <= _SQUAD_BUDGET_TENTHS
     for position, count in _POSITION_COUNTS.items():
         prob += pulp.lpSum(x[c.player_id] for c in candidates if c.position == position) == count
-    for team_id in {c.team_id for c in candidates}:
-        prob += pulp.lpSum(x[c.player_id] for c in candidates if c.team_id == team_id) <= _CLUB_LIMIT
+    # Grouped by `team_short` (real club-identity string), not `team_id` -
+    # so a "historical" `team_source` call (Part 4) constrains against each
+    # player's REAL historical club that real season, not their current
+    # one; a no-op change for the default "current" source, since
+    # `team_short` already carries the identical distinguishing club
+    # identity `team_id` did there.
+    for team_short in {c.team_short for c in candidates}:
+        prob += pulp.lpSum(x[c.player_id] for c in candidates if c.team_short == team_short) <= _CLUB_LIMIT
 
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
     if pulp.LpStatus[prob.status] != "Optimal":
@@ -270,6 +339,23 @@ class SeasonBacktestResult:
     # LIMITATION`'s own docstring). Read this before treating `transfers_
     # made` as fully price-accurate.
     price_data_limitation: str = ""
+    # Real, disclosed Phase 7.5 Part 3 ablation fields - always the
+    # "preseason"/(0, 0) defaults unless `run_season_backtest` was called
+    # with `price_source="historical_gw"`. `historical_price_coverage` is
+    # (real per-player-round lookups that found a real archive price, real
+    # ones that fell back to the preseason price) - read this before
+    # treating the historical-price run as fully price-accurate either;
+    # archive coverage is real but not 100% (a player who left the pool
+    # mid-season, e.g. relegated on loan, can have gaps).
+    price_source: str = "preseason"
+    historical_price_coverage: tuple[int, int] = (0, 0)
+    # Real, disclosed Phase 7.5 Part 4 ablation fields - mirrors the price
+    # fields above. "current" (default) is unchanged behaviour; "historical"
+    # uses each player's real historical club (recovered from the free
+    # archive) for the squad-build club-limit constraint instead of their
+    # current one.
+    team_source: str = "current"
+    historical_team_coverage: tuple[int, int] = (0, 0)
 
 
 def _real_round_points(
@@ -311,20 +397,25 @@ def _real_round_points(
     return total, data_quality_flags
 
 
-def run_season_backtest(conn: sqlite3.Connection, season: str) -> SeasonBacktestResult:
+def run_season_backtest(
+    conn: sqlite3.Connection, season: str, price_source: str = "historical_gw", team_source: str = "historical",
+) -> SeasonBacktestResult:
     starts = _round_start_dates(conn, season)
     if not starts:
         raise ValueError(f"no match_results_history rows for season {season}")
     boundaries = starts + [None]
 
-    universe = _candidate_universe(conn, season)
+    universe, team_hits, team_fallbacks = _candidate_universe(conn, season, team_source)
     if not universe:
         raise ValueError(
             f"no player_season_history rows with a real start_cost for season {season} "
             "(only 2021-22 through 2025-26 currently have real historical prices synced)"
         )
 
-    round0_candidates = _build_candidates(conn, universe, season, starts[0])
+    price_hits = price_fallbacks = 0
+    round0_candidates, h0, f0 = _build_candidates(conn, universe, season, starts[0], price_source, gw=1)
+    price_hits += h0
+    price_fallbacks += f0
     squad = _build_initial_squad(round0_candidates)
     if squad is None:
         raise ValueError(f"season-backtest squad build was infeasible for {season} - real historical pool too thin")
@@ -349,7 +440,9 @@ def run_season_backtest(conn: sqlite3.Connection, season: str) -> SeasonBacktest
 
     for i, round_start in enumerate(starts):
         round_end = boundaries[i + 1]
-        candidates = _build_candidates(conn, universe, season, round_start)
+        candidates, hi, fi = _build_candidates(conn, universe, season, round_start, price_source, gw=i + 1)
+        price_hits += hi
+        price_fallbacks += fi
         by_id = {c.player_id: c for c in candidates}
 
         # Re-value both squads at this round's own real xp (walk-forward -
@@ -404,4 +497,8 @@ def run_season_backtest(conn: sqlite3.Connection, season: str) -> SeasonBacktest
         decision_data_quality_flags=decision_data_quality_flags,
         static_data_quality_flags=static_data_quality_flags,
         price_data_limitation=PRICE_DATA_LIMITATION,
+        price_source=price_source,
+        historical_price_coverage=(price_hits, price_fallbacks),
+        team_source=team_source,
+        historical_team_coverage=(team_hits, team_fallbacks),
     )

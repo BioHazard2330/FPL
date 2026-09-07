@@ -45,7 +45,7 @@ _SEASON_HTML = json.dumps({
 
 _MATCH_HTML = json.dumps({
     "rosters": {
-        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50", "time": "90",
+        "h": {"101": {"id": "101", "player_id": "9101", "player": "Erling Haaland", "team_id": "50", "time": "90",
                        "goals": "1", "assists": "0", "shots": "3", "xG": "0.6", "xA": "0.0",
                        "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
         "a": {},

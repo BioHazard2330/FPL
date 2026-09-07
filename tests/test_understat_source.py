@@ -7,10 +7,10 @@ from fpl_agent.ingestion.understat_source import (
 
 def test_parse_understat_match_players_flattens_both_sides():
     rosters = {
-        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50",
+        "h": {"101": {"id": "101", "player_id": "9101", "player": "Erling Haaland", "team_id": "50",
                        "time": "90", "goals": "2", "assists": "0", "shots": "5", "xG": "1.8",
                        "xA": "0.1", "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
-        "a": {"202": {"id": "202", "player": "Cole Palmer", "team_id": "8",
+        "a": {"202": {"id": "202", "player_id": "9202", "player": "Cole Palmer", "team_id": "8",
                        "time": "90", "goals": "0", "assists": "1", "shots": "2", "xG": "0.3",
                        "xA": "0.5", "key_passes": "3", "yellow_card": "1", "red_card": "0"}},
     }
@@ -27,8 +27,8 @@ def test_parse_understat_match_players_flattens_both_sides():
 
 
 def test_parse_understat_match_players_raises_for_unknown_team_id():
-    rosters = {"h": {"101": {"id": "101", "player": "X", "team_id": "999", "time": "90", "goals": "0",
-                              "assists": "0", "shots": "0", "xG": "0", "xA": "0", "key_passes": "0",
+    rosters = {"h": {"101": {"id": "101", "player_id": "9101", "player": "X", "team_id": "999", "time": "90",
+                              "goals": "0", "assists": "0", "shots": "0", "xG": "0", "xA": "0", "key_passes": "0",
                               "yellow_card": "0", "red_card": "0"}}, "a": {}}
     import pytest
     with pytest.raises(KeyError):
@@ -44,7 +44,7 @@ _SEASON_JSON = json.dumps({
 
 _MATCH_JSON = json.dumps({
     "rosters": {
-        "h": {"101": {"id": "101", "player": "Erling Haaland", "team_id": "50", "time": "90",
+        "h": {"101": {"id": "101", "player_id": "9101", "player": "Erling Haaland", "team_id": "50", "time": "90",
                        "goals": "2", "assists": "0", "shots": "5", "xG": "1.8", "xA": "0.1",
                        "key_passes": "1", "yellow_card": "0", "red_card": "0"}},
         "a": {},
@@ -239,3 +239,66 @@ def test_repair_unresolved_player_ids_counts_a_real_fetch_error_without_crashing
 
     assert result["errors"] == 1
     assert result["matches_processed"] == 0
+
+
+def test_repair_unresolved_player_ids_backfills_the_real_stable_id_for_every_touched_row(db_conn, monkeypatch):
+    """Phase 7.5 Part 6 - the real, stable per-player Understat id
+    (`entry['player_id']`, distinct from the per-match `entry['id']` this
+    project has always stored as `understat_player_id`) must be backfilled
+    for every row this repair pass touches, even one it can't otherwise
+    resolve by name - real, free, already-fetched data, never wasted."""
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    row = db_conn.execute(
+        "SELECT understat_stable_player_id FROM player_match_stats_history WHERE understat_player_id='101'"
+    ).fetchone()
+    assert row["understat_stable_player_id"] == "9101"  # the real player_id from _MATCH_JSON's roster entry
+
+
+def test_repair_unresolved_player_ids_falls_back_to_the_archive_crosswalk_when_name_matching_fails(db_conn, monkeypatch):
+    """Phase 7.5 Part 5/6 - a real, independent SECOND resolution signal:
+    when this project's own name-based resolver can't find a match at all
+    (a genuinely different real name on record - simulates a real name-
+    spelling divergence this resolver can't bridge), the free archive's own
+    crosswalk (keyed on the SAME real stable Understat id) can still
+    resolve it."""
+    import fpl_agent.ingestion.understat_source as us_mod
+
+    backfill_understat(db_conn, "2024-25", season_page_html=_SEASON_JSON, match_pages={"555": _MATCH_JSON})
+    monkeypatch.setattr(us_mod, "fetch_understat_match_page", lambda match_id: _MATCH_JSON)
+
+    # A real player whose name has zero overlap with "Erling Haaland" - the
+    # name-based resolver has no honest way to find them - but whose
+    # `code` the archive's own crosswalk maps the real stable id "9101" to.
+    db_conn.execute(
+        "INSERT OR IGNORE INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    db_conn.execute(
+        "INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1, 100, 'Team A', 'TMA', 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO players (id, code, web_name, first_name, second_name, team_id, element_type, status, updated_at) "
+        "VALUES (555, 7777, 'ZZZ', 'Completely', 'Different', 1, 1, 'a', 't0')"
+    )
+    db_conn.execute(
+        "INSERT INTO historical_identity_crosswalk (understat_player_id, player_code, season, source, retrieved_at) "
+        "VALUES ('9101', 7777, '2024-25', 'test', 't0')"
+    )
+    db_conn.commit()
+
+    result = repair_unresolved_player_ids(db_conn, delay=0.0)
+
+    assert result["rows_resolved"] == 1
+    row = db_conn.execute("SELECT player_id FROM player_match_stats_history WHERE understat_player_id='101'").fetchone()
+    assert row["player_id"] == 555
+    log = db_conn.execute(
+        "SELECT resolution_method, confidence FROM player_id_resolution_log WHERE player_id=555"
+    ).fetchone()
+    assert log["resolution_method"] == "archive_crosswalk"
+    assert log["confidence"] == "high"

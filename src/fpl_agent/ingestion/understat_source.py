@@ -58,6 +58,14 @@ def _row_from_entry(entry: dict, match_id: str, match_date: str, season: str, te
     return {
         "understat_match_id": match_id,
         "understat_player_id": entry["id"],
+        # Real, stable, per-PLAYER Understat id (2026-09-07, Phase 7.5 Part
+        # 6 - confirmed via a real live fetch that Understat's own roster
+        # entry carries BOTH this AND `id` above, which is only a per-
+        # MATCH-appearance id (different every match for the same real
+        # player) - `understat_player_id` above was never actually a stable
+        # identity, just used as one for row-uniqueness. This is the field
+        # that matches the free archive's own `id_dict.csv` crosswalk.
+        "understat_stable_player_id": entry["player_id"],
         "player_name": entry["player"],
         "team_name": team_names[entry["team_id"]],
         "season": season,
@@ -124,15 +132,16 @@ def _upsert_player_match_row(conn, season: str, row: dict) -> None:
 
     conn.execute(
         "INSERT INTO player_match_stats_history "
-        "(understat_match_id, understat_player_id, player_id, market_team_id, season, match_date, "
-        "minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "(understat_match_id, understat_player_id, understat_stable_player_id, player_id, market_team_id, season, "
+        "match_date, minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(understat_match_id, understat_player_id) DO UPDATE SET "
+        "understat_stable_player_id=excluded.understat_stable_player_id, "
         "minutes=excluded.minutes, goals=excluded.goals, assists=excluded.assists, shots=excluded.shots, "
         "xg=excluded.xg, xa=excluded.xa, key_passes=excluded.key_passes, "
         "yellow_cards=excluded.yellow_cards, red_cards=excluded.red_cards, retrieved_at=excluded.retrieved_at",
-        (row["understat_match_id"], row["understat_player_id"], player_id, market_team_id, season,
-         row["match_date"], row["minutes"], row["goals"], row["assists"], row["shots"],
+        (row["understat_match_id"], row["understat_player_id"], row["understat_stable_player_id"], player_id,
+         market_team_id, season, row["match_date"], row["minutes"], row["goals"], row["assists"], row["shots"],
          row["xg"], row["xa"], row["key_passes"], row["yellow_cards"], row["red_cards"], now),
     )
 
@@ -210,21 +219,47 @@ def repair_unresolved_player_ids(
             str(entry["id"]): entry["player"]
             for side in ("h", "a") for entry in rosters.get(side, {}).values()
         }
+        # Real, stable per-player Understat id (Phase 7.5 Part 6 - see
+        # `_row_from_entry`'s own docstring for the confirmed bug this
+        # closes). Backfilled for every row this repair pass touches
+        # regardless of whether name-based resolution succeeds - real,
+        # always-useful data, and the same network call already paid for.
+        stable_id_by_understat_id = {
+            str(entry["id"]): str(entry["player_id"])
+            for side in ("h", "a") for entry in rosters.get(side, {}).values()
+        }
 
         unresolved_rows = conn.execute(
             "SELECT id, understat_player_id, market_team_id, season FROM player_match_stats_history "
             "WHERE understat_match_id=? AND player_id IS NULL", (match_id,),
         ).fetchall()
         for row in unresolved_rows:
+            stable_id = stable_id_by_understat_id.get(str(row["understat_player_id"]))
+            if stable_id is not None:
+                conn.execute(
+                    "UPDATE player_match_stats_history SET understat_stable_player_id=? WHERE id=?",
+                    (stable_id, row["id"]),
+                )
             name = name_by_understat_id.get(str(row["understat_player_id"]))
-            if name is None:
-                rows_still_unresolved += 1
-                continue
-            team_row = conn.execute(
-                "SELECT fpl_team_id FROM market_teams WHERE id=?", (row["market_team_id"],)
-            ).fetchone()
-            fpl_team_id = team_row["fpl_team_id"] if team_row else None
-            resolved = resolve_player_id_with_method(conn, "understat", name, team_id=fpl_team_id)
+            resolved = None
+            if name is not None:
+                team_row = conn.execute(
+                    "SELECT fpl_team_id FROM market_teams WHERE id=?", (row["market_team_id"],)
+                ).fetchone()
+                fpl_team_id = team_row["fpl_team_id"] if team_row else None
+                resolved = resolve_player_id_with_method(conn, "understat", name, team_id=fpl_team_id)
+            if resolved is None and stable_id is not None:
+                # Real, independent SECOND resolution signal (Phase 7.5 Part
+                # 5/6) - the free archive's own community-maintained
+                # Understat<->FPL crosswalk, keyed on the SAME real stable id
+                # just recovered above. Only tried when the project's own
+                # name-based resolver couldn't find a match - never
+                # overrides a real name-based resolution, only fills a gap.
+                from fpl_agent.ingestion.historical_archive_source import resolve_via_archive_crosswalk
+
+                archive_player_id = resolve_via_archive_crosswalk(conn, stable_id, row["season"])
+                if archive_player_id is not None:
+                    resolved = (archive_player_id, "archive_crosswalk")
             if resolved is not None:
                 new_player_id, method = resolved
                 conn.execute(
@@ -241,8 +276,9 @@ def repair_unresolved_player_ids(
                     "INSERT OR IGNORE INTO player_id_resolution_log "
                     "(player_id, understat_player_id, season, source_name, resolution_method, confidence, resolved_at) "
                     "VALUES (?,?,?,?,?,?,?)",
-                    (new_player_id, row["understat_player_id"], row["season"], name, method,
-                     "high" if method in ("exact_match", "alias_cache") else "medium",
+                    (new_player_id, row["understat_player_id"], row["season"],
+                     name if name is not None else f"understat_stable_id:{stable_id}", method,
+                     "high" if method in ("exact_match", "alias_cache", "archive_crosswalk") else "medium",
                      datetime.now(timezone.utc).isoformat()),
                 )
                 rows_resolved += 1
