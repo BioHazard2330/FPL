@@ -243,7 +243,7 @@ _HUMANIZE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bcould genuinely improve\b"), "could improve"),
     (re.compile(r"\bone more real (gameweek|match)\b"), r"one more \1"),
     (re.compile(r"\ba real additional match\b"), "another match"),
-    (re.compile(r"\bthis is a real case where waiting has meaningful expected information value\b"), "waiting here could genuinely pay off"),
+    (re.compile(r"\bthis is a real case where waiting has meaningful expected information value\b"), "waiting here could pay off"),
     (re.compile(r"\bthe decision is not information-starved, deferring it buys little real evidence\b"), "there's not much to gain by waiting"),
     (re.compile(r"\breal flexibility to react\b"), "flexibility to react"),
     # Team Outlook / Match Intelligence qualitative text (2026-08-27, direct
@@ -3363,7 +3363,7 @@ def _chip_strategy_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
             if value < 0:
                 context_line = f"<div class='chip-strategy-context'>Net negative ({value:.1f}xP) - rebuilding the squad costs more than it gains right now.</div>"
             elif value < 2.0:
-                context_line = f"<div class='chip-strategy-context'>Modest {value:.1f}xP - not yet clearly worth using.</div>"
+                context_line = f"<div class='chip-strategy-context'>Modest {value:.1f}xP - not yet worth using.</div>"
             else:
                 context_line = f"<div class='chip-strategy-context'>{value:.1f}xP gain - worth using this window.</div>"
 
@@ -3464,6 +3464,19 @@ _CSS = """
        disclosed follow-up, not silently left inconsistent by accident. */
     --fs-2xs: 0.68rem; --fs-xs: 0.75rem; --fs-sm: 0.85rem; --fs-base: 0.95rem;
     --fs-md: 1.1rem; --fs-lg: 1.5rem; --fs-xl: 2rem;
+    /* Corner-radius scale (2026-09-07, Phase 7.6 visual-system audit) -
+       real, confirmed finding: 97 real `border-radius` declarations across
+       12 distinct pixel values, but they already cluster into one coherent
+       small/medium/large/pill pattern (4-6px / 8-10px / 14-18px / 99-999px)
+       - not the chaotic "every corner a different radius" anti-pattern the
+       audit checked for. Same judgment call the `--fs-*` scale above
+       already made and disclosed: added here as real tokens for any new or
+       touched CSS to reference, never a blind file-wide replace of the
+       existing 97 call sites (too large a blast radius to verify visually
+       in one pass without reliable scrolled-viewport screenshots this
+       session - a real, disclosed follow-up, not silently left
+       inconsistent by accident). */
+    --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-pill: 999px;
   }
   @media (prefers-color-scheme: light) {
     :root {

@@ -115,10 +115,26 @@ def _squad_change_module_html(signals: list, squad_ids: set[int], crest_by_playe
     mine = [s for s in signals if s.entity_id in squad_ids]
     if not mine:
         return ""
+    # Real duplicate-presentation fix (Phase 7.6 Part 13) - a plain
+    # positive MINUTES signal ("90 minutes played / starting-role signal")
+    # is near-content-free once a richer same-match signal for the SAME
+    # real player already states it inline as part of its own evidence
+    # (e.g. "...0.94 xA, 90 minutes."). Suppressed here ONLY when a richer
+    # category exists for the identical (entity_id, match_id) pair - the
+    # underlying `match_observations` row is never touched, and a genuine
+    # early-withdrawal MINUTES/NEGATIVE ("rotation/injury risk") signal is
+    # never suppressed, since that fact isn't restated by any other card.
+    richer_player_matches = {
+        (s.entity_id, s.match_id) for s in mine if s.category != "MINUTES" and s.match_id is not None
+    }
+    mine = [
+        s for s in mine
+        if not (s.category == "MINUTES" and s.direction == "POSITIVE" and (s.entity_id, s.match_id) in richer_player_matches)
+    ]
     mine.sort(key=lambda s: _DECISION_EFFECT_RANK.get(s.decision_effect, 0), reverse=True)
     rows_html = "".join(_signal_row_html(s, crest_by_player, squad_ids) for s in mine[:10])
     return f"""<div class="fb-squad-changes">
-    <div class="fb-section-label">WHAT CHANGED FOR MY SQUAD? <span class="panel-subtitle">ranked by real estimated FPL relevance</span></div>
+    <div class="fb-section-label">WHAT CHANGED FOR MY SQUAD? <span class="panel-subtitle">ranked by estimated FPL relevance</span></div>
     {rows_html}
   </div>"""
 

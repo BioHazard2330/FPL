@@ -104,9 +104,9 @@ _TIE_LABEL = {
     "CLEAR_LEAD": "CLEAR LEAD", "LIKELY_BEST": "LIKELY BEST", "NEAR_TIE": "NEAR TIE",
 }
 _TIE_NOTE = {
-    "CLEAR_LEAD": "a real, decisive margin over the closest real alternative",
-    "LIKELY_BEST": "a real but modest margin - worth double-checking before committing",
-    "NEAR_TIE": "too close to call a single winner - the real margin over the closest real alternative is inside noise",
+    "CLEAR_LEAD": "a decisive margin over the closest alternative",
+    "LIKELY_BEST": "a modest margin - worth double-checking before committing",
+    "NEAR_TIE": "too close to call a single winner - the margin over the closest alternative is inside noise",
 }
 
 
@@ -159,7 +159,7 @@ def render_plan_workspace(conn, sd: dict | None, locked, squad_ids: set[int] | N
     if locked is None:
         return "<div class='empty-state'>No real locked squad - lock a squad to plan your strategy.</div>"
     if sd is None or not sd.get("paths"):
-        return "<div class='empty-state'>Run <code>fpl strategic-plan</code> to see the real multi-GW path search.</div>"
+        return "<div class='empty-state'>Run <code>fpl strategic-plan</code> to see the multi-GW path search.</div>"
 
     from fpl_agent.monitoring.dashboard.live_charts import (
         render_strategic_contribution_chart,

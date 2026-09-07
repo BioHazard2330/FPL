@@ -370,7 +370,7 @@ def generate_dashboard_html(
         paths=(sd.get("paths") if sd else None),
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
-  <h2>Plan <span class="panel-subtitle">the real multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
+  <h2>Plan <span class="panel-subtitle">the multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>
   {plan.render_plan_workspace(conn, sd, locked, squad_ids)}
 </section>"""
     switcher_html, projected_view = squad.build_projected_switcher(conn, locked=locked, sd=sd)
@@ -538,8 +538,14 @@ def generate_dashboard_html(
   <a href="#screen-football" class="site-nav-primary">Football</a>
   <a href="#screen-scout" class="site-nav-primary">Scout</a>
   <a href="#advanced" class="site-nav-primary">Advanced</a>
-  <span class="site-nav-sep"></span>
-  <a href="#live-match-centre" class="site-nav-secondary">Live</a>
+  <!-- Real, confirmed interaction bug fixed 2026-09-07 (Phase 7.6 Part 24,
+       "no fake controls") - `render_match_centre` correctly returns '' with
+       no live match right now (this dashboard's own honest "no fabricated
+       live state" rule), but the nav link below still pointed at a target
+       that then didn't exist, giving zero feedback on click most of the
+       time (a match is genuinely live only during an actual live window).
+       Only rendered when there's a real section for it to reach. -->
+  {'<span class="site-nav-sep"></span><a href="#live-match-centre" class="site-nav-secondary">Live</a>' if match_centre_section_html else ''}
 </nav>
 
 {command_section_html}

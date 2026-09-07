@@ -13,6 +13,7 @@ from fpl_agent.monitoring.dashboard.legacy import (
     _team_outlook_html,
 )
 from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
+from test_match_centre import _insert_live_match, _insert_team
 from test_optimization_squad import _seed
 
 
@@ -191,6 +192,32 @@ def test_hero_falls_back_to_the_last_trustworthy_live_rank_when_the_latest_is_de
     assert "~37" not in result and ">37<" not in result
     assert "last trustworthy check" in result
     assert "500,000" in result
+
+
+def test_live_nav_link_absent_when_no_match_is_genuinely_live(db_conn):
+    """Real regression test, Phase 7.6 Part 24 ('no fake controls') - with
+    no genuinely live match (`render_match_centre` correctly returns '',
+    this dashboard's own honest 'no fabricated live state' rule), the nav
+    bar must not offer a 'Live' link pointing at a section that doesn't
+    exist - a dead click with zero feedback."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'href="#live-match-centre"' not in result
+
+
+def test_live_nav_link_present_when_a_match_is_genuinely_live(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _insert_team(db_conn, 101, "TMA")
+    _insert_team(db_conn, 102, "TMB")
+    _insert_live_match(db_conn, "fm-live-1", 101, 102)
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'href="#live-match-centre"' in result
+    assert 'id="live-match-centre"' in result
 
 
 def test_generate_dashboard_html_composes_without_crashing(db_conn):

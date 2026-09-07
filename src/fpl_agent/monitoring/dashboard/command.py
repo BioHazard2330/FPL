@@ -137,7 +137,7 @@ def _trajectory_html(conn: sqlite3.Connection, current_gw_label: str, auth: dict
             inner = f"<span class='cmd-node-label'>{_esc(out.strip())} &rarr; {_esc(inn.strip())}</span>"
         else:
             inner = f"<span class='cmd-node-label'>{_esc(raw)}</span>"
-        watch = "<span class='cmd-node-watch' title='This leg is part of a real fragile path - a change here is a real reason to re-plan'>&#9888;</span>" if matches_dep else ""
+        watch = "<span class='cmd-node-watch' title='This leg is part of a fragile path - a change here is reason to re-plan'>&#9888;</span>" if matches_dep else ""
         fade = 1.0 - min(i * 0.14, 0.55)
         nodes.append(f"""<div class="cmd-node{' cmd-node-fragile' if matches_dep else ''}" style="opacity:{fade:.2f}">
       <div class="cmd-node-gw">GW{gw if gw is not None else '?'}{watch}</div>
