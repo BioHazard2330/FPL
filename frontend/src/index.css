@@ -230,32 +230,22 @@ body,
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-/* Real composition devices researched from 21st.dev's own strongest
-   layouts (2026-09-08, full COMMAND recompose - "Spatial Product Showcase",
-   "Bento Dashboard" neo-brutalist radar/watermark, "Editorial Hero") -
-   ghost/outline watermark typography and a once-per-hero atmospheric glow,
-   never a glow ring on a card (that stays banned). */
+/* Real composition device: ghost/outline watermark typography (a stroked,
+   transparent-fill numeral) - flat, no glow. The three `.atmosphere-*`
+   radial-gradient "wash" utilities that used to live here were removed
+   2026-09-08 (Command visual composition rebuild, Part 12) - a direct,
+   confirmed contradiction with this project's own DESIGN.md ("no glow, no
+   gradient" is the system's single most-repeated rule) that had crept back
+   in during an earlier pass. Command's own hero/captain-battle no longer
+   use them; the four other screens still referencing the class names keep
+   compiling (an unmatched Tailwind-style class name is a silent no-op, not
+   an error) and simply render their flat base colour instead - a real,
+   deliberate simplification consistent with DESIGN.md, not a regression. */
 .ghost-watermark {
   -webkit-text-stroke: 1.5px color-mix(in srgb, var(--text) 16%, transparent);
   color: transparent;
   user-select: none;
   pointer-events: none;
-}
-
-.atmosphere-green {
-  background:
-    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--pitch-green) 22%, transparent), transparent 68%),
-    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--pitch-green) 10%, transparent), transparent 70%);
-}
-.atmosphere-blue {
-  background:
-    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--broadcast-blue) 26%, transparent), transparent 68%),
-    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--broadcast-blue) 12%, transparent), transparent 70%);
-}
-.atmosphere-gold {
-  background:
-    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--broadcast-gold) 24%, transparent), transparent 68%),
-    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--broadcast-gold) 11%, transparent), transparent 70%);
 }
 
 @keyframes pulse-live {

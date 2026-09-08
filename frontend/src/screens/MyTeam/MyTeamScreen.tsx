@@ -196,6 +196,7 @@ export function MyTeamScreen() {
   if (state.status === 'loading') {
     return (
       <div className="space-y-3 p-10">
+        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading squad</div>
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-72 w-full" />
       </div>
@@ -253,7 +254,7 @@ export function MyTeamScreen() {
 
       {/* Editorial star moment - real shirt image over the atmosphere wash */}
       {star && (
-        <div className="atmosphere-green relative overflow-hidden px-10 py-6">
+        <div className="relative overflow-hidden px-10 py-6">
           <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
             SQUAD
           </span>

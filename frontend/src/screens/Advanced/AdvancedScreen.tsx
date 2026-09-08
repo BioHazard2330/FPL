@@ -31,6 +31,7 @@ export function AdvancedScreen() {
   if (state.status === 'loading') {
     return (
       <div className="space-y-3 p-10">
+        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading diagnostics</div>
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>

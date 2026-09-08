@@ -70,7 +70,7 @@ function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null;
       <SheetContent className="border-l-2 border-divider bg-void p-0 sm:max-w-md">
         {player && (
           <>
-            <div className="atmosphere-blue relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
+            <div className="relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
               {shirt && (
                 <img
                   src={shirt}
@@ -238,6 +238,7 @@ export function ScoutScreen() {
   if (state.status === 'loading') {
     return (
       <div className="space-y-3 p-10">
+        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading market data</div>
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-96 w-full" />
       </div>
@@ -263,7 +264,7 @@ export function ScoutScreen() {
 
       {/* MARKET OVERVIEW - real category counts as boards, not prose */}
       {opp && (
-        <div className="atmosphere-blue relative flex flex-wrap divide-x-2 divide-divider overflow-hidden border-b-2 border-divider">
+        <div className="relative flex flex-wrap divide-x-2 divide-divider overflow-hidden border-b-2 border-divider">
           <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
             MARKET
           </span>

@@ -102,6 +102,7 @@ export function PlanScreen() {
   if (state.status === 'loading') {
     return (
       <div className="space-y-3 p-10">
+        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading strategy</div>
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -134,7 +135,7 @@ export function PlanScreen() {
   return (
     <div className="pb-16">
       <Masthead edition="Strategy Desk" title={`${p.horizon_gw}-gameweek plan`} />
-      <div className="atmosphere-blue relative overflow-hidden px-10 pb-8 pt-7">
+      <div className="relative overflow-hidden px-10 pb-8 pt-7">
         <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
           PLAN
         </span>

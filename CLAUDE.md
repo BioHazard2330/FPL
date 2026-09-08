@@ -2,6 +2,10 @@
 
 Persistent, resource-bounded FPL 2026/27 personal decision-support system. Full original spec: `../FPL 2026-27 — Claude Code Ultimate Autonomous FPL System — Optimized Master Bootstrap Prompt.md` (parent dir) — do not copy that spec's content back into this file.
 
+## Repository
+
+Real GitHub remote (added 2026-09-08, direct user request — lets external tools like ChatGPT inspect the actual implementation without needing a localhost tunnel, which proved unreliable): **https://github.com/BioHazard2330/FPL** (public — `.gitignore` already excludes `data/*.db`/`.env`/crests/logs, confirmed safe before the first push). Origin already configured (`git remote -v`); `git push` uses the OS's own Git Credential Manager (a real browser OAuth popup on first use per session, never a token handled by Claude).
+
 **Documentation map** (2026-08-27 cleanup — this file used to be ~6300 lines of session-by-session narrative; that history is preserved, not deleted, in `docs/history/`):
 - **This file** — operating manual: constraints, architecture, conventions, commands, current blockers.
 - `docs/PROJECT_STATE.md` — current capabilities, known gaps, production state, next recommended work, verification procedure. Read this first when resuming work.
@@ -19,6 +23,7 @@ Take the user from preseason → GW1 → GW38 → season audit, answering one qu
 - **Free resources only.** No paid APIs/services for new data connectors.
 - **No subagent/Agent-tool dispatch for this project.** Standing user instruction: do implementation, investigation, and fixes directly with Read/Edit/Bash/Grep in the main thread, even for large multi-file work. This is a durable rule, not a one-off. **Also applies to any installed skill's own suggestion to delegate.** `critique` (installed 2026-09-03, see Skills section below) explicitly suggests spawning a sub-agent per assessment — its own text names a fallback ("If sub-agents are not available in the current environment, complete each assessment sequentially") — always take that fallback here, never the sub-agent path, regardless of what the skill's own instructions say.
 - **Autonomous authorization.** Proceed through a pillar/plan/audit's full cycle without stopping for confirmation at each step; report at natural completion points. Still applies the project's own review discipline (tests, live verification) as the substitute for a human checkpoint.
+- **Standing rule: commit and push real, meaningful work to GitHub** (2026-09-08, direct user request — "this should be a standing rule"). After a real, coherent unit of work lands (not every intermediate edit) — tests green, build clean, live-verified where applicable — `git add`/`commit`/`push` to the real remote (see Repository above) without waiting to be asked each time. Keeps the repo genuinely inspectable by external tools (ChatGPT reading the real component tree/payload shapes) rather than stale. Same discipline as everywhere else in this file: never push something that hasn't actually been verified, never bundle unrelated junk (scratch/profiling files) into the commit.
 
 ## Skills / tooling ecosystem (installed 2026-09-03)
 

@@ -563,3 +563,93 @@ its own fix.
   circularly-dependent modules on a fresh process start - self-heals on
   retry (confirmed live, repeatedly), real fix is eager-importing every
   `api.*` module from the main thread before spawning the 4 threads.
+
+## Stage 4 — art-direction pass v3 ("more football") + COMMAND visual composition rebuild v4 (2026-09-08)
+
+Two separate direct-user-driven passes landed together this session; both
+kept to the same standing rule (real payload data only, no backend
+decision-logic changes, no new architecture beyond what each pass actually
+needed).
+
+**Art-direction pass v3 - real football texture + backend extensions**
+(direct user follow-up to the Phase 8.0-8.3 redesign: "more football, less
+AI slop"):
+- **Real, confirmed bug found and fixed**: the FPL shirt CDN only serves
+  three discrete sizes (66/110/220px) - every other pixel value silently
+  404s (`img.complete=true`, `naturalWidth=0`, no console error, no visible
+  broken-image icon). A prior tier-size gallery pass had introduced
+  arbitrary sizes (92/116/148/etc) that were all quietly failing. Fixed at
+  the source in `lib/api.ts::shirtUrl` - every caller now snaps to the
+  nearest real size, verified via direct fetch against the real CDN.
+- **FOOTBALL**: real squad-scoped Fixture Ticker (FDR-coloured, real
+  `team_fixture_ticker`) and a real MANAGER/XI/AVAILABILITY change wire
+  (the same real `change_events` table the old dashboard's `_squad_changes_
+  html` already read, reshaped as clean JSON - no HTML entities leaking
+  into React-rendered text, the same class of bug this project's own
+  `command_payload.py` had already found and fixed once for `_horizon_
+  label`).
+- **SCOUT**: real Template Team board (highest-owned pool per position as
+  actual shirts on a turf strip, real squad-overlap/differential stats) and
+  a real xGI-per-90 leaderboard (a genuinely non-redundant signal over the
+  main table's raw-total xGI - surfaces a high-rate player under-ranked by
+  fewer total minutes). Statistics panel deliberately NOT ported - audited
+  and found to be a strict squad-scoped subset of data the main table
+  already exposes via its own "My Squad" filter.
+- **PLAN**/**COMMAND**: real player-identity backend extensions
+  (`CaptainOption.team_id`, `PlanStep.player_out`/`.player_in`) so the
+  frontend can resolve a real shirt without cross-referencing a different,
+  possibly-non-matching payload block.
+- 8 new backend regression tests; full suite 1675/1675 clean at the time.
+
+**COMMAND visual composition rebuild v4** (direct user brief: stop reading
+as "sidebar + header + stacked bordered sections", read as "a football
+decision graphic / editorial command centre" - COMMAND only, no other
+screen restructured, no backend rewrite, no framework migration):
+- `CommandScreen.tsx` rebuilt as a thin composition layer over 8 real,
+  purpose-built components (`components/command/DecisionHero.tsx`/
+  `ComparisonGraphic.tsx`/`PlayerGallery.tsx`/`CaptainFaceOff.tsx`/
+  `DecisionHorizon.tsx`/`StrategyRail.tsx`/`EvidenceRail.tsx`/
+  `ConfidenceGraphic.tsx`) - zero new backend data, every field traces to
+  the same `CommandPayload` shape the previous version already rendered.
+- Each component uses a genuinely different separation technique (a flat
+  colour-field band, one thick rule, or whitespace alone) rather than the
+  repeated eyebrow+border pattern the earlier passes still leaned on
+  everywhere - the explicit anti-pattern the user's brief named directly.
+- **Real DESIGN.md/index.css conformance fix**: the three `.atmosphere-
+  {green,blue,gold}` radial-gradient utilities directly contradicted
+  DESIGN.md's own repeated "no glow, no gradient" rule - removed entirely
+  (not replaced with another gradient); the four other screens still
+  referencing the class names had just the token stripped (a real
+  simplification to their flat base colour, not a redesign of those
+  screens - explicitly out of this pass's own scope).
+- All colored `shadow-[...]`/`drop-shadow-[...]` glow effects removed from
+  COMMAND's own hero/verdict-block/bars/shirts - DESIGN.md's "flat, no
+  shadow" rule, previously violated throughout this screen specifically.
+
+**Operational fixes found while investigating a direct user bug report**
+("football tab doesn't work, blue screen for a long time") - two real, of
+separate causes:
+1. The loading `Skeleton` primitive (`bg-muted` against this app's
+   `bg-void` background) was near-invisible - a genuine ~30s+ cold-cache
+   FOOTBALL load read as a frozen blank screen. Fixed: `bg-raised` (real
+   confirmed higher contrast) + an explicit "Loading X" label, all 6
+   fetching screens.
+2. The actual reported hang: a second, full `LiveServer` instance (a
+   throwaway dev-only script left running by an earlier/different session
+   on port 8878) was contending with the real production server (port
+   8877) for the same `data/fpl.db` SQLite file - confirmed via direct
+   reproduction (`curl /api/command` timed out completely at 60s) and
+   confirmed fixed by killing the duplicate (both endpoints back to
+   single-digit milliseconds immediately). See `docs/PROJECT_STATE.md`'s
+   own dated entry for the full real, actionable lesson this leaves for
+   future sessions (check for orphaned `LiveServer`/Vite processes from
+   prior sessions before assuming a live-server-side bug).
+
+**Repository made public and pushed** (`https://github.com/BioHazard2330/
+FPL`, direct user request - lets ChatGPT inspect the real implementation
+directly after its own browsing environment proved unable to retrieve a
+rendered response through either `localtunnel` or a Cloudflare quick
+tunnel, both independently confirmed reachable by `curl` and this
+project's own Browser-pane tool). Committing and pushing real, verified
+work to this remote without being asked each time is now a standing rule
+(CLAUDE.md's own constraints list).

@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-02 (Football Intelligence Engine Phase 3 finalization). Read this before
+Last updated: 2026-09-08 (Command visual composition rebuild v4 + operational fixes). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
@@ -39,15 +39,85 @@ does not actually kill the process - force-kill the real PID first, then
 `Start-ScheduledTask`) → warm all 6 `/api/*` endpoints (first hit after a
 restart is a real cold `DashboardContext` build, 40-150s).
 
-**Real, disclosed remaining scope** (each screen has a working, live-
-verified v1; these are the specific gaps, not "incomplete"): SCOUT
-(Combobox multi-position/team filter, Template Team/Statistics/Expected
-Data panels); LIVE (full Match Centre - score/momentum/shot map - untestable
-without a live match); PLAN (optional Radial Orbital view); FOOTBALL
-(MANAGER/XI/AVAILABILITY changes feed, Fixture Ticker, Fixture Projections);
-ADVANCED (Decision Detail, Player Odds, Optimizer Delta, Regret Analysis).
-Full narrative (every phase, every bug found, every live-verification):
-`docs/UI_REDESIGN_DECISIONS.md`.
+**Real, disclosed remaining scope** (updated 2026-09-08 - Template Team,
+Expected Data, Fixture Ticker, and the MANAGER/XI/AVAILABILITY change wire
+are now built, see the dated entry below; each screen has a working, live-
+verified v1, these are the specific gaps left, not "incomplete"): SCOUT
+(Combobox multi-position/team filter; Statistics panel deliberately NOT
+ported - audited and found to be a strict squad-scoped subset of the main
+Player Search table, already reachable via its own "My Squad" filter -
+porting it would be pure duplication); LIVE (full Match Centre - score/
+momentum/shot map - untestable without a live match); PLAN (optional Radial
+Orbital view); FOOTBALL (Fixture Projections - the full 20-team x 8-GW
+goals/CS% grid, a real, larger, separately-scoped follow-up to the now-built
+squad-scoped Fixture Ticker); ADVANCED (Decision Detail, Player Odds,
+Optimizer Delta, Regret Analysis). Full narrative (every phase, every bug
+found, every live-verification): `docs/UI_REDESIGN_DECISIONS.md`.
+
+## Where things stand (updated 2026-09-08, Command visual composition rebuild v4 + operational fixes)
+
+**COMMAND rebuilt as 8 real, purpose-built compositions** (`frontend/src/
+components/command/DecisionHero.tsx`/`ComparisonGraphic.tsx`/
+`PlayerGallery.tsx`/`CaptainFaceOff.tsx`/`DecisionHorizon.tsx`/
+`StrategyRail.tsx`/`EvidenceRail.tsx`/`ConfidenceGraphic.tsx`), direct user
+request ("stop reading as sidebar + stacked bordered sections, read as a
+football decision graphic"). `CommandScreen.tsx` is now a thin composition
+layer only - zero new backend data, every field traces to the same
+`CommandPayload` shape. Each component uses a genuinely different
+separation technique (flat colour-field band, one thick rule, or
+whitespace alone) rather than the repeated eyebrow+border pattern the
+previous pass still had. Two small, real, additive backend fields were
+added to support this (never a decision-logic change): `CaptainOption`/
+`PlayerBrief` gained a real `team_id`/`team_code` so the captain face-off
+can resolve a real shirt without cross-referencing a different payload
+block; `PlanStep` gained resolved `player_out`/`player_in` identity objects
+for the same reason on PLAN's strategy rail.
+
+**Real DESIGN.md/index.css conformance fix**: the three `.atmosphere-{green,
+blue,gold}` radial-gradient "wash" utilities directly contradicted
+DESIGN.md's own repeated "no glow, no gradient" rule - removed from
+`index.css` entirely (not replaced with another gradient). Command's own
+hero/captain-battle no longer reference them; the four other screens that
+still did (My Team/Plan/Football/Scout hero sections) had just the
+className token stripped - a real, deliberate simplification to a flat
+base colour, not a redesign of those screens.
+
+**Real, confirmed operational finding (direct user bug report, "football
+tab doesn't work, blue screen for a long time")**: two real bugs, not one.
+(1) The loading `Skeleton` component (`bg-muted` against this app's
+`bg-void` page background) was near-invisible, especially once
+`animate-pulse` dims it further - a genuine ~30s+ cold-cache load (FOOTBALL's
+own league-wide signal scan) read as a frozen blank screen. Fixed: `bg-raised`
+(real, confirmed higher contrast) plus an explicit "Loading X" text label,
+across all 6 fetching screens. (2) The actual reported hang was a SEPARATE,
+more serious issue: a second, full `LiveServer` instance (a throwaway dev
+convenience script, `dev_live_server.py`, left running by an earlier/
+different session on port 8878) was contending with the real production
+`FPLAgentLiveServer` (port 8877) for the same real `data/fpl.db` SQLite
+file - confirmed live via direct reproduction (`curl /api/command` timed
+out completely at 60s with zero response) and confirmed fixed by killing
+the duplicate process (both endpoints back to single-digit milliseconds
+immediately after). **Real, actionable lesson for future sessions**: never
+leave a throwaway `LiveServer`/`npm run dev` instance running past the
+session that created it - check `Get-CimInstance Win32_Process -Filter
+"Name='python.exe'"` (and `node.exe` for Vite dev servers) for orphaned
+processes from prior sessions before assuming a live-server-side bug; a
+second full `LiveServer` is exceptionally easy to leave behind since it
+deliberately bypasses the real production singleton lock by design (that
+lock exists to stop two *scheduled automation* instances from fighting over
+writes, not to prevent this exact multi-session dev-instance collision).
+
+**Repository is now public and pushed** (2026-09-08, direct user request -
+`https://github.com/BioHazard2330/FPL`, see CLAUDE.md's own "Repository"
+section) - lets an external tool (ChatGPT) inspect the real component tree/
+payload shapes directly instead of needing a localhost tunnel (tried and
+found unreliable: ChatGPT's own browsing environment could not retrieve a
+rendered response through either `localtunnel` or a Cloudflare quick
+tunnel, both reachable fine by `curl`/this project's own Browser-pane tool
+- concluded to be a real limitation specific to ChatGPT's fetch environment,
+not a tunnel misconfiguration). **New standing rule** (CLAUDE.md's own
+constraints list): commit and push real, verified work to this remote
+without waiting to be asked each time - keeps external inspection current.
 
 **Known, unrelated, flagged-not-fixed bug**: `live/sse_server.py`'s 4
 background cache-refresh threads can hit a real Python import deadlock on

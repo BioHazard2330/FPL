@@ -200,6 +200,9 @@ export function FootballScreen() {
   if (state.status === 'loading') {
     return (
       <div className="space-y-3 p-10">
+        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">
+          Loading football intelligence &mdash; a league-wide scan, can take up to 30s on a cold cache
+        </div>
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -224,7 +227,7 @@ export function FootballScreen() {
     <div className="pb-16">
       <Masthead edition="Match Intelligence Wire" title="Football" />
 
-      <div className="atmosphere-gold relative overflow-hidden px-10 pb-6 pt-7">
+      <div className="relative overflow-hidden px-10 pb-6 pt-7">
         <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
           MATCH
         </span>
