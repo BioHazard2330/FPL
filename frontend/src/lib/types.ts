@@ -490,9 +490,22 @@ export interface LiveSnapshot {
   recent_changes: Record<string, unknown>[]
   points_changes: unknown
   recommendation: Record<string, unknown> | null
-  source_freshness: unknown
-  cadence: unknown
+  source_freshness: SourceFreshnessRow[]
+  cadence: LiveCadence
   charts: LiveCharts | null
+}
+
+export interface SourceFreshnessRow {
+  source: string
+  last_success: string | null
+  last_failure: string | null
+  failure_count: number
+  degraded: boolean
+}
+
+export interface LiveCadence {
+  system: { interval_minutes: number; reason: string; last_sync_at: string | null }
+  rank: { last_update_at: string | null; next_due_floor_minutes: number }
 }
 
 export interface ActionSquadPlayer {

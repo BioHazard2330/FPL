@@ -653,3 +653,129 @@ tunnel, both independently confirmed reachable by `curl` and this
 project's own Browser-pane tool). Committing and pushing real, verified
 work to this remote without being asked each time is now a standing rule
 (CLAUDE.md's own constraints list).
+
+## Stage 5 — frontend-wide visual/UX overhaul, all 7 screens (2026-09-08)
+
+Direct user brief: comprehensive visual/compositional/interaction overhaul
+across the WHOLE frontend, not just Command - "if a page can still be
+described as sidebar + title + collection of cards, the work is not
+finished." Backend, data contracts, and recommendation semantics stayed
+untouched throughout (frontend-only pass).
+
+**Method**: audited each of the other six screens against the brief's own
+"preserve/refine vs fundamentally recompose" distinction rather than
+rebuilding everything uniformly:
+
+- **Global sweep**: all 14 remaining colored `shadow-[...]`/`drop-shadow-
+  [...]` glow effects removed across My Team/Plan/Football/Scout/Advanced
+  (Command was already clean) - DESIGN.md's own repeated "flat, no shadow"
+  rule, violated everywhere outside Command until this pass. Kept
+  `CommandPalette`'s modal-overlay shadow (a real floating-layer elevation
+  cue, functionally different from card decoration) and an unused shadcn
+  `Sidebar` `floating` variant this app doesn't render.
+- **My Team, Plan, Football, Scout** - judged "preserve and refine": each
+  already had real football texture from earlier passes (pitch, Fixture
+  Ticker, Change Wire, Template Team, shirt-swap legs). Plan additionally
+  had its 4 lower sections recomposed away from a 4x-repeated `border-t-2 +
+  eyebrow` pattern into deliberately varied separation (flat panel band /
+  chart-integrated annotations / gold-accented rail), reusing the same
+  composition vocabulary Command's v4 pass established. My Team's pitch
+  column widened slightly (200px sidebar, was 240px).
+- **Advanced** - judged "fundamentally recompose" (a literal shadow-card
+  grid, the worst offender). Chip Strategy rebuilt as a real horizontal
+  comparison rail (chip xP values ARE directly comparable magnitudes - the
+  same bar language `ComparisonGraphic` already established) replacing a
+  2-column card grid. Model vs Market rebuilt as a weighted rail - a real
+  `MAJOR_OUTLIER` divergence now reads visibly larger than a routine one
+  (the same lead/rest hierarchy `EvidenceRail` uses) instead of a uniform
+  boxed list.
+- **Live** - judged "fundamentally recompose" for one concrete, real gap:
+  `source_freshness`/`cadence` were already real fields in the live-
+  snapshot payload (per-source last-success/degraded status, and the real
+  adaptive sync interval `scheduler/cadence.py` computes for its own
+  scheduling decisions) but the frontend typed both `unknown` and never
+  rendered them. Added real TS types + a new System Health section - closes
+  the brief's own explicit control-room hierarchy (status / events /
+  movements / health / last-updated) with zero new backend computation.
+- Full suite run once at the end (1675/1675 passed at Stage 4's own gate;
+  no Python changed this stage, so this run is a confirmation, not a
+  regression check).
+
+## Stage 6 — structural escalation: three real layout rebuilds (2026-09-08)
+
+Direct user pushback on Stage 5: "changes are still small, very minute" -
+correct. Stage 5 was real but surface-level (shadow removal, band
+recoloring, one card-grid-to-rail conversion). This stage is the genuine
+structural escalation - three new page compositions, not restyles:
+
+- **My Team**: merged two stacked sections (facts strip, star-player
+  moment) into one asymmetric hero band sharing a single ghost "SQUAD"
+  numeral. Moved Bench/Transfer Pressure/Squad Risks out from under the
+  pitch into a real 320px analysis rail running alongside it - the pitch
+  now stands alone in the main column, the right side is a genuine
+  tactical sidebar, not a near-empty margin.
+- **Plan**: new `StrategyGrid` component - every shown path plotted
+  simultaneously across a shared real gameweek axis (rows = paths, columns
+  = the real union of GW events, cells = that path's real action/chip,
+  honest empty dash when absent). Replaces a single-path rail + separate
+  ranked list with one spatial overview; the old rail is now the drill-down
+  detail for the selected row. A genuinely new composition - nothing else
+  in this app resembles it.
+- **Scout**: replaced the `Sheet` slide-out drawer with a real, always-
+  visible persistent detail panel beside the table - list-left/detail-
+  right, the actual scouting-workstation pattern, never hides the table it
+  came from.
+
+**Real operational finding surfaced while verifying this stage**: a cold
+`DashboardContext` rebuild now takes ~180s (confirmed via a direct, patient
+timed `curl`), not the ~60s `context.py`'s own docstring still claims - a
+request landing during that window is indistinguishable from a genuine
+hang under a short verification timeout. This explains why the SAME real
+symptom got misdiagnosed differently earlier the same session (a duplicate
+`LiveServer` once, suspected background-test CPU contention once) - both
+were real findings for their own instances, but this was the actual
+common-case cause. Documented as a real, scoped follow-up in
+`docs/PROJECT_STATE.md`; not fixed this pass (the underlying ~180s cost
+itself is out of scope for a frontend visual pass).
+
+## Stage 7 — real polling, closing a real "never refreshes" gap (2026-09-08)
+
+Direct user question: "does everything update regularly, like the old
+dashboard's autonomy?" - led to a real, confirmed, serious finding: every
+screen's `useFetch(fetchXPayload, [])` call used an EMPTY dependency array,
+meaning it fetched its payload exactly ONCE on mount and never again for
+the lifetime of the page - true of all 7 screens, including LIVE. The old
+dashboard was a fully-regenerated static file every real sync cycle, with
+its own client-side refresh; the React rebuild never re-implemented
+anything equivalent for the main screen content (only the shared nav-rail/
+header chrome polled, via `useLiveMeta`'s existing 15s interval) - a real
+gap this whole redesign effort had carried since Phase 8.2 Stage 2 without
+anyone (including every prior session this year) noticing.
+
+Fixed by adding a real, optional `pollMs` parameter to `useFetch` -
+the FIRST fetch still shows the real loading skeleton; a poll-triggered
+refetch updates data in place (never flips back to loading) and, on
+failure, keeps the last real data on screen (the same "keep the last real
+snapshot" rule `useLiveMeta` already established) rather than blanking a
+still-valid view over a transient network hiccup. Wired in:
+- LIVE: 10s (matches the old dashboard's own documented real cadence for
+  this exact channel - `live_snapshot.json`, "browser-patched every ~10s").
+- Command/My Team/Plan/Football/Scout/Advanced: 60s - the underlying
+  `/api/*` payloads are server-cached (600s TTL, proactively refreshed
+  every 480s), so a 60s client poll is cheap (usually a warm-cache hit,
+  confirmed single-digit-to-tens-of-ms in this session's own testing) and
+  keeps the page honestly in sync rather than frozen at whatever was true
+  at page-load time.
+
+**Real follow-on bug found and fixed while wiring this in**: Scout's and
+My Team's own "selected player" detail views (the new persistent
+workstation panel, the existing detail sheet) both stored the FETCHED ROW
+OBJECT itself in state. Once polling started replacing `rows`/`positions`
+with fresh objects every tick, a selected player's detail view would have
+frozen on the stale object forever - worse than the pre-polling behavior,
+since the surrounding table/pitch would show fresh numbers while the
+detail panel silently stopped updating. Fixed by storing only the real
+`player_id` and re-deriving the actual object from the current payload on
+every render - the panel now always reflects whatever the last real poll
+returned, and degrades to `null` (not a stale ghost) if a player ever
+disappears from the payload entirely.

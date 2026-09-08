@@ -21,7 +21,7 @@ import { useFetch } from '@/lib/useFetch'
  * every number here traces to the same `CommandPayload` fields the
  * previous version already rendered. */
 export function CommandScreen() {
-  const state = useFetch(fetchCommandPayload, [])
+  const state = useFetch(fetchCommandPayload, [], 60000)
 
   if (state.status === 'loading') {
     return (

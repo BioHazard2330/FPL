@@ -19,7 +19,7 @@ const CLASS_COLOR: Record<string, string> = {
 }
 
 export function LiveScreen() {
-  const state = useFetch(fetchLiveSnapshot, [])
+  const state = useFetch(fetchLiveSnapshot, [], 10000)
 
   if (state.status === 'loading') {
     return (
@@ -230,6 +230,44 @@ export function LiveScreen() {
           </div>
         )}
       </div>
+
+      {/* SYSTEM HEALTH - real per-source freshness + the real adaptive sync
+          cadence this project's own scheduler uses to decide its next tick -
+          never a fake "system monitor", every value here already drives a
+          real backend decision. Closes the control-room hierarchy (status /
+          events / movements / health / last-updated) on a distinct flat
+          band. */}
+      {(p.source_freshness.length > 0 || p.cadence) && (
+        <div className="border-t-2 border-divider bg-panel px-10 py-8">
+          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">System health</div>
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_auto]">
+            {p.source_freshness.length > 0 && (
+              <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3">
+                {p.source_freshness.map((s) => (
+                  <div key={s.source} className="flex items-center gap-2">
+                    <span className={`size-1.5 shrink-0 rounded-full ${s.degraded ? 'bg-alert-red' : 'bg-pitch-green'}`} />
+                    <span className="truncate text-sm font-semibold text-text">{s.source}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-text-faint">
+                      {s.last_success ? new Date(s.last_success).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'never'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {p.cadence && (
+              <div className="border-l-2 border-divider pl-8 text-sm">
+                <div className="text-text-muted">
+                  Sync every <span className="font-bold text-text">{p.cadence.system.interval_minutes}m</span>
+                </div>
+                <div className="mt-1 text-xs text-text-faint">{p.cadence.system.reason}</div>
+                <div className="mt-3 text-text-muted">
+                  Rank refreshes at least every <span className="font-bold text-text">{p.cadence.rank.next_due_floor_minutes}m</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

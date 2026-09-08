@@ -135,7 +135,7 @@ function FeaturedSignalCard({ s, large = false }: { s: FootballSignal; large?: b
 
   return (
     <div
-      className={`min-w-[300px] flex-1 border-l-4 bg-panel px-6 py-5 shadow-[0_16px_32px_-16px_rgba(0,0,0,0.8)] ${CATEGORY_ACCENT[s.category] ?? 'border-text-faint'} ${large ? 'basis-full py-7' : ''}`}
+      className={`min-w-[300px] flex-1 border-l-4 bg-panel px-6 py-5 ${CATEGORY_ACCENT[s.category] ?? 'border-text-faint'} ${large ? 'basis-full py-7' : ''}`}
     >
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
@@ -195,7 +195,7 @@ function heatStyle(value: number | null, min: number, max: number, good: boolean
 }
 
 export function FootballScreen() {
-  const state = useFetch(fetchFootballPayload, [])
+  const state = useFetch(fetchFootballPayload, [], 60000)
 
   if (state.status === 'loading') {
     return (
@@ -303,7 +303,7 @@ export function FootballScreen() {
       {p.team_state.length > 0 && (
         <div className="mt-10 px-10">
           <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</div>
-          <div className="overflow-x-auto border-2 border-divider bg-panel px-4 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.9)]">
+          <div className="overflow-x-auto border-2 border-divider bg-panel px-4">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">

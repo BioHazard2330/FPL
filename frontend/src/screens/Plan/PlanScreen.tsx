@@ -25,6 +25,83 @@ function RailArrow() {
   )
 }
 
+/** THE STRATEGY GRID - real spatial path comparison, rows = ranked paths,
+ * columns = the real union of gameweeks any shown path actually has a leg
+ * for. Replaces a plain ranked list: comparing paths by which GW does what
+ * is the actual planning question, not just "which number is bigger."
+ * A cell with no step for that path/GW renders as an honest empty dash -
+ * never a fabricated placeholder action. */
+function StrategyGrid({ paths, activePath, onSelect }: { paths: PlanPath[]; activePath: number; onSelect: (idx: number) => void }) {
+  const ranked = paths.slice().sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
+  const events = Array.from(new Set(paths.flatMap((pp) => pp.steps.map((s) => s.event)))).sort((a, b) => a - b)
+  if (events.length === 0) return null
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="grid" style={{ gridTemplateColumns: `minmax(220px, auto) repeat(${events.length}, minmax(96px, 1fr)) auto` }}>
+        {/* header row: GW axis */}
+        <div />
+        {events.map((e) => (
+          <div key={e} className="border-b-2 border-divider px-2 pb-2 text-center text-[10px] font-bold uppercase tracking-wide text-text-faint">
+            GW{e}
+          </div>
+        ))}
+        <div className="border-b-2 border-divider" />
+
+        {ranked.map((pp, rank) => {
+          const active = pp.idx === activePath
+          const leading = rank === 0
+          const stepByEvent = new Map(pp.steps.map((s) => [s.event, s]))
+          return (
+            <div key={pp.idx} className="contents">
+              <button
+                onClick={() => onSelect(pp.idx)}
+                className={`flex items-baseline gap-3 border-b border-divider py-3 pr-3 text-left ${active ? 'bg-panel' : 'hover:bg-panel/50'}`}
+              >
+                <span className={`font-display font-bold tabular ${leading ? 'text-2xl text-pitch-green' : 'text-base text-text-faint'}`}>
+                  {String(rank + 1).padStart(2, '0')}
+                </span>
+                <span className={`truncate text-sm font-semibold ${active ? 'text-text' : 'text-text-muted'}`}>{pp.descriptor}</span>
+              </button>
+              {events.map((e) => {
+                const s = stepByEvent.get(e)
+                if (!s) return <div key={e} className={`border-b border-divider py-3 text-center text-text-faint ${active ? 'bg-panel' : ''}`}>&middot;</div>
+                const isChip = s.chip_played !== null
+                return (
+                  <div
+                    key={e}
+                    className={`flex items-center justify-center border-b border-divider px-1 py-2 text-center ${active ? 'bg-panel' : ''}`}
+                  >
+                    <span
+                      className={`w-full truncate px-1.5 py-1 text-[10px] font-bold uppercase leading-tight ${
+                        s.is_locked
+                          ? 'bg-pitch-green text-pitch-green-ink'
+                          : isChip
+                            ? 'border border-dashed border-broadcast-gold/60 text-broadcast-gold'
+                            : 'text-text-muted'
+                      }`}
+                    >
+                      {s.chip_played ?? s.action}
+                    </span>
+                  </div>
+                )
+              })}
+              <button
+                onClick={() => onSelect(pp.idx)}
+                className={`border-b border-divider py-3 pl-3 text-right ${active ? 'bg-panel' : ''}`}
+              >
+                <span className={`tabular font-bold ${leading ? 'font-display text-xl text-pitch-green' : 'text-sm text-text-muted'}`}>
+                  {pp.score?.toFixed(1) ?? '—'}
+                </span>
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function StepRail({ path }: { path: PlanPath }) {
   return (
     <div className="flex items-stretch gap-0 overflow-x-auto pb-2">
@@ -38,7 +115,7 @@ function StepRail({ path }: { path: PlanPath }) {
             <div
               className={`flex min-w-[150px] flex-col gap-1 px-5 py-4 ${
                 s.is_locked
-                  ? 'border-t-2 border-white/40 bg-pitch-green text-pitch-green-ink shadow-[0_16px_28px_-12px_rgba(31,206,107,0.55)]'
+                  ? 'border-t-2 border-white/40 bg-pitch-green text-pitch-green-ink'
                   : isChip
                     ? 'border-2 border-dashed border-broadcast-gold/60 bg-panel text-text'
                     : 'border-2 border-dashed border-divider bg-panel text-text-muted'
@@ -96,7 +173,7 @@ function StepRail({ path }: { path: PlanPath }) {
 }
 
 export function PlanScreen() {
-  const state = useFetch(fetchPlanPayload, [])
+  const state = useFetch(fetchPlanPayload, [], 60000)
   const [activePath, setActivePath] = useState(1)
 
   if (state.status === 'loading') {
@@ -158,10 +235,23 @@ export function PlanScreen() {
         </div>
       </div>
 
-      {/* DOMINANT MODULE: the strategy timeline for the selected path */}
+      {/* THE STRATEGY GRID - the real planning-desk centrepiece: every shown
+          path laid out across the same real gameweek axis at once, spatial
+          comparison instead of a ranked list. Selecting a row drives the
+          detail rail + chart below. */}
+      {p.paths && p.paths.length > 0 && (
+        <div className="mt-8 bg-panel px-10 py-8">
+          <div className="mb-5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Strategy grid</div>
+          <StrategyGrid paths={p.paths} activePath={activePath} onSelect={setActivePath} />
+        </div>
+      )}
+
+      {/* DETAIL: the selected path's own real per-leg breakdown (shirts,
+          hit-taken flags, per-GW EV) - the grid above is the overview, this
+          is the drill-down, whitespace-only separation between them. */}
       {current && (
-        <div className="mt-8 px-10">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Strategy path</div>
+        <div className="mt-10 px-10">
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Selected path detail</div>
           <StepRail path={current} />
           <div className="mt-4 flex flex-wrap gap-x-8 gap-y-1 text-sm text-text-muted">
             <span>
@@ -174,76 +264,42 @@ export function PlanScreen() {
         </div>
       )}
 
-      {/* PATH COMPARISON: real ranking, not a bar chart - the leader dominates typographically */}
-      {p.paths && p.paths.length > 0 && (
-        <div className="mt-10 border-t-2 border-divider px-10 pt-6">
-          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Path comparison</div>
-          <div className="divide-y divide-divider">
-            {p.paths
-              .slice()
-              .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
-              .map((pp, rank) => {
-                const active = pp.idx === activePath
-                const leading = rank === 0
-                return (
-                  <button
-                    key={pp.idx}
-                    onClick={() => setActivePath(pp.idx)}
-                    className={`flex w-full items-baseline gap-5 py-4 text-left transition-colors ${leading ? 'bg-panel px-4' : 'px-4 hover:bg-panel/40'}`}
-                  >
-                    <span
-                      className={`font-display shrink-0 font-bold tabular ${leading ? 'text-5xl text-pitch-green' : 'text-2xl text-text-faint'}`}
-                    >
-                      {String(rank + 1).padStart(2, '0')}
-                    </span>
-                    <span className={`flex-1 truncate ${leading ? 'font-display text-2xl font-bold text-text' : 'text-sm font-semibold text-text-muted'} ${active && !leading ? 'text-text' : ''}`}>
-                      {pp.descriptor}
-                    </span>
-                    <span className={`tabular shrink-0 font-bold ${leading ? 'text-3xl text-pitch-green' : 'text-base text-text-muted'}`}>
-                      {pp.score?.toFixed(1) ?? '—'}
-                    </span>
-                    <span className="w-24 shrink-0 text-right text-[10px] uppercase tracking-wide text-text-faint">{pp.confidence}</span>
-                  </button>
-                )
-              })}
-          </div>
-        </div>
-      )}
-
-      {/* CUMULATIVE EDGE */}
+      {/* CUMULATIVE EDGE - the real chart, with the real per-horizon totals as
+          direct annotations underneath rather than a separate bordered row -
+          whitespace-only separation from the panel band above */}
       {series.length > 0 && (
-        <div className="mt-10 border-t-2 border-divider px-10 pt-6">
+        <div className="mt-12 px-10">
           <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative edge</div>
           <Chart options={chartOptions} series={series} type="line" height={300} />
-        </div>
-      )}
-
-      {current?.horizon_breakdown && (
-        <div className="flex gap-8 border-t-2 border-divider px-10 pt-6">
-          {Object.entries(current.horizon_breakdown).map(([h, entry]) => (
-            <div key={h}>
-              <div className="tabular text-lg font-bold text-text">{entry.path_total.toFixed(1)}</div>
-              <div className="text-[11px] uppercase tracking-wide text-text-faint">at {h} gameweeks</div>
-              {entry.delta_vs_roll !== null && (
-                <div className="tabular text-xs text-pitch-green">
-                  {entry.delta_vs_roll >= 0 ? '+' : ''}
-                  {entry.delta_vs_roll.toFixed(1)} vs roll
+          {current?.horizon_breakdown && (
+            <div className="mt-2 flex gap-10 border-t-2 border-divider pt-4">
+              {Object.entries(current.horizon_breakdown).map(([h, entry]) => (
+                <div key={h}>
+                  <div className="tabular text-lg font-bold text-text">{entry.path_total.toFixed(1)}</div>
+                  <div className="text-[11px] uppercase tracking-wide text-text-faint">at {h} gameweeks</div>
+                  {entry.delta_vs_roll !== null && (
+                    <div className="tabular text-xs text-pitch-green">
+                      {entry.delta_vs_roll >= 0 ? '+' : ''}
+                      {entry.delta_vs_roll.toFixed(1)} vs roll
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* STRATEGY RISKS */}
+      {/* STRATEGY RISKS - a real gold-accented rail, matching the same
+          risk-strip language My Team's own squad-risks strip already uses */}
       {p.sensitivity && p.sensitivity.length > 0 && (
-        <div className="mt-10 border-t-2 border-divider px-10 pt-6">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Strategy risks</div>
-          <div className="space-y-2">
+        <div className="mt-12 border-t-2 border-divider bg-raised/40 px-10 py-8">
+          <div className="mb-4 text-[11px] font-bold uppercase tracking-wide text-broadcast-gold">Strategy risks - what would flip this</div>
+          <div className="space-y-3">
             {p.sensitivity.map((s) => (
-              <div key={s.label} className="flex items-center gap-4">
+              <div key={s.label} className="flex items-center gap-4 border-l-2 border-broadcast-gold/50 pl-3">
                 <div className="w-64 shrink-0 truncate text-sm text-text-muted">{s.label}</div>
-                <div className="h-2 flex-1 bg-raised">
+                <div className="h-2 flex-1 bg-panel">
                   <div className="h-full bg-broadcast-gold" style={{ width: `${Math.min(s.pct, 100)}%` }} />
                 </div>
                 <div className="tabular w-14 text-right text-sm font-semibold text-text">~{s.pct}%</div>

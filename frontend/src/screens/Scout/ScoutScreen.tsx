@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchScoutPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -46,11 +45,13 @@ function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
   )
 }
 
-/** Real "scouting workstation" identity block, not a stacked property list
- * (art-direction pass, 2026-09-08 v2) - a large bleeding shirt behind the
- * name, then a flat stat strip (Label/Data cells, DESIGN.md's own component)
- * in place of the old divide-y rows. Same real fields throughout. */
-function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null; onClose: () => void }) {
+/** THE SCOUTING WORKSTATION DETAIL PANEL - a real persistent pane, not a
+ * slide-out drawer that covers the table it came from. The classic
+ * workstation pattern (list left, detail always visible right) - clicking
+ * a row updates this panel in place, the table never gets obscured.
+ * Same real fields as before, just never hidden behind an open/close
+ * interaction. */
+function PlayerDetailPanel({ player }: { player: ScoutPlayerRow | null }) {
   const shirt = player ? shirtUrl(player.team_code, player.position === 'GKP', 260) : null
   const crest = player ? crestUrl(player.team_code) : null
   const stats: { label: string; value: string | number | null }[] = player
@@ -65,39 +66,37 @@ function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null;
         { label: 'Ownership', value: player.owned_pct !== null ? `${player.owned_pct.toFixed(1)}%` : null },
       ]
     : []
+
+  if (!player) {
+    return (
+      <div className="sticky top-4 flex h-[70vh] w-80 shrink-0 flex-col items-center justify-center border-2 border-dashed border-divider text-center">
+        <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Scouting bench</div>
+        <p className="mt-2 max-w-[16rem] text-sm text-text-muted">Select a player from the table to pull up their real scouting profile here.</p>
+      </div>
+    )
+  }
+
   return (
-    <Sheet open={player !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="border-l-2 border-divider bg-void p-0 sm:max-w-md">
-        {player && (
-          <>
-            <div className="relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
-              {shirt && (
-                <img
-                  src={shirt}
-                  alt=""
-                  className="pointer-events-none absolute -right-6 -top-4 h-40 w-40 object-contain opacity-90 drop-shadow-[0_16px_24px_rgba(0,0,0,0.6)]"
-                />
-              )}
-              <SheetHeader className="relative p-0">
-                <SheetTitle className="max-w-[65%] font-display text-3xl font-bold leading-[0.95] text-text">{player.name}</SheetTitle>
-                <div className="mt-2 flex items-center gap-1.5 text-sm text-text-muted">
-                  {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                  {player.team_short} &middot; {player.position} &middot; {player.price_m !== null ? `£${player.price_m.toFixed(1)}m` : '—'}
-                </div>
-              </SheetHeader>
-            </div>
-            <div className="grid grid-cols-3 gap-px bg-divider">
-              {stats.map((s) => (
-                <div key={s.label} className="bg-panel px-3 py-3">
-                  <div className="text-[9px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
-                  <div className="tabular mt-0.5 text-lg font-bold text-text">{s.value ?? '—'}</div>
-                </div>
-              ))}
-            </div>
-          </>
+    <div className="sticky top-4 w-80 shrink-0 border-2 border-divider bg-void">
+      <div className="relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
+        {shirt && (
+          <img src={shirt} alt="" className="pointer-events-none absolute -right-6 -top-4 h-40 w-40 object-contain opacity-90" />
         )}
-      </SheetContent>
-    </Sheet>
+        <div className="relative max-w-[65%] font-display text-3xl font-bold leading-[0.95] text-text">{player.name}</div>
+        <div className="relative mt-2 flex items-center gap-1.5 text-sm text-text-muted">
+          {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
+          {player.team_short} &middot; {player.position} &middot; {player.price_m !== null ? `£${player.price_m.toFixed(1)}m` : '—'}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-px bg-divider">
+        {stats.map((s) => (
+          <div key={s.label} className="bg-panel px-3 py-3">
+            <div className="text-[9px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
+            <div className="tabular mt-0.5 text-lg font-bold text-text">{s.value ?? '—'}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -125,9 +124,9 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
                   {tp.is_mine && (
                     <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">M</span>
                   )}
-                  <div className="relative h-14 w-14 drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]">
+                  <div className="relative h-14 w-14">
                     {shirt ? <img src={shirt} alt="" className="h-14 w-14 object-contain" /> : <div className="h-14 w-14 bg-raised" />}
-                    {crest && <img src={crest} alt="" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void shadow-[0_0_0_2px_var(--void)]" />}
+                    {crest && <img src={crest} alt="" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void ring-2 ring-void" />}
                   </div>
                   <div className="mt-1 w-full truncate text-xs font-bold text-text">{tp.name}</div>
                   <div className="tabular text-sm font-bold text-pitch-green">
@@ -216,15 +215,22 @@ function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
 }
 
 export function ScoutScreen() {
-  const state = useFetch(fetchScoutPayload, [])
+  const state = useFetch(fetchScoutPayload, [], 60000)
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState<(typeof POSITIONS)[number]>('ALL')
   const [sortKey, setSortKey] = useState<SortKey>('total_points')
   const [maxPrice, setMaxPrice] = useState(PRICE_CEIL)
   const [mineOnly, setMineOnly] = useState(false)
-  const [selected, setSelected] = useState<ScoutPlayerRow | null>(null)
+  // Real id, not the fetched row object itself (2026-09-08, direct user
+  // finding: "I don't want that lag" led to adding real polling to
+  // `useFetch` - a stored object reference would freeze the detail panel
+  // on stale data forever once a poll refresh replaces `rows` with new
+  // objects). Re-looked-up from the current `rows` on every render, so the
+  // panel always reflects whatever the last real poll actually returned.
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   const rows = state.status === 'ready' ? state.data.players : []
+  const selected = selectedId !== null ? (rows.find((r) => r.player_id === selectedId) ?? null) : null
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows
@@ -400,59 +406,65 @@ export function ScoutScreen() {
         </label>
       </div>
 
-      <div className="mt-6 px-10">
-        <div className="max-h-[70vh] overflow-y-auto border-2 border-divider bg-panel px-4 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.9)]">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-panel">
-              <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
-                <th className="py-2 pr-4">Player</th>
-                <th className="py-2 pr-4">Pos</th>
-                <th className="tabular py-2 pr-4">Price</th>
-                <th className="tabular py-2 pr-4">Owned</th>
-                <th className="tabular py-2 pr-4">Pts</th>
-                <th className="tabular py-2 pr-4">Form</th>
-                <th className="tabular py-2 pr-4">xGI</th>
-                <th className="tabular py-2 pr-4">G</th>
-                <th className="tabular py-2 pr-4">A</th>
-                <th className="tabular py-2 pr-4">Min</th>
-                <th className="tabular py-2 pr-4">Bonus</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r: ScoutPlayerRow) => {
-                const crest = crestUrl(r.team_code)
-                return (
-                  <tr
-                    key={r.player_id}
-                    onClick={() => setSelected(r)}
-                    className={`cursor-pointer border-b-2 border-divider hover:bg-panel ${r.is_mine ? 'bg-raised' : ''}`}
-                  >
-                    <td className="py-2 pr-4">
-                      <span className="flex items-center gap-2 font-bold text-text">
-                        {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                        {r.name}
-                        <span className="font-normal text-text-faint">{r.team_short}</span>
-                        {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MINE</span>}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
-                    </td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.price_m !== null ? `£${r.price_m.toFixed(1)}m` : '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.owned_pct !== null ? `${r.owned_pct.toFixed(1)}%` : '—'}</td>
-                    <td className="tabular py-2 pr-4 font-semibold text-text">{r.total_points ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.form ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.xgi ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.goals ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.assists ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.minutes ?? '—'}</td>
-                    <td className="tabular py-2 pr-4 text-text-muted">{r.bonus ?? '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+      {/* THE WORKSTATION - table + a real persistent detail pane, not a
+          drawer that slides over the table it came from. */}
+      <div className="mt-6 flex gap-6 px-10">
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <div className="max-h-[70vh] overflow-y-auto border-2 border-divider bg-panel px-4">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-panel">
+                <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
+                  <th className="py-2 pr-4">Player</th>
+                  <th className="py-2 pr-4">Pos</th>
+                  <th className="tabular py-2 pr-4">Price</th>
+                  <th className="tabular py-2 pr-4">Owned</th>
+                  <th className="tabular py-2 pr-4">Pts</th>
+                  <th className="tabular py-2 pr-4">Form</th>
+                  <th className="tabular py-2 pr-4">xGI</th>
+                  <th className="tabular py-2 pr-4">G</th>
+                  <th className="tabular py-2 pr-4">A</th>
+                  <th className="tabular py-2 pr-4">Min</th>
+                  <th className="tabular py-2 pr-4">Bonus</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r: ScoutPlayerRow) => {
+                  const crest = crestUrl(r.team_code)
+                  const active = selected?.player_id === r.player_id
+                  return (
+                    <tr
+                      key={r.player_id}
+                      onClick={() => setSelectedId(r.player_id)}
+                      className={`cursor-pointer border-b-2 border-divider hover:bg-raised ${active ? 'bg-raised' : r.is_mine ? 'bg-panel' : ''}`}
+                    >
+                      <td className={`py-2 pr-4 ${active ? 'border-l-2 border-pitch-green' : ''}`}>
+                        <span className="flex items-center gap-2 font-bold text-text">
+                          {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
+                          {r.name}
+                          <span className="font-normal text-text-faint">{r.team_short}</span>
+                          {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MINE</span>}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
+                      </td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.price_m !== null ? `£${r.price_m.toFixed(1)}m` : '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.owned_pct !== null ? `${r.owned_pct.toFixed(1)}%` : '—'}</td>
+                      <td className="tabular py-2 pr-4 font-semibold text-text">{r.total_points ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.form ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.xgi ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.goals ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.assists ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.minutes ?? '—'}</td>
+                      <td className="tabular py-2 pr-4 text-text-muted">{r.bonus ?? '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
+        <PlayerDetailPanel player={selected} />
       </div>
 
       {/* PRICE MOVES - real rise/fall forecast + confirmed change ledger */}
@@ -513,7 +525,6 @@ export function ScoutScreen() {
         </div>
       )}
 
-      <PlayerDetailSheet player={selected} onClose={() => setSelected(null)} />
     </div>
   )
 }

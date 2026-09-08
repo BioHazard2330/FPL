@@ -53,13 +53,13 @@ function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolea
                 {p.is_captain ? 'C' : 'V'}
               </span>
             )}
-            <div className={`relative ${boxClass} drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}>
+            <div className={`relative ${boxClass}`}>
               {shirt ? (
                 <img src={shirt} alt={`${p.team_short} shirt`} loading="lazy" className={`${boxClass} object-contain`} />
               ) : (
                 <div className={`${boxClass} bg-raised`} />
               )}
-              {crest && <img src={crest} alt="" loading="lazy" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void shadow-[0_0_0_2px_var(--void)]" />}
+              {crest && <img src={crest} alt="" loading="lazy" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void ring-2 ring-void" />}
             </div>
             <div className={`mt-1 w-full truncate font-bold text-text ${big ? 'text-sm' : 'text-xs'}`}>{p.name}</div>
             <div className="text-[10px] text-text-faint">
@@ -72,7 +72,7 @@ function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolea
           </button>
         }
       />
-      <HoverCardContent className="w-56 rounded-none border-2 border-divider bg-panel p-0 text-text shadow-[0_20px_40px_-12px_rgba(0,0,0,0.85)] ring-0">
+      <HoverCardContent className="w-56 rounded-none border-2 border-divider bg-panel p-0 text-text ring-0">
         <div className="border-b-2 border-divider px-3 py-2">
           <div className="font-display text-sm font-bold text-text">{p.name}</div>
           <div className="text-[10px] text-text-faint">{p.team_short} &middot; {p.position}</div>
@@ -190,8 +190,12 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
 }
 
 export function MyTeamScreen() {
-  const state = useFetch(fetchMyTeamPayload, [])
-  const [selected, setSelected] = useState<SquadPlayer | null>(null)
+  const state = useFetch(fetchMyTeamPayload, [], 60000)
+  // Real id, not the fetched row object (2026-09-08, direct user finding:
+  // "I don't want that lag" led to real polling on `useFetch` - a stored
+  // object reference would freeze the detail sheet on stale data forever
+  // once a poll refresh replaces the squad with new objects).
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   if (state.status === 'loading') {
     return (
@@ -217,128 +221,138 @@ export function MyTeamScreen() {
 
   const star = p.positions?.flatMap((pos) => pos.players).find((pl) => pl.tier === 'CORE') ?? p.positions?.[0]?.players[0]
   const starShirt = star ? shirtUrl(star.team_code, star.position === 'GKP', 220) : null
+  const allSquadPlayers = [...(p.positions?.flatMap((pos) => pos.players) ?? []), ...(p.bench ?? [])]
+  const selected = selectedId !== null ? (allSquadPlayers.find((pl) => pl.player_id === selectedId) ?? null) : null
 
   return (
     <div className="pb-16">
       <Masthead edition="Squad Report" title={p.bar.pitch_heading ?? 'My Team'} />
 
-      {/* TEAM STATUS - compact block, real squad facts, not folded into the masthead line */}
-      <div className="flex flex-wrap gap-x-10 gap-y-2 border-b-2 border-divider px-10 py-5">
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Squad value</div>
-          <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.squad_value_m.toFixed(1)}m</div>
-        </div>
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Bank</div>
-          <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.bank_m.toFixed(1)}m</div>
-        </div>
-        {p.bar.formation && (
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Formation</div>
-            <div className="font-display text-2xl font-bold text-text">{p.bar.formation}</div>
-          </div>
-        )}
-        {p.bar.captain_name && (
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Captain</div>
-            <div className="font-display text-2xl font-bold text-broadcast-gold">{p.bar.captain_name}</div>
-          </div>
-        )}
-        {p.bar.vice_name && (
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Vice</div>
-            <div className="font-display text-2xl font-bold text-text-muted">{p.bar.vice_name}</div>
-          </div>
-        )}
-      </div>
-
-      {/* Editorial star moment - real shirt image over the atmosphere wash */}
-      {star && (
-        <div className="relative overflow-hidden px-10 py-6">
-          <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
-            SQUAD
-          </span>
-          <div className="relative flex items-end gap-8">
-            {starShirt && (
-              <div className="relative h-32 w-32 shrink-0">
-                <img src={starShirt} alt="" className="h-32 w-32 object-contain" />
+      {/* HERO - one unified band, not two stacked sections: a compact facts
+          column facing the real star-player moment, a single oversized
+          ghost numeral running behind both. */}
+      <div className="relative overflow-hidden border-b-2 border-divider">
+        <span className="ghost-watermark pointer-events-none absolute -right-6 -top-10 select-none font-display text-[13rem] font-bold uppercase leading-none">
+          SQUAD
+        </span>
+        <div className="relative grid grid-cols-1 gap-8 px-10 py-8 lg:grid-cols-[auto_1fr]">
+          <div className="flex flex-wrap gap-x-8 gap-y-4 lg:flex-col lg:flex-nowrap lg:gap-y-5 lg:border-r-2 lg:border-divider lg:pr-8">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Squad value</div>
+              <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.squad_value_m.toFixed(1)}m</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Bank</div>
+              <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.bank_m.toFixed(1)}m</div>
+            </div>
+            {p.bar.formation && (
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Formation</div>
+                <div className="font-display text-2xl font-bold text-text">{p.bar.formation}</div>
               </div>
             )}
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Top projected this GW</div>
-              <div className="font-display text-4xl font-bold uppercase text-text">{star.name}</div>
-              <div className="tabular mt-1 text-2xl font-bold text-pitch-green">{star.median.toFixed(1)} xP</div>
-            </div>
+            {p.bar.captain_name && (
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Captain</div>
+                <div className="font-display text-2xl font-bold text-broadcast-gold">{p.bar.captain_name}</div>
+              </div>
+            )}
+            {p.bar.vice_name && (
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Vice</div>
+                <div className="font-display text-2xl font-bold text-text-muted">{p.bar.vice_name}</div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px]">
-        {/* MAIN: the pitch — dominant object, most of the visual field */}
-        <div className="border-r-0 border-divider px-8 py-8 lg:border-r-2">
-          <div className="pitch-surface flex flex-col justify-between gap-6 px-6 py-12">
+          {star && (
+            <div className="flex items-end gap-8">
+              {starShirt && (
+                <div className="relative h-40 w-40 shrink-0">
+                  <img src={starShirt} alt="" className="h-40 w-40 object-contain" />
+                </div>
+              )}
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Top projected this GW</div>
+                <div className="font-display text-5xl font-bold uppercase text-text">{star.name}</div>
+                <div className="tabular mt-1 text-3xl font-bold text-pitch-green">{star.median.toFixed(1)} xP</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* TACTICAL BOARD - the pitch (+ bench, real substitutes standing by)
+          runs alone in the main column, uninterrupted; every supporting
+          fact moves into a real, wide analysis rail alongside it - a true
+          left/right split for the whole surface, not sections stacked
+          under a full-width pitch. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
+        <div className="border-r-0 border-divider px-8 py-10 lg:border-r-2">
+          <div className="pitch-surface flex flex-col justify-between gap-7 px-6 py-14">
             {p.positions?.map((pos) => (
               <div key={pos.position} className="relative flex flex-wrap justify-center gap-6">
                 {pos.players.map((pl) => (
-                  <PlayerTile key={pl.player_id} p={pl} onSelect={setSelected} />
+                  <PlayerTile key={pl.player_id} p={pl} onSelect={(pl) => setSelectedId(pl.player_id)} />
                 ))}
               </div>
             ))}
           </div>
 
-          {/* BENCH / WEAK LINKS / RISKS - three real, differently-composed strips */}
-          <div className="mt-6 grid grid-cols-1 gap-0 divide-y-2 divide-divider border-t-2 border-divider md:grid-cols-3 md:divide-x-2 md:divide-y-0">
-            {p.bench && p.bench.length > 0 && (
-              <div className="px-1 py-5 md:px-6">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
-                <div className="mt-4 flex flex-wrap gap-x-5 gap-y-4 opacity-70">
-                  {p.bench.map((pl) => (
-                    <PlayerTile key={pl.player_id} p={pl} dim onSelect={setSelected} />
-                  ))}
-                </div>
+          {p.bench && p.bench.length > 0 && (
+            <div className="mt-6 flex items-center gap-6 border-t-2 border-divider pt-5">
+              <div className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
+              <div className="flex flex-1 flex-wrap gap-x-6 gap-y-4 opacity-70">
+                {p.bench.map((pl) => (
+                  <PlayerTile key={pl.player_id} p={pl} dim onSelect={(pl) => setSelectedId(pl.player_id)} />
+                ))}
               </div>
-            )}
-            {p.weak_links && p.weak_links.length > 0 && (
-              <div className="px-1 py-5 md:px-6">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-alert-red">Transfer pressure</div>
-                <div className="mt-3 divide-y divide-divider">
-                  {p.weak_links.map((w) => (
-                    <div key={w.name} className="flex items-baseline justify-between py-2">
-                      <span className="text-sm font-semibold text-text">{w.name}</span>
-                      <span className="tabular text-lg font-bold text-alert-red">{w.median.toFixed(1)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {p.risks && p.risks.length > 0 && (
-              <div className="bg-raised/40 px-1 py-5 md:px-6">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-broadcast-gold">Squad risks</div>
-                <div className="mt-3 space-y-3">
-                  {p.risks.map((r, i) => (
-                    <p key={i} className="border-l-2 border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* RIGHT: tactical margin - quiet, rule-line only, never a filled panel competing with the pitch */}
-        <aside className="px-6 py-8">
+        {/* RIGHT: a real analysis rail, not a near-empty margin - carrying,
+            pressure, and risk each get their own real visual treatment,
+            stacked to run the full height beside the pitch. */}
+        <aside className="bg-panel px-7 py-10">
           <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Squad signals</div>
 
           {p.strong_link && (
             <div className="mt-5 border-t-2 border-divider pt-4">
               <div className="text-[10px] font-bold uppercase tracking-wide text-pitch-green">Carrying</div>
-              <div className="mt-1 font-display text-xl font-bold text-text">{p.strong_link.name}</div>
+              <div className="mt-1 font-display text-2xl font-bold text-text">{p.strong_link.name}</div>
               <div className="tabular text-sm text-pitch-green">{p.strong_link.median.toFixed(1)} xP &middot; {p.strong_link.team_short}</div>
+            </div>
+          )}
+
+          {p.weak_links && p.weak_links.length > 0 && (
+            <div className="mt-6 border-t-2 border-divider pt-4">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-alert-red">Transfer pressure</div>
+              <div className="mt-3 divide-y divide-divider">
+                {p.weak_links.map((w) => (
+                  <div key={w.name} className="flex items-baseline justify-between py-2.5">
+                    <span className="text-sm font-semibold text-text">{w.name}</span>
+                    <span className="tabular text-xl font-bold text-alert-red">{w.median.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {p.risks && p.risks.length > 0 && (
+            <div className="mt-6 border-t-2 border-divider pt-4">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-broadcast-gold">Squad risks</div>
+              <div className="mt-3 space-y-3">
+                {p.risks.map((r, i) => (
+                  <p key={i} className="border-l-2 border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
+                ))}
+              </div>
             </div>
           )}
         </aside>
       </div>
 
-      <PlayerDetailSheet player={selected} onClose={() => setSelected(null)} />
+      <PlayerDetailSheet player={selected} onClose={() => setSelectedId(null)} />
     </div>
   )
 }

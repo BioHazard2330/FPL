@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-08 (Command visual composition rebuild v4 + operational fixes). Read this before
+Last updated: 2026-09-08 (frontend-wide visual/UX overhaul - all 7 screens). Read this before
 resuming work — it's the current, load-bearing snapshot, kept lean on purpose. **Don't add
 session narrative here** — a new capability/architecture change gets one short factual entry;
 the story of how it was built, bugs found, and live-verification detail goes in `docs/history/`
@@ -32,12 +32,28 @@ glow/gradients except a deliberate body-level grain texture + per-screen
 atmosphere washes), a compact nav rail, real ApexCharts on LIVE (rank/
 points/captain trajectory) and PLAN (trajectory/cumulative-edge).
 
+**Live update model** (real polling added 2026-09-08, Stage 7 - see
+`docs/UI_REDESIGN_DECISIONS.md`; every screen fetched its payload exactly
+ONCE on mount before this and never refreshed, a real gap this whole
+rebuild had carried unnoticed since Stage 2): LIVE polls every 10s
+(matches the old dashboard's own real cadence for `live_snapshot.json`);
+Command/My Team/Plan/Football/Scout/Advanced poll every 60s (cheap - these
+hit the warm server-side `DashboardContext`/per-screen caches almost
+always). The shared nav-rail/header chrome (`useLiveMeta`) already polled
+independently at 15s and is unaffected. A poll-triggered refetch updates
+data in place without flashing back to a loading skeleton, and on failure
+keeps the last real data on screen rather than blanking a still-valid
+view.
+
 Deploy procedure (manual, not yet automated into `run_scheduled`): `npm run
 build` in `frontend/` → copy `dist/{assets,fonts,index.html}` into `data/`
 → restart the real `FPLAgentLiveServer` scheduled task (`Stop-ScheduledTask`
 does not actually kill the process - force-kill the real PID first, then
 `Start-ScheduledTask`) → warm all 6 `/api/*` endpoints (first hit after a
-restart is a real cold `DashboardContext` build, 40-150s).
+restart is a real cold `DashboardContext` build - **confirmed ~180s**
+2026-09-08 via a direct patient timed request, not the ~60s this module's
+own docstring still claims; use a patient timeout when verifying post-
+restart, a short one reads a legitimate cold build as a hang).
 
 **Real, disclosed remaining scope** (updated 2026-09-08 - Template Team,
 Expected Data, Fixture Ticker, and the MANAGER/XI/AVAILABILITY change wire
@@ -54,7 +70,104 @@ squad-scoped Fixture Ticker); ADVANCED (Decision Detail, Player Odds,
 Optimizer Delta, Regret Analysis). Full narrative (every phase, every bug
 found, every live-verification): `docs/UI_REDESIGN_DECISIONS.md`.
 
-## Where things stand (updated 2026-09-08, Command visual composition rebuild v4 + operational fixes)
+## Where things stand (updated 2026-09-08, frontend-wide visual/UX overhaul)
+
+Direct user brief: eliminate every remaining "generic dark SaaS dashboard"
+surface across all 7 screens, not just Command - Command was already real,
+this pass audited the other six and judged each on its own merits (per the
+brief's own "preserve/refine vs fundamentally recompose" distinction, not a
+blind full rebuild):
+
+- **Global DESIGN.md conformance sweep**: removed all 14 remaining
+  `shadow-[...]`/`drop-shadow-[...]` colored-glow effects across My Team,
+  Plan, Football, Scout, and Advanced (Command was already clean from the
+  v4 pass) - DESIGN.md's own repeated "flat, no shadow" rule, previously
+  violated everywhere outside Command. The one deliberate exception left in
+  place: `CommandPalette`'s modal-overlay shadow (a real floating-layer
+  elevation cue, not card decoration - judged out of scope for the same
+  reason DESIGN.md's own "one live pill" exception exists).
+- **My Team**: judged "preserve and refine" (pitch already dominant, real
+  bench/pressure/risk zones from the prior pass) - shadows removed, pitch
+  column widened (sidebar 240px -> 200px) for more pitch dominance.
+- **Plan**: judged "preserve and refine" - the 4 lower sections (path
+  comparison / cumulative edge / horizon breakdown / strategy risks) used
+  to repeat the same `border-t-2 + eyebrow` pattern four times in a row,
+  the exact anti-pattern the brief named; recomposed with the same
+  deliberately-varied separation techniques Command's v4 pass established
+  (path comparison -> its own flat panel band; cumulative edge -> real
+  per-horizon totals as direct chart annotations instead of a separate
+  bordered row; strategy risks -> a gold-accented rail).
+- **Football / Scout**: judged "preserve and refine" - already had real
+  football texture (Fixture Ticker, Change Wire, Template Team, Expected
+  Data) from the prior "more football" pass; this pass was shadow removal
+  only, structure already sound.
+- **Advanced**: judged "fundamentally recompose" - was the worst offender
+  (a literal shadow-card grid). Chip Strategy rebuilt as a real horizontal
+  comparison rail (chip xP values are directly comparable magnitudes - the
+  same broadcast-bar language Command's `ComparisonGraphic` already uses)
+  instead of a 2-column card grid. Model vs Market rebuilt as a weighted
+  rail where a real `MAJOR_OUTLIER` divergence earns visibly more weight
+  than a routine one (the same lead/rest hierarchy `EvidenceRail` uses),
+  instead of a uniform boxed list. System Readiness bento grid and Source
+  Health table were already sound, kept.
+- **Live**: judged "fundamentally recompose" for one real, concrete gap -
+  the payload already carried `source_freshness` (per-source last-success/
+  degraded flags) and `cadence` (the real adaptive sync interval this
+  project's own scheduler uses) but the frontend typed both as `unknown`
+  and never rendered them. Added real TS types (`SourceFreshnessRow`,
+  `LiveCadence`) and a new System Health section - closes the brief's own
+  explicit "control room" hierarchy (status / events / movements / health /
+  last-updated), zero new backend computation, purely exposing an
+  already-computed real field.
+- Full suite run once at the end (no Python changed this pass - a
+  confirmation run, not a regression check).
+
+**Follow-up escalation, same day (direct user pushback: "changes are still
+small, very minute")** - correct feedback: the pass above was real but
+surface-level (shadow removal, band recoloring, one rail conversion). Three
+genuine structural rebuilds followed, each a real layout/interaction change
+new to this app, not a restyle of what already existed:
+- **My Team**: the squad-value/bank/formation/captain/vice strip and the
+  "top projected" star-player moment used to be two separate stacked
+  sections - merged into one hero band (a real asymmetric split: a compact
+  facts column facing the star moment, one shared ghost "SQUAD" numeral
+  behind both). Below it, Bench/Transfer Pressure/Squad Risks used to sit
+  in a 3-column row UNDER a full-width pitch - moved into a real, wide
+  (320px) analysis rail running the full height ALONGSIDE the pitch instead,
+  so the pitch stands alone and uninterrupted in the main column while the
+  right side carries every supporting fact. A genuinely different page
+  silhouette, not the same content re-colored.
+- **Plan**: added a new `StrategyGrid` component - real spatial path
+  comparison, EVERY shown path laid out simultaneously across the same real
+  gameweek axis (rows = ranked paths, columns = the real union of GW events
+  any path has a leg for, a cell = that path's real action/chip for that
+  GW, an honest empty dash when a path has no leg there). Replaces the old
+  single-path rail + separate ranked list with one real overview; the old
+  rail (`StepRail`) now serves as the drill-down detail for whichever row
+  is selected. Nothing else in this app looks like this - a genuine new
+  composition, not a reskin.
+- **Scout**: replaced the click-to-open `Sheet` drawer (which slides over
+  and hides the table it came from) with a real, always-visible persistent
+  detail panel beside the table - the classic scouting-workstation split-
+  pane pattern (list left, detail right, selecting a row updates the panel
+  in place). A real, honest "select a player" empty state when nothing's
+  selected, never a placeholder profile.
+- **Real, separately-confirmed operational finding while verifying this
+  pass**: a cold `DashboardContext` rebuild (the shared cache every
+  `/api/*` route depends on) now genuinely takes **~180s**, not the ~60s
+  this module's own docstring still documents - confirmed via a direct,
+  patient timed `curl` (177s to first byte) after ruling out every other
+  explanation (no duplicate `LiveServer`, no competing scheduled sync, the
+  earlier-suspected background test-suite CPU contention indepedently
+  ruled out by killing it mid-run with the hang still present). A request
+  landing during that real cold window looks identical to a genuine hang
+  with a naive short timeout - this is why earlier verification passes in
+  this same session misdiagnosed the *same* real symptom differently each
+  time (a duplicate process once, suspected CPU contention once). **Real
+  lesson for future sessions**: after any live-server restart, verify with
+  a patient timeout (3min+) before concluding anything is broken, and
+  update `context.py`'s own "~60s" estimate to reality as a real, scoped
+  follow-up (out of scope to fix the underlying cost itself this pass).
 
 **COMMAND rebuilt as 8 real, purpose-built compositions** (`frontend/src/
 components/command/DecisionHero.tsx`/`ComparisonGraphic.tsx`/
