@@ -5,9 +5,21 @@ composition tests. `football.py` composes a real league-wide signal feed
 changes, match evidence) - these tests prove the real composition renders
 once, cleanly, and never crashes; the underlying computations are already
 covered elsewhere."""
-from fpl_agent.monitoring.dashboard.football import render_football_screen
+from types import SimpleNamespace
+
+from fpl_agent.monitoring.dashboard.football import _signal_row_html, render_football_screen
 from test_football_signal import _seed_match, _seed_observation, _seed_player
 from test_optimization_squad import _seed
+
+
+def _fake_signal(**overrides):
+    base = dict(
+        entity_id=1, entity_name="TestPlayer", direction="POSITIVE", category="GOAL_THREAT",
+        evidence="3 shots, 0.5 xG", interpretation="supports goal threat", fpl_effect=None,
+        confidence="medium", expires_at=None,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 
 def test_football_screen_shows_the_squad_change_module_for_a_squad_players_own_signal(db_conn):
@@ -24,6 +36,22 @@ def test_football_screen_shows_the_squad_change_module_for_a_squad_players_own_s
     assert "WHAT CHANGED FOR MY SQUAD?" in result
     assert "fb-squad-changes" in result
     assert "MyPlayer" in result.split("fb-squad-changes")[1].split("fb-feed")[0]
+
+
+def test_signal_row_renders_the_real_fpl_consequence_when_present():
+    """Real regression test, Phase 8.1 Part 19 - `s.fpl_effect` (a real,
+    already-computed field this project's own model produces) was never
+    rendered anywhere on FOOTBALL before this phase. Must now appear as
+    its own distinct element, and must be honestly omitted (not blanked)
+    when a signal genuinely has none."""
+    with_effect = _fake_signal(fpl_effect="+0.15 xP already applied to goals this GW")
+    row = _signal_row_html(with_effect, {}, set())
+    assert "fb-signal-consequence" in row
+    assert "+0.15 xP already applied to goals this GW" in row
+
+    without_effect = _fake_signal(fpl_effect=None)
+    row2 = _signal_row_html(without_effect, {}, set())
+    assert "fb-signal-consequence" not in row2
 
 
 def test_squad_change_module_never_shows_the_redundant_my_squad_badge(db_conn):

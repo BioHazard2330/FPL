@@ -70,7 +70,7 @@ def test_opportunity_board_renders_a_breakout_card_and_excludes_squad_members(db
 
     assert "Mendy" in result
     assert "Already Owned" not in result
-    assert "opp-card-breakout" in result
+    assert "opp-row-breakout" in result
     assert "1.20 xP/£m" in result  # real "£" character, never a double-escaped entity
 
 
@@ -84,17 +84,19 @@ def test_card_renders_real_xp_minutes_risk_and_what_would_change_fields():
         xp=6.3, expected_minutes=88.0, risk="projection confidence is low - based on limited real evidence so far",
         what_would_change="ownership rises above 10% (currently 2.9%) or value ratio falls below 0.5 xP/£m",
     )
-    assert "6.3" in html_with and "xP" in html_with
-    assert "88" in html_with and "opp-card-stats" in html_with
-    assert "opp-card-risk" in html_with and "projection confidence is low" in html_with
-    assert "opp-card-change" in html_with and "ownership rises above 10%" in html_with
+    # Real table recomposition (2026-09-08, Phase 8.1 Part 22/23) - xP/
+    # minutes are now plain numeric column cells (the "xP"/"Min" label
+    # lives once in the table header, not repeated per row).
+    assert "6.3" in html_with
+    assert "88" in html_with
+    assert "opp-row-risk" in html_with and "projection confidence is low" in html_with
+    assert "opp-row-change" in html_with and "ownership rises above 10%" in html_with
 
     html_without = opportunity_mod._card(
         "Value", "Foden", "MID", 7.0, None, "£7.0m -> £7.1m", "price rise 2h ago", "HIGH",
     )
-    assert "opp-card-stats" not in html_without
-    assert "opp-card-risk" not in html_without
-    assert "opp-card-change" not in html_without
+    assert "opp-row-risk'" not in html_without and "opp-row-risk-none" in html_without
+    assert "opp-row-change" not in html_without
 
 
 def test_risk_from_confidence_only_flags_low_and_very_low():
@@ -119,7 +121,7 @@ def test_opportunity_board_shows_real_squad_impact_when_a_card_is_a_real_transfe
 
     result = render_opportunity_workspace(db_conn, set(), ta=ta)
 
-    assert "opp-card-squad-impact" in result
+    assert "opp-row-tag" in result
     assert "Would replace" in result and "Tzolis" in result
 
 
@@ -130,7 +132,7 @@ def test_opportunity_board_no_squad_impact_line_without_a_real_transfer_match(db
 
     result = render_opportunity_workspace(db_conn, set(), ta=ta)
 
-    assert "opp-card-squad-impact" not in result
+    assert "opp-row-tag" not in result
 
 
 def test_opportunity_board_renders_a_trap_card_with_real_reasons(db_conn, monkeypatch):
@@ -139,7 +141,7 @@ def test_opportunity_board_renders_a_trap_card_with_real_reasons(db_conn, monkey
 
     result = render_opportunity_workspace(db_conn, set())
 
-    assert "opp-card-trap" in result
+    assert "opp-row-trap" in result
     assert "O&#x27;Reilly" in result or "O'Reilly" in result
     assert "real deteriorating case" in result
     assert "&amp;middot;" not in result  # no double-escaped entities (real bug found live in this pass)
@@ -154,7 +156,7 @@ def test_opportunity_board_omits_considered_flag_when_no_strategic_plan_run(db_c
 
     result = render_opportunity_workspace(db_conn, set())
 
-    assert "opp-card-considered" not in result
+    assert "opp-row-considered-yes" not in result and "opp-row-considered-no" not in result
 
 
 def test_opportunity_board_marks_a_player_considered_by_the_optimizer(db_conn, monkeypatch):
@@ -164,7 +166,7 @@ def test_opportunity_board_marks_a_player_considered_by_the_optimizer(db_conn, m
     result = render_opportunity_workspace(db_conn, set(), considered_ids={1, 99})
 
     assert "Considered by optimizer" in result
-    assert "opp-card-considered-yes" in result
+    assert "opp-row-considered-yes" in result
     assert "Not evaluated by the optimizer" not in result
 
 
@@ -175,7 +177,7 @@ def test_opportunity_board_marks_a_player_not_considered_by_the_optimizer(db_con
     result = render_opportunity_workspace(db_conn, set(), considered_ids={99})
 
     assert "Not evaluated by the optimizer" in result
-    assert "opp-card-considered-no" in result
+    assert "opp-row-considered-no" in result
     assert "Considered by optimizer" not in result
 
 
@@ -211,6 +213,37 @@ def test_opportunity_board_value_category_excludes_squad_members(db_conn):
 
     assert "FreeAgent" in result
     assert "SquadPlayer" not in result
+
+
+def test_breakout_card_shows_the_real_current_price_not_price_unavailable(db_conn, monkeypatch):
+    """Real, confirmed bug fix (2026-09-08, Phase 8.1) - Breakout/Trap/Role
+    Change cards always passed a hardcoded `None` for price, rendering
+    "Price unavailable" even for a real, currently-priced player -
+    `_bulk_player_lookup` (already called for `team_code`) already carries
+    the real `price_tenths`, it was just never read. A real current price
+    row must now render as "£5.5m", never the fallback disclosure."""
+    now = "2026-08-01T00:00:00Z"
+    db_conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'T1','T1','{now}')")
+    db_conn.execute(
+        f"INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, "
+        f"squad_max_play, squad_select, updated_at) VALUES (1,'Defender','DEF','Defenders',3,5,5,'{now}')"
+    )
+    db_conn.execute(
+        f"INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        f"VALUES (1,1,'RealPricePlayer',1,1,'a',0,'{now}')"
+    )
+    db_conn.execute(
+        f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) "
+        f"VALUES (1, 55, '{now}', NULL)"
+    )
+    db_conn.commit()
+    monkeypatch.setattr(opportunity_mod, "find_breakouts", lambda conn: [_breakout(player_id=1, web_name="RealPricePlayer")])
+    monkeypatch.setattr(opportunity_mod, "find_traps", lambda conn: [])
+
+    result = render_opportunity_workspace(db_conn, set())
+
+    assert "£5.5m" in result
+    assert "Price unavailable" not in result
 
 
 def _ta(decision_kind="roll", chosen=False):

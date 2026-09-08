@@ -103,6 +103,71 @@ def test_static_file_serving_blocks_path_traversal(live_server):
     assert resp.status_code in (403, 404)
 
 
+def test_root_serves_the_react_app_index_html(live_server, tmp_path):
+    (tmp_path / "index.html").write_text("<html>react shell</html>", encoding="utf-8")
+    resp = requests.get(f"http://127.0.0.1:{live_server.port}/", timeout=5)
+    assert resp.status_code == 200
+    assert "react shell" in resp.text
+    assert resp.headers["Content-Type"].startswith("text/html")
+
+
+def test_unknown_extensionless_path_falls_back_to_the_react_shell_for_client_side_routing(live_server, tmp_path):
+    (tmp_path / "index.html").write_text("<html>react shell</html>", encoding="utf-8")
+    resp = requests.get(f"http://127.0.0.1:{live_server.port}/my-team", timeout=5)
+    assert resp.status_code == 200
+    assert "react shell" in resp.text
+
+
+def test_missing_asset_with_an_extension_404s_honestly_rather_than_falling_back(live_server, tmp_path):
+    (tmp_path / "index.html").write_text("<html>react shell</html>", encoding="utf-8")
+    resp = requests.get(f"http://127.0.0.1:{live_server.port}/assets/does-not-exist.js", timeout=5)
+    assert resp.status_code == 404
+
+
+def test_api_command_route_serves_real_json(live_server):
+    """Real integration test, Phase 8.2 Stage 2 - `/api/command` must serve
+    a real, valid JSON payload over an actual socket, from the SAME
+    `conn_factory` the tailer thread already uses (never a second DB
+    connection strategy). This is the React frontend's own real data
+    source for COMMAND - the honest 'no squad locked yet' shape here is a
+    correct response, not an error, since `test_sse_server.py`'s own
+    `db_conn` fixture starts with an empty DB."""
+    resp = requests.get(f"http://127.0.0.1:{live_server.port}/api/command", timeout=5)
+    assert resp.status_code == 200
+    assert resp.headers["Content-Type"] == "application/json"
+    payload = resp.json()
+    assert "action" in payload and "bar" in payload and "gw" in payload
+
+
+def test_api_route_404s_for_an_unknown_screen(live_server):
+    resp = requests.get(f"http://127.0.0.1:{live_server.port}/api/not-a-real-screen", timeout=5)
+    assert resp.status_code == 404
+
+
+def test_api_routes_disabled_when_no_conn_factory_given(tmp_path):
+    """Real backward-compat guard - a `LiveServer`/`make_handler` caller that
+    never opts into `conn_factory` (existing tests, or a future caller that
+    only wants `/events` + static files) must see `/api/*` fall through to
+    static-file serving (a real, honest 404 for a nonexistent file), never a
+    crash from a `None` conn_factory being called."""
+    from fpl_agent.live.sse_server import make_handler, Broadcaster
+    from http.server import ThreadingHTTPServer
+
+    handler_cls = make_handler(Broadcaster(), tmp_path)  # conn_factory omitted
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    port = httpd.server_address[1]
+    import threading
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        resp = requests.get(f"http://127.0.0.1:{port}/api/command", timeout=5)
+        assert resp.status_code == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        t.join(timeout=5)
+
+
 def test_missing_file_is_404(live_server):
     resp = requests.get(f"http://127.0.0.1:{live_server.port}/nope.html", timeout=5)
     assert resp.status_code == 404

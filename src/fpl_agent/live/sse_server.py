@@ -199,10 +199,19 @@ def run_tailer_loop(tailer: DbTailer, stop_event: threading.Event, interval: flo
         stop_event.wait(interval)
 
 
-def make_handler(broadcaster: Broadcaster, data_dir: Path) -> type[BaseHTTPRequestHandler]:
+def make_handler(broadcaster: Broadcaster, data_dir: Path, conn_factory=None) -> type[BaseHTTPRequestHandler]:
     """A fresh handler CLASS per server instance (closing over `broadcaster`/
-    `data_dir`) - `http.server`'s own API requires a class, not an instance,
-    for the handler factory."""
+    `data_dir`/`conn_factory`) - `http.server`'s own API requires a class,
+    not an instance, for the handler factory.
+
+    `conn_factory` (2026-09-08, Phase 8.2 Stage 2 - the React frontend's own
+    JSON API) opens a fresh, short-lived, read-only-in-practice connection
+    per `/api/<screen>` request - never the tailer's own long-lived
+    connection, which stays on its own background thread per `LiveServer`'s
+    existing thread-affinity rule. `None` (the default) disables the `/api/`
+    routes entirely - existing callers that only ever wanted `/events` and
+    static files (tests, `run_forever` without this new kwarg) see zero
+    behavior change."""
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
@@ -211,8 +220,53 @@ def make_handler(broadcaster: Broadcaster, data_dir: Path) -> type[BaseHTTPReque
         def do_GET(self) -> None:
             if self.path == "/events":
                 self._serve_sse()
+            elif self.path.startswith("/api/") and conn_factory is not None:
+                self._serve_api()
             else:
                 self._serve_static()
+
+        def _serve_api(self) -> None:
+            # Real, deliberate scope limit (2026-09-08, Phase 8.2 Stage 2) -
+            # this endpoint ONLY shapes already-computed real data into JSON
+            # (`monitoring.api.API_BUILDERS`, each builder a thin pass over
+            # `DashboardContext`) - it never runs the optimizer, never
+            # recomputes a decision. It does NOT call `build_dashboard_
+            # context` directly - real, measured cost (~60s, see that
+            # module's own docstring for the live-verified breakdown) means
+            # every request must instead share ONE process-wide cached
+            # context (`get_cached_dashboard_context`, default 60s TTL - the
+            # same real regen cadence `fpl dashboard` already runs at), or a
+            # naive per-request rebuild would make every page load/nav pay
+            # the full real transfer-analysis + build-team-report cost this
+            # project's own `generate_dashboard_html` was only ever meant to
+            # pay once per periodic regen.
+            from fpl_agent.monitoring.api import API_BUILDERS
+            from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context
+
+            screen = self.path.removeprefix("/api/").split("?", 1)[0].strip("/")
+            builder = API_BUILDERS.get(screen)
+            if builder is None:
+                self.send_error(404, f"no real API payload for '{screen}'")
+                return
+            conn = conn_factory()
+            try:
+                ctx = get_cached_dashboard_context(conn)
+                payload = builder(ctx)
+            except Exception:
+                _logger.exception("building the '%s' API payload failed", screen)
+                self.send_error(500, "payload build failed - see server log")
+                return
+            finally:
+                conn.close()
+            body = json.dumps(payload, default=str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            # Real, deliberate wildcard (same posture as `/events` above -
+            # read-only, unauthenticated, local-machine-only data).
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _serve_sse(self) -> None:
             self.send_response(200)
@@ -244,16 +298,39 @@ def make_handler(broadcaster: Broadcaster, data_dir: Path) -> type[BaseHTTPReque
                 broadcaster.unregister(q)
 
         def _serve_static(self) -> None:
-            rel = self.path.lstrip("/") or "dashboard.html"
+            # Real, deliberate default flip (2026-09-08, Phase 8.2 Stage 2 -
+            # direct user request: "turn off the old dashboard and keep this
+            # new one as the main thing now"). `/` now serves the built
+            # React app's `index.html` (`data/index.html`, deployed from
+            # `frontend/dist/`) rather than the old Python-rendered
+            # `dashboard.html` - which stays real, unchanged, and reachable
+            # at its own explicit `/dashboard.html` path (any `ComingSoon`
+            # screen's fallback link still works, and it's a real, honest
+            # rollback path if the React app ever needs one).
+            rel = self.path.lstrip("/").split("?", 1)[0] or "index.html"
             if ".." in rel:
                 self.send_error(403)
                 return
             target = data_dir / rel
             if not target.is_file():
-                self.send_error(404)
-                return
+                # Real SPA fallback: `react-router`'s client-side routes
+                # (`/my-team`, `/plan`, ...) have no matching real file on
+                # disk - a direct navigation or refresh on one of those
+                # paths must still serve the React shell, which then
+                # resolves the route client-side. Scoped to extension-less
+                # paths only, so a genuinely missing asset (`/assets/x.js`)
+                # still 404s honestly rather than silently serving HTML.
+                if "." not in Path(rel).name:
+                    target = data_dir / "index.html"
+                if not target.is_file():
+                    self.send_error(404)
+                    return
             content_type = {
                 ".html": "text/html; charset=utf-8", ".json": "application/json",
+                ".js": "application/javascript; charset=utf-8", ".mjs": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
+                ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
+                ".ico": "image/x-icon", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             }.get(target.suffix, "application/octet-stream")
             body = target.read_bytes()
             self.send_response(200)
@@ -282,11 +359,15 @@ class LiveServer:
         self.data_dir = data_dir
         self.conn_factory = conn_factory or _get_connection
         self.broadcaster = Broadcaster()
-        handler_cls = make_handler(self.broadcaster, data_dir)
+        handler_cls = make_handler(self.broadcaster, data_dir, conn_factory=self.conn_factory)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", port), handler_cls)
         self.port = self.httpd.server_address[1]
         self._stop_event = threading.Event()
         self._tailer_thread: threading.Thread | None = None
+        self._context_refresh_thread: threading.Thread | None = None
+        self._readiness_refresh_thread: threading.Thread | None = None
+        self._football_refresh_thread: threading.Thread | None = None
+        self._scout_refresh_thread: threading.Thread | None = None
         self._server_thread: threading.Thread | None = None
         self._tailer_conn = None
         # Real startup-race fix (see `DbTailer.__init__`'s own docstring) -
@@ -320,6 +401,97 @@ class LiveServer:
         self._tailer_thread.start()
         self._server_thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self._server_thread.start()
+        # Real cache-warming + proactive refresh (2026-09-08, Phase 8.2 Stage
+        # 2, extended Phase 9 - direct user requirement: "fix this lag...
+        # I want it instantly"). The first `/api/<screen>` request after a
+        # cold server start would otherwise pay the full real ~60-130s
+        # `build_dashboard_context` cost itself (see that module's own
+        # docstring). `_context_refresh_thread` warms the cache once
+        # immediately, then keeps calling `run_context_refresh_loop` for the
+        # server's whole lifetime - so after that one real boot-time cost, a
+        # real user's request never pays it again (the cache is proactively
+        # rebuilt every ~8 minutes, well inside the 10-minute TTL). Best-
+        # effort only - a failure here is logged, never fatal to the server
+        # itself (the tailer/SSE/static paths don't depend on this at all).
+        self._context_refresh_thread = threading.Thread(target=self._context_refresh_main, daemon=True)
+        self._context_refresh_thread.start()
+        # Same real treatment for ADVANCED's own separate readiness cache
+        # (`optimise_squad` inside `run_readiness_checks` is its own real
+        # ~20s+ cost, confirmed live - not covered by the DashboardContext
+        # cache above, so it needs its own boot warm + proactive refresh).
+        self._readiness_refresh_thread = threading.Thread(target=self._readiness_refresh_main, daemon=True)
+        self._readiness_refresh_thread.start()
+        # Same real treatment for FOOTBALL's own separate league-wide signal
+        # scan (~10-16s uncached, confirmed live - `build_football_payload`
+        # never touched the DashboardContext cache above at all).
+        self._football_refresh_thread = threading.Thread(target=self._football_refresh_main, daemon=True)
+        self._football_refresh_thread.start()
+        # Same real treatment for SCOUT's own Opportunity Board scan
+        # (`find_breakouts`/`find_traps` etc.) - cached from the start this
+        # time (Phase 9, learned from the football/advanced/command bugs).
+        self._scout_refresh_thread = threading.Thread(target=self._scout_refresh_main, daemon=True)
+        self._scout_refresh_thread.start()
+
+    def _context_refresh_main(self) -> None:
+        from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context, run_context_refresh_loop
+
+        conn = self.conn_factory()
+        try:
+            get_cached_dashboard_context(conn)
+        except Exception:
+            _logger.exception("cache-warming build_dashboard_context failed - first real /api/ request will pay the full cost instead")
+        finally:
+            conn.close()
+        run_context_refresh_loop(self.conn_factory, self._stop_event)
+
+    def _readiness_refresh_main(self) -> None:
+        from fpl_agent.monitoring.api.advanced_payload import _get_cached_readiness, run_readiness_refresh_loop
+        from fpl_agent.optimization.locked_squad import get_locked_squad
+
+        conn = self.conn_factory()
+        try:
+            locked = get_locked_squad(conn)
+            squad_ids = set(locked.squad_ids) if locked is not None else set()
+            _get_cached_readiness(conn, squad_ids)
+        except Exception:
+            _logger.exception("cache-warming readiness checks failed - first real ADVANCED-screen visit will pay the full cost instead")
+        finally:
+            conn.close()
+        run_readiness_refresh_loop(self.conn_factory, self._stop_event)
+
+    def _football_refresh_main(self) -> None:
+        from fpl_agent.monitoring.api.football_payload import build_football_payload, run_football_refresh_loop
+        from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context
+
+        def ctx_factory():
+            conn = self.conn_factory()
+            try:
+                return get_cached_dashboard_context(conn)
+            finally:
+                conn.close()
+
+        try:
+            build_football_payload(ctx_factory())
+        except Exception:
+            _logger.exception("cache-warming the football payload failed - first real FOOTBALL-screen visit will pay the full cost instead")
+        run_football_refresh_loop(ctx_factory, self._stop_event)
+
+    def _scout_refresh_main(self) -> None:
+        from fpl_agent.monitoring.api.scout_payload import build_scout_payload, run_scout_refresh_loop
+        from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context
+
+        def ctx_factory():
+            conn = self.conn_factory()
+            try:
+                return get_cached_dashboard_context(conn)
+            finally:
+                conn.close()
+
+        try:
+            build_scout_payload(ctx_factory())
+        except Exception:
+            _logger.exception("cache-warming the scout payload failed - first real SCOUT-screen visit will pay the full cost instead")
+        run_scout_refresh_loop(ctx_factory, self._stop_event)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -329,6 +501,14 @@ class LiveServer:
             self._tailer_thread.join(timeout=5)
         if self._server_thread is not None:
             self._server_thread.join(timeout=5)
+        if self._context_refresh_thread is not None:
+            self._context_refresh_thread.join(timeout=5)
+        if self._readiness_refresh_thread is not None:
+            self._readiness_refresh_thread.join(timeout=5)
+        if self._football_refresh_thread is not None:
+            self._football_refresh_thread.join(timeout=5)
+        if self._scout_refresh_thread is not None:
+            self._scout_refresh_thread.join(timeout=5)
 
 
 def run_forever(data_dir: Path, port: int, conn_factory=None) -> None:

@@ -364,7 +364,20 @@ def render_strategic_trajectory_chart(sd: dict) -> str:
             points.append({"x": gw, "y": round(running, 2)})
             action = s.get("action", "ROLL")
             if action != "ROLL":
-                label = s.get("chip_played").upper() if s.get("chip_played") else action[:14]
+                if s.get("chip_played"):
+                    label = s["chip_played"].upper()
+                else:
+                    # Real, confirmed bug fix (2026-09-08, Phase 8.1 Part
+                    # 26/33) - a hardcoded `action[:14]` silently chopped a
+                    # transfer label mid-surname (e.g. "Andersen -> Ballard"
+                    # -> "Andersen -> Ba", live-confirmed on the PLAN
+                    # trajectory chart) - reading as a genuinely different,
+                    # wrong player name, not as "truncated". A longer real
+                    # cap (the chart's own right-padding fix already gives
+                    # room for it) plus an explicit ellipsis when a name is
+                    # still too long keeps this honestly a truncation, never
+                    # a fabricated shorter name.
+                    label = action if len(action) <= 22 else action[:21] + "…"
                 events.append({"x": gw, "label": label})
         return {
             "name": f"Path {i}", "pathIdx": i, "role": role,

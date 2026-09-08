@@ -100,11 +100,18 @@ def test_compute_my_live_score_uses_real_synced_multipliers(db_conn):
 
 
 def test_dashboard_keeps_original_panel_order_when_pre_deadline(db_conn):
+    """Real (2026-09-08, Phase 8.1 Part 29) - `id="live"` (the squad live-
+    tracking + season-charts block) now sits inside the unified `#screen-
+    live` section, positioned right after COMMAND to preserve live-window
+    prominence (a real, deliberate 2026-08-29 design decision for the
+    Match Centre it shares that section with) - so it now comes BEFORE
+    `id="squad"`, the reverse of its old standalone-floating-section
+    ordering."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
     result = generate_dashboard_html(db_conn)
 
-    assert result.index('id="squad"') < result.index('id="live"')
+    assert result.index('id="live"') < result.index('id="squad"')
     # Real (2026-09-02, MY TEAM rebuild): the pitch heading now renders
     # uppercase as a status-line label, consistent with every other screen's
     # own status heading (`.cmd-status-heading`/`.fb-status-heading`).

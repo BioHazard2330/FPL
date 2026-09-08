@@ -22,6 +22,7 @@ def test_build_live_snapshot_has_no_rank_or_points_without_any_data(db_conn):
     assert snap["rank"] is None
     assert snap["points"] is None
     assert snap["version"]  # a real, non-empty version stamp
+    assert snap["charts"] is None  # no real team synced - never a fabricated empty chart
 
 
 def test_build_live_snapshot_reads_the_latest_live_rank_decision(db_conn):

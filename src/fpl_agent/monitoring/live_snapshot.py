@@ -494,6 +494,39 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "recommendation": _recommendation_block(conn, squad_ids),
         "source_freshness": _source_freshness_block(conn),
         "cadence": _cadence_block(conn, rank_block["retrieved_at"] if rank_block else None),
+        "charts": _charts_block(conn),
+    }
+
+
+def _charts_block(conn: sqlite3.Connection) -> dict | None:
+    """Real season-long charts (2026-09-08, full redesign pass - direct
+    user complaint: "no amazing graphs" in the React app, even though real
+    ApexCharts series have existed server-side since 2026-08-29 for the old
+    dashboard, `monitoring/dashboard/live_charts.py`). Reuses that module's
+    own real series computations (`_rank_series`/`_cumulative_points_series`/
+    `_captain_contribution_series`) verbatim - single indexed SELECTs over
+    `my_team_gw_summary`/`my_team_picks`, at most 38 rows a season, cheap
+    enough to compute on every live-snapshot poll (same cost class as the
+    other reads already in this function) rather than needing its own
+    cache. `None` when no real team is synced yet - never a fabricated
+    empty chart."""
+    from fpl_agent.ingestion.my_team import get_my_team_entry_id
+    from fpl_agent.monitoring.dashboard.live_charts import (
+        _captain_contribution_series, _cumulative_points_series, _rank_series,
+    )
+
+    entry_id = get_my_team_entry_id(conn)
+    if entry_id is None:
+        return None
+    rank = _rank_series(conn, entry_id)
+    cum_points = _cumulative_points_series(conn, entry_id)
+    captain = _captain_contribution_series(conn, entry_id)
+    if not rank.events and not cum_points.events and not captain.events:
+        return None
+    return {
+        "rank": {"events": rank.events, "values": rank.values},
+        "cumulative_points": {"events": cum_points.events, "values": cum_points.values},
+        "captain_contribution": {"events": captain.events, "values": captain.values},
     }
 
 

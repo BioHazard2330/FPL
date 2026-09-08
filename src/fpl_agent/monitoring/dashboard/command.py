@@ -571,7 +571,6 @@ def render_command_screen(
       {captain_html}
       {cross_check_html}
     </div>
-    <div class="cmd-hero-rule"></div>
     <div class="cmd-hero-side">
       {alt_col_html}
       {monitor_html}

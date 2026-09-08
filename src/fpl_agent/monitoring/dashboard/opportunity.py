@@ -71,82 +71,84 @@ def _card(kind: str, name: str, position: str, price_m: float | None, ownership_
           considered_by_optimizer: bool | None = None, squad_impact: str | None = None,
           xp: float | None = None, expected_minutes: float | None = None, risk: str | None = None,
           what_would_change: str | None = None) -> str:
-    # Real, honest missing-data label (2026-08-29, "final product-completion
-    # pass" P1 fix: a bare "?" reads as a broken card, not a real "we don't
-    # have this" disclosure).
+    """Real, evidence-based PLAYER/PRICE/xP/MINUTES/WHY NOW/RISK/CONFIDENCE
+    row for the opportunity board's per-category table (2026-09-08, Phase 8.1
+    Part 22/23 - "the current opportunity board is literally a card grid.
+    Recompose it"). Renders one `<tr>`, not a standalone bordered box - every
+    field stays real and individually optional (never a fabricated "?"), the
+    recomposition here is presentation only, no candidate-selection change."""
     price_bit = f"£{price_m:.1f}m" if price_m is not None else "Price unavailable"
     own_bit = f"{ownership_pct:.1f}% owned" if ownership_pct is not None else ""
-    # Real crest-on-shirt overlay (2026-09-03, same real pattern as the
-    # MY TEAM pitch - crest-forward identity applies to every real shirt
-    # rendered on this dashboard, not just the pitch).
     shirt_html = (
-        f"<div class='opp-card-shirt-wrap'>"
-        f"<img class='opp-card-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=66))}' loading='lazy' alt=''>"
-        f"{_crest_html(team_code, '', css_class='opp-card-crest')}"
-        f"</div>" if team_code is not None else ""
+        f"<div class='opp-row-shirt-wrap'>"
+        f"<img class='opp-row-shirt' src='{_esc(_official_shirt_url(team_code, is_gkp=(position == 'GKP'), size=40))}' loading='lazy' alt=''>"
+        f"{_crest_html(team_code, '', css_class='opp-row-crest')}"
+        f"</div>" if team_code is not None else "<div class='opp-row-shirt-wrap'></div>"
     )
-    # Real "was this player considered by the strategic optimizer" flag
-    # (2026-08-29, direct P1 spec line: "Also show whether the player was
-    # considered by the strategic optimizer") - `considered_by_optimizer` is
-    # `None` when no strategic plan has been run this session (honest
-    # omission, not a guess), else a real True/False against the real diverse
-    # top-N paths' own candidate pool (`assemble.py`'s `_optimizer_considered_ids`).
-    considered_html = ""
+    # Real "was this player considered by the strategic optimizer" flag and
+    # "MY SQUAD IMPACT" (both fpl.page-parity, 2026-08-29) - unchanged real
+    # data, now rendered as small tags under the player's identity rather
+    # than as their own standalone card elements.
+    tags = []
     if considered_by_optimizer is not None:
-        cls = "opp-card-considered-yes" if considered_by_optimizer else "opp-card-considered-no"
+        cls = "opp-row-considered-yes" if considered_by_optimizer else "opp-row-considered-no"
         label = "Considered by optimizer" if considered_by_optimizer else "Not evaluated by the optimizer"
-        considered_html = f"<div class='opp-card-considered {cls}'>{_esc(label)}</div>"
-    # Real "MY SQUAD IMPACT" (fpl.page-parity pass) - only ever the SAME
-    # real transfer candidate `analyze_transfer_decision` already computed
-    # (`ta.candidates`), never a second, invented replacement guess. `None`
-    # (never a fabricated "no impact") when this player genuinely isn't one
-    # of the real candidates the decision layer itself considered as an IN.
-    squad_impact_html = (
-        f"<div class='opp-card-squad-impact'>Would replace <strong>{_esc(squad_impact)}</strong></div>"
-        if squad_impact else ""
-    )
-    # Real PLAYER/PRICE/xP/MINUTES/ROLE/OWNERSHIP/RISK/WHAT-WOULD-CHANGE
-    # field set (2026-09-07, Phase 7.3 Part 17 - "no generic prose, a
-    # player should be interesting because of measurable evidence"). Every
-    # one is optional and individually omitted (never a fabricated "?") -
-    # not every category has cheap access to all of them yet (see this
-    # module's own callers for which fields each category currently
-    # populates).
-    stat_bits = []
-    if xp is not None:
-        stat_bits.append(f"<span class='opp-card-stat'><b>{xp:.1f}</b> xP</span>")
-    if expected_minutes is not None:
-        stat_bits.append(f"<span class='opp-card-stat'><b>{expected_minutes:.0f}&prime;</b> exp.</span>")
-    stats_html = f"<div class='opp-card-stats'>{''.join(stat_bits)}</div>" if stat_bits else ""
-    risk_html = f"<div class='opp-card-risk'><strong>Risk</strong> {_esc(risk)}</div>" if risk else ""
+        tags.append(f"<span class='opp-row-tag {cls}'>{_esc(label)}</span>")
+    if squad_impact:
+        tags.append(f"<span class='opp-row-tag'>Would replace <strong>{_esc(squad_impact)}</strong></span>")
+    tags_html = f"<div class='opp-row-tags'>{''.join(tags)}</div>" if tags else ""
+    xp_bit = f"{xp:.1f}" if xp is not None else "&mdash;"
+    min_bit = f"{expected_minutes:.0f}&prime;" if expected_minutes is not None else "&mdash;"
     change_html = (
-        f"<div class='opp-card-change'><strong>What would change this</strong> {_esc(what_would_change)}</div>"
+        f"<div class='opp-row-change'>What changes it: {_esc(what_would_change)}</div>"
         if what_would_change else ""
     )
+    risk_bit = f"<span class='opp-row-risk'>{_esc(risk)}</span>" if risk else "<span class='opp-row-risk-none'>&mdash;</span>"
+    own_html = f"<div class='opp-row-own'>{own_bit}</div>" if own_bit else ""
     return (
-        f"<div class='opp-card opp-card-{_esc(kind.lower().replace(' ', '-'))}'>"
-        f"{shirt_html}"
-        f"<div class='opp-card-kind'>{_esc(kind)}</div>"
-        f"<div class='opp-card-title'>{name} <span class='opp-pos'>{_esc(position)}</span></div>"
-        f"<div class='opp-card-meta'>{price_bit}{' &middot; ' + own_bit if own_bit else ''}</div>"
-        f"{stats_html}"
-        f"<div class='opp-card-metric'>{_esc(key_metric)}</div>"
-        f"<div class='opp-card-why'><strong>Why now</strong> {_esc(why_now)}</div>"
-        f"{risk_html}"
-        f"{change_html}"
-        f"<div class='opp-card-confidence opp-confidence-{_esc(confidence.lower())}'>{_esc(confidence)}</div>"
-        f"{considered_html}"
-        f"{squad_impact_html}"
-        f"</div>"
+        f"<tr class='opp-row opp-row-{_esc(kind.lower().replace(' ', '-'))}'>"
+        f"<td class='opp-row-player'>{shirt_html}"
+        f"<div class='opp-row-identity'><span class='opp-row-name'>{name}</span> "
+        f"<span class='opp-pos'>{_esc(position)}</span>{tags_html}</div></td>"
+        f"<td class='opp-row-price'>{price_bit}{own_html}</td>"
+        f"<td class='opp-row-num'>{xp_bit}</td>"
+        f"<td class='opp-row-num'>{min_bit}</td>"
+        f"<td class='opp-row-whycell'><div class='opp-row-metric'>{_esc(key_metric)}</div>"
+        f"<div class='opp-row-why'>{_esc(why_now)}</div>{change_html}</td>"
+        f"<td class='opp-row-riskcell'>{risk_bit}</td>"
+        f"<td class='opp-row-confcell'><span class='opp-confidence-text opp-confidence-{_esc(confidence.lower())}'>{_esc(confidence)}</span></td>"
+        f"</tr>"
     )
 
 
-def _category_block(kind: str, cards: list[str]) -> str:
-    if not cards:
+_PLAYER_TABLE_HEAD = (
+    "<thead><tr><th>Player</th><th>Price</th><th>xP</th><th>Min</th>"
+    "<th>Why now</th><th>Risk</th><th>Confidence</th></tr></thead>"
+)
+_SWING_TABLE_HEAD = "<thead><tr><th>Team</th><th>5-GW difficulty</th><th>Why now</th></tr></thead>"
+
+
+def _category_block(kind: str, rows: list[str], head: str = _PLAYER_TABLE_HEAD) -> str:
+    """Real per-category TABLE (2026-09-08, Phase 8.1 Part 22/23), replacing
+    the previous per-category flex stack of `.opp-card` boxes - a category
+    is now one real, labeled section with its own rows, not its own card
+    universe. `_VISIBLE_PER_CATEGORY`/`_MAX_PER_CATEGORY` and the real
+    `<details>` reveal-more mechanism are unchanged from before this pass."""
+    if not rows:
         return ""
-    visible, rest = cards[:_VISIBLE_PER_CATEGORY], cards[_VISIBLE_PER_CATEGORY:]
-    rest_html = f"<details class='opp-category-more'><summary>{len(rest)} more real {_esc(kind.lower())} candidate{'s' if len(rest) != 1 else ''}</summary>{''.join(rest)}</details>" if rest else ""
-    return f"<div class='opp-category'>{''.join(visible)}{rest_html}</div>"
+    visible, rest = rows[:_VISIBLE_PER_CATEGORY], rows[_VISIBLE_PER_CATEGORY:]
+    rest_html = (
+        f"<details class='opp-category-more'><summary>{len(rest)} more real {_esc(kind.lower())} candidate{'s' if len(rest) != 1 else ''}</summary>"
+        f"<div class='opp-table-wrap'><table class='opp-table opp-table-more'>{head}<tbody>{''.join(rest)}</tbody></table></div></details>"
+        if rest else ""
+    )
+    return (
+        f"<div class='opp-category-section'>"
+        f"<div class='opp-category-heading'>{_esc(kind)}</div>"
+        f"<div class='opp-table-wrap'><table class='opp-table'>{head}<tbody>{''.join(visible)}</tbody></table></div>"
+        f"{rest_html}"
+        f"</div>"
+    )
 
 
 # Index positions inside change_detection.py's `_SETPIECE_FIELDS` tuple
@@ -249,6 +251,17 @@ def render_opportunity_workspace(
     def _considered(pid: int) -> bool | None:
         return None if considered_ids is None else pid in considered_ids
 
+    def _price_m(pid: int) -> float | None:
+        """Real, confirmed bug fix (2026-09-08, Phase 8.1) - Breakout/Trap/
+        Role Change cards always passed a hardcoded `None` for price,
+        rendering "Price unavailable" for real, currently-priced players -
+        `team_lookup` (`_bulk_player_lookup`, already queried above for
+        `team_code`) already carries the real `price_tenths` for every one
+        of these candidates; this was sitting unused, not genuinely
+        missing. Exposes already-fetched data, no new query."""
+        tenths = team_lookup.get(pid, {}).get("price_tenths")
+        return tenths / 10 if tenths is not None else None
+
     # Real "MY SQUAD IMPACT" map (fpl.page-parity pass) - `ta.candidates` are
     # the SAME real ranked `TransferOption`s `analyze_transfer_decision`
     # already computed (never re-scanned here); a card whose player IS one
@@ -271,7 +284,7 @@ def render_opportunity_workspace(
         own_txt = f"{b.ownership_percent:.1f}%" if b.ownership_percent is not None else "ownership"
         change_txt = f"ownership rises above {MAX_OWNERSHIP_PERCENT:.0f}% (currently {own_txt}) or value ratio falls below {MIN_VALUE_RATIO:.1f} xP/£m"
         breakout_cards.append(_card(
-            "Breakout", _esc(b.web_name), b.position, None, b.ownership_percent,
+            "Breakout", _esc(b.web_name), b.position, _price_m(b.player_id), b.ownership_percent,
             f"{b.value_ratio:.2f} xP/£m value ratio",
             "; ".join(b.reasons) if b.reasons else f"{b.value_ratio:.2f} xP/£m, {own_bit}",
             confidence, team_code=team_code,
@@ -285,7 +298,7 @@ def render_opportunity_workspace(
         own_bit = f"{t.ownership_percent:.1f}% owned" if t.ownership_percent is not None else "high ownership"
         confidence = _confidence_label(conn, t.player_id)
         trap_cards.append(_card(
-            "Trap", _esc(t.web_name), t.position, None, t.ownership_percent,
+            "Trap", _esc(t.web_name), t.position, _price_m(t.player_id), t.ownership_percent,
             f"{t.eo_source} ownership source",
             "; ".join(t.reasons) if t.reasons else f"{own_bit}, case weakening",
             confidence, team_code=team_code,
@@ -299,7 +312,7 @@ def render_opportunity_workspace(
         order_bit = _setpiece_order_change_text(r["old_value"], r["new_value"])
         confidence = _confidence_label(conn, r["entity_id"])
         role_cards.append(_card(
-            "Role Change", _esc(r["web_name"]), r["position"], None, None,
+            "Role Change", _esc(r["web_name"]), r["position"], _price_m(r["entity_id"]), None,
             f"set-piece {order_bit}, {_esc(_relative_time(r['detected_at']))}",
             order_bit,
             confidence, team_code=team_code,
@@ -340,27 +353,27 @@ def render_opportunity_workspace(
         for avg, short_name, label in swings[:_MAX_PER_CATEGORY]:
             team_id = next((t["id"] for t in team_rows if t["short_name"] == short_name), None)
             badge_html = (
-                _crest_html(team_codes[team_id], short_name, css_class="opp-card-shirt opp-card-badge")
+                _crest_html(team_codes[team_id], short_name, css_class="opp-row-badge")
                 if team_id is not None else ""
             )
             swing_cards.append(
-                f"<div class='opp-card opp-card-fixture-swing'>"
-                f"{badge_html}"
-                f"<div class='opp-card-kind'>Fixture Swing</div>"
-                f"<div class='opp-card-title'>{_esc(short_name)}</div>"
-                f"<div class='opp-card-metric'>5-GW average difficulty {avg:.1f} ({_esc(label)})</div>"
-                f"<div class='opp-card-why'><strong>Why now</strong> {_esc(label)} fixture run, not currently in your squad</div>"
-                f"</div>"
+                f"<tr class='opp-row opp-row-fixture-swing'>"
+                f"<td class='opp-row-player'><div class='opp-row-shirt-wrap'>{badge_html}</div>"
+                f"<div class='opp-row-identity'><span class='opp-row-name'>{_esc(short_name)}</span></div></td>"
+                f"<td class='opp-row-num'>{avg:.1f}</td>"
+                f"<td class='opp-row-whycell'><div class='opp-row-metric'>{_esc(label)} fixture run</div>"
+                f"<div class='opp-row-why'>Not currently in your squad</div></td>"
+                f"</tr>"
             )
     except Exception:
         pass
 
     blocks = [
-        _category_block("Breakout", breakout_cards), _category_block("Fixture Swing", swing_cards),
+        _category_block("Breakout", breakout_cards), _category_block("Fixture Swing", swing_cards, head=_SWING_TABLE_HEAD),
         _category_block("Role Change", role_cards), _category_block("Value", value_cards),
         _category_block("Trap", trap_cards),
     ]
     blocks = [b for b in blocks if b]
     if not blocks:
         return "<div class='empty-state'>No real league-wide opportunities cleared the bar this regen - the honest state, not a gap.</div>"
-    return f"<div class='opp-board-grid'>{''.join(blocks)}</div>"
+    return f"<div class='opp-board'>{''.join(blocks)}</div>"

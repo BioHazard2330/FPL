@@ -6,55 +6,33 @@ detail, chip strategy, player odds, optimizer delta). All real setup logic
 (locked squad, `ta`/`ca`, primary verdict, live window, live-rank tile) is
 carried over unchanged from the pre-redesign `generate_dashboard_html` -
 only the HTML composed from it changes shape."""
-import logging
 import sqlite3
-from datetime import datetime, timezone
 
-from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
-from fpl_agent.models.live_rank import classify_precision
-from fpl_agent.models.rules import current_season, get_rule
-from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
-from fpl_agent.ingestion.my_team import get_my_team_entry_id, get_used_chips
-from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.monitoring.dashboard import (
     benchmark, command, football, injuries, live_charts, match_centre, myteam,
     plan, points_changes, scout, squad,
 )
+from fpl_agent.monitoring.dashboard.context import build_dashboard_context
 from fpl_agent.monitoring.dashboard.data_payload import build_workspace_payload, render_payload_script
 from fpl_agent.monitoring.dashboard.legacy import (
     _CSS,
     _alternatives_html,
-    _analyze_locked_decisions,
-    _compare_panel_html,
-    _compute_my_live_score,
-    _compute_primary_verdict,
     _confidence_strip_html,
-    _dashboard_state,
     _decision_audit_html,
     _decision_comparison_html,
     _esc,
     _health_summary_html,
-    _lifecycle_stage_label,
     _live_tracking_html,
     _market_divergence_html,
     _model_football_conflict_html,
     _news_html,
-    _pitch_html,
-    _pitch_html_from_xi,
     _player_odds_html,
     _readiness_chips,
-    _relative_time,
     _source_chips,
     _source_freshness,
-    _squad_live_window,
     _chip_strategy_html,
 )
 from fpl_agent.monitoring.dashboard.plan import path_confidence, path_descriptor
-from fpl_agent.monitoring.source_status import get_source_health
-from fpl_agent.optimization.build_team import generate_build_team_report
-from fpl_agent.optimization.decision_engine import evaluate_locked_squad
-from fpl_agent.optimization.locked_squad import get_locked_squad
-from fpl_agent.optimization.squad import validate_starting_xi
 
 # Real "remove the two competing live/refresh concepts" fix (2026-08-28) -
 # the page no longer periodically reloads itself; this is only the JS
@@ -71,294 +49,35 @@ def generate_dashboard_html(
     gw_window: int = 1, must_include_ids: set[int] | None = None, must_start_ids: set[int] | None = None,
     exclude_ids: set[int] | None = None,
 ) -> str:
-    """Pure function of current DB state (plus an optional already-fetched live
-    payload) - see the pre-redesign docstring this carries forward unchanged:
-    locked-squad-first product architecture, Mode-A override semantics,
-    single `ta`/`ca` computation shared across every panel that needs it."""
-    # Real page-level freshness stamp (2026-09-03, direct user ask: "each
-    # module should say when it last updated so I can make sure the system
-    # is always up to date") - every static screen (COMMAND's own layout/
-    # MY TEAM/FOOTBALL/SCOUT/PLAN/ADVANCED) regenerates together in this one
-    # call, so ONE real "dashboard generated at" timestamp, ticking live in
-    # the topbar, honestly answers "is this up to date" for all of them at
-    # once - never a per-panel timestamp implying they could independently
-    # drift when they can't. Live Tracking/Match Centre have their own,
-    # faster-cadence freshness (the live_snapshot poll, wired in separately
-    # below); the optimizer's own decision freshness is COMMAND's existing
-    # "Computed Xh ago" banner - this is neither of those, the third real
-    # freshness axis this dashboard needed a visible answer for.
-    generated_at_iso = datetime.now(timezone.utc).isoformat()
-    default_call = (
-        gw_window == 1 and must_include_ids is None and must_start_ids is None and exclude_ids is None
+    """Composes the full dashboard HTML from a fresh `DashboardContext` (see
+    `build_dashboard_context` above for the real setup logic this used to
+    contain directly - moved out, 2026-09-08, Phase 8.2 Stage 2, so the new
+    JSON API layer can share it). Every local variable below that isn't
+    assigned inline is a `ctx.` field, destructured once here to keep the
+    rest of this function's own composition logic - unchanged since before
+    this extraction - reading exactly the same bare names it always did."""
+    ctx = build_dashboard_context(
+        conn, live_payload=live_payload, gw_window=gw_window, must_include_ids=must_include_ids,
+        must_start_ids=must_start_ids, exclude_ids=exclude_ids,
     )
-    locked = None
-    if default_call:
-        try:
-            locked = get_locked_squad(conn)
-        except Exception:
-            # Real defensive fix (2026-08-28, diagnosing an intermittent
-            # "dashboard shows no squad" report) - get_locked_squad() had no
-            # exception guard anywhere in its call chain, so a genuinely
-            # malformed row (see locked_squad.py's own new logging) could
-            # crash the WHOLE dashboard regen instead of degrading to the
-            # honest "no squad locked" empty state every panel already
-            # handles. Logged, not silently swallowed - the real fix is
-            # whatever locked_squad.py's new warnings surface, not this.
-            logging.getLogger("fpl_agent.dashboard").exception(
-                "get_locked_squad() raised during dashboard regen - degrading to 'no squad locked' rather than failing the whole regen"
-            )
-            locked = None
-    ta = ca = None
-    cap_id = None
-    if locked is not None:
-        try:
-            ta, ca = _analyze_locked_decisions(conn, locked)
-        except Exception:
-            ta = ca = None
-    decision = evaluate_locked_squad(conn, locked, ta=ta, ca=ca) if locked is not None else None
-    primary_verdict = _compute_primary_verdict(conn, ta) if ta is not None else None
-    sd = primary_verdict.sd if primary_verdict is not None else None
-    current_rec = sd.get("current_recommendation") if sd else None
-
-    report = generate_build_team_report(
-        conn, gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
-        exclude_ids=exclude_ids,
+    (
+        generated_at_iso, locked, ta, ca, sd, current_rec,
+        my_team_entry_id, reference_event, squad_error_html, squad_ids, display_xi, cap_id,
+        captain_name, vice_name, risks_list, headline_xp, squad_value_m, bank_m, pitch_heading, pitch_html,
+        ft_tile_value, ft_tile_title, my_live_score, compare_panel, gw_label,
+        live_rank_tile_html, dash_state, actual_points_label,
+        xp_summary_label, gw_label_html, freshness, cross_check, live_snapshot_for_strip,
+        chips_available,
+    ) = (
+        ctx.generated_at_iso, ctx.locked, ctx.ta, ctx.ca, ctx.sd,
+        ctx.current_rec, ctx.my_team_entry_id, ctx.reference_event,
+        ctx.squad_error_html, ctx.squad_ids, ctx.display_xi, ctx.cap_id, ctx.captain_name,
+        ctx.vice_name, ctx.risks_list, ctx.headline_xp, ctx.squad_value_m, ctx.bank_m, ctx.pitch_heading,
+        ctx.pitch_html, ctx.ft_tile_value, ctx.ft_tile_title, ctx.my_live_score,
+        ctx.compare_panel, ctx.gw_label, ctx.live_rank_tile_html,
+        ctx.dash_state, ctx.actual_points_label, ctx.xp_summary_label, ctx.gw_label_html,
+        ctx.freshness, ctx.cross_check, ctx.live_snapshot_for_strip, ctx.chips_available,
     )
-    primary = report.structures[0] if report.structures else None
-    my_team_entry_id = get_my_team_entry_id(conn)
-
-    from fpl_agent.models.fixtures import live_or_reference_event
-    reference_event = live_or_reference_event(conn)
-    squad_error_html = ""
-    if locked is not None:
-        squad_ids = set(locked.squad_ids)
-        display_xi = locked.xi
-        cap_id = locked.xi.captain.player_id if locked.xi.captain else None
-        vc_id = locked.xi.vice_captain.player_id if locked.xi.vice_captain else None
-        captain_name = locked.xi.captain.web_name if locked.xi.captain else "n/a"
-        vice_name = locked.xi.vice_captain.web_name if locked.xi.vice_captain else "n/a"
-        risks_list = decision.risks if decision is not None else []
-        headline_xp = sum(c.median for c in locked.xi.starting) + (locked.xi.captain.median if locked.xi.captain else 0.0)
-        squad_value_m = locked.squad_value_tenths / 10
-        if locked.bank_tenths is not None:
-            bank_m = locked.bank_tenths / 10
-        else:
-            season = current_season(conn)
-            budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000) if season else 1000
-            bank_m = (budget_tenths - locked.squad_value_tenths) / 10
-        pitch_heading = "My Locked Squad"
-        pitch_html = ""
-        validation_problems = validate_starting_xi(display_xi)
-        if validation_problems:
-            squad_error_html = (
-                "<div class='empty-state'>SYSTEM ERROR: locked squad failed validation - "
-                + "; ".join(_esc(p) for p in validation_problems) + "</div>"
-            )
-        else:
-            pitch_html = _pitch_html_from_xi(conn, display_xi, cap_id, vc_id, live_payload, reference_event, ta=ta)
-    else:
-        squad_ids = {c.player_id for c in primary.result.squad} if primary and primary.result.squad else set()
-        display_xi = primary.xi if primary and primary.result.squad else None
-        captain_name = report.captain.web_name if report.captain else "n/a"
-        vice_name = report.vice.web_name if report.vice else "n/a"
-        risks_list = report.risks
-        headline_xp = 0.0
-        squad_value_m = 0.0
-        bank_m = 0.0
-        if primary and primary.result.squad:
-            headline_xp = sum(c.median for c in primary.xi.starting) + (primary.xi.captain.median if primary.xi.captain else 0.0)
-            season = current_season(conn)
-            budget_tenths = get_rule(conn, season, "rules.squad_total_spend", 1000) if season else 1000
-            squad_value_m = primary.result.total_cost_tenths / 10
-            bank_m = (budget_tenths - primary.result.total_cost_tenths) / 10
-        pitch_heading = "Optimizer Recommendation"
-        pitch_html = _pitch_html(conn, report, live_payload, reference_event)
-
-    real_ft = getattr(locked, "free_transfers", None) if locked is not None else None
-    if real_ft is not None:
-        ft_tile_value = str(real_ft)
-        ft_tile_title = "Real free-transfer count, replayed from official FPL history (models/free_transfers.py)."
-    else:
-        ft_tile_value = "not tracked"
-        ft_tile_title = "Not derivable yet - no real synced squad history exists for this entry (pre-sync, or a gap in synced history). Never guessed."
-
-    live_window = _squad_live_window(conn, squad_ids)
-    my_live_score = _compute_my_live_score(conn, locked, live_payload, live_window.event)
-
-    compare_panel = ""
-    if my_team_entry_id is not None:
-        compare_panel = f"""
-  <details class="panel panel-compare panel-advanced" id="compare">
-    <summary><h2 style="display:inline">Optimizer Delta <span class="panel-subtitle">ADVANCED - what if you rebuilt from scratch (a different squad, not a same-squad decision)</span></h2></summary>
-    {_compare_panel_html(conn, my_team_entry_id, headline_xp, squad_value_m, bank_m, captain_name, squad_ids, my_live_score)}
-  </details>"""
-
-    gw_label = f"GW{reference_event}" if reference_event is not None else "GW?"
-
-    # Real live-rank headline (unchanged from pre-redesign - see legacy
-    # history for the full "degenerate sample" honesty gate this carries
-    # forward verbatim) - only the wrapping tile markup is new (home.py's
-    # own metric-tile shape), the data logic is untouched.
-    live_rank_decision = latest_decision_of_type(conn, "live_rank")
-    live_rank_tile_html = ""
-    if live_rank_decision is not None:
-        precision = live_rank_decision.detail.get("precision")
-        if precision == "degenerate":
-            trustworthy = None
-            for d in list_decisions_of_type(conn, "live_rank", limit=50):
-                d_event = d.detail.get("event")
-                if d_event is None:
-                    continue
-                d_reference = get_live_rank_reference(conn, d_event)
-                if d_reference and classify_precision(d_reference) != "degenerate":
-                    trustworthy = d
-                    break
-            source_row = next((s for s in get_source_health(conn) if s.source_name == "fpl_live_rank_sample"), None)
-            source_note = "source: healthy" if source_row is not None and source_row.failure_count == 0 else "source: degraded"
-            reason = (
-                f"real sample of {live_rank_decision.detail.get('sample_size', '?')} managers returned mostly "
-                f"identical page-level ranks - not enough real distinct data to estimate honestly"
-            )
-            if trustworthy is not None:
-                t_rank = trustworthy.detail.get("estimated_rank")
-                t_event = trustworthy.detail.get("event")
-                last_trustworthy_note = (
-                    f"last trustworthy check: ~{t_rank:,} (GW{t_event}, {_relative_time(trustworthy.created_at)})"
-                    if t_rank is not None else f"last trustworthy check: {trustworthy.summary}"
-                )
-            else:
-                last_trustworthy_note = "no trustworthy live-rank estimate has ever been produced"
-            rank_tooltip = f"{reason} &middot; {source_note} &middot; {last_trustworthy_note}"
-            live_rank_tile_html = f"""<div class="home-metric" title="{_esc(rank_tooltip)}">
-      <div class="home-metric-label" id="live-rank-label">Rank</div>
-      <div class="home-metric-value home-metric-value-muted" id="live-rank-value">Unavailable</div>
-    </div>"""
-        else:
-            rank = live_rank_decision.detail.get("estimated_rank")
-            is_approximate = precision == "approximate"
-            is_livefpl = live_rank_decision.detail.get("source") == "livefpl"
-            rank_prefix = "" if is_livefpl else ("~" if is_approximate else "~")
-            rank_str = f"{rank_prefix}{rank:,}" if rank is not None else live_rank_decision.summary
-            # Real fix carried forward from the pre-redesign hero (2026-08-27,
-            # direct user report: "live rank is fucked") - only the CURRENT
-            # gameweek's estimate is ever labeled "Live rank"; a stale
-            # prior-gameweek estimate is relabeled "Last rank check (GWx)" so
-            # the real number is never hidden, only never mislabeled current.
-            rank_event = live_rank_decision.detail.get("event")
-            is_current = rank_event == reference_event
-            rank_label = "Live rank (est.)" if is_current else f"Last rank check (GW{rank_event})"
-            live_rank_tile_html = f"""<div class="home-metric">
-      <div class="home-metric-label" id="live-rank-label">{_esc(rank_label)}</div>
-      <div class="home-metric-value" id="live-rank-value">{_esc(rank_str)}</div>
-      <div class="home-metric-delta" id="live-rank-delta"></div>
-    </div>"""
-
-    lifecycle = compute_gw_lifecycle_state(conn)
-    dash_state = _dashboard_state(lifecycle.state if lifecycle is not None else None)
-    if my_live_score is not None:
-        hero_state_label = "FINAL" if dash_state == "POST_MATCH" else "LIVE"
-    else:
-        hero_state_label = _lifecycle_stage_label(lifecycle.state if lifecycle is not None else None)
-
-    actual_points_label = (
-        f"{my_live_score.points:.0f} {_esc(gw_label)} pts &middot; " if my_live_score is not None else ""
-    )
-    xp_summary_label = "next-GW xP" if my_live_score is not None else "projected xP"
-
-    # --- New HOME / PLAN / SQUAD workspaces ---------------------------------
-    # Each dynamic piece escaped individually before concatenation - never
-    # re-escaped at the template site, or the literal `&middot;` entity
-    # would double-escape into visible text (the exact bug this project
-    # already found once in the pre-redesign hero).
-    gw_label_html = _esc(gw_label) + (f" &middot; {_esc(hero_state_label)}" if hero_state_label else "")
-
-    # Real "never show a stale strategic decision as current" fix (2026-08-29,
-    # P0 recommendation-freshness audit): `current_rec` above is read from the
-    # cached `strategic_plan` decision (real, deliberately not re-run live
-    # every regen - see CLAUDE.md's own cost note), so the hero must disclose
-    # its real age and check for a real, already-recorded material change
-    # since it was computed (`change_events`, HIGH severity, squad-scoped)
-    # rather than silently presenting a possibly-outdated verdict as current.
-    #
-    # Real bug found + fixed (2026-08-29, direct user report: "why is the
-    # dashboard saying recomputing and i have run fpl strategic plan again" -
-    # it never cleared no matter how many times the user re-ran it). This
-    # used to check `primary_verdict.strategic_decision` - the HYSTERESIS-
-    # filtered decision (`models/decision_hysteresis.py`, milestone 4),
-    # which deliberately keeps pointing at an older decision until a real EV/
-    # confidence/persistence bar is cleared, specifically so the DISPLAYED
-    # verdict doesn't flip-flop on noise. That's the right behavior for what
-    # to SHOW - it's the wrong thing to check freshness against: a fresh
-    # recompute can genuinely re-confirm the same answer (hysteresis
-    # correctly declines to flip it) while this check kept comparing against
-    # the old, hysteresis-locked timestamp - meaning RECOMPUTING could never
-    # clear even after a real, successful re-run, because hysteresis's own
-    # job is to NOT advance that reference point. Freshness must answer "has
-    # a recompute happened since the world last changed", which needs the
-    # RAW latest strategic_plan decision (same one `live_snapshot.py`'s own
-    # freshness check and `adversarial_audit.py`'s cross-check already use,
-    # per `decision_freshness.py`'s own docstring - hysteresis was always
-    # meant to be excluded from this, this call site was just never updated
-    # when milestone 4 introduced it).
-    freshness = None
-    if current_rec is not None and locked is not None:
-        from fpl_agent.models.decision_freshness import assess_recommendation_freshness
-
-        latest_strategic_decision = latest_decision_of_type(conn, "strategic_plan")
-        freshness = assess_recommendation_freshness(
-            conn, latest_strategic_decision, set(locked.squad_ids),
-        )
-    # Real MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
-    # pass) - every input here is a real, already-real, independently-cheap
-    # read (no strategic beam search, no wildcard ILP). Solio's own
-    # `compare_captain_pick` does re-run `evaluate_captaincy` internally
-    # (a real, minor, disclosed duplicate of a CHEAP scan `ca` already ran -
-    # not the expensive strategic-plan/wildcard path this project's
-    # decision-engine rule actually guards against) rather than needing a
-    # deeper refactor of that module's public API for this pass.
-    cross_check = None
-    if ca is not None and locked is not None and locked.squad_ids:
-        from fpl_agent.models.decision_fusion import captain_cross_check
-        from fpl_agent.models.external_benchmark import compare_captain_pick, latest_solio_snapshot
-        from fpl_agent.models.template import get_template
-
-        solio_snapshot = latest_solio_snapshot(conn)
-        solio_cmp = compare_captain_pick(conn, list(locked.squad_ids), solio_snapshot) if solio_snapshot else None
-        template_players = get_template(conn)
-        cross_check = captain_cross_check(
-            conn, list(locked.squad_ids), ca=ca, solio_comparison=solio_cmp, template_players=template_players,
-        )
-
-    # Real fix (2026-08-28, direct user report: a dashboard opened via
-    # `file://` - downloaded/copied out of `data/` rather than served over
-    # http - showed the SYSTEM LIVE strip permanently stuck at "not yet
-    # polled"/"unavailable", since `fetch()` is blocked entirely under the
-    # `file://` origin and the strip had no fallback - see
-    # `home._system_live_html`'s own docstring). Building the SAME snapshot
-    # `write_live_snapshot` already writes to disk (cheap - pure DB reads,
-    # no Dixon-Coles/Monte Carlo, see that module's own docstring) lets the
-    # strip start at real, correct-as-of-this-regen values server-side;
-    # non-fatal so a real failure here never breaks the surrounding regen.
-    live_snapshot_for_strip = None
-    try:
-        from fpl_agent.monitoring.live_snapshot import build_live_snapshot
-
-        live_snapshot_for_strip = build_live_snapshot(conn, live_payload)
-    except Exception:
-        logging.getLogger("fpl_agent.dashboard").exception(
-            "build_live_snapshot failed while rendering the SYSTEM LIVE strip - falling back to the unpolled shell"
-        )
-
-    # Real (2026-09-02, Phase 6A) - chips available THIS gameweek, not yet
-    # burned this season. `SUPPORTED_CHIP_NAMES` is this project's own real
-    # 4-chip catalog (transfers.py/chips.py); `get_used_chips` is the same
-    # real, already-used-elsewhere function `fpl strategic-plan` itself uses
-    # to exclude burned chips from the search - never a second, competing
-    # eligibility check.
-    from fpl_agent.optimization.chips import SUPPORTED_CHIP_NAMES
-
-    used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
-    chips_available = [c for c in SUPPORTED_CHIP_NAMES if c not in used_chip_names]
 
     command_section_html = command.render_command_screen(
         conn=conn, gw_label_html=gw_label_html, gw_label_plain=gw_label,
@@ -434,15 +153,29 @@ def generate_dashboard_html(
         }
 
     scout_section_html = scout.render_scout_screen(conn, squad_ids, optimizer_considered_ids, ta, locked=locked)
-    live_section_html = f"""<section class="panel panel-live{' panel-live-emphasis' if dash_state == 'LIVE' else ''}" id="live" data-cat="data">
-  <h2>Live Tracking</h2>
+    # Real "Live Tracking" content (squad-wide live bonus/DEFCON across the
+    # window's own pre/live/post state, plus season-long charts: rank
+    # trajectory, captain impact, points, actual-vs-expected, projection
+    # range, team strength, player comparison, player form) - always real,
+    # never empty (the "unknown"/"pre" states are their own honest
+    # disclosures, not a blank). Kept as a content fragment, not its own
+    # `<section>`, so it can be folded into the single real LIVE screen
+    # below (2026-09-08, Phase 8.1 Part 29/33 fix - this used to be its own
+    # floating `<section id="live">` positioned between SCOUT and ADVANCED
+    # with no nav link reaching it at all, live-confirmed via direct DOM
+    # measurement to sit ~3800px tall in a genuine navigational dead zone -
+    # real, valuable content (a user's own live bonus tracking, their real
+    # season rank trajectory) that most users would never discover unless
+    # they scrolled past SCOUT by hand).
+    live_tracking_inner_html = f"""<div id="live" class="live-tracking-block{' panel-live-emphasis' if dash_state == 'LIVE' else ''}">
+  <h3>Live Tracking <span class="panel-subtitle">your squad's own live bonus/DefCon, and real season-long charts</span></h3>
   {_live_tracking_html(conn, squad_ids, live_payload, captain_id=(locked.xi.captain.player_id if locked is not None and locked.xi.captain else None), by_player=(my_live_score.by_player if my_live_score is not None else None))}
   {live_charts.render_live_charts(conn, my_team_entry_id, reference_event, squad_ids, locked)}
   <div class="live-changes-feed-wrap" id="live-changes-feed-wrap" hidden>
     <div class="live-changes-feed-title">LIVE CHANGES</div>
     <ul class="live-changes-feed" id="live-changes-feed"></ul>
   </div>
-</section>"""
+</div>"""
     # Real live Match Centre (2026-08-29, "live command centre" pass) - score/
     # minute/team-stats/momentum/shot-map/my-players for any genuinely LIVE/
     # HALFTIME match, single-sourced from `live_snapshot._active_matches_block`
@@ -450,17 +183,25 @@ def generate_dashboard_html(
     # second query path). Deliberately NOT gated on the coarser gameweek-
     # level `dash_state` (a real, confirmed distinct case: one early fixture
     # can be genuinely LIVE in `match_intelligence` while the whole
-    # gameweek's own lifecycle state hasn't yet flipped to "LIVE") - placed
-    # unconditionally near the top of the page, right after the Home hero,
-    # and returns `''` (a real empty section, never a placeholder card)
-    # whenever nothing is genuinely live right now.
+    # gameweek's own lifecycle state hasn't yet flipped to "LIVE") - returns
+    # `''` (a real empty section, never a placeholder card) whenever nothing
+    # is genuinely live right now; `live_tracking_inner_html` above always
+    # has real content, so the combined `#screen-live` wrapper below never
+    # goes empty even when this piece specifically does.
     match_centre_section_html = match_centre.render_match_centre(conn, squad_ids)
-
-    if dash_state == "POST_MATCH":
-        panel_order = [live_section_html, compare_panel]
-    else:
-        panel_order = [live_section_html]
-    ordered_panels_html = "\n\n".join(p for p in panel_order if p)
+    # Real, confirmed duplicate-render bug fixed 2026-09-08 (Phase 8.1 Part
+    # 29) - `compare_panel` used to ALSO be appended here during POST_MATCH
+    # (reachable most weeks - `GW_FINISHED`/`NEXT_GW_ANALYSIS` both map to
+    # POST_MATCH), producing a second `id="compare"` element on the page
+    # alongside the one already unconditionally rendered inside ADVANCED
+    # below - confirmed live via direct source read, not assumed. It never
+    # needed a second placement; ADVANCED's own copy was always the real
+    # one.
+    live_screen_html = f"""<section class="panel panel-live-screen" id="screen-live" data-cat="data">
+  <h2>Live <span class="panel-subtitle">match centre when a squad fixture is genuinely live, your own live tracking and season charts always</span></h2>
+  {match_centre_section_html}
+  {live_tracking_inner_html}
+</section>"""
 
     news_fresh = _source_freshness(conn, "bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports_rss")
     news_fresh_html = f"<span class='panel-subtitle freshness-tag'>Updated {_esc(news_fresh)}</span>" if news_fresh else ""
@@ -538,20 +279,19 @@ def generate_dashboard_html(
   <a href="#screen-football" class="site-nav-primary">Football</a>
   <a href="#screen-scout" class="site-nav-primary">Scout</a>
   <a href="#advanced" class="site-nav-primary">Advanced</a>
-  <!-- Real, confirmed interaction bug fixed 2026-09-07 (Phase 7.6 Part 24,
-       "no fake controls") - `render_match_centre` correctly returns '' with
-       no live match right now (this dashboard's own honest "no fabricated
-       live state" rule), but the nav link below still pointed at a target
-       that then didn't exist, giving zero feedback on click most of the
-       time (a match is genuinely live only during an actual live window).
-       Only rendered when there's a real section for it to reach. -->
-  {'<span class="site-nav-sep"></span><a href="#live-match-centre" class="site-nav-secondary">Live</a>' if match_centre_section_html else ''}
+  <!-- Real (2026-09-08, Phase 8.1 Part 29) - the "Live" link is now
+       unconditional. `#screen-live` always exists and always has real
+       content (`live_tracking_inner_html` is never empty - see its own
+       comment above), so this can never be a dead click the way the old
+       match-centre-gated version could be (Phase 7.6 Part 24's original
+       "no fake controls" fix, generalized rather than reverted). -->
+  <span class="site-nav-sep"></span><a href="#screen-live" class="site-nav-secondary">Live</a>
 </nav>
 
 {command_section_html}
 {payload_script_html}
 
-{match_centre_section_html}
+{live_screen_html}
 
 {squad_section_html}
 
@@ -561,31 +301,27 @@ def generate_dashboard_html(
 
 {scout_section_html}
 
-{ordered_panels_html}
-
-<div class="panel-grid" id="market-detail">
-  <section class="panel panel-news" data-cat="data">
-    <h2>FPL Market / Player News <span class="panel-subtitle">journalism, Tier 2-4, filtered to real player/team matches</span>{news_fresh_html}</h2>
-    <div class="news-list">
-{_news_html(conn, squad_ids, captain_id=cap_id, ta=ta)}
-    </div>
-  </section>
-
-  <section class="panel panel-injuries" data-cat="data">
-    <h2>Injuries <span class="panel-subtitle">league-wide, real status/chance of playing/news</span></h2>
-{injuries.render_injuries_html(conn)}
-  </section>
-
-  <section class="panel panel-points-changes" id="points-changes" data-cat="data">
-    <h2>Points Changes <span class="panel-subtitle">post-match revisions to Bonus Points and DefCon</span></h2>
-{points_changes.render_points_changes_html(conn, squad_ids)}
-  </section>
-</div>
-
 <section class="panel panel-advanced-hub" id="advanced" data-cat="data">
   <h2>Advanced &amp; System <span class="panel-subtitle">diagnostic detail, from-scratch rebuild comparison, raw feeds, system health - real data</span></h2>
   <div class="advanced-hub-body">
     {decision_detail_html}
+
+    <details class="panel-advanced">
+      <summary><h3>FPL Market / Player News <span class="panel-subtitle">journalism, Tier 2-4, filtered to real player/team matches</span>{news_fresh_html}</h3></summary>
+      <div class="news-list">
+{_news_html(conn, squad_ids, captain_id=cap_id, ta=ta)}
+      </div>
+    </details>
+
+    <details class="panel-advanced">
+      <summary><h3>Injuries <span class="panel-subtitle">league-wide, real status/chance of playing/news</span></h3></summary>
+{injuries.render_injuries_html(conn)}
+    </details>
+
+    <details class="panel-advanced" id="points-changes">
+      <summary><h3>Points Changes <span class="panel-subtitle">post-match revisions to Bonus Points and DefCon</span></h3></summary>
+{points_changes.render_points_changes_html(conn, squad_ids)}
+    </details>
 
     <details class="panel-advanced">
       <summary><h3>Chip Strategy <span class="panel-subtitle">single-decision-point value (is using this chip worth it RIGHT NOW, in isolation) - a different, narrower question from Plan's chip timing above (jointly timed against the winning transfer path)</span></h3></summary>
@@ -1170,7 +906,15 @@ def generate_dashboard_html(
       stroke: {{ curve: 'straight', width: widths, dashArray: dashes }},
       markers: {{ size: 3, hover: {{ size: 5 }} }},
       dataLabels: {{ enabled: false }},
-      grid: baseGrid(),
+      // Real, confirmed clipping fix (2026-09-08, Phase 8.1 Part 21/33) -
+      // the real event-label annotations above (chip/transfer names at
+      // each real GW) render past their own anchor point, so the LAST
+      // real GW's label routinely overran the chart's own edge with only
+      // `baseGrid()`'s plain 8px - confirmed live (a real "Tarkowski ->"
+      // label clipped at the container edge). Real extra right padding
+      // gives the widest real label room without affecting any other
+      // chart that still uses the shared, unmodified `baseGrid()`.
+      grid: Object.assign({{}}, baseGrid(), {{ padding: {{ left: 8, right: 70 }} }}),
       legend: {{ show: true, labels: {{ colors: cssVar('--muted') }}, fontSize: '11px', fontWeight: 600 }},
       xaxis: {{
         type: 'numeric', tickAmount: Math.min(payload.series[0].points.length - 1, 8),
@@ -1656,29 +1400,6 @@ def generate_dashboard_html(
     if (snap.points && snap.points.points != null) {{
       var ptsEl = document.getElementById('live-points-value');
       if (ptsEl) ptsEl.textContent = Math.round(snap.points.points);
-    }}
-    if (snap.points && snap.points.captain_points != null) {{
-      var capPtsEl = document.getElementById('live-captain-points');
-      var capPtsText = Math.round(snap.points.captain_points) + ' pts';
-      if (capPtsEl && capPtsEl.textContent !== capPtsText) capPtsEl.textContent = capPtsText;
-    }}
-    // Real recommendation-staleness propagation (P0 "decision change" ask) -
-    // reuses the SAME 'home-hero-stale-banner' CSS class the server-rendered
-    // page already defines (no new visual design, just an earlier real
-    // disclosure than waiting for the next full regen/meta-refresh).
-    if (snap.recommendation && snap.recommendation.is_stale === true) {{
-      var actionEl = document.getElementById('home-action-word');
-      if (actionEl && actionEl.textContent !== 'RECOMPUTING') actionEl.textContent = 'RECOMPUTING';
-      var freshBlock = document.getElementById('home-freshness-block');
-      if (freshBlock && freshBlock.dataset.staleShown !== '1') {{
-        var reasonText = snap.recommendation.stale_reason || 'input changed';
-        var banner = document.createElement('div');
-        banner.className = 'home-hero-stale-banner';
-        banner.textContent = 'RECOMPUTING — a real change since this was computed (' + reasonText +
-          ') may affect this recommendation. Run fpl strategic-plan again.';
-        freshBlock.appendChild(banner);
-        freshBlock.dataset.staleShown = '1';
-      }}
     }}
     patchLiveRows(snap);
     patchMatchCentre(snap);
@@ -2484,13 +2205,19 @@ _CSS_WORKSPACE = """
     border-radius: 8px; padding: 8px 10px; }
   .mt-stat-value { font-weight: 800; font-size: 1rem; color: var(--fg); font-variant-numeric: tabular-nums; }
   .mt-stat-label { font-size: 0.7rem; letter-spacing: 0.03em; text-transform: uppercase; color: var(--faint); }
-  .mt-verdict-card { border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  /* Real "pitch is an open tactical board, sidebar shouldn't be a
+     dashboard card" fix (2026-09-08, Phase 8.1 Part 12) - these two real
+     verdicts (top projected / weak links) sat in individually-backgrounded,
+     bordered boxes directly beside a pitch that's deliberately unboxed -
+     a visible mismatch between "tactical board" and "widget". A rule-line
+     separator between the two real sections carries the same grouping
+     without competing with the pitch's own open surface. */
+  .mt-verdict-card { padding: 0 0 14px; margin-bottom: 14px; border-bottom: 1px solid var(--gridline); }
+  .mt-verdict-card:last-of-type { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
   .mt-verdict-label { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; margin-bottom: 6px; }
   .mt-verdict-name { font-weight: 800; font-size: 0.92rem; color: var(--fg); }
   .mt-verdict-stat { font-size: 0.74rem; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .mt-verdict-star { background: color-mix(in srgb, var(--accent-2) 10%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--accent-2) 30%, var(--border)); }
   .mt-verdict-star .mt-verdict-label { color: var(--accent-2); }
-  .mt-verdict-flop { background: var(--surface-2); border: 1px solid var(--border); }
   .mt-verdict-flop .mt-verdict-label { color: var(--faint); }
   .mt-verdict-flop .mt-weak-row:last-child { border-bottom: none; }
   @media (max-width: 1080px) {
@@ -2545,7 +2272,14 @@ _CSS_WORKSPACE = """
   .cmd-bar-item .home-metric-value-muted { font-size: inherit; }
   .cmd-bar-item .home-metric-delta { display: none; }
 
-  .cmd-hero { display: grid; grid-template-columns: 1fr 1px minmax(220px, 0.34fr); column-gap: clamp(28px, 4vw, 60px); }
+  /* Real "unified command surface" fix (2026-09-08, Phase 8.1 Part 8) -
+     the hard 1px filled rule that used to separate main/side literally
+     read as two boxes side by side, exactly the "big card + card beside
+     it" pattern the redesign named to remove. A wider gap alone (already
+     generous - clamp(28px,4vw,60px)) carries the same real separation
+     without a physical wall - the alternative should feel like it's
+     orbiting the decision, not partitioned from it. */
+  .cmd-hero { display: grid; grid-template-columns: 1fr minmax(220px, 0.34fr); column-gap: clamp(36px, 5vw, 72px); }
   /* Real, confirmed fix (2026-09-03, Playwright sweep P0): a grid item's
      default `min-width: auto` refuses to shrink below its content's
      intrinsic width - `.cmd-trajectory-line`'s own `overflow-x: auto`
@@ -2556,7 +2290,6 @@ _CSS_WORKSPACE = """
      the track honor the grid's own sizing and hands the overflow to the
      trajectory's own scrollbar, where it belongs. */
   .cmd-hero-main { min-width: 0; }
-  .cmd-hero-rule { background: var(--gridline); align-self: stretch; }
   .cmd-action-word { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800;
     font-size: clamp(2.4rem, 4.6vw, 3.8rem); letter-spacing: 0.01em; line-height: 1; color: var(--fg); }
   .cmd-action-review { color: #f0c419; }
@@ -2730,49 +2463,23 @@ _CSS_WORKSPACE = """
 
   @media (max-width: 900px) {
     .cmd-hero { grid-template-columns: 1fr; row-gap: 24px; }
-    .cmd-hero-rule { display: none; }
     .cmd-alt-col { padding-top: 18px; border-top: 1px solid var(--gridline); }
   }
 
-  /* HOME workspace (2026-08-27, frontend redesign) - first viewport, six
-     metrics only, no competing content. Superseded on-screen by the
-     COMMAND section above (2026-09-02) - CSS kept only because other,
-     not-yet-rebuilt screens still reuse `.risk-row`/`.cross-check-*`
-     styles defined further down this same block. */
-  /* Real fix (2026-08-29, "live command centre" pass, direct user finding:
-     "the stylesheet's own visual language claims flat/zero-gradients [see
-     the header's own 2026-08-27 'flat rebuild - a plain dark bar, no
-     gradient' comment] but the Home hero still washes the whole screen in
-     a purple gradient" - a genuine, confirmed contradiction, not a style
-     nitpick). Flat `--surface-2` (the same real token the rest of this
-     flat design language already uses) + a narrow left accent bar carries
-     the brand identity instead of a full-bleed gradient wash. `--fg`
-     (theme-aware) replaces the old hardcoded `#fff`, which only ever
-     worked against a guaranteed-dark purple background. */
-  .home-hero { padding: 28px clamp(16px, 4vw, 40px); background: var(--surface-2);
-    border-left: 4px solid var(--fpl-purple, #37003c);
-    color: var(--fg); border-radius: 0 0 18px 18px; }
-  .home-hero-gw { font-size: 0.85rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.75; }
-  .home-hero-action { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 800; font-size: clamp(2rem, 6vw, 3.4rem);
-    letter-spacing: 0.02em; margin-top: 4px; }
-  /* Real fix (2026-08-29, "live command centre" pass, direct spec: "the
-     giant PLAY WILDCARD headline must NOT consume the dominant visual area
-     while matches are being played"). `.state-live` is the SAME body class
-     `dash_state` already computes server-side (no new state, no new Python
-     logic) - during a real live GW the recommendation stays visible (never
-     hidden - a different question, still answered) but stops dominating,
-     so the Match Centre/live metrics promoted right below it (see
-     `panel_order` in `assemble.py`) get the primary visual weight instead. */
-  .state-live .home-hero-action { font-size: clamp(1.4rem, 3.4vw, 2rem); }
-  .state-live .home-hero-reason { font-size: 0.88rem; max-width: 560px; }
-  .home-hero-roll .home-hero-action { color: var(--accent-2); }
-  .home-hero-transfer .home-hero-action, .home-hero-chip .home-hero-action { color: #04f5ff; }
-  .home-hero-review .home-hero-action { color: #f0c419; }
-  .home-hero-reason { font-size: clamp(0.95rem, 2vw, 1.15rem); margin-top: 8px; max-width: 640px; opacity: 0.92; }
   /* Real decision-freshness disclosure (2026-08-29, P0 audit) - a plain
      age/version caption always, escalating to an explicit amber banner only
      when a real material change has been recorded since this decision was
-     computed. Never CSS-only - `home.py::_freshness_html` decides content. */
+     computed. Never CSS-only - `home.py::_freshness_html` decides content -
+     STILL LIVE (2026-09-08 Phase 8.1 Part 37 dead-CSS re-audit confirmed
+     this specific helper is imported and called directly by
+     `command.py::render_command_screen`, unlike the rest of the original
+     `.home-hero*` family below it in this file's history, which really was
+     dead - `home.py::render_hero` itself, and every class exclusive to it,
+     removed this same pass). */
+  .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
+  .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
+  .home-hero-stale-banner code { background: rgba(0,0,0,0.25); padding: 1px 5px; border-radius: 4px; }
   /* Real, always-honest freshness strip (2026-08-29, "master live +
      strategic-plan correction pass" P0 fix). `data-live-state` toggles the
      dot color - "unknown" (no snapshot polled yet, grey), "live" (snapshot
@@ -2829,10 +2536,6 @@ _CSS_WORKSPACE = """
   @media (max-width: 480px) {
     .system-live-more-grid { left: 0; right: 0; min-width: 0; }
   }
-  .home-hero-computed-at { font-size: 0.72rem; opacity: 0.6; margin-top: 6px; }
-  .home-hero-stale-banner { font-size: 0.82rem; margin-top: 8px; padding: 8px 12px; border-radius: 8px;
-    background: rgba(240, 196, 25, 0.16); border: 1px solid rgba(240, 196, 25, 0.5); color: #f0c419; max-width: 640px; }
-  .home-hero-stale-banner code { background: rgba(0,0,0,0.25); padding: 1px 5px; border-radius: 4px; }
   /* --- MODEL vs FOOTBALL/MARKET/TEMPLATE cross-check (fpl.page-parity
      pass) - compact, semantic-color-only, never a fourth wall of cards. --- */
   .cross-check-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -2850,13 +2553,16 @@ _CSS_WORKSPACE = """
   .template-overlap { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--gridline); }
   .template-overlap-stat { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
   .projected-pos-row-squad .projected-pos-label { color: var(--accent-2); }
-  /* Real visual redesign (2026-08-29, forensic fpl.page-referenced pass) -
-     a real divider separates this from the reason/evidence text above it
-     (matches fpl.page's own clear internal section breaks inside one
-     card), and bigger, bolder numbers carry real visual weight the way
-     fpl.page's own data rows do. */
-  .home-hero-metrics { display: flex; flex-wrap: wrap; gap: 16px 32px; margin-top: 20px; padding-top: 18px;
-    border-top: 1px solid var(--gridline); }
+  /* `.home-metric*` (label/value/value-muted/sub/delta) stays live - reused
+     by the current COMMAND topbar's own live-rank tile (`assemble.py`'s
+     `live_rank_tile_html`, styled further by `.cmd-bar-item .home-metric*`
+     below) even though the ORIGINAL `.home-hero-metrics` container and the
+     rest of the `.home-hero*`/`.home-action-*` family that used to wrap it
+     (2026-08-29 vintage `home.py::render_hero`) is confirmed dead - zero
+     real callers in the current six-screen page composition, only the
+     confirmed-orphaned function's own dedicated unit tests. Removed
+     2026-09-08, Phase 8.1 Part 37 (re-evaluating this exact deferred
+     cleanup from Phase 7.6/8.0, now verified safe to fully remove). */
   .home-metric-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
   .home-metric-value { font-family: "Oswald", "Titillium Web", sans-serif; font-weight: 700; font-size: 1.75rem; margin-top: 3px; }
   .home-metric-value-muted { opacity: 0.55; font-size: 1.15rem; }
@@ -2869,11 +2575,6 @@ _CSS_WORKSPACE = """
   .home-metric-delta { font-size: 0.75rem; margin-top: 2px; font-weight: 700; }
   .home-metric-delta-good { color: #3ecf8e; }
   .home-metric-delta-bad { color: #f0c419; }
-  .home-hero-actions { display: flex; gap: 10px; margin-top: 24px; }
-  .home-action-btn { padding: 9px 18px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg);
-    text-decoration: none; font-weight: 600; font-size: 0.9rem; }
-  .home-action-primary { background: var(--accent-2); color: #14002b; border-color: transparent; }
-  @media (max-width: 480px) {{ .home-hero {{ border-radius: 0; padding: 20px 16px; }} }}
 
   /* PLAN workspace (2026-09-02, Phase 4C/4D visual-language rebuild) - the
      reference implementation for the whole dashboard's new information
@@ -3036,38 +2737,55 @@ _CSS_WORKSPACE = """
   .intel-confidence-low, .intel-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
   .intel-card-details { margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
 
-  /* OPPORTUNITY workspace - scouting-board cards, one visible per category by default. */
-  .opp-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; align-items: start; }
-  .opp-category { display: flex; flex-direction: column; gap: 6px; }
-  .opp-card-shirt-wrap { position: relative; width: 44px; margin-bottom: 4px; }
-  .opp-card-shirt { width: 44px; height: 44px; object-fit: contain; display: block;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
-  .opp-card-crest { position: absolute; top: -2px; left: -2px; width: 16px; height: 16px;
-    background: #fff; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
-  .opp-card-badge { width: 32px; height: 32px; }
-  .opp-card-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
-  /* Real PLAYER/PRICE/xP/MINUTES/RISK/WHAT-WOULD-CHANGE field set
-     (2026-09-07, Phase 7.3 Part 17) - each its own real, measurable value,
-     never generic prose. */
-  .opp-card-stats { display: flex; gap: 10px; font-size: 0.78rem; color: var(--muted); margin: 2px 0; }
-  .opp-card-stats b { color: var(--fg); font-variant-numeric: tabular-nums; }
-  .opp-card-risk { font-size: 0.74rem; color: #ff9b6b; margin-top: 4px; }
-  .opp-card-change { font-size: 0.74rem; color: var(--faint); margin-top: 4px; }
-  .opp-card-metric { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
-  .opp-card-confidence { display: inline-block; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em;
-    text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-top: 6px; }
-  .opp-confidence-high, .opp-confidence-very_high { background: color-mix(in srgb, var(--accent-2) 15%, transparent); color: var(--accent-2); }
-  .opp-confidence-medium { background: rgba(4,245,255,0.15); color: #04f5ff; }
-  .opp-confidence-low, .opp-confidence-very_low { background: rgba(255,80,80,0.15); color: #ff6b6b; }
-  /* Real "considered by optimizer" flag (2026-08-29, P1 opportunity-engine
-     spec line). */
-  .opp-card-considered { font-size: 0.7rem; margin-top: 6px; font-weight: 600; }
-  .opp-card-considered-yes { color: var(--accent); }
-  .opp-card-considered-no { color: var(--faint); }
-  .opp-card-squad-impact { font-size: 0.7rem; margin-top: 3px; color: var(--muted); }
-  .opp-card-squad-impact strong { color: var(--fg); }
-  .opp-category-more { margin-top: 4px; font-size: 0.76rem; color: var(--muted); cursor: pointer; }
+  /* OPPORTUNITY workspace (2026-09-08, Phase 8.1 Part 22/23 recomposition -
+     "the current opportunity board is literally a card grid. Recompose it")
+     - a real per-category TABLE (PLAYER/PRICE/xP/MIN/WHY NOW/RISK/
+     CONFIDENCE), replacing the previous 4-column grid of individually-boxed
+     cards. Single source of truth for this board's CSS - the pre-existing
+     competing `.opp-card`/`.opp-board-grid` rules in legacy.py (a stale,
+     narrower-fielded predecessor that never matched this module's real
+     `_card()` output) are removed as part of this same change, not left to
+     shadow it. */
+  .opp-board { display: flex; flex-direction: column; gap: 26px; margin-top: 8px; }
+  .opp-category-heading { display: inline-block; font-size: 0.74rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--fg); font-weight: 800; background: var(--surface-2);
+    border-radius: 5px; padding: 5px 10px; margin-bottom: 8px; }
+  .opp-table { width: 100%; border-collapse: collapse; }
+  .opp-table th { text-align: left; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--faint); font-weight: 700; padding: 0 10px 6px; border-bottom: 1px solid var(--gridline); }
+  .opp-table th:first-child, .opp-table td:first-child { padding-left: 0; }
+  .opp-row td { padding: 10px 10px; border-bottom: 1px solid var(--gridline); vertical-align: top; }
+  .opp-row:last-child td { border-bottom: none; }
+  .opp-row-player { display: flex; gap: 10px; align-items: flex-start; min-width: 160px; }
+  .opp-row-shirt-wrap { position: relative; width: 30px; flex: 0 0 auto; }
+  .opp-row-shirt { width: 30px; height: 30px; object-fit: contain; display: block; }
+  .opp-row-crest { position: absolute; top: -2px; left: -2px; width: 13px; height: 13px;
+    background: #fff; border-radius: 50%; padding: 1px; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+  .opp-row-badge { width: 24px; height: 24px; }
+  .opp-row-identity { display: flex; flex-direction: column; gap: 2px; }
+  .opp-row-name { font-size: 0.92rem; font-weight: 800; color: var(--fg); }
+  .opp-row-tags { display: flex; flex-direction: column; gap: 1px; }
+  .opp-row-tag { font-size: 0.68rem; color: var(--faint); }
+  .opp-row-tag strong { color: var(--muted); }
+  .opp-row-considered-yes { color: var(--accent); }
+  .opp-row-price { font-size: 0.86rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .opp-row-own { font-size: 0.7rem; color: var(--faint); margin-top: 2px; }
+  .opp-row-num { font-size: 0.9rem; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--fg); white-space: nowrap; }
+  .opp-row-whycell { min-width: 220px; max-width: 360px; }
+  .opp-row-metric { font-size: 0.82rem; font-weight: 700; color: var(--fg); margin-bottom: 2px; }
+  .opp-row-why { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+  .opp-row-change { font-size: 0.72rem; color: var(--faint); margin-top: 4px; }
+  .opp-row-riskcell { font-size: 0.76rem; color: #ff9b6b; max-width: 200px; }
+  .opp-row-risk-none { color: var(--faint); }
+  .opp-confidence-text { font-size: 0.74rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+  .opp-confidence-high, .opp-confidence-very_high { color: var(--accent-2); }
+  .opp-confidence-medium { color: #04f5ff; }
+  .opp-confidence-low, .opp-confidence-very_low { color: #ff6b6b; }
+  .opp-category-more { margin-top: 6px; font-size: 0.76rem; color: var(--muted); cursor: pointer; }
   .opp-category-more[open] summary { margin-bottom: 6px; }
+  .opp-table-more { margin-top: 4px; }
+  .opp-table-wrap { overflow-x: auto; }
 
   /* FIXTURE TOOL - range/metric/sort/filter controls. */
   .fixture-tool-controls { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; }
@@ -3188,6 +2906,11 @@ _CSS_WORKSPACE = """
     border: 1px solid var(--accent-2); border-radius: 3px; padding: 1px 4px; align-self: center; }
   .fb-signal-evidence { color: var(--fg); flex: 1 1 260px; font-weight: 500; }
   .fb-signal-effect { font-size: 0.76rem; color: var(--muted); font-style: italic; }
+  /* Real, previously-unexposed FPL CONSEQUENCE (2026-09-08, Phase 8.1 Part
+     19) - deliberately NOT muted/italic like the interpretation tag above:
+     this is a real, already-applied number, not a soft reading, and
+     should read as the more concrete of the two. */
+  .fb-signal-consequence { font-size: 0.76rem; font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
   .fb-signal-confidence { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em; color: var(--faint); }
   .fb-signal-expiry { font-size: 0.7rem; color: var(--faint); font-style: italic; }
   .fb-category-more summary, .fb-category-more { font-size: 0.76rem; color: var(--accent); cursor: pointer; margin-top: 6px; }
@@ -3200,31 +2923,32 @@ _CSS_WORKSPACE = """
   .fb-evidence summary { cursor: pointer; }
   @media (max-width: 900px) { .fb-grid-2 { grid-template-columns: 1fr; } }
 
-  /* Real TEAM STATE cards (Part 4/5, 2026-09-03 visual rebuild) -
-     ATTACK/DEFENCE/TACTICAL rows carry real numeric team_match_state
-     data, never a flat "team name + up-arrow". */
-  .fb-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 4px; }
-  .fb-team-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-  .fb-team-card-mine { border-color: var(--accent-2); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 25%, transparent) inset; }
-  .fb-team-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  /* Real TEAM STATE table (2026-09-08, Phase 8.1 Part 18/20 recomposition
+     - "make it feel like a real football analytics table," replacing the
+     previous ~20-team `.fb-team-grid` card wall). ATTACK/DEFENCE/TACTICAL/
+     FPL IMPLICATION carry the same real numeric `team_match_state` data and
+     LLM-authored qualitative text as before - presentation only. */
+  .fb-team-table-wrap { overflow-x: auto; margin-top: 4px; }
+  .fb-team-table { width: 100%; border-collapse: collapse; }
+  .fb-team-table th { text-align: left; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--faint); font-weight: 700; padding: 0 12px 6px; border-bottom: 1px solid var(--gridline); }
+  .fb-team-table th:first-child, .fb-team-tr td:first-child { padding-left: 0; }
+  .fb-team-tr td { padding: 10px 12px; border-bottom: 1px solid var(--gridline); vertical-align: top; }
+  .fb-team-tr:last-child td { border-bottom: none; }
+  .fb-team-tr-mine { background: color-mix(in srgb, var(--accent-2) 6%, transparent); }
+  .fb-team-cell-team { display: flex; align-items: center; gap: 10px; min-width: 160px; }
   /* Real crest-forward sizing (2026-09-03, direct user direction: "crest-
      forward" identity) - big enough to actually read as the club badge,
      not a tiny favicon-sized afterthought next to the team name. */
-  .fb-team-crest { width: 32px; height: 32px; object-fit: contain; }
-  .fb-team-name { font-weight: 800; font-size: 0.94rem;
+  .fb-team-crest { width: 26px; height: 26px; object-fit: contain; flex: 0 0 auto; }
+  .fb-team-name { font-weight: 800; font-size: 0.86rem;
     letter-spacing: 0.02em; color: var(--fg); }
-  .fb-team-squad-tag { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2);
-    border: 1px solid var(--accent-2); border-radius: 3px; padding: 1px 4px; margin-left: auto; }
-  .fb-team-row { display: flex; justify-content: space-between; gap: 10px; font-size: 0.78rem; padding: 3px 0; }
-  .fb-team-row-label { color: var(--faint); font-weight: 700; letter-spacing: 0.03em; font-size: 0.66rem; align-self: center; }
-  .fb-team-row-value { color: var(--fg); font-variant-numeric: tabular-nums; text-align: right; }
-  .fb-team-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 4px; }
-  .fb-team-stat-tile { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;
-    background: var(--surface); border-radius: 6px; }
-  .fb-team-stat-value { color: var(--fg); font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
-  .fb-team-stat-label { color: var(--faint); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; }
-  .fb-team-effect { font-size: 0.76rem; color: var(--muted); margin-top: 8px; font-style: italic; }
-  .fb-team-risk { font-size: 0.68rem; color: var(--uncertainty-amber); margin-top: 6px; }
+  .fb-team-squad-tag { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-2);
+    border: 1px solid var(--accent-2); border-radius: 3px; padding: 1px 4px; }
+  .fb-team-cell-num { font-size: 0.82rem; color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fb-team-cell-text { font-size: 0.8rem; color: var(--muted); max-width: 260px; }
+  .fb-team-cell-empty { color: var(--faint); }
+  .fb-team-risk { font-size: 0.68rem; color: var(--uncertainty-amber); margin-top: 4px; }
 
   /* SCOUT screen (2026-09-03, Phase 6) - the real recruitment board
      (`opportunity.py`'s existing categorized cards, unchanged) plus the

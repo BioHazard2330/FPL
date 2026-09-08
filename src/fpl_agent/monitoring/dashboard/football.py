@@ -55,11 +55,22 @@ def _signal_row_html(s, crest_by_team: dict, squad_ids: set[int], show_mine_badg
     expiry = f"<span class='fb-signal-expiry'>expires {_esc(_relative_time(s.expires_at))}</span>" if s.expires_at else ""
     mine = "<span class='fb-signal-mine'>MY SQUAD</span>" if show_mine_badge and s.entity_id in squad_ids else ""
     effect = f"<span class='fb-signal-effect'>{_esc(s.interpretation)}</span>" if s.interpretation else ""
+    # Real, previously-unexposed FPL CONSEQUENCE (2026-09-08, Phase 8.1
+    # Part 19 - "consequence should be visually distinct") - `s.fpl_effect`
+    # is a real, already-computed field (`football_signal.py`) stating the
+    # actual applied xP adjustment, e.g. "+0.15 xP already applied to
+    # goals this GW" - genuinely sparse (only populated for a persistent,
+    # component-mappable trend that actually cleared the adjustment
+    # threshold), never fabricated for rows without one. Distinct styling
+    # from the muted/italic interpretation tag above - this is a real
+    # applied number, not a soft reading.
+    consequence = f"<span class='fb-signal-consequence'>{_esc(s.fpl_effect)}</span>" if s.fpl_effect else ""
     return f"""<div class="fb-signal-row{' fb-signal-row-mine' if s.entity_id in squad_ids else ''}">
     <span class="fb-signal-icon fb-signal-dot-{dot}">{icon}</span>
     {crest}<span class="fb-signal-entity">{_esc(s.entity_name or '')}</span>{mine}
     <span class="fb-signal-evidence">{_esc(s.evidence or '')}</span>
     {effect}
+    {consequence}
     <span class="fb-signal-confidence">{_esc(s.confidence.upper())}</span>
     {expiry}
   </div>"""
@@ -175,15 +186,16 @@ def _team_recent_form(conn, team_id: int, n: int = 3) -> dict | None:
     }
 
 
-def _team_state_card_html(conn, outlook, *, in_squad: bool, team_code: int) -> str | None:
-    """Real ATTACK / DEFENCE / TACTICAL / FPL EFFECT card (Part 4/5 - "TEAM
-    STATE must actually say something", never a bare 'Arsenal up-arrow').
-    ATTACK/DEFENCE come from real `team_match_state` numbers
-    (`_team_recent_form`); TACTICAL/FPL EFFECT reuse the real qualitative
-    read `team_outlook` already computed (LLM-authored `current_*_signal`/
-    `current_fpl_implication`) - never a second text-generation pass. A
-    card with neither real numeric form NOR real qualitative text is
-    skipped outright, never rendered empty."""
+def _team_state_row_html(conn, outlook, *, in_squad: bool, team_code: int) -> str | None:
+    """Real TEAM/ATTACK/DEFENCE/TACTICAL/FPL IMPLICATION table row (2026-
+    09-08, Phase 8.1 Part 18/20 recomposition - "make it feel like a real
+    football analytics table," replacing the previous 20-team `.fb-team-
+    grid` card wall). ATTACK/DEFENCE come from real `team_match_state`
+    numbers (`_team_recent_form`); TACTICAL/FPL IMPLICATION reuse the real
+    qualitative read `team_outlook` already computed (LLM-authored
+    `current_*_signal`/`current_fpl_implication`) - never a second text-
+    generation pass. A row with neither real numeric form NOR real
+    qualitative text is skipped outright, never rendered empty."""
     form = _team_recent_form(conn, outlook.team_id, n=3)
     q = outlook.qualitative
     tactical_text = q.current_tactical_signal if q else None
@@ -191,41 +203,35 @@ def _team_state_card_html(conn, outlook, *, in_squad: bool, team_code: int) -> s
     if form is None and tactical_text is None and impact is None and outlook.formation is None:
         return None
 
-    stat_tiles = []
+    attack_bits = []
+    defence_bits = []
     if form is not None:
-        stat_tiles.append(("XG / MATCH", f"{form['xg_for']:.2f}"))
+        attack_bits.append(f"{form['xg_for']:.2f} xG")
         if form["shots_for"] is not None:
-            stat_tiles.append(("SHOTS / MATCH", f"{form['shots_for']:.1f}"))
+            attack_bits.append(f"{form['shots_for']:.1f} shots")
         if form["xg_against"] is not None:
-            stat_tiles.append(("XGA / MATCH", f"{form['xg_against']:.2f}"))
+            defence_bits.append(f"{form['xg_against']:.2f} xGA")
         if form["shots_against"] is not None:
-            stat_tiles.append(("SHOTS CONCEDED", f"{form['shots_against']:.1f}"))
-    stats_grid_html = (
-        "<div class='fb-team-stat-grid'>" + "".join(
-            f"<div class='fb-team-stat-tile'><span class='fb-team-stat-value'>{_esc(v)}</span>"
-            f"<span class='fb-team-stat-label'>{_esc(k)}</span></div>"
-            for k, v in stat_tiles
-        ) + "</div>"
-    ) if stat_tiles else ""
-    tactical_html = ""
-    if outlook.formation or tactical_text:
-        bits = [b for b in (outlook.formation, tactical_text) if b]
-        tactical_html = f"<div class='fb-team-row'><span class='fb-team-row-label'>TACTICAL</span><span class='fb-team-row-value'>{_esc(' - '.join(bits))}</span></div>"
-    effect_html = f"<div class='fb-team-effect'>{_esc(impact)}</div>" if impact else ""
+            defence_bits.append(f"{form['shots_against']:.1f} conceded")
+    attack_html = " &middot; ".join(attack_bits) if attack_bits else "<span class='fb-team-cell-empty'>&mdash;</span>"
+    defence_html = " &middot; ".join(defence_bits) if defence_bits else "<span class='fb-team-cell-empty'>&mdash;</span>"
+    tactical_bits = [b for b in (outlook.formation, tactical_text) if b]
+    tactical_html = _esc(" - ".join(tactical_bits)) if tactical_bits else "<span class='fb-team-cell-empty'>&mdash;</span>"
+    effect_html = _esc(impact) if impact else "<span class='fb-team-cell-empty'>&mdash;</span>"
     risk_html = (
-        f"<div class='fb-team-risk'>small sample - only {form['n']} match{'es' if form['n'] != 1 else ''} analyzed</div>"
+        f"<div class='fb-team-risk'>only {form['n']} match{'es' if form['n'] != 1 else ''} analyzed</div>"
         if form is not None and form["n"] < 3 else ""
     )
     squad_tag = "<span class='fb-team-squad-tag'>MY SQUAD</span>" if in_squad else ""
     crest_html = _crest_html(team_code, outlook.team_name, css_class="fb-team-crest")
 
-    return f"""<div class="fb-team-card{' fb-team-card-mine' if in_squad else ''}">
-  <div class="fb-team-head">{crest_html}<span class="fb-team-name">{_esc(outlook.team_name.upper())}</span>{squad_tag}</div>
-  {stats_grid_html}
-  {tactical_html}
-  {effect_html}
-  {risk_html}
-</div>"""
+    return f"""<tr class="fb-team-tr{' fb-team-tr-mine' if in_squad else ''}">
+  <td class="fb-team-cell-team">{crest_html}<span class="fb-team-name">{_esc(outlook.team_name.upper())}</span>{squad_tag}</td>
+  <td class="fb-team-cell-num">{attack_html}</td>
+  <td class="fb-team-cell-num">{defence_html}</td>
+  <td class="fb-team-cell-text">{tactical_html}</td>
+  <td class="fb-team-cell-text">{effect_html}{risk_html}</td>
+</tr>"""
 
 
 def render_football_screen(conn, squad_ids: set[int], ca=None) -> str:
@@ -271,8 +277,9 @@ def render_football_screen(conn, squad_ids: set[int], ca=None) -> str:
     if not category_blocks:
         category_blocks = "<div class='empty-state'>No real match-analyzed signals yet - run <code>fpl match-analyze</code> once matches have been played.</div>"
 
-    # Team-level cards - real ATTACK/DEFENCE/TACTICAL/FPL-EFFECT state
-    # (`_team_state_card_html`, Part 4/5), squad teams surfaced first.
+    # Team-level table rows - real ATTACK/DEFENCE/TACTICAL/FPL-IMPLICATION
+    # state (`_team_state_row_html`, Part 4/5, recomposed into a real table
+    # 2026-09-08 Phase 8.1 Part 18/20), squad teams surfaced first.
     squad_team_ids: set[int] = set()
     if squad_ids:
         squad_team_ids = {
@@ -282,15 +289,18 @@ def render_football_screen(conn, squad_ids: set[int], ca=None) -> str:
             ).fetchall()
         }
     from fpl_agent.models.team_outlook import team_outlook
-    team_cards = []
+    team_rows_html = []
     for r in team_rows:
         outlook = team_outlook(conn, r["id"])
-        card = _team_state_card_html(conn, outlook, in_squad=r["id"] in squad_team_ids, team_code=r["code"])
-        if card is not None:
-            team_cards.append((r["id"] not in squad_team_ids, card))
-    team_cards.sort(key=lambda c: c[0])
-    team_grid = f"<div class='fb-team-grid'>{''.join(c for _, c in team_cards)}</div>" if team_cards else \
-        "<div class='empty-state'>No real team-level signals yet.</div>"
+        row = _team_state_row_html(conn, outlook, in_squad=r["id"] in squad_team_ids, team_code=r["code"])
+        if row is not None:
+            team_rows_html.append((r["id"] not in squad_team_ids, row))
+    team_rows_html.sort(key=lambda c: c[0])
+    team_grid = (
+        "<div class='fb-team-table-wrap'><table class='fb-team-table'>"
+        "<thead><tr><th>Team</th><th>Attack</th><th>Defence</th><th>Tactical</th><th>FPL implication</th></tr></thead>"
+        f"<tbody>{''.join(r for _, r in team_rows_html)}</tbody></table></div>"
+    ) if team_rows_html else "<div class='empty-state'>No real team-level signals yet.</div>"
 
     changes_html = _squad_changes_html(conn, limit=12)
     evidence_html = _match_report_strip_html(conn, squad_ids)

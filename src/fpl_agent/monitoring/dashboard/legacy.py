@@ -3669,30 +3669,15 @@ _CSS = """
   @media (max-width: 640px) { .hero-strip { flex-wrap: wrap; gap: 8px 0; } .hero-strip-item { border-right: none; padding: 0 12px 0 0; } }
   @media (max-width: 480px) { .hero-support { grid-template-columns: 1fr 1fr; } .hero-verdict-word { font-size: 2.1rem; } }
 
-  /* Real masonry widget wall (2026-08-27, direct user comparison against
-     real fpl.page screenshots: "so many things missing than what i sent" -
-     fpl.page's own real layout is a dense multi-column wall of
-     independent-height widget cards, not this project's prior fixed
-     2-column grid where every row had to match its neighbor's height.
-     Vanilla CSS multi-column - no JS masonry library, matches this
-     project's own free-resources/no-new-dependency posture - each real
-     child panel flows into whichever column has room next, same real
-     visual rhythm fpl.page's own widgets show. */
-  .panel-grid { columns: 2 420px; column-gap: 14px; margin-bottom: 14px; }
-  .panel-grid > * { break-inside: avoid-column; margin-bottom: 14px; }
-  /* Real mobile overflow fix (2026-08-27, responsive verification pass) -
-     a CSS Grid item's default `min-width: auto` lets its content's own
-     min-content width (a wide table, an unbroken chip row) blow the track
-     past the grid's own column size instead of wrapping/scrolling inside
-     it - confirmed live via a real 390px viewport check: several panels
-     (Team Outlook, Fixture Projections, Statistics, News, Match
-     Intelligence) were rendering ~490px wide inside a 390px viewport,
-     forcing the whole page to scroll horizontally. `min-width: 0` is the
-     standard fix - each grid item can now shrink to its column's real
-     width, and its own `overflow-x: auto` (tables/tickers already have
-     this) takes over for anything still too wide to fit, instead of the
-     page itself scrolling. */
-  .panel-grid > * { min-width: 0; }
+  /* `.panel-grid` (a real multi-column masonry layout, 2026-08-27) removed
+     2026-09-08 (Phase 8.1 Part 29/33) - its only real caller was the
+     `#market-detail` News/Injuries/Points-Changes wrapper, which was itself
+     a genuine navigational dead zone (no nav link, sitting between SCOUT
+     and ADVANCED) - confirmed live via direct DOM measurement before
+     removal. Those three feeds now render as real `<details>` disclosures
+     inside ADVANCED, matching that screen's own "raw feeds" subtitle and
+     its existing `.panel-advanced` pattern - no CSS needed for them beyond
+     what ADVANCED's other disclosures already share. */
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px;
     min-width: 0; }
   /* Real DATA / INTELLIGENCE / DECISION distinction (2026-08-22, revised
@@ -3722,9 +3707,7 @@ _CSS = """
      width. Both now take the FULL row - stacked vertically instead of
      squeezed side-by-side. */
   .panel-compare { grid-column: 1 / -1; }
-  .panel-live { grid-column: span 1; }
   .panel:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
-  @media (max-width: 1024px) { .panel-grid { columns: 1; } }
   @media (max-width: 640px) {
     body { padding: 14px 12px 40px; }
     .topbar { margin: -14px -12px 14px; padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
@@ -3865,7 +3848,16 @@ _CSS = """
      repeats this project's own earlier "saturated pill on every card"
      mistake; "full" (BENCHED/OUT, real exceptions) keeps the existing
      attention-grabbing pill treatment unchanged. */
-  .lineup-badge-compact { opacity: 0.75; font-weight: 700; padding: 1px 6px; font-size: 0.75rem; }
+  /* Real, further de-emphasis (2026-09-08, Phase 8.1 Part 13/29) - a
+     solid-background pill still reads as its own competing UI component
+     regardless of opacity (a real, colored, bordered shape draws the eye
+     the same way a badge always does). The compact case - the common,
+     routine one, present on nearly every started player - drops the pill
+     background entirely in favour of plain small text; the alarming
+     BENCHED/OUT full case keeps its real, attention-earning pill exactly
+     as before, so the one case that genuinely needs to interrupt the eye
+     still does. */
+  .lineup-badge-compact { background: none; opacity: 0.85; font-weight: 700; padding: 0; font-size: 0.72rem; }
   .lineup-badge-full { opacity: 1; }
 
   /* Hover tooltip (2026-08-21) - real data only (floor/median/ceiling,
@@ -4441,37 +4433,13 @@ _CSS = """
   .intel-section:first-child h3, .market-section:first-child h3 { margin-top: 0; }
   @media (max-width: 640px) { .intel-grid-2, .market-grid-2 { grid-template-columns: 1fr; } }
 
-  /* --- Opportunity Board (2026-08-27, product design pass, section 8) -
-     the real league-wide breakout/differential/trap/role-change/price scan,
-     ranked cards capped per category, never a flood. --- */
-  /* --- Opportunity Board: scouting feed (2026-08-27, "premium product"
-     redesign) - real rows (kind / who+what / why now), not a card grid -
-     scans like an editorial scouting feed, not a wall of tiles. --- */
-  .opp-board-grid { display: flex; flex-direction: column; }
-  .opp-card { background: transparent; border: none; border-radius: 0; border-top: 1px solid var(--border);
-    padding: 12px 2px; display: grid; grid-template-columns: 88px 1fr; gap: 2px 14px; }
-  .opp-card:first-child { border-top: none; padding-top: 0; }
-  /* Real broadcast-tag badge (2026-09-03, direct user correction - plain
-     colored text read as quiet engineering-dashboard labeling, not a
-     match-graphics category tag). Solid background block per real
-     opportunity kind, same recipe as FOOTBALL's category badges. */
-  .opp-card-kind { grid-column: 1; align-self: start; font-size: 0.68rem; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg); background: var(--surface-2);
-    border-radius: 4px; padding: 3px 8px; margin-top: 1px; }
-  .opp-card-breakout .opp-card-kind { background: color-mix(in srgb, var(--accent-2) 24%, var(--surface-2)); color: #b6ffe0; }
-  .opp-card-trap .opp-card-kind { background: color-mix(in srgb, var(--fpl-pink) 24%, var(--surface-2)); color: #ffb6d5; }
-  .opp-card-role-change .opp-card-kind { background: color-mix(in srgb, #d9a441 24%, var(--surface-2)); color: #f2cf8f; }
-  .opp-card-fixture-swing .opp-card-kind { background: color-mix(in srgb, var(--accent) 24%, var(--surface-2)); color: #b6ffe0; }
-  .opp-card-value .opp-card-kind { background: color-mix(in srgb, var(--ok-text) 24%, var(--surface-2)); color: #b6ffe0; }
-  .opp-card-title { grid-column: 2; font-size: 0.96rem; font-weight: 800; color: var(--fg); }
+  /* Opportunity Board CSS lives entirely in assemble.py now (2026-09-08,
+     Phase 8.1 Part 22/23 recomposition) - this file's own predecessor rules
+     were stale (never matched this module's real `_card()` field set) and
+     only ever won the cascade for a few shadowed box-model properties,
+     confirmed via live `getComputedStyle` before removal. `.opp-pos` (the
+     position tag) is still used by the new markup - kept below. */
   .opp-pos { font-size: 0.75rem; font-weight: 700; color: var(--faint); text-transform: uppercase; margin-left: 4px; }
-  .opp-card-subtitle { grid-column: 2; font-size: 0.78rem; color: var(--muted); }
-  .opp-card-why { grid-column: 2; font-size: 0.78rem; color: var(--faint); line-height: 1.4; }
-  .opp-card-why strong { color: var(--muted); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em; margin-right: 3px; }
-  @media (max-width: 640px) {
-    .opp-card { grid-template-columns: 1fr; gap: 2px; }
-    .opp-card-kind, .opp-card-title, .opp-card-subtitle, .opp-card-why { grid-column: 1; }
-  }
 
   /* --- Market Signals (2026-08-27) - real model-vs-consensus/momentum,
      never a raw bookmaker-row dump --- */
@@ -4705,6 +4673,13 @@ _CSS = """
      glow. */
   .panel-live-emphasis { border: 2px solid var(--accent-2);
     background: color-mix(in srgb, var(--accent-2) 6%, var(--surface)); }
+  /* Real LIVE screen (2026-09-08, Phase 8.1 Part 29/33) - `.live-tracking-
+     block` is the always-real inner content (squad live bonus/DefCon +
+     season charts) that sits under the Match Centre's own broadcast
+     content (when genuinely live) inside one unified `#screen-live`. */
+  .live-tracking-block { margin-top: 10px; padding: 14px 16px; border-radius: 10px; }
+  .live-tracking-block.panel-live-emphasis { padding: 14px 16px; }
+  .live-tracking-block h3 { font-size: 1.02rem; font-weight: 800; margin: 0 0 12px; color: var(--fg); }
 
   .price-list { display: flex; flex-direction: column; gap: 4px; }
   .price-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; padding: 6px 8px;

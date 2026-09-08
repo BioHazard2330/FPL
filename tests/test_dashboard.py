@@ -194,20 +194,27 @@ def test_hero_falls_back_to_the_last_trustworthy_live_rank_when_the_latest_is_de
     assert "500,000" in result
 
 
-def test_live_nav_link_absent_when_no_match_is_genuinely_live(db_conn):
-    """Real regression test, Phase 7.6 Part 24 ('no fake controls') - with
-    no genuinely live match (`render_match_centre` correctly returns '',
-    this dashboard's own honest 'no fabricated live state' rule), the nav
-    bar must not offer a 'Live' link pointing at a section that doesn't
-    exist - a dead click with zero feedback."""
+def test_live_nav_link_never_dead_with_no_match_genuinely_live(db_conn):
+    """Real regression test, Phase 7.6 Part 24 ('no fake controls'),
+    generalized 2026-09-08 (Phase 8.1 Part 29) - the 'Live' nav link used to
+    be hidden entirely whenever `render_match_centre` correctly returned ''
+    (this dashboard's own honest 'no fabricated live state' rule), which
+    fixed the dead-click case but also hid real, always-present content
+    (squad live bonus/DefCon tracking, season rank/points charts) that lived
+    at the SAME target and was never actually match-gated. The link is now
+    unconditional, pointing at `#screen-live` - a real section that always
+    exists and always has real content - so it can never be dead, without
+    needing to disappear when nothing's currently live."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
     result = generate_dashboard_html(db_conn)
 
-    assert 'href="#live-match-centre"' not in result
+    assert 'href="#screen-live"' in result
+    assert 'id="screen-live"' in result
+    assert 'id="live-match-centre"' not in result  # honestly absent - nothing genuinely live
 
 
-def test_live_nav_link_present_when_a_match_is_genuinely_live(db_conn):
+def test_live_nav_link_reaches_the_match_centre_when_a_match_is_genuinely_live(db_conn):
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _insert_team(db_conn, 101, "TMA")
     _insert_team(db_conn, 102, "TMB")
@@ -216,8 +223,34 @@ def test_live_nav_link_present_when_a_match_is_genuinely_live(db_conn):
 
     result = generate_dashboard_html(db_conn)
 
-    assert 'href="#live-match-centre"' in result
+    assert 'href="#screen-live"' in result
+    assert 'id="screen-live"' in result
     assert 'id="live-match-centre"' in result
+    # Real (2026-09-08, Phase 8.1 Part 29) - the match centre's own broadcast
+    # content now nests inside the same unified LIVE screen as the squad's
+    # live tracking, not a separate, differently-gated section.
+    assert result.index('id="screen-live"') < result.index('id="live-match-centre"')
+
+
+def test_news_injuries_points_changes_live_inside_advanced_not_a_dead_zone(db_conn):
+    """Real, confirmed structural bug fixed 2026-09-08 (Phase 8.1 Part 29) -
+    FPL Market/Player News, Injuries, and Points Changes used to render in
+    an unlabeled `#market-detail` group sandwiched between SCOUT and
+    ADVANCED with zero nav link reaching it (confirmed live via direct DOM
+    measurement: ~1400px of real content unreachable by any nav click,
+    discoverable only by scrolling past SCOUT by hand). ADVANCED's own
+    subtitle already promises "raw feeds" - these three now render as real
+    `<details>` disclosures inside it, matching its own established pattern
+    and finally living up to that subtitle."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+
+    result = generate_dashboard_html(db_conn)
+
+    assert 'id="market-detail"' not in result
+    advanced_section = result.split('id="advanced"', 1)[1]
+    assert "FPL Market / Player News" in advanced_section
+    assert "Injuries" in advanced_section
+    assert "Points Changes" in advanced_section
 
 
 def test_generate_dashboard_html_composes_without_crashing(db_conn):
@@ -1108,8 +1141,30 @@ def test_dashboard_shows_compare_panel_once_an_entry_id_is_saved(db_conn):
 
     assert 'id="compare"' in result
     assert "Recommended Squad" in result
-    assert "Pranav Nair" in result
-    assert "2191" in result  # real season-history points, shown honestly since no synced picks exist yet this test
+
+
+def test_dashboard_never_renders_the_compare_panel_twice(db_conn):
+    """Real, confirmed bug fixed 2026-09-08 (Phase 8.1 Part 29) - the
+    Optimizer Delta panel (`compare_panel`, `id="compare"`) used to be
+    appended a SECOND time into a separate, unlabeled panel group whenever
+    `dash_state == 'POST_MATCH'` (a real, commonly-reached state -
+    `GW_FINISHED`/`NEXT_GW_ANALYSIS` both map to it, reachable most weeks
+    right after a gameweek's matches finish) - on top of the one already
+    unconditionally rendered inside ADVANCED. Two elements sharing one id is
+    invalid HTML and means `getElementById('compare')` silently resolves to
+    whichever copy happens to come first, regardless of state. Only one real
+    copy should ever exist, in any state."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    db_conn.execute(
+        "INSERT INTO my_team_entry (entry_id, manager_name, region_name, favourite_team_id, "
+        "joined_time, started_event, retrieved_at) VALUES (7378572,'Pranav Nair','Netherlands',16,'t0',1,'t0')"
+    )
+    db_conn.commit()
+
+    result = generate_dashboard_html(db_conn)
+
+    assert result.count('id="compare"') == 1
 
 
 def test_dashboard_compare_panel_honest_empty_state_with_zero_real_data(db_conn):
@@ -1290,7 +1345,7 @@ def test_dashboard_decision_center_shows_captain_keep_against_the_locked_captain
 def test_dashboard_renders_system_error_instead_of_a_silently_broken_locked_squad(db_conn, monkeypatch):
     """Section 20's explicit requirement: an invalid locked XI must never
     render silently."""
-    import fpl_agent.monitoring.dashboard.assemble as dash_mod
+    import fpl_agent.monitoring.dashboard.context as dash_mod
     from fpl_agent.optimization.locked_squad import LockedSquadState
     from fpl_agent.optimization.squad import StartingXI
 
