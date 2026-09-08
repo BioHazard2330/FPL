@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8931", "--directory", "C:\\Users\\2003p\\FPL\\fpl-agent\\data"],
       "port": 8931
+    },
+    {
+      "name": "vite",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_API_PORT=8878&& npm --prefix C:\\Users\\2003p\\FPL\\fpl-agent\\frontend run dev"],
+      "port": 5173
     }
   ]
 }

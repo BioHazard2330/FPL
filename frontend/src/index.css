@@ -1,0 +1,315 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Real design tokens (2026-09-08, Phase 8.2 Stage 3 - full redesign per
+   DESIGN.md/PRODUCT.md, "The Scoreboard Bug"). Replaces the Stage 2/early-
+   Stage-3 palette entirely - that pass ported the old Python dashboard's own
+   FPL-brand colors verbatim, then layered glow/glassmorphism on top of them
+   (direct, correct user rejection: "AI slop"). This system has no
+   relationship to the old dashboard's palette at all - see DESIGN.md for the
+   real reasoning (flat broadcast-graphics color blocks, no glow, no
+   gradients, sharp corners, two deliberately separate typographic
+   registers). The old dashboard (`data/dashboard.html`) keeps its own
+   original CSS untouched - this file only ever governed the React app. */
+:root {
+  --void: #0a0e14;
+  --panel: #12171f;
+  --raised: #1a2029;
+  --divider: #232b36;
+  --text: #f5f3ee;
+  --text-muted: #9099a8;
+  --text-faint: #5b6472;
+
+  --pitch-green: #1fce6b;
+  --pitch-green-deep: #12a552;
+  --pitch-green-ink: #04150c;
+  --broadcast-gold: #f0a93e;
+  --broadcast-gold-ink: #1a1100;
+  --broadcast-blue: #2d6cdf;
+  --broadcast-blue-ink: #f5f3ee;
+  --alert-red: #e3452f;
+  --alert-red-ink: #f5f3ee;
+
+  --fs-label: 0.6875rem;
+  --fs-body: 0.9375rem;
+  --fs-data: 1rem;
+  --fs-headline: 1.75rem;
+  --fs-display: clamp(3.5rem, 8vw, 7rem);
+
+  color-scheme: dark;
+
+  /* Real shadcn/Radix semantic tokens, mapped to the real palette above.
+     Sharp by default (`--radius: 0`) - this system is flat color blocks,
+     not rounded cards; the one deliberate rounded exception (the live
+     pill) is a direct Tailwind class, not a semantic token. */
+  --background: var(--void);
+  --foreground: var(--text);
+  --card: var(--panel);
+  --card-foreground: var(--text);
+  --popover: var(--panel);
+  --popover-foreground: var(--text);
+  --primary: var(--pitch-green);
+  --primary-foreground: var(--pitch-green-ink);
+  --secondary: var(--raised);
+  --secondary-foreground: var(--text);
+  --muted: var(--panel);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--raised);
+  --accent-foreground: var(--text);
+  --destructive: var(--alert-red);
+  --destructive-foreground: var(--alert-red-ink);
+  --input: var(--divider);
+  --ring: var(--pitch-green);
+  --chart-1: var(--pitch-green);
+  --chart-2: var(--broadcast-blue);
+  --chart-3: var(--broadcast-gold);
+  --chart-4: var(--alert-red);
+  --chart-5: var(--text-muted);
+  --sidebar: var(--void);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--pitch-green);
+  --sidebar-primary-foreground: var(--pitch-green-ink);
+  --sidebar-accent: var(--raised);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--divider);
+  --sidebar-ring: var(--pitch-green);
+  --radius: 0px;
+  --radius-md: 2px; /* shadcn button.tsx references this directly - keep it sharp, not undefined */
+}
+
+/* Deliberately no `prefers-color-scheme: light` branch (2026-09-08 redesign
+   decision, DESIGN.md's own "let the redesign decide" theme call) - a
+   broadcast-truck-dark canvas is the real, considered choice for this
+   product (checked at a desk, sometimes at night before a deadline), not a
+   default. Single-theme, committed. */
+
+@theme inline {
+  --color-void: var(--void);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-divider: var(--divider);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  --color-pitch-green: var(--pitch-green);
+  --color-pitch-green-deep: var(--pitch-green-deep);
+  --color-pitch-green-ink: var(--pitch-green-ink);
+  --color-broadcast-gold: var(--broadcast-gold);
+  --color-broadcast-gold-ink: var(--broadcast-gold-ink);
+  --color-broadcast-blue: var(--broadcast-blue);
+  --color-broadcast-blue-ink: var(--broadcast-blue-ink);
+  --color-alert-red: var(--alert-red);
+  --color-alert-red-ink: var(--alert-red-ink);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--divider);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+
+  --text-label: var(--fs-label);
+  --text-body: var(--fs-body);
+  --text-data: var(--fs-data);
+  --text-headline: var(--fs-headline);
+  --text-display: var(--fs-display);
+
+  --radius-none: 0px;
+  --radius-sm: 2px;
+  --radius-pill: 999px;
+}
+
+/* Real, self-hosted variable-weight files (2026-09-08 - a real, confirmed
+   bug found live: neither font had ever actually loaded. Oswald had no
+   @font-face at all, and IBM Plex Sans's own rule pointed at
+   /fonts/ibm-plex-sans.woff2, which never existed - `frontend/public/`
+   itself didn't exist. Every "font-display" headline across the whole app
+   has been silently rendering in the fallback system sans-serif this
+   entire redesign - the one device meant to carry this system's actual
+   typographic identity was never on screen. Both files are the real single
+   variable-font woff2 Google Fonts serves for the full static weight range
+   requested (400-700 IBM Plex Sans, 500-700 Oswald - confirmed byte-
+   identical across weight requests), so one file per family covers every
+   weight this app uses. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/oswald.woff2") format("woff2");
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+@layer base {
+  * {
+    @apply border-divider outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    margin: 0;
+    position: relative;
+  }
+  /* Real broadcast-truck grain (full redesign pass, richness follow-up) -
+     a fixed, low-opacity noise overlay so the void/panel surfaces read as
+     material rather than flat vector fills. Pure CSS (inline SVG feTurbulence
+     data URI), zero network request, effectively free to paint. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+/* Real shared primitives (2026-09-08 redesign) - "The Scoreboard Bug"
+   components DESIGN.md names directly: an angled verdict block, tabular
+   data numerals as a real typographic choice (not a monospace costume),
+   and the one deliberate rounded exception (the live pill). Every other
+   panel in this system is a flat, sharp-cornered color block - Tailwind
+   utility classes on the element itself, no new component class needed. */
+.verdict-block {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 28px), calc(100% - 48px) 100%, 0 100%);
+}
+
+.tabular {
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Real composition devices researched from 21st.dev's own strongest
+   layouts (2026-09-08, full COMMAND recompose - "Spatial Product Showcase",
+   "Bento Dashboard" neo-brutalist radar/watermark, "Editorial Hero") -
+   ghost/outline watermark typography and a once-per-hero atmospheric glow,
+   never a glow ring on a card (that stays banned). */
+.ghost-watermark {
+  -webkit-text-stroke: 1.5px color-mix(in srgb, var(--text) 16%, transparent);
+  color: transparent;
+  user-select: none;
+  pointer-events: none;
+}
+
+.atmosphere-green {
+  background:
+    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--pitch-green) 22%, transparent), transparent 68%),
+    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--pitch-green) 10%, transparent), transparent 70%);
+}
+.atmosphere-blue {
+  background:
+    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--broadcast-blue) 26%, transparent), transparent 68%),
+    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--broadcast-blue) 12%, transparent), transparent 70%);
+}
+.atmosphere-gold {
+  background:
+    radial-gradient(ellipse 65% 80% at 6% 10%, color-mix(in srgb, var(--broadcast-gold) 24%, transparent), transparent 68%),
+    radial-gradient(ellipse 50% 60% at 100% 100%, color-mix(in srgb, var(--broadcast-gold) 11%, transparent), transparent 70%);
+}
+
+@keyframes pulse-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-pulse-live {
+  animation: pulse-live 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-live {
+    animation: none;
+  }
+}
+
+/* Real pitch surface (My Team full redesign pass) - mowed-stripe turf +
+   halfway line + centre circle via pure CSS, no image asset. Gives the
+   squad grid actual formation geometry instead of a flat void background -
+   Part 6's own "keep the pitch, make it the dominant visual object." */
+.pitch-surface {
+  position: relative;
+  background: repeating-linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--pitch-green) 9%, var(--void)) 0,
+    color-mix(in srgb, var(--pitch-green) 9%, var(--void)) 64px,
+    color-mix(in srgb, var(--pitch-green) 4%, var(--void)) 64px,
+    color-mix(in srgb, var(--pitch-green) 4%, var(--void)) 128px
+  );
+  border: 2px solid var(--divider);
+}
+.pitch-surface::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+.pitch-surface::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 130px;
+  height: 130px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
