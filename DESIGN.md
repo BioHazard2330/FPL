@@ -1,272 +1,196 @@
 ---
-name: FPL Agent Dashboard
-description: A personal FPL decision-support dashboard with broadcast-match-graphics confidence and zero data fabrication.
+name: FPL Agent
+description: A personal FPL decision terminal styled as a live match-graphics package, not a SaaS dashboard.
 colors:
-  bg: "#201f22"
-  surface: "#0a0a0b"
-  surface-2: "#141416"
-  fg: "#ffffff"
-  muted: "#a7a7b3"
-  faint: "#6c6c78"
-  border: "rgba(255,255,255,0.12)"
-  gridline: "#232326"
-  ok: "#22c55e"
-  warn: "#fbbf24"
-  bad: "#f0555a"
-  accent: "#00ff87"
-  structural-cyan: "#04f5ff"
-  tactical-purple: "#9d5cff"
-  captaincy-pink: "#ff2882"
-  fpl-purple: "#37003c"
-  fpl-pink: "#e90052"
-  match-home: "#00ff87"
-  match-away: "#04c8ff"
+  canvas-void: "#0A0E14"
+  surface-panel: "#12171F"
+  surface-raised: "#1A2029"
+  pitch-green: "#1FCE6B"
+  pitch-green-deep: "#12A552"
+  broadcast-gold: "#F0A93E"
+  broadcast-blue: "#2D6CDF"
+  alert-red: "#E3452F"
+  text-primary: "#F5F3EE"
+  text-muted: "#9099A8"
+  text-faint: "#5B6472"
+  divider: "#232B36"
 typography:
   display:
-    fontFamily: "Oswald, Titillium Web, Impact, Arial Narrow Bold, sans-serif"
-    fontSize: "2.7rem"
-    fontWeight: 800
-    lineHeight: 1.1
-    letterSpacing: "normal"
-  label:
-    fontFamily: "Oswald, Titillium Web, system-ui, sans-serif"
-    fontSize: "0.75rem"
+    fontFamily: "Oswald, 'Arial Narrow', sans-serif"
+    fontSize: "clamp(3.5rem, 8vw, 7rem)"
     fontWeight: 700
-    letterSpacing: "0.06em"
+    lineHeight: 0.92
+    letterSpacing: "-0.01em"
+  headline:
+    fontFamily: "Oswald, 'Arial Narrow', sans-serif"
+    fontSize: "1.75rem"
+    fontWeight: 600
+    lineHeight: 1.05
+    letterSpacing: "0.01em"
+  label:
+    fontFamily: "IBM Plex Sans, system-ui, sans-serif"
+    fontSize: "0.6875rem"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "0.12em"
   body:
-    fontFamily: "IBM Plex Sans, system-ui, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.95rem"
+    fontFamily: "IBM Plex Sans, system-ui, sans-serif"
+    fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.5
+    letterSpacing: "normal"
+  data:
+    fontFamily: "IBM Plex Sans, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 600
+    lineHeight: 1.1
+    letterSpacing: "normal"
+    fontFeature: "tnum"
 rounded:
-  sm: "5px"
-  md: "8px"
-  lg: "10px"
+  none: "0px"
+  sm: "2px"
+  pill: "999px"
 spacing:
-  xs: "8px"
-  sm: "14px"
-  md: "20px"
+  xs: "4px"
+  sm: "8px"
+  md: "16px"
   lg: "32px"
-  xl: "48px"
+  xl: "64px"
 components:
-  panel:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.fg}"
-    rounded: "{rounded.lg}"
-    padding: "18px 20px"
-  timeline-node-decision:
-    backgroundColor: "transparent"
-    textColor: "{colors.fg}"
-    rounded: "{rounded.sm}"
-    padding: "12px 16px"
-  cmd-action-word:
-    typography: "{typography.display}"
-    textColor: "{colors.fg}"
+  verdict-block:
+    backgroundColor: "{colors.pitch-green}"
+    textColor: "{colors.canvas-void}"
+    rounded: "{rounded.none}"
+    padding: "32px 40px"
+  tag-block:
+    backgroundColor: "{colors.surface-raised}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.none}"
+    padding: "6px 12px"
+  tag-block-hover:
+    backgroundColor: "{colors.divider}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.none}"
+    padding: "6px 12px"
+  live-pill:
+    backgroundColor: "{colors.alert-red}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.pill}"
+    padding: "3px 10px"
 ---
 
-# Design System: FPL Agent Dashboard
+# Design System: FPL Agent
 
 ## 1. Overview
 
-**Creative North Star: "The Match Graphics Package"**
+**Creative North Star: "The Scoreboard Bug"**
 
-This dashboard reads like the graphics overlay a broadcaster runs during a
-match, not like an analytics SaaS product. A broadcast stat graphic states
-one number, once, large, in a condensed athletic display face, with total
-typographic confidence, even when the commentator is simultaneously hedging
-in speech. This system borrows exactly that split: the CRAFT is confident
-and immediate; the DATA stays honest through explicit, unhedged labels
-(FRAGILE, MEDIUM confidence, RECOMPUTING) that sit right next to the bold
-number rather than softening it. Team and player identity is real wherever
-data supports it - official shirt graphics, club crests, team colour - never
-a generic icon standing in for identity the data already carries.
+Every screen reads like the graphics package running under a live match
+broadcast: a scoreboard bug, a half-time stat graphic, a deadline-day
+build-up ticker. Flat, confident color blocks stand in for cards. Condensed,
+oversized numerals stand in for hero metrics. Angled cuts and thick rule
+dividers stand in for borders and shadows. Nothing glows, nothing is glass,
+nothing fades in gradient - broadcast graphics are opaque, fast to read at a
+glance, and never apologize for taking up space.
 
-This is a deliberate move away from the project's earlier, more generic
-"dark analytics dashboard" phase (monochrome grey hierarchy, one thin
-accent line, engineering-report density) toward a system with more real
-colour presence and graphic confidence, without ever loosening the
-project's own non-negotiable anti-fabrication rules - those are data-layer
-rules and are never in tension with bolder visual craft.
+This explicitly rejects the generic AI-dashboard look this project already
+built once and threw out: dark background plus cyan/purple neon glow,
+glassmorphism panels, monospace numerals worn as a costume instead of used
+as a typographic decision, gradient text, a soft-shadowed rounded card
+repeated for every fact regardless of importance. None of that survives
+here. Where the old pass reached for a glow ring, this system reaches for a
+flat color block and a diagonal cut instead.
 
-**Explicitly rejected**: generic AI-SaaS dashboard cliches (gradient text,
-glassmorphism, hero-metric-plus-sparkline cards, identical rounded-card
-grids, side-stripe accent borders) and sports-betting-site energy (odds-
-board density, flashing badges, reflexive green/red on every metric
-regardless of what it's being compared against).
+The single user is fluent in dense data (an engineering background) and
+wants the verdict fast - so density is not the enemy of boldness here.
+Broadcast graphics are *both* dramatic and information-dense (a scoreboard
+bug carries score, clock, and possession in one confident glance) - this
+system holds both at once rather than trading one for the other.
 
 **Key Characteristics:**
-- Condensed athletic display type (Oswald) for every number/verdict that
-  matters; a plain humanist sans (Inter) for reading prose.
-- Flat surfaces, tonal layering instead of shadows - the "broadcast lower
-  third," not a floating card.
-- Team colour and crest identity appear everywhere a club is named.
-- A strict, already-established color-ROLE table (below) - never color
-  picked because a section "needs more color."
+- Flat color blocks, never gradients or glow, as the primary way information is grouped
+- Oversized condensed numerals for hero verdicts; disciplined, denser type for tables and lists
+- Angled (`clip-path`) cuts and thick rule dividers replace soft shadows and glass borders
+- Near-black, cool-tinted canvas - broadcast-truck darkness, not "dashboards are dark by default"
+- One flat accent per semantic category (verdict, captain/premium, informational, danger) - never decorative
 
 ## 2. Colors
 
-Near-black tonal surfaces (a real broadcast-truck monitor in a dim room, not
-a bright SaaS canvas) with a narrow, deliberate set of high-chroma accents
-that each carry one specific meaning, never used interchangeably.
+Flat and saturated where broadcast graphics are saturated - color blocks, not accents on a neutral field.
 
 ### Primary
-- **Signal Green** (`#00ff87`): the one color that means "this is the
-  chosen path / the positive outcome / the active state." Used sparingly -
-  the decision word, the winning bar, the confirmed-positive tag.
-
-### Full palette (product register, data-viz-heavy - four deliberate roles beyond primary)
-- **Structural Cyan** (`#04f5ff`): "now" / a locked, structural decision
-  point. Never used for a generic highlight.
-- **Tactical Purple** (`#9d5cff`): tactical-change / second-candidate /
-  comparison role.
-- **Uncertainty Amber** (`#fbbf24` / warn text `#f0c419`): watch, review,
-  fragile - never a confirmed-positive result.
-- **Risk Red** (`#f0555a`) and **Captaincy Pink** (`#ff2882`, reserved
-  strictly for the captain verdict word, never a generic "important"
-  highlight).
+- **Pitch Green** (#1FCE6B): the verdict color - the primary recommended action, positive deltas, "this is the answer" moments. Used as a full flat block behind the hero verdict, not as a glow or a thin accent line.
 
 ### Secondary
-- **FPL Purple** (`#37003c`) / **FPL Pink** (`#e90052`): the official Fantasy
-  Premier League brand pair - used sparingly for real FPL-brand moments
-  (a left accent on FPL-sourced content blocks), never as a general UI
-  accent competing with the primary/full-palette roles above.
-- **Match Home/Away** (`#00ff87` / `#04c8ff`): reserved strictly for Match
-  Centre's own home-vs-away team-color coding (momentum chart, score line)
-  - a distinct, narrower role from the primary/tactical/structural accents
-  above even though `#04c8ff` sits close in hue to Structural Cyan; never
-  reuse one for the other.
+- **Broadcast Gold** (#F0A93E): captaincy, premium/hero picks, anything that should read as "the standout." A deliberately warm, non-neon amber - trophy and premium-broadcast association, nowhere near the AI-slop cyan/purple family.
+
+### Tertiary
+- **Broadcast Blue** (#2D6CDF): informational category tag for chip/transfer-type actions and neutral data callouts - a confident, saturated blue, not a desaturated "info gray."
 
 ### Neutral
-- **Near-black Surface** (`#0a0a0b`): card/panel background.
-- **Charcoal Surface-2** (`#141416`): a second, slightly lighter tonal step
-  for nested/secondary surfaces - never a shadow, a lighter tone instead.
-- **Page Ground** (`#201f22`): the page background, one step lighter than
-  surfaces so cards read as real objects sitting on the page.
-- **Muted Grey** (`#a7a7b3`) / **Faint Grey** (`#6c6c78`): secondary and
-  tertiary text.
-- **Hairline Border** (`rgba(255,255,255,0.12)`): the only border weight
-  used at rest.
-
-A parallel light theme exists (`prefers-color-scheme: light` /
-`data-theme="light"`), remapping every token to a light-ground equivalent -
-same roles, inverted lightness, never a separate palette to maintain.
-
-### Named Rules
-**The One Role Rule.** Every accent color answers "what role does this
-play" (current / structural / tactical / uncertainty / risk / captaincy) -
-never "does this section need more color." A color used for two different
-roles on the same screen is a bug, not a style choice.
-
-**The Broadcast-Truck Rule.** Neutrals stay near-black and tonal, never a
-bright SaaS-white canvas, even in the light theme (which lightens without
-ever hitting pure `#fff`).
+- **Void** (#0A0E14): the base canvas - near-black, cool-tinted, never pure `#000`.
+- **Panel** (#12171F): the first surface layer above the canvas (section backgrounds).
+- **Raised** (#1A2029): the second surface layer (tag blocks, table row hover, nested groupings).
+- **Divider** (#232B36): rule lines between sections - used instead of card borders/shadows for separation.
+- **Text Primary** (#F5F3EE): warm off-white, never pure `#fff`.
+- **Text Muted** (#9099A8): secondary text, supporting stats.
+- **Text Faint** (#5B6472): tertiary text, timestamps, disabled-adjacent labels.
+- **Alert Red** (#E3452F): danger/sell/fragile state - a real broadcast red, not a neon warning glow.
 
 ## 3. Typography
 
-**Display Font:** Oswald (with Titillium Web, Impact, Arial Narrow Bold, sans-serif fallbacks)
-**Body Font:** IBM Plex Sans (with system-ui, -apple-system, Segoe UI, sans-serif fallbacks) - self-hosted, `data/vendor/fonts/ibm-plex-sans.woff2`
+Two typographic registers, deliberately: a **display** register for the handful of genuine hero moments (the verdict headline, a scoreboard number), and a **data** register for everything else (tables, lists, labels, body copy) that stays dense and legible rather than dramatic. This is the one place this system departs from "product UI wants a tight, single-family scale" on purpose - broadcast graphics packages do exactly this (a huge scoreboard numeral next to a small dense stat line), and the brand-personality exception PRODUCT.md documents is granted specifically for this.
 
-**Character:** A condensed, all-caps-capable athletic display face (the
-same family broadcast lower-thirds and stadium scoreboards use) paired with
-a plain, highly-legible humanist body face. The pairing is the whole
-"broadcast graphics, not SaaS" argument stated in two font choices.
+- **Display** - Oswald 700, condensed and tall, `clamp(3.5rem, 8vw, 7rem)`. The verdict word/phrase only. Nothing else earns this size.
+- **Headline** - Oswald 600, 1.75rem. Section identifiers that need real presence (a screen's own title treated as a scoreboard-bug label), used sparingly.
+- **Label** - IBM Plex Sans 700, 0.6875rem, `0.12em` tracking, uppercase. Category tags, stat labels - the small bold caption under every number.
+- **Body** - IBM Plex Sans 400, 0.9375rem. Prose, explanations, reasoning text. Capped at 65-75ch.
+- **Data** - IBM Plex Sans 600 with tabular numeral features (`font-feature-settings: "tnum"`), 1rem. Every real number (prices, xP, deltas) aligns on this - a genuine typographic decision (tabular figures on the SAME family), not a monospace family worn as a "tech" costume.
 
-### Hierarchy
-- **Display** (800, 2.7rem `.cmd-action-word`/`.hero-verdict-word`, 1.1
-  line-height): the one authoritative decision word per screen (PLAY
-  WILDCARD, ROLL). Appears once. Never a headline treatment for something
-  that isn't the primary decision.
-- **Label** (700, 0.75rem, 0.06em tracking, uppercase, Oswald): section
-  labels, tags, GW badges, chip badges - short, athletic, always uppercase.
-- **Body** (400, 0.95rem, Inter, 1.5 line-height): prose, evidence
-  sentences, table cells. Cap line length near 70ch where prose runs long
-  (football-evidence sentences).
-- **Data label** (`--fs-2xs` through `--fs-xl`, an existing 6-step scale
-  currently only fully applied in Match Centre): numeric/tabular values -
-  `font-variant-numeric: tabular-nums` throughout so numbers align in
-  columns.
-
-### Named Rules
-**The One Verdict Rule.** Display-scale type is reserved for the single
-authoritative recommendation on a screen. A comparison or alternative
-value never renders at display scale, no matter how important it feels in
-the moment - scale is the hierarchy signal, not color or weight alone.
+Monospace is not used anywhere in this system. IBM Plex Mono (used in the previous pass) is dropped entirely - it was decoration, not a real typographic choice.
 
 ## 4. Elevation
 
-Flat by default - tonal layering (surface -> surface-2, one step lighter)
-does the depth work a shadow would, matching a broadcast graphic's flat
-plate rather than a floating SaaS card. No box-shadow anywhere at rest.
-The one exception: the player-inspector drawer, a real slide-in panel,
-carries a directional shadow (`-20px 0 50px -20px rgba(0,0,0,0.6)`) because
-it's genuinely elevated above page content, not decoratively "lifted."
-
-### Named Rules
-**The Flat-By-Default Rule.** A surface is flat at rest. The only thing
-that ever separates two surfaces is a hairline border or one tonal step,
-never a shadow used for decoration.
+Flat. No shadows, no blur, no glass. Layering is communicated by flat surface color (void -> panel -> raised) and by angled `clip-path` cuts on hero blocks, the same way a broadcast graphics package layers a scoreboard bug over live video without ever using a drop shadow. A thick (2-4px) solid rule divider does the separation work a card border or shadow would otherwise do.
 
 ## 5. Components
 
-### Buttons / Tabs
-- **Shape:** small radius (5px, `--rounded-sm`), never pill-shaped except
-  status dots and chip badges (intentionally circular/pill for those two).
-- **Primary (nav-active / path-selected):** transparent background, color
-  shift to `--fg`/`--accent-2`, never a filled background at rest - the
-  underline/border-color carries the "selected" state.
-- **Timeline node (signature component):** a multi-row card-button (GW
-  label / action word / chip badge stacked) - deliberately NOT a
-  single-line label; this is the system's own athletic "match-clock event"
-  metaphor, not a generic button.
+- **Verdict block**: the hero recommendation. A full-bleed flat Pitch Green (or category-appropriate color) block, one angled edge (`clip-path: polygon(...)`), the Display headline in Void-colored text directly on the block - not white text on a dark card with a colored accent, the block itself IS the color.
+- **Stat strip**: a horizontal row of flat-background stat cells (Raised surface), each with a Label caption above a Data numeral - modeled on a live match stat ticker, not a grid of bordered KPI cards.
+- **Tag block**: flat Raised-surface rectangle, sharp corners, Label typography - category/status tags. Never a soft rounded pill except the one deliberate exception below.
+- **Live pill**: the ONE rounded, pill-shaped element in the system, reserved exclusively for a genuinely live/real-time state (a live match, a live rank tick) - Alert Red or Pitch Green fill depending on state, so the pill shape itself becomes a real signal ("this one thing is live") rather than a default shape.
+- **Data table row**: dense, Data typography for numerals, Raised-surface hover, a Divider rule between rows - no card wrapper around individual rows.
+- **Comparison bar**: a flat, rectangular (not pill) fill bar for chosen-vs-alternative comparisons - a thick marker line for the alternative, no gradient, no glow.
 
-### Cards / Panels
-- **Corner style:** 10px radius (`--rounded-lg`).
-- **Background:** `--surface`, one hairline border (`--border`), never a
-  shadow.
-- **The Real-Structure Rule:** a card is used only when it represents one
-  real, distinct object (a player, a path, a team) - never as a generic
-  content wrapper. Text that doesn't represent a discrete real object
-  should not be boxed.
+## Phase 8.3 addendum (exhaustive 21st.dev research, validated + extended)
 
-### Shirts / Crests (signature component)
-Real official FPL shirt graphics (`fantasy.premierleague.com` CDN) and
-cached club crests appear everywhere a player or team is named - this is
-the system's actual identity language, doing the work a generic avatar or
-icon would do elsewhere. Never a placeholder silhouette when the data to
-resolve a real shirt/crest exists.
+The exhaustive catalogue crawl (`docs/21ST_EXHAUSTIVE_CATALOGUE.md`, 749 real
+components across all 77 live categories) confirmed this system's core direction
+rather than changing it - the closest real 21st pattern to broadcast/scoreboard
+graphics (Bento Dashboard's neo-brutalist flat-bar-chart + ghost-watermark language)
+independently converges on the same flat-block, no-glow, condensed-display-type
+grammar this system already committed to. Two real additions from that research:
 
-### Navigation
-Sticky top bar, horizontally scrollable with an edge fade below ~900px,
-uppercase Oswald labels, muted at rest, `--fg` on hover/active - no pill
-background, no underline, color shift alone carries state.
-
-### Charts
-ApexCharts exclusively (one chart type per real analytical question - see
-`.claude/skills/fpl-visualization/SKILL.md`, which this file defers to for
-the full chart-type <-> question mapping and the canonical color-role
-table this section's palette is drawn from).
+- **Flat tag chips** (Records Table pattern) - a table row's category/risk markers
+  are small, fully-filled flat color rectangles (never a translucent badge), several
+  per row where genuinely needed - the SCOUT/ADVANCED table language.
+- **Blur-transition numerals** (Number Flow pattern) - a second `CountUp` mode
+  reserved for a value that changes AGAIN while already on screen (live rank, live
+  points) - a per-digit blur in/out, distinct from the existing ease-out count used
+  for a value's first arrival.
 
 ## 6. Do's and Don'ts
 
-### Do:
-- **Do** render the single authoritative decision at display scale (2.7rem,
-  Oswald 800), once per screen.
-- **Do** use real shirt/crest graphics for every named player/team.
-- **Do** keep every accent color tied to its one role (current/structural/
-  tactical/uncertainty/risk/captaincy) from the Colors section above.
-- **Do** state a number once, plainly, then carry its honesty label
-  (confidence/staleness/FRAGILE) as a separate, explicit tag beside it.
+**Do:**
+- Use flat color blocks and angled cuts to group and separate information.
+- Reserve the Display register for genuine hero moments - one per screen, maybe two.
+- Keep tables and dense data in the Data/Label registers, disciplined and tight.
+- Let one category own a section's color (a chip-type verdict is Blue throughout, not Blue-plus-random-accent).
+- Use real crest/shirt imagery where the product already has it (My Team's pitch) as the actual visual interest, not a decorative background.
 
-### Don't:
-- **Don't** use gradient text, glassmorphism, or a hero-metric-plus-
-  sparkline card template - named anti-references from PRODUCT.md.
-- **Don't** build betting-site energy: no flashing badges, no reflexive
-  green-for-up/red-for-down regardless of what's being compared, no
-  manufactured urgency.
-- **Don't** use `border-left`/`border-right` greater than 1px as a colored
-  accent stripe on any card or row.
-- **Don't** add a box-shadow to a surface at rest - tonal layering only.
-- **Don't** invent a new accent color for a component "because it needs
-  more color" - reuse an existing role or leave it neutral.
-- **Don't** soften a number's typography to hedge uncertainty - the hedge
-  belongs in an explicit label, never in the number's own visual weight.
+**Don't:**
+- Use any glow, gradient fill, or `background-clip: text` gradient numeral - the single most-repeated failure of the previous pass.
+- Reach for glassmorphism/blur cards.
+- Use monospace as a "tech dashboard" costume - tabular numerals on the real body family instead.
+- Put a rounded-corner ring/border on every card - most panels here are sharp-cornered flat blocks, not bordered cards.
+- Repeat the same bordered-card treatment for every fact regardless of importance - a scoreboard bug never gives a substitution and the final score equal visual weight.

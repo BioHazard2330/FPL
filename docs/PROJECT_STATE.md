@@ -13,6 +13,49 @@ teach` setup still outstanding before the new frontend-design skills are
 usable. No application code changed as part of that pass except two new
 project-local skill files.
 
+## Where things stand (updated 2026-09-08, React frontend — Phase 8-10)
+
+The React app (`frontend/`, Vite + TypeScript + Tailwind v4 + shadcn/Base UI)
+is now the real, deployed default UI at `/` (the old Python-rendered
+`data/dashboard.html` still exists, reachable at `/dashboard.html`, kept as
+a real rollback path and the one remaining reference for screens not yet
+ported - see below). Backend stays authoritative: a `monitoring/api/*.py`
+JSON payload layer (`command_payload.py`/`myteam_payload.py`/`plan_payload.
+py`/`football_payload.py`/`scout_payload.py`/`advanced_payload.py`) reads
+the SAME `DashboardContext` (`monitoring/dashboard/context.py`, TTL-cached +
+proactively refreshed every ~8min by 4 background threads wired into
+`LiveServer.start()`) the old dashboard already computed - never a second,
+independently-derived calculation. Real, deployed design system: self-
+hosted Oswald + IBM Plex Sans (a real bug fixed 2026-09-08 - neither font
+had ever actually loaded before that), flat broadcast-graphics palette (no
+glow/gradients except a deliberate body-level grain texture + per-screen
+atmosphere washes), a compact nav rail, real ApexCharts on LIVE (rank/
+points/captain trajectory) and PLAN (trajectory/cumulative-edge).
+
+Deploy procedure (manual, not yet automated into `run_scheduled`): `npm run
+build` in `frontend/` → copy `dist/{assets,fonts,index.html}` into `data/`
+→ restart the real `FPLAgentLiveServer` scheduled task (`Stop-ScheduledTask`
+does not actually kill the process - force-kill the real PID first, then
+`Start-ScheduledTask`) → warm all 6 `/api/*` endpoints (first hit after a
+restart is a real cold `DashboardContext` build, 40-150s).
+
+**Real, disclosed remaining scope** (each screen has a working, live-
+verified v1; these are the specific gaps, not "incomplete"): SCOUT
+(Combobox multi-position/team filter, Template Team/Statistics/Expected
+Data panels); LIVE (full Match Centre - score/momentum/shot map - untestable
+without a live match); PLAN (optional Radial Orbital view); FOOTBALL
+(MANAGER/XI/AVAILABILITY changes feed, Fixture Ticker, Fixture Projections);
+ADVANCED (Decision Detail, Player Odds, Optimizer Delta, Regret Analysis).
+Full narrative (every phase, every bug found, every live-verification):
+`docs/UI_REDESIGN_DECISIONS.md`.
+
+**Known, unrelated, flagged-not-fixed bug**: `live/sse_server.py`'s 4
+background cache-refresh threads can hit a real Python import deadlock on
+process start (`_frozen_importlib._DeadlockError`) when two race to import
+circularly-dependent `monitoring.api.*` modules - self-heals on retry
+(confirmed repeatedly), real fix is eager-importing those modules from the
+main thread before spawning the threads. Not yet applied.
+
 ## Where things stand (updated 2026-09-02, Football Intelligence Engine — Phase 3 finalization)
 
 Three deterministic detectors (`models/role_signal_detectors.py`) close out the

@@ -6,80 +6,69 @@ product
 
 ## Users
 
-A single user: a Fantasy Premier League manager (aerospace engineering
-background, comfortable with numerical/statistical reasoning) running their
-own personal decision-support system for the 2026/27 FPL season. They open
-this dashboard mid-week and on deadline day, under real time pressure, to
-answer one question: what should I do right now, and why. They already know
-FPL vocabulary (xP, EO, DGW, chips) and don't need it explained - but they do
-need the system's own honesty markers (FACT vs MODEL vs FORECAST, confidence,
-staleness) to stay legible at a glance, because the system's core promise is
-that it never fabricates and never overstates certainty.
+One user: the person who owns and runs this codebase. An aerospace engineering
+grad student with a CFD/numerical-methods background, comfortable with dense
+quantitative data, uncomfortable with fluff. Not a multi-tenant product, not a
+public-facing tool, not designed for a stranger to onboard into. The person
+using this already understands FPL deeply and wants the model's verdict fast,
+not explained from first principles.
+
+Context of use: checking this on a laptop, usually in short bursts before a
+gameweek deadline or during a live match, sometimes idly between matches to
+see if anything changed. Not a leisurely browse - a fast, confident read.
 
 ## Product Purpose
 
-Take the user from preseason through GW38 answering: what should I do now,
-and why. Recommend only, never auto-act. One authoritative decision per
-question (transfer, captain, chip) - every panel either shows that same
-decision or is clearly labeled as answering a different question. Success
-looks like: the user can state the current recommendation and its single
-biggest risk within 5 seconds of opening the page, and never once catches
-the dashboard asserting something as fact that was actually a projection.
+Real-time FPL (Fantasy Premier League) decision support. One question,
+answered well every time: **what should I do right now, and why**. A real
+Python backend (optimizer, projections, decision engine, football
+intelligence - all already built, real, and authoritative) computes the
+actual answer; this frontend's only job is presenting that answer with the
+confidence and clarity of a sports broadcast graphics package, not a SaaS
+admin panel.
+
+Success looks like: opening the app and understanding the verdict in under
+three seconds, the way a viewer reads a scoreboard bug during a match, not
+the way someone reads a quarterly report.
 
 ## Brand Personality
 
-Football broadcast graphics (Sky Sports / Opta match-graphics package), not
-SaaS-dashboard minimalism and not a betting slip. Three words: **decisive,
-broadcast-grade, honest**. Bold use of real team colour/crest identity where
-data supports it, stat-overlay confidence in how numbers are presented
-(the way a broadcast graphic states a stat once, large, with zero hedging
-in its TYPOGRAPHY even though the underlying number itself is honestly
-uncertain) - the visual confidence is in the CRAFT, never smuggled into the
-DATA. This is a tone shift from the dashboard's current near-monochrome
-"restrained product" look toward something with more real team-colour
-presence and graphic confidence, without loosening the project's own
-non-negotiable precision/anti-fabrication rules (see CLAUDE.md) - those are
-data-layer rules, not visual ones, and are never in tension with a bolder
-visual system.
+**Confident. Broadcast. Decisive.**
+
+The explicit direction (user's own choice among offered aesthetic lanes):
+**maximalist broadcast** - the visual energy of live sports graphics
+packages (match-day scoreboard bugs, half-time stat graphics, transfer-deadline-day
+build-up graphics), not a financial dashboard and not a generic AI-generated
+admin panel. Real color blocks, real scale drama, real typographic weight -
+never mistaken for a spreadsheet, a SaaS trial dashboard, or a crypto
+tracker.
+
+This is a maximalist exception, granted explicitly and repeatedly by the
+user ("no restrictions on creativity", "fuck the brand colours... this is a
+complete redesign", "no time limit") - not the Restrained-by-default posture
+product UI normally takes. Committed to here on purpose, not by accident.
 
 ## Anti-references
 
-- **Generic AI-SaaS dashboard.** Purple/blue gradients, glassmorphism,
-  hero-metric-plus-sparkline cards repeated per section, identical
-  rounded-card grids, side-stripe accent borders, gradient text. If it could
-  be mistaken for a Vercel/Linear-template analytics starter, it has failed.
-- **Sports betting sites.** Odds-board information density, flashing
-  promos/badges, reflexive green-for-up/red-for-down on every metric
-  regardless of what it's comparing against, urgency-manufacturing UI
-  (countdowns, "X people viewing this offer" patterns).
+The single, explicit thing to avoid: **generic AI-generated dashboard
+slop** - dark background + cyan/purple neon glow, glassmorphism cards,
+monospace numerals used purely as a "tech" decoration rather than a real
+typographic choice, gradient text on metrics, a hero number in a glowing
+ring, identical bordered card grids repeated down the page. This was
+literally built once already this session and correctly rejected - it reads
+as "AI made this," not as a real product with a point of view.
 
-## Design Principles
-
-1. **Broadcast confidence in craft, never in data.** A number renders once,
-   large, unhedged in typography - the honesty lives in explicit FACT/MODEL/
-   FORECAST/confidence labels next to it, never in a softened visual
-   treatment of the number itself.
-2. **Team and player identity is real, not decorative.** Crests, kit colours
-   and shirt graphics carry actual club identity everywhere a player/team is
-   named - never a generic avatar or icon standing in for identity that
-   real data already supports.
-3. **One decision, one voice.** Visual hierarchy always makes the single
-   authoritative recommendation the loudest object on the screen; a
-   different question (a comparison, an alternative, a what-if) is always
-   visually secondary, never competing for the same attention.
-4. **Color is a role, not decoration.** Reuse this project's own established
-   color-role table (positive/current/live/tactical/uncertainty/risk/
-   captaincy - see `.claude/skills/fpl-visualization/SKILL.md`) - a color
-   choice always answers "what role does this play," never "does this
-   section need more color."
-5. **Desktop is the product.** Design and verify at 1440px primary, 1080px
-   secondary. Mobile stays usable, never a design target.
+No other specific anti-reference named - just don't let it read as
+templated or unconsidered.
 
 ## Accessibility & Inclusion
 
-Standard WCAG-reasonable contrast in both the existing dark and light
-themes (already implemented via CSS custom properties). No additional
-accommodation required - single known user, no stated color-vision or motor
-constraints. Chart series colors should still remain distinguishable by
-shape/position/label, not hue alone, as a general good practice, not a
-stated hard requirement.
+Single sighted user, desktop only (this project has a standing, explicit
+"desktop-first, permanently" rule - no mobile-viewport design or QA).
+Reduced-motion support should still be real (`prefers-reduced-motion`
+respected), since motion is used for state changes the user should be able
+to opt out of. Color is never the only signal for a state (buy/sell/hold
+verdicts, robustness, etc. always pair color with a real label/icon, not
+color alone) - not because of a stated accessibility requirement, but
+because this project's own decision-integrity rules already demand every
+verdict be legible and unambiguous.
