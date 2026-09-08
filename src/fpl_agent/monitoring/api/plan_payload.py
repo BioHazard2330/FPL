@@ -43,17 +43,46 @@ def _trajectory_series(paths: list[dict], shown_indices: list[int]) -> list[dict
     return series
 
 
-def _steps_json(steps: list[dict]) -> list[dict]:
+def _player_identity_map(conn, player_ids: set[int], team_codes: dict[int, int]) -> dict[int, dict]:
+    """Real name/team_code/position for a real set of player ids appearing as
+    a transfer leg's out/in target somewhere in the shown paths (2026-09-08,
+    art-direction pass v3, direct user follow-up: "more football" - the
+    Strategy Rail had zero shirt imagery because this payload never carried
+    team identity for a transfer leg's players, only their raw ids). One
+    batched query, not one per leg."""
+    if not player_ids:
+        return {}
+    placeholders = ",".join("?" for _ in player_ids)
+    rows = conn.execute(
+        f"SELECT id, web_name, team_id, element_type FROM players WHERE id IN ({placeholders})",
+        tuple(player_ids),
+    ).fetchall()
+    position_by_type = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+    return {
+        r["id"]: {
+            "player_id": r["id"],
+            "name": r["web_name"],
+            "team_code": team_codes.get(r["team_id"]),
+            "position": position_by_type.get(r["element_type"]),
+        }
+        for r in rows
+    }
+
+
+def _steps_json(steps: list[dict], identity: dict[int, dict]) -> list[dict]:
     out = []
     for j, s in enumerate(steps):
+        out_id, in_id = s.get("player_out_id"), s.get("player_in_id")
         out.append({
             "event": s["event"],
             "action": s.get("action", "ROLL"),
             "chip_played": _chip_display_name(s["chip_played"]).upper() if s.get("chip_played") else None,
             "uses_hit": bool(s.get("uses_hit")),
             "gw_ev": round(s["gw_ev"], 2) if s.get("gw_ev") is not None else None,
-            "player_out_id": s.get("player_out_id"),
-            "player_in_id": s.get("player_in_id"),
+            "player_out_id": out_id,
+            "player_in_id": in_id,
+            "player_out": identity.get(out_id) if out_id is not None else None,
+            "player_in": identity.get(in_id) if in_id is not None else None,
             "is_locked": j == 0,
         })
     return out
@@ -91,6 +120,15 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
     conn = get_connection()
     try:
         leader_conf = path_confidence(conn, leader)
+        needed_ids: set[int] = set()
+        for i in primary_indices:
+            for s in paths[i - 1].get("steps") or []:
+                for key in ("player_out_id", "player_in_id"):
+                    pid = s.get(key)
+                    if pid is not None:
+                        needed_ids.add(pid)
+        identity = _player_identity_map(conn, needed_ids, ctx.team_codes)
+
         path_rows = []
         for i in primary_indices:
             p = paths[i - 1]
@@ -104,7 +142,7 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
                 "is_leading": i == 1,
                 "sibling_count": len(siblings),
                 "sibling_scores": [paths[s - 1].get("path_total") for s in siblings],
-                "steps": _steps_json(p.get("steps") or []),
+                "steps": _steps_json(p.get("steps") or [], identity),
                 "final_free_transfers": p.get("final_free_transfers"),
                 "final_bank_m": round((p.get("final_bank_tenths") or 0) / 10, 1),
                 "horizon_breakdown": p.get("horizon_breakdown"),

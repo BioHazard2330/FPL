@@ -22,31 +22,39 @@ const DIRECTION_BAR: Record<string, string> = {
   POSITIVE: 'bg-pitch-green', NEGATIVE: 'bg-alert-red', WATCH: 'bg-broadcast-gold', NEUTRAL: 'bg-text-faint',
 }
 
+/** Real size hierarchy, not a uniform row (art-direction pass, 2026-09-08 v2):
+ * the captain reads as the headline player of the gallery, the rest scale
+ * down by real projected median - never a decorative/random size, the same
+ * number already driving the green figure under each shirt. */
 function ActionSquadTile({
-  p, captainId, viceId, small = false,
+  p, captainId, viceId, tier = 'normal',
 }: {
   p: ActionSquadPlayer
   captainId: number | null
   viceId: number | null
-  small?: boolean
+  tier?: 'captain' | 'featured' | 'normal' | 'bench'
 }) {
-  const shirt = shirtUrl(p.team_code, p.position === 'GKP', small ? 66 : 110)
+  const pxSize = tier === 'captain' ? 148 : tier === 'featured' ? 116 : tier === 'bench' ? 60 : 92
+  const shirt = shirtUrl(p.team_code, p.position === 'GKP', pxSize)
   const crest = crestUrl(p.team_code)
-  const size = small ? 'h-10 w-10' : 'h-14 w-14'
+  const sizeClass =
+    tier === 'captain' ? 'h-24 w-24' : tier === 'featured' ? 'h-[4.5rem] w-[4.5rem]' : tier === 'bench' ? 'h-10 w-10' : 'h-14 w-14'
+  const nameClass = tier === 'captain' ? 'font-display text-lg font-bold' : tier === 'featured' ? 'text-sm font-bold' : 'text-xs font-bold'
+  const medianClass = tier === 'captain' ? 'text-2xl' : tier === 'featured' ? 'text-base' : 'text-sm'
   return (
-    <div className="relative flex w-20 flex-col items-center text-center">
+    <div className={`relative flex flex-col items-center text-center ${tier === 'captain' ? 'w-32' : tier === 'featured' ? 'w-24' : tier === 'bench' ? 'w-16' : 'w-20'}`}>
       {p.player_id === captainId && (
-        <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[10px] font-bold text-broadcast-gold-ink">C</span>
+        <span className="absolute right-1 top-0 flex h-5 w-5 items-center justify-center bg-broadcast-gold text-xs font-bold text-broadcast-gold-ink">C</span>
       )}
       {p.player_id === viceId && (
         <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-raised text-[10px] font-bold text-text">V</span>
       )}
-      <div className={`relative ${size} drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}>
-        {shirt ? <img src={shirt} alt="" className={`${size} object-contain`} /> : <div className={`${size} bg-raised`} />}
+      <div className={`relative ${sizeClass} drop-shadow-[0_10px_16px_rgba(0,0,0,0.6)]`}>
+        {shirt ? <img src={shirt} alt="" className={`${sizeClass} object-contain`} /> : <div className={`${sizeClass} bg-raised`} />}
         {crest && <img src={crest} alt="" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void shadow-[0_0_0_2px_var(--void)]" />}
       </div>
-      <div className="mt-1 w-full truncate text-xs font-bold text-text">{p.name}</div>
-      <div className="tabular text-sm font-bold text-pitch-green">{p.median.toFixed(1)}</div>
+      <div className={`mt-1.5 w-full truncate text-text ${nameClass}`}>{p.name}</div>
+      <div className={`tabular font-bold text-pitch-green ${medianClass}`}>{p.median.toFixed(1)}</div>
     </div>
   )
 }
@@ -83,13 +91,11 @@ export function CommandScreen() {
 
   return (
     <div className="pb-20">
-      {/* ── HERO ── asymmetric split, ghost watermark + atmosphere wash, no card border */}
-      <section className="atmosphere-blue relative overflow-hidden border-b-2 border-divider px-10 pb-12 pt-8">
-        <span className="ghost-watermark pointer-events-none absolute -top-6 right-4 select-none font-display text-[13rem] font-bold uppercase leading-none">
-          {p.gw.label}
-        </span>
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[1.15fr_0.85fr]">
-          <div>
+      {/* ── HERO ── three-column broadcast graphic: decision / comparison / oversized GW anchor.
+          The GW numeral is a real structural column now, not a corner sticker. */}
+      <section className="atmosphere-blue relative overflow-hidden border-b-2 border-divider">
+        <div className="relative grid grid-cols-1 lg:grid-cols-[1.05fr_0.8fr_auto]">
+          <div className="px-10 pb-12 pt-8">
             <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-text-faint">{p.gw.label} &middot; The decision</div>
             <div className="verdict-block mt-4 inline-block bg-pitch-green py-4 pl-6 pr-14 shadow-[0_20px_40px_-16px_rgba(31,206,107,0.5)]">
               <h1 className="font-display text-5xl font-bold uppercase leading-[0.9] text-pitch-green-ink md:text-6xl">{p.action.word}</h1>
@@ -116,9 +122,9 @@ export function CommandScreen() {
             </div>
           </div>
 
-          {/* dominant right visual: a bar-height comparison, not a card */}
+          {/* dominant centre visual: a bar-height comparison, not a card */}
           {chosenTotal !== null && altTotal !== null && p.checkpoint_table && (
-            <div className="flex items-end justify-center gap-8 pt-4">
+            <div className="flex items-end justify-center gap-8 px-6 pb-12 pt-4">
               <div className="flex flex-col items-center gap-3">
                 <div className="text-2xl font-bold text-text-faint opacity-60">
                   <MetricNumber value={altTotal} />
@@ -148,6 +154,16 @@ export function CommandScreen() {
               </div>
             </div>
           )}
+
+          {/* right anchor: the gameweek itself as a vertical broadcast marker, not a corner sticker */}
+          <div className="relative hidden w-40 shrink-0 items-center justify-center overflow-hidden border-l-2 border-divider/60 lg:flex">
+            <span
+              className="ghost-watermark pointer-events-none select-none font-display text-[7.5rem] font-bold uppercase leading-none"
+              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+            >
+              {p.gw.label}
+            </span>
+          </div>
         </div>
       </section>
 
@@ -157,15 +173,20 @@ export function CommandScreen() {
           <div className="mb-5 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">
             {p.action_squad.action ? `The ${p.action_squad.action.toLowerCase()} squad` : 'Resulting squad'}
           </div>
-          <div className="flex flex-wrap gap-x-6 gap-y-5">
-            {p.action_squad.starting.map((pl) => (
-              <ActionSquadTile key={pl.player_id} p={pl} captainId={p.action_squad!.captain_id} viceId={p.action_squad!.vice_id} />
-            ))}
+          <div className="flex flex-wrap items-end gap-x-7 gap-y-5">
+            {p.action_squad.starting
+              .slice()
+              .sort((a, b) => b.median - a.median)
+              .map((pl, i) => {
+                const tier =
+                  pl.player_id === p.action_squad!.captain_id ? 'captain' : i < 3 ? 'featured' : 'normal'
+                return <ActionSquadTile key={pl.player_id} p={pl} captainId={p.action_squad!.captain_id} viceId={p.action_squad!.vice_id} tier={tier} />
+              })}
           </div>
           {p.action_squad.bench.length > 0 && (
-            <div className="mt-6 flex flex-wrap gap-x-6 gap-y-4 border-t-2 border-divider pt-5 opacity-60">
+            <div className="mt-6 flex flex-wrap items-end gap-x-6 gap-y-4 border-t-2 border-divider pt-5 opacity-60">
               {p.action_squad.bench.map((pl) => (
-                <ActionSquadTile key={pl.player_id} p={pl} captainId={null} viceId={null} small />
+                <ActionSquadTile key={pl.player_id} p={pl} captainId={null} viceId={null} tier="bench" />
               ))}
             </div>
           )}
@@ -184,6 +205,31 @@ export function CommandScreen() {
             <span className="text-xs text-text-faint">at the {p.checkpoint_table.horizons[p.checkpoint_table.horizons.length - 1]}-GW horizon</span>
           </div>
           <div className="relative flex items-end gap-0">
+            {/* real trend line tracing the same edge values the bars encode -
+                a broadcast-style horizon graphic, not a bare bar row */}
+            <svg
+              className="pointer-events-none absolute inset-x-0 bottom-[calc(1.75rem+0.5rem)] h-24 w-full"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <polyline
+                fill="none"
+                stroke="var(--pitch-green)"
+                strokeWidth="1.5"
+                strokeOpacity="0.55"
+                vectorEffect="non-scaling-stroke"
+                points={p.checkpoint_table.horizons
+                  .map((_, i) => {
+                    const edge = p.checkpoint_table!.edge[i]
+                    const maxEdge = Math.max(...p.checkpoint_table!.edge.map((e) => Math.abs(e)), 1)
+                    const barH = Math.max(6, (Math.abs(edge) / maxEdge) * 90)
+                    const x = ((i + 0.5) / p.checkpoint_table!.horizons.length) * 100
+                    const y = 100 - (barH / 96) * 100
+                    return `${x},${y}`
+                  })
+                  .join(' ')}
+              />
+            </svg>
             {p.checkpoint_table.horizons.map((h, i) => {
               const edge = p.checkpoint_table!.edge[i]
               const maxEdge = Math.max(...p.checkpoint_table!.edge.map((e) => Math.abs(e)), 1)
@@ -212,25 +258,39 @@ export function CommandScreen() {
         <section className="border-b-2 border-divider">
           <div className="px-10 pt-8 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain battle</div>
           <div className="grid grid-cols-1 items-stretch md:grid-cols-[1fr_auto_1fr]">
-            <div className="atmosphere-green relative flex flex-col justify-center overflow-hidden px-10 py-10 text-right">
-              <div className="relative font-display text-4xl font-bold uppercase text-text md:text-5xl">{p.captain.best.name}</div>
-              <div className="tabular relative mt-2 text-5xl font-bold text-pitch-green">
-                <MetricNumber value={p.captain.best.median} suffix=" xP" />
-              </div>
-              {(p.captain.best.floor !== null || p.captain.best.ceiling !== null) && (
-                <div className="tabular relative mt-1 text-xs text-text-faint">
-                  {p.captain.best.floor?.toFixed(1) ?? '—'}&ndash;{p.captain.best.ceiling?.toFixed(1) ?? '—'} range
+            <div className="atmosphere-green relative flex items-center justify-end gap-6 overflow-hidden px-10 py-10 text-right">
+              <div>
+                <div className="relative font-display text-4xl font-bold uppercase text-text md:text-5xl">{p.captain.best.name}</div>
+                <div className="tabular relative mt-2 text-5xl font-bold text-pitch-green">
+                  <MetricNumber value={p.captain.best.median} suffix=" xP" />
                 </div>
-              )}
+                {(p.captain.best.floor !== null || p.captain.best.ceiling !== null) && (
+                  <div className="tabular relative mt-1 text-xs text-text-faint">
+                    {p.captain.best.floor?.toFixed(1) ?? '—'}&ndash;{p.captain.best.ceiling?.toFixed(1) ?? '—'} range
+                  </div>
+                )}
+              </div>
+              {(() => {
+                const shirt = p.captain!.best.team_code !== null ? shirtUrl(p.captain!.best.team_code, p.captain!.best.position === 'GKP', 220) : null
+                return shirt ? (
+                  <img src={shirt} alt="" className="relative h-32 w-32 shrink-0 object-contain drop-shadow-[0_16px_24px_rgba(0,0,0,0.6)] md:h-40 md:w-40" />
+                ) : null
+              })()}
             </div>
             <div className="flex items-center justify-center px-6 py-6">
               <div className="flex size-16 items-center justify-center rounded-full border-2 border-broadcast-gold bg-void font-display text-lg font-bold text-broadcast-gold shadow-[0_8px_24px_-8px_rgba(240,169,62,0.5)]">
                 VS
               </div>
             </div>
-            <div className="flex flex-col justify-center px-10 py-10">
+            <div className="flex items-center justify-start gap-6 px-10 py-10">
+              {p.captain.second && (() => {
+                const shirt = p.captain!.second!.team_code !== null ? shirtUrl(p.captain!.second!.team_code, p.captain!.second!.position === 'GKP', 180) : null
+                return shirt ? (
+                  <img src={shirt} alt="" className="h-24 w-24 shrink-0 object-contain opacity-80 drop-shadow-[0_12px_18px_rgba(0,0,0,0.55)] md:h-28 md:w-28" />
+                ) : null
+              })()}
               {p.captain.second ? (
-                <>
+                <div>
                   <div className="font-display text-2xl font-bold uppercase text-text-muted md:text-3xl">{p.captain.second.name}</div>
                   <div className="tabular mt-2 text-3xl font-bold text-text-muted">{p.captain.second.median.toFixed(1)} xP</div>
                   {(p.captain.second.floor !== null || p.captain.second.ceiling !== null) && (
@@ -238,7 +298,7 @@ export function CommandScreen() {
                       {p.captain.second.floor?.toFixed(1) ?? '—'}&ndash;{p.captain.second.ceiling?.toFixed(1) ?? '—'} range
                     </div>
                   )}
-                </>
+                </div>
               ) : (
                 <div className="text-sm text-text-faint">No genuine second option this week.</div>
               )}
@@ -298,14 +358,23 @@ export function CommandScreen() {
         <section className="border-b-2 border-divider py-10">
           <div className="px-10 mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Football context</div>
           <div className="flex gap-px overflow-x-auto bg-divider px-px">
-            {p.football_context.map((f, i) => (
-              <div key={i} className="min-w-[280px] flex-1 bg-void px-8 py-6">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">{f.category.replace(/_/g, ' ')}</div>
-                <div className="mt-1 font-display text-2xl font-bold text-text">{f.entity_name}</div>
-                <p className="mt-2 text-sm leading-relaxed text-text-muted">{f.evidence}</p>
-                {f.fpl_effect && <div className={`mt-3 text-sm font-bold ${DIRECTION_COLOR[f.direction] ?? 'text-text'}`}>{f.fpl_effect}</div>}
-              </div>
-            ))}
+            {p.football_context.map((f, i) =>
+              i === 0 ? (
+                <div key={i} className="atmosphere-gold relative min-w-[340px] overflow-hidden bg-void px-8 py-8">
+                  <div className="relative text-[10px] font-bold uppercase tracking-wide text-broadcast-gold">{f.category.replace(/_/g, ' ')}</div>
+                  <div className="relative mt-1 font-display text-4xl font-bold leading-[0.95] text-text">{f.entity_name}</div>
+                  <p className="relative mt-3 max-w-sm text-sm leading-relaxed text-text-muted">{f.evidence}</p>
+                  {f.fpl_effect && <div className={`relative mt-4 text-base font-bold ${DIRECTION_COLOR[f.direction] ?? 'text-text'}`}>{f.fpl_effect}</div>}
+                </div>
+              ) : (
+                <div key={i} className="min-w-[200px] max-w-[240px] shrink-0 bg-void px-6 py-6">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">{f.category.replace(/_/g, ' ')}</div>
+                  <div className="mt-1 font-display text-lg font-bold text-text">{f.entity_name}</div>
+                  <p className="mt-1.5 text-xs leading-relaxed text-text-muted">{f.evidence}</p>
+                  {f.fpl_effect && <div className={`mt-2 text-xs font-bold ${DIRECTION_COLOR[f.direction] ?? 'text-text'}`}>{f.fpl_effect}</div>}
+                </div>
+              ),
+            )}
           </div>
         </section>
       )}

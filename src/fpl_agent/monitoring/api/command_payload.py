@@ -12,20 +12,28 @@ from fpl_agent.monitoring.dashboard.home import _action_word
 from fpl_agent.optimization.captaincy import captain_edge_driver
 
 
-def _player_brief(option) -> dict:
+def _player_brief(option, team_codes: dict[int, int] | None = None) -> dict:
     """Minimal real player identity + the SAME real median/floor/ceiling
     `expected_points()` already computed for this candidate - never a second
-    projection."""
+    projection. `team_code`/`position` (2026-09-08 v3) are the same real
+    `CaptainOption.team_id`/`.position` fields, resolved through the SAME
+    `ctx.team_codes` map `myteam_payload.py` already uses - lets the client
+    render a real shirt/crest without cross-referencing a different payload
+    block that may not even contain this player (e.g. a captain option who
+    isn't part of the current recommended action's own resulting squad)."""
+    team_code = (team_codes or {}).get(getattr(option, "team_id", 0))
     return {
         "player_id": option.player_id,
         "name": option.web_name,
         "median": round(option.median, 2),
         "floor": round(option.floor, 2) if option.floor is not None else None,
         "ceiling": round(option.ceiling, 2) if option.ceiling is not None else None,
+        "team_code": team_code,
+        "position": getattr(option, "position", None),
     }
 
 
-def _captain_block(ca) -> dict | None:
+def _captain_block(ca, team_codes: dict[int, int] | None = None) -> dict | None:
     if ca is None or not ca.options:
         return None
     best = ca.options[0].option
@@ -36,8 +44,8 @@ def _captain_block(ca) -> dict | None:
         "verdict": verdict,
         "verdict_name": verdict_name,
         "robustness": ca.robustness,
-        "best": _player_brief(best),
-        "second": _player_brief(second) if second is not None else None,
+        "best": _player_brief(best, team_codes),
+        "second": _player_brief(second, team_codes) if second is not None else None,
         "edge": round(best.median - second.median, 2) if second is not None else None,
         "edge_driver": None,
     }
@@ -266,7 +274,7 @@ def build_command_payload(ctx: DashboardContext) -> dict:
         "contribution": _contribution_block(auth, ctx.ca),
         "trajectory": _trajectory_block(auth, ctx.ca, ctx.gw_label),
         "why": why,
-        "captain": _captain_block(ctx.ca),
+        "captain": _captain_block(ctx.ca, ctx.team_codes),
         "cross_check": None if ctx.cross_check is None else {
             "status": getattr(ctx.cross_check, "status", None),
             "why": getattr(ctx.cross_check, "why", None),

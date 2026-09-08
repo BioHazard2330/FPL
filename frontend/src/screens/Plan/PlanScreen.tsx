@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Chart from 'react-apexcharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Masthead } from '@/components/shell/Masthead'
-import { fetchPlanPayload } from '@/lib/api'
+import { fetchPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import type { PlanPath } from '@/lib/types'
 
@@ -12,36 +12,80 @@ const TIE_COLOR: Record<string, string> = {
   NEAR_TIE: 'text-alert-red',
 }
 
+/** Real strategy-rail connector: a filled arrowhead, not a bare rule line -
+ * spec's "transfer arrows should actually behave like transfer arrows." */
+function RailArrow() {
+  return (
+    <div className="my-auto flex w-8 shrink-0 items-center">
+      <div className="h-[2px] flex-1 bg-divider" />
+      <svg width="9" height="10" viewBox="0 0 9 10" className="shrink-0 fill-divider">
+        <path d="M0 0 L9 5 L0 10 Z" />
+      </svg>
+    </div>
+  )
+}
+
 function StepRail({ path }: { path: PlanPath }) {
   return (
     <div className="flex items-stretch gap-0 overflow-x-auto pb-2">
-      {path.steps.map((s, i) => (
-        <div key={i} className="flex items-stretch">
-          <div
-            className={`flex min-w-[150px] flex-col gap-1 px-5 py-4 ${
-              s.is_locked
-                ? 'border-t-2 border-white/40 bg-pitch-green text-pitch-green-ink shadow-[0_16px_28px_-12px_rgba(31,206,107,0.55)]'
-                : 'border-2 border-dashed border-divider bg-panel text-text'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">
-              GW{s.event}{s.is_locked ? ' · now' : ''}
-            </span>
-            <span className="font-display text-lg font-bold leading-tight">{s.chip_played ?? s.action}</span>
-            {s.gw_ev !== null && (
-              <span className="tabular text-xs font-semibold opacity-90">
-                {s.gw_ev >= 0 ? '+' : ''}
-                {s.gw_ev.toFixed(1)} pts
+      {path.steps.map((s, i) => {
+        // Real visual weight split: a chip leg is a strategic event (gold),
+        // a plain transfer/roll leg is routine (blue accent) - spec's
+        // "important points should have different visual weight."
+        const isChip = s.chip_played !== null
+        return (
+          <div key={i} className="flex items-stretch">
+            <div
+              className={`flex min-w-[150px] flex-col gap-1 px-5 py-4 ${
+                s.is_locked
+                  ? 'border-t-2 border-white/40 bg-pitch-green text-pitch-green-ink shadow-[0_16px_28px_-12px_rgba(31,206,107,0.55)]'
+                  : isChip
+                    ? 'border-2 border-dashed border-broadcast-gold/60 bg-panel text-text'
+                    : 'border-2 border-dashed border-divider bg-panel text-text-muted'
+              }`}
+            >
+              <span className={`text-[10px] font-bold uppercase tracking-wide ${s.is_locked ? 'opacity-80' : isChip ? 'text-broadcast-gold' : 'opacity-70'}`}>
+                GW{s.event}{s.is_locked ? ' · now' : ''}
               </span>
-            )}
-            {s.uses_hit && <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">Takes a hit</span>}
+              <span className="font-display text-lg font-bold leading-tight">{s.chip_played ?? s.action}</span>
+              {/* real out->in shirt swap (art-direction pass v3, direct user
+                  follow-up: "more football" - a transfer leg used to be
+                  pure text) - only renders when the payload resolved real
+                  identity for both sides, never a placeholder shirt */}
+              {s.player_out && s.player_in && (
+                <div className="mt-1 flex items-center gap-1.5">
+                  {s.player_out.team_code !== null && (
+                    <img
+                      src={shirtUrl(s.player_out.team_code, s.player_out.position === 'GKP', 66) ?? undefined}
+                      alt=""
+                      className="h-6 w-6 object-contain opacity-50 grayscale"
+                    />
+                  )}
+                  <span className="text-xs opacity-70">&rarr;</span>
+                  {s.player_in.team_code !== null && (
+                    <img
+                      src={shirtUrl(s.player_in.team_code, s.player_in.position === 'GKP', 66) ?? undefined}
+                      alt=""
+                      className="h-6 w-6 object-contain"
+                    />
+                  )}
+                </div>
+              )}
+              {s.gw_ev !== null && (
+                <span className="tabular text-xs font-semibold opacity-90">
+                  {s.gw_ev >= 0 ? '+' : ''}
+                  {s.gw_ev.toFixed(1)} pts
+                </span>
+              )}
+              {s.uses_hit && <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">Takes a hit</span>}
+            </div>
+            {i < path.steps.length - 1 && <RailArrow />}
           </div>
-          {i < path.steps.length - 1 && <div className="my-auto h-px w-6 shrink-0 bg-divider" />}
-        </div>
-      ))}
+        )
+      })}
       {path.steps.length > 1 && (
         <>
-          <div className="my-auto h-px w-6 shrink-0 bg-divider" />
+          <RailArrow />
           <div className="flex min-w-[130px] flex-col justify-center px-4 py-4 text-[10px] font-bold uppercase tracking-wide text-text-faint">
             Re-evaluate — not locked in
           </div>
@@ -129,37 +173,38 @@ export function PlanScreen() {
         </div>
       )}
 
-      {/* PATH COMPARISON: real bar comparison, not a button grid */}
+      {/* PATH COMPARISON: real ranking, not a bar chart - the leader dominates typographically */}
       {p.paths && p.paths.length > 0 && (
         <div className="mt-10 border-t-2 border-divider px-10 pt-6">
           <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Path comparison</div>
-          <div className="space-y-1">
-            {p.paths.map((pp) => {
-              const maxScore = Math.max(...p.paths!.map((x) => x.score ?? 0), 1)
-              const pct = pp.score !== null ? Math.max(4, (pp.score / maxScore) * 100) : 4
-              const active = pp.idx === activePath
-              return (
-                <button
-                  key={pp.idx}
-                  onClick={() => setActivePath(pp.idx)}
-                  className="flex w-full items-center gap-4 py-2 text-left"
-                >
-                  <span className={`w-56 shrink-0 truncate text-sm font-semibold ${active ? 'text-text' : 'text-text-muted'}`}>
-                    {pp.idx}. {pp.descriptor}
-                  </span>
-                  <span className="relative h-6 flex-1 border border-divider bg-void">
+          <div className="divide-y divide-divider">
+            {p.paths
+              .slice()
+              .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
+              .map((pp, rank) => {
+                const active = pp.idx === activePath
+                const leading = rank === 0
+                return (
+                  <button
+                    key={pp.idx}
+                    onClick={() => setActivePath(pp.idx)}
+                    className={`flex w-full items-baseline gap-5 py-4 text-left transition-colors ${leading ? 'bg-panel px-4' : 'px-4 hover:bg-panel/40'}`}
+                  >
                     <span
-                      className={`absolute inset-y-0 left-0 transition-[width] duration-300 ${active ? 'bg-pitch-green' : 'bg-text-faint/50'}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </span>
-                  <span className={`tabular w-20 shrink-0 text-right text-sm font-bold ${active ? 'text-pitch-green' : 'text-text-muted'}`}>
-                    {pp.score?.toFixed(1) ?? '—'}
-                  </span>
-                  <span className="w-24 shrink-0 text-right text-[10px] uppercase tracking-wide text-text-faint">{pp.confidence}</span>
-                </button>
-              )
-            })}
+                      className={`font-display shrink-0 font-bold tabular ${leading ? 'text-5xl text-pitch-green' : 'text-2xl text-text-faint'}`}
+                    >
+                      {String(rank + 1).padStart(2, '0')}
+                    </span>
+                    <span className={`flex-1 truncate ${leading ? 'font-display text-2xl font-bold text-text' : 'text-sm font-semibold text-text-muted'} ${active && !leading ? 'text-text' : ''}`}>
+                      {pp.descriptor}
+                    </span>
+                    <span className={`tabular shrink-0 font-bold ${leading ? 'text-3xl text-pitch-green' : 'text-base text-text-muted'}`}>
+                      {pp.score?.toFixed(1) ?? '—'}
+                    </span>
+                    <span className="w-24 shrink-0 text-right text-[10px] uppercase tracking-wide text-text-faint">{pp.confidence}</span>
+                  </button>
+                )
+              })}
           </div>
         </div>
       )}

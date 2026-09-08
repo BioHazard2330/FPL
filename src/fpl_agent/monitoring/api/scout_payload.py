@@ -5,11 +5,17 @@ Swing/Role Change/Value/Trap - the same real candidate scans
 `monitoring/dashboard/opportunity.py` already runs, reshaped as JSON instead
 of HTML strings, never a second/different scan).
 
-Real, disclosed deferred scope: Transfer Momentum, Template Team, Price
-History, Statistics, and Expected Data panels are real and already computed
-by the old dashboard's `scout.py`, but converting each of their own HTML
-renderers to a structured JSON shape is real, comparable-sized follow-up
-work of its own - not attempted this pass.
+Real, disclosed deferred scope: Price History is real and already computed
+by the old dashboard's `scout.py`, but converting its own HTML renderer to a
+structured JSON shape is real, comparable-sized follow-up work of its own -
+not attempted this pass. Transfer Momentum, Template Team, and Expected Data
+(2026-09-08 v3, direct user follow-up: "more football") ARE now exposed -
+see `_momentum`/`_template_team_json`/`_expected_data_json`. Statistics
+(`legacy.py::_statistics_html`) was deliberately NOT ported - checked its
+real fields against the main Player Search table's own columns and found it
+squad-scoped/total-only, a strict subset already reachable there via the
+existing "My Squad" filter toggle; porting it would be pure duplication, not
+new value.
 
 **Cached from the start this time** (2026-09-08, Phase 9 - learned live from
 the football/advanced/command latency bugs found earlier this same phase):
@@ -266,6 +272,109 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
     }
 
 
+_TEMPLATE_POSITION_ORDER = ("GKP", "DEF", "MID", "FWD")
+
+
+def _template_team_json(conn, squad_ids: set[int]) -> dict:
+    """Real TEMPLATE TEAM panel, JSON-native (2026-09-08 v3, direct user
+    follow-up: "more football" - closes a gap this module's own docstring
+    used to disclose as deferred). Same real `get_template`/sampled-EO data
+    `template_team.py::render_template_team_html` already renders - a
+    per-position highest-owned pool (never a formation-constrained "best
+    XI" - this project has never computed one and presenting it here would
+    imply a selection this data doesn't support, same disclosed limit the
+    HTML version already carries), plus the same real overlap/differential
+    facts against the locked squad."""
+    from fpl_agent.models.effective_ownership import get_all_sample_eo
+    from fpl_agent.models.template import get_template
+    from fpl_agent.monitoring.dashboard.legacy import _bulk_player_lookup
+
+    template_players = get_template(conn)
+    if not template_players:
+        return {"positions": [], "overlap": None}
+
+    lookup = _bulk_player_lookup(conn, {tp.player_id for tp in template_players})
+    by_pos: dict[str, list] = {}
+    for tp in template_players:
+        by_pos.setdefault(tp.position, []).append({
+            "player_id": tp.player_id, "name": tp.web_name,
+            "team_code": lookup.get(tp.player_id, {}).get("team_code"),
+            "ownership_pct": round(tp.ownership_percent, 1),
+            "eo_percent": round(tp.effective_ownership_percent, 1) if tp.effective_ownership_percent is not None else None,
+            "eo_source": tp.eo_source,
+            "margin_of_error_pp": round(tp.margin_of_error_pp, 1) if tp.margin_of_error_pp is not None else None,
+            "is_mine": tp.player_id in squad_ids,
+        })
+    positions = [{"position": pos, "players": by_pos[pos]} for pos in _TEMPLATE_POSITION_ORDER if pos in by_pos]
+
+    overlap = None
+    if squad_ids:
+        template_ids = {tp.player_id for tp in template_players}
+        overlap_count = len(squad_ids & template_ids)
+        missing = [tp for tp in template_players if tp.player_id not in squad_ids]
+        missing.sort(key=lambda tp: -(tp.effective_ownership_percent if tp.effective_ownership_percent is not None else tp.ownership_percent))
+
+        rows = conn.execute(
+            "SELECT p.id, p.web_name, oh.selected_by_percent FROM players p "
+            "JOIN player_ownership_history oh ON oh.player_id = p.id AND oh.valid_until IS NULL "
+            "WHERE p.id IN ({})".format(",".join("?" * len(squad_ids))),
+            tuple(squad_ids),
+        ).fetchall()
+        eo_by_player = get_all_sample_eo(conn)
+        squad_owned = []
+        for r in rows:
+            eo = eo_by_player.get(r["id"])
+            ownership = eo.eo_percent if eo is not None else r["selected_by_percent"]
+            squad_owned.append((ownership, r["web_name"]))
+        squad_owned.sort()
+
+        overlap = {
+            "overlap_count": overlap_count,
+            "squad_size": len(squad_ids),
+            "differential_name": squad_owned[0][1] if squad_owned else None,
+            "differential_pct": round(squad_owned[0][0], 1) if squad_owned else None,
+            "missing_top3": [{"player_id": tp.player_id, "name": tp.web_name} for tp in missing[:3]],
+        }
+
+    return {"positions": positions, "overlap": overlap}
+
+
+def _expected_data_json(conn, squad_ids: set[int], limit: int = 15) -> list[dict]:
+    """Real league-wide xGI leaderboard WITH per-90 rates (2026-09-08 v3,
+    direct user follow-up: "more football" - the main Scout table only ever
+    shows raw-total xGI, which under-ranks a high-rate player who's played
+    fewer minutes; this is a real, non-redundant scouting signal - the same
+    real `player_match_stats_history` Understat data
+    `player_data.py::render_expected_data_html` already aggregates, reshaped
+    as JSON)."""
+    from fpl_agent.models.rules import current_season
+
+    season = current_season(conn)
+    if season is None:
+        return []
+    rows = conn.execute(
+        "SELECT h.player_id, p.web_name, t.short_name AS team_short, t.code AS team_code, "
+        "SUM(h.minutes) AS minutes, SUM(h.xg) AS xg, SUM(h.xa) AS xa "
+        "FROM player_match_stats_history h "
+        "JOIN players p ON p.id = h.player_id JOIN teams t ON t.id = p.team_id "
+        "WHERE h.season = ? AND p.removed = 0 "
+        "GROUP BY h.player_id HAVING SUM(h.minutes) > 0 "
+        "ORDER BY (SUM(h.xg) + SUM(h.xa)) DESC LIMIT ?",
+        (season, limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        p90 = 90 / r["minutes"]
+        xgi = r["xg"] + r["xa"]
+        out.append({
+            "player_id": r["player_id"], "name": r["web_name"], "team_short": r["team_short"],
+            "team_code": r["team_code"], "xg": round(r["xg"], 1), "xa": round(r["xa"], 1), "xgi": round(xgi, 1),
+            "xg_per90": round(r["xg"] * p90, 2), "xa_per90": round(r["xa"] * p90, 2), "xgi_per90": round(xgi * p90, 2),
+            "minutes": r["minutes"], "is_mine": r["player_id"] in squad_ids,
+        })
+    return out
+
+
 def _build_scout_payload_uncached(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
 
@@ -311,10 +420,15 @@ def _build_scout_payload_uncached(ctx: DashboardContext) -> dict:
 
         opportunities = _build_opportunities(conn, ctx)
         price_moves = _price_moves_block(conn, squad_ids)
+        template_team = _template_team_json(conn, squad_ids)
+        expected_data = _expected_data_json(conn, squad_ids)
     finally:
         conn.close()
 
-    return {"players": players, "opportunities": opportunities, "price_moves": price_moves}
+    return {
+        "players": players, "opportunities": opportunities, "price_moves": price_moves,
+        "template_team": template_team, "expected_data": expected_data,
+    }
 
 
 def _price_moves_block(conn, squad_ids: set[int]) -> dict:

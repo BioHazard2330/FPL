@@ -47,3 +47,30 @@ def test_command_payload_reads_the_same_real_squad_the_html_screen_shows(db_conn
     if ctx.ca is not None and ctx.ca.options:
         assert payload["captain"] is not None
         assert payload["captain"]["best"]["player_id"] == ctx.ca.options[0].option.player_id
+
+
+def test_command_payload_captain_carries_real_team_code_for_shirt_art(db_conn):
+    """Real regression (2026-09-08, art-direction pass v3, direct user
+    follow-up: "more football"). `CaptainBlock.best`/`.second` used to carry
+    no team identity at all, forcing the frontend to cross-reference a
+    DIFFERENT payload block (`action_squad`) that may not even contain the
+    captain option in question (e.g. a candidate who isn't part of the
+    currently-recommended action's own resulting squad - a real, confirmed
+    gap this fixes). `CaptainOption.team_id` (new field, `captaincy.py`) now
+    resolves through the SAME `ctx.team_codes` map `myteam_payload.py`
+    already uses - never a second, independently-derived team lookup."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    set_my_team_entry_id(db_conn, 7378572)
+    _seed_real_picks(db_conn, captain_id=30, vice_id=20)
+    db_conn.commit()
+
+    ctx = build_dashboard_context(db_conn)
+    payload = build_command_payload(ctx)
+    json.dumps(payload)
+
+    assert payload["captain"] is not None
+    best = payload["captain"]["best"]
+    real_team_id = next(o.option.team_id for o in ctx.ca.options if o.option.player_id == best["player_id"])
+    assert best["team_code"] == ctx.team_codes.get(real_team_id)
+    assert best["team_code"] is not None
+    assert best["position"] is not None

@@ -59,13 +59,23 @@ export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
   return getJson<LiveSnapshot>('/live_snapshot.json')
 }
 
+// Real, confirmed via direct fetch (2026-09-08, art-direction pass v3): this
+// CDN only serves three discrete shirt sizes - every other pixel value 404s
+// silently (img.complete=true, naturalWidth=0, no console error, no visible
+// broken-image icon since it's a transparent webp response). A real bug this
+// pass found live: the tier-size gallery work introduced arbitrary sizes
+// (92/116/148/etc) that all 404'd. Every caller now requests a real size and
+// this snaps it to the nearest one actually served.
+const SHIRT_SIZES = [66, 110, 220] as const
+
 /** Official FPL shirt CDN, keyed by team (never a per-player photo, so it can
  * never go stale after a transfer) - the exact same real asset
  * `legacy.py::_official_shirt_url` serves to the old dashboard. */
 export function shirtUrl(teamCode: number | null, isGkp: boolean, size = 110): string | null {
   if (teamCode === null) return null
   const suffix = isGkp ? '_1' : ''
-  return `https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_${teamCode}${suffix}-${size}.webp`
+  const real = SHIRT_SIZES.reduce((best, s) => (Math.abs(s - size) < Math.abs(best - size) ? s : best))
+  return `https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_${teamCode}${suffix}-${real}.webp`
 }
 
 /** Same-origin cached crest, served directly from `data/crests/` by

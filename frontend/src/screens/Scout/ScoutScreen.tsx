@@ -4,7 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchScoutPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { OpportunityRow, ScoutPlayerRow } from '@/lib/types'
+import type { ExpectedDataRow, OpportunityRow, ScoutPlayerRow, TemplateTeamBlock } from '@/lib/types'
 
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const
 type SortKey = 'total_points' | 'price_m' | 'owned_pct' | 'form' | 'xgi'
@@ -17,34 +17,52 @@ const CONFIDENCE_COLOR: Record<string, string> = {
   HIGH: 'text-pitch-green', VERY_HIGH: 'text-pitch-green', MEDIUM: 'text-broadcast-gold', LOW: 'text-alert-red', VERY_LOW: 'text-alert-red',
 }
 
-function OpportunityRowView({ r }: { r: OpportunityRow }) {
+const OPP_KIND_ACCENT: Record<string, string> = {
+  Breakout: 'border-l-2 border-pitch-green',
+  Value: 'border-l-2 border-broadcast-blue',
+  Trap: 'border-l-2 border-alert-red bg-alert-red/[0.06]',
+  'Role change': 'border-l-2 border-broadcast-gold',
+}
+
+/** Real per-category market-board row (art-direction pass, 2026-09-08 v2) -
+ * Trap gets a warning wash (this is the one category where the real risk
+ * text matters more than the xP number), everything else keeps its own
+ * accent color so the four boards read as distinct market segments rather
+ * than one repeated row template. */
+function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
   const crest = crestUrl(r.team_code)
+  const isTrap = kind === 'Trap'
   return (
-    <div className="flex flex-wrap items-baseline gap-3 border-b-2 border-divider py-2.5 text-sm last:border-b-0">
+    <div className={`flex flex-wrap items-baseline gap-3 py-2.5 pl-3 text-sm ${OPP_KIND_ACCENT[kind] ?? 'border-l-2 border-divider'}`}>
       {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
       <span className="font-bold text-text">{r.name}</span>
       <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
       {r.price_m !== null && <span className="tabular text-text-muted">£{r.price_m.toFixed(1)}m</span>}
       {r.xp !== null && <span className="tabular font-semibold text-pitch-green">{r.xp.toFixed(1)} xP</span>}
-      <span className="text-text-muted">{r.why_now}</span>
-      {r.risk && <span className="italic text-broadcast-gold">{r.risk}</span>}
+      <span className={isTrap ? 'font-semibold text-text' : 'text-text-muted'}>{isTrap ? r.risk ?? r.why_now : r.why_now}</span>
+      {!isTrap && r.risk && <span className="italic text-broadcast-gold">{r.risk}</span>}
       <span className={`ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wide ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
     </div>
   )
 }
 
+/** Real "scouting workstation" identity block, not a stacked property list
+ * (art-direction pass, 2026-09-08 v2) - a large bleeding shirt behind the
+ * name, then a flat stat strip (Label/Data cells, DESIGN.md's own component)
+ * in place of the old divide-y rows. Same real fields throughout. */
 function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null; onClose: () => void }) {
-  const shirt = player ? shirtUrl(player.team_code, player.position === 'GKP', 220) : null
+  const shirt = player ? shirtUrl(player.team_code, player.position === 'GKP', 260) : null
   const crest = player ? crestUrl(player.team_code) : null
   const stats: { label: string; value: string | number | null }[] = player
     ? [
         { label: 'Total points', value: player.total_points },
         { label: 'Form', value: player.form },
         { label: 'xGI', value: player.xgi },
+        { label: 'Minutes', value: player.minutes },
         { label: 'Goals', value: player.goals },
         { label: 'Assists', value: player.assists },
-        { label: 'Minutes', value: player.minutes },
         { label: 'Bonus', value: player.bonus },
+        { label: 'Ownership', value: player.owned_pct !== null ? `${player.owned_pct.toFixed(1)}%` : null },
       ]
     : []
   return (
@@ -52,29 +70,27 @@ function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null;
       <SheetContent className="border-l-2 border-divider bg-void p-0 sm:max-w-md">
         {player && (
           <>
-            <SheetHeader className="border-b border-divider p-6">
-              <div className="flex items-center gap-4">
-                {shirt && <img src={shirt} alt="" className="h-16 w-16 object-contain" />}
-                <div>
-                  <SheetTitle className="font-display text-2xl font-bold text-text">{player.name}</SheetTitle>
-                  <div className="mt-1 flex items-center gap-1.5 text-sm text-text-muted">
-                    {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                    {player.team_short} &middot; {player.position} &middot; {player.price_m !== null ? `£${player.price_m.toFixed(1)}m` : '—'}
-                  </div>
-                </div>
-              </div>
-            </SheetHeader>
-            <div className="space-y-2 p-6 text-sm">
-              {player.owned_pct !== null && (
-                <div className="flex justify-between border-b border-divider pb-2">
-                  <span className="text-text-muted">Ownership</span>
-                  <span className="tabular font-bold text-text">{player.owned_pct.toFixed(1)}%</span>
-                </div>
+            <div className="atmosphere-blue relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
+              {shirt && (
+                <img
+                  src={shirt}
+                  alt=""
+                  className="pointer-events-none absolute -right-6 -top-4 h-40 w-40 object-contain opacity-90 drop-shadow-[0_16px_24px_rgba(0,0,0,0.6)]"
+                />
               )}
+              <SheetHeader className="relative p-0">
+                <SheetTitle className="max-w-[65%] font-display text-3xl font-bold leading-[0.95] text-text">{player.name}</SheetTitle>
+                <div className="mt-2 flex items-center gap-1.5 text-sm text-text-muted">
+                  {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
+                  {player.team_short} &middot; {player.position} &middot; {player.price_m !== null ? `£${player.price_m.toFixed(1)}m` : '—'}
+                </div>
+              </SheetHeader>
+            </div>
+            <div className="grid grid-cols-3 gap-px bg-divider">
               {stats.map((s) => (
-                <div key={s.label} className="flex justify-between border-b border-divider pb-2">
-                  <span className="text-text-muted">{s.label}</span>
-                  <span className="tabular font-bold text-text">{s.value ?? '—'}</span>
+                <div key={s.label} className="bg-panel px-3 py-3">
+                  <div className="text-[9px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
+                  <div className="tabular mt-0.5 text-lg font-bold text-text">{s.value ?? '—'}</div>
                 </div>
               ))}
             </div>
@@ -82,6 +98,120 @@ function PlayerDetailSheet({ player, onClose }: { player: ScoutPlayerRow | null;
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+/** Real TEMPLATE TEAM panel (art-direction pass v3, direct user follow-up:
+ * "more football" - closes a real, previously-disclosed gap). A per-
+ * position highest-owned pool as real shirts on a quiet turf strip, not a
+ * formation-constrained "best XI" (this project has never computed one -
+ * see the backend's own docstring for why presenting one would overstate
+ * what this data supports). Overlap/differential facts read straight off
+ * the real payload, never re-derived client-side. */
+function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
+  if (block.positions.length === 0) return null
+  return (
+    <div className="border-b-2 border-divider px-10 py-8">
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Template team</div>
+      <div className="mb-5 text-xs text-text-faint">Highest real-owned pool per position - not a formation, a market read.</div>
+      <div className="pitch-surface flex flex-col gap-6 px-6 py-8">
+        {block.positions.map((pos) => (
+          <div key={pos.position} className="flex flex-wrap items-start justify-center gap-6">
+            {pos.players.map((tp) => {
+              const shirt = shirtUrl(tp.team_code, pos.position === 'GKP')
+              const crest = crestUrl(tp.team_code)
+              return (
+                <div key={tp.player_id} className="relative flex w-24 flex-col items-center text-center">
+                  {tp.is_mine && (
+                    <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">M</span>
+                  )}
+                  <div className="relative h-14 w-14 drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]">
+                    {shirt ? <img src={shirt} alt="" className="h-14 w-14 object-contain" /> : <div className="h-14 w-14 bg-raised" />}
+                    {crest && <img src={crest} alt="" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void shadow-[0_0_0_2px_var(--void)]" />}
+                  </div>
+                  <div className="mt-1 w-full truncate text-xs font-bold text-text">{tp.name}</div>
+                  <div className="tabular text-sm font-bold text-pitch-green">
+                    {tp.eo_percent !== null ? `${tp.eo_percent.toFixed(1)}%` : `${tp.ownership_pct.toFixed(1)}%`}
+                  </div>
+                  {tp.margin_of_error_pp !== null && (
+                    <div className="text-[9px] text-text-faint">&plusmn;{tp.margin_of_error_pp.toFixed(1)}pp</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+      {block.overlap && (
+        <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+          <span className="text-text-muted">
+            <span className="tabular font-bold text-text">{block.overlap.overlap_count}/{block.overlap.squad_size}</span> of your squad in this pool
+          </span>
+          {block.overlap.differential_name && (
+            <span className="text-text-muted">
+              Biggest differential: <span className="font-bold text-broadcast-gold">{block.overlap.differential_name}</span>{' '}
+              <span className="tabular">({block.overlap.differential_pct?.toFixed(1)}% owned)</span>
+            </span>
+          )}
+          {block.overlap.missing_top3.length > 0 && (
+            <span className="text-text-muted">
+              You don't have: <span className="text-text">{block.overlap.missing_top3.map((m) => m.name).join(', ')}</span>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Real xGI-per-90 leaderboard (art-direction pass v3, direct user follow-up:
+ * "more football" - a genuinely non-redundant scouting signal the main
+ * table can't show: a high-RATE player under-ranked by raw totals because
+ * of fewer minutes played, real Understat data). */
+function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
+  if (rows.length === 0) return null
+  return (
+    <div className="border-b-2 border-divider px-10 py-8">
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Expected data</div>
+      <div className="mb-4 text-xs text-text-faint">Real current-season xG/xA, ranked by per-90 rate - not raw totals.</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
+              <th className="py-2 pr-4">Player</th>
+              <th className="tabular py-2 pr-4">xG</th>
+              <th className="tabular py-2 pr-4">xA</th>
+              <th className="tabular py-2 pr-4">xGI</th>
+              <th className="tabular py-2 pr-4 text-pitch-green">xG/90</th>
+              <th className="tabular py-2 pr-4 text-pitch-green">xA/90</th>
+              <th className="tabular py-2 pr-4 text-pitch-green">xGI/90</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const crest = crestUrl(r.team_code)
+              return (
+                <tr key={r.player_id} className={`border-b-2 border-divider ${r.is_mine ? 'bg-raised' : ''}`}>
+                  <td className="py-2 pr-4">
+                    <span className="flex items-center gap-2 font-bold text-text">
+                      {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
+                      {r.name}
+                      <span className="font-normal text-text-faint">{r.team_short}</span>
+                    </span>
+                  </td>
+                  <td className="tabular py-2 pr-4 text-text-muted">{r.xg.toFixed(1)}</td>
+                  <td className="tabular py-2 pr-4 text-text-muted">{r.xa.toFixed(1)}</td>
+                  <td className="tabular py-2 pr-4 font-semibold text-text">{r.xgi.toFixed(1)}</td>
+                  <td className="tabular py-2 pr-4 font-bold text-pitch-green">{r.xg_per90.toFixed(2)}</td>
+                  <td className="tabular py-2 pr-4 font-bold text-pitch-green">{r.xa_per90.toFixed(2)}</td>
+                  <td className="tabular py-2 pr-4 font-bold text-pitch-green">{r.xgi_per90.toFixed(2)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
@@ -157,7 +287,9 @@ export function ScoutScreen() {
           {oppCategories.map((c) => (
             <div key={c.label}>
               <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{c.label}</div>
-              {c.rows.map((r, i) => <OpportunityRowView key={i} r={r} />)}
+              <div className="divide-y divide-divider">
+                {c.rows.map((r, i) => <OpportunityRowView key={i} r={r} kind={c.label} />)}
+              </div>
             </div>
           ))}
           {opp.fixture_swing.length > 0 && (
@@ -212,6 +344,9 @@ export function ScoutScreen() {
           )}
         </div>
       )}
+
+      {state.status === 'ready' && <TemplateTeamBoard block={state.data.template_team} />}
+      {state.status === 'ready' && <ExpectedDataLeaderboard rows={state.data.expected_data} />}
 
       <div className="mt-4 flex flex-wrap items-center gap-3 px-10">
         <input
@@ -327,7 +462,7 @@ export function ScoutScreen() {
             {state.data.price_moves.forecast.length > 0 && (
               <div>
                 <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">Forecast (uncalibrated momentum heuristic)</div>
-                <div className="divide-y divide-divider border-2 border-divider bg-panel px-4 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.9)]">
+                <div className="divide-y divide-divider border-t-2 border-divider">
                   {state.data.price_moves.forecast.slice(0, 12).map((r) => {
                     const crest = crestUrl(r.team_code)
                     const rising = r.direction === 'RISE_LIKELY'
@@ -352,7 +487,7 @@ export function ScoutScreen() {
             {state.data.price_moves.ledger.length > 0 && (
               <div>
                 <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">Confirmed changes</div>
-                <div className="divide-y divide-divider border-2 border-divider bg-panel px-4 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.9)]">
+                <div className="divide-y divide-divider border-t-2 border-divider">
                   {state.data.price_moves.ledger.map((r) => {
                     const crest = crestUrl(r.team_code)
                     const up = r.new_price_m > r.old_price_m

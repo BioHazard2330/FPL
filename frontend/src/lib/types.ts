@@ -9,6 +9,8 @@ export interface PlayerBrief {
   median: number
   floor: number | null
   ceiling: number | null
+  team_code: number | null
+  position: string | null
 }
 
 export interface CaptainBlock {
@@ -135,6 +137,13 @@ export interface TrajectorySeries {
   events: { x: number; label: string }[]
 }
 
+export interface PlanTransferPlayer {
+  player_id: number
+  name: string
+  team_code: number | null
+  position: string | null
+}
+
 export interface PlanStep {
   event: number
   action: string
@@ -143,6 +152,8 @@ export interface PlanStep {
   gw_ev: number | null
   player_out_id: number | null
   player_in_id: number | null
+  player_out: PlanTransferPlayer | null
+  player_in: PlanTransferPlayer | null
   is_locked: boolean
 }
 
@@ -223,10 +234,39 @@ export interface TeamOddsRow {
   projected_goals: number
 }
 
+export interface ChangeFeedRow {
+  category: 'MANAGER' | 'XI' | 'AVAILABILITY'
+  event_type: string
+  entity_name: string
+  team_code: number | null
+  old_label: string | null
+  new_label: string | null
+  dot: 'good' | 'bad' | 'neutral'
+  is_mine: boolean
+  detected_at: string
+}
+
+export interface FixtureTickerEntry {
+  event: number
+  opponent_short: string
+  opponent_code: number | null
+  is_home: boolean
+  difficulty: number
+}
+
+export interface FixtureTickerRow {
+  team_id: number
+  team_code: number | null
+  team_short: string
+  fixtures: FixtureTickerEntry[]
+}
+
 export interface FootballPayload {
   signal_count: number
   squad_signal_count: number
   squad_changes: FootballSignal[]
+  change_feed: ChangeFeedRow[]
+  fixture_ticker: FixtureTickerRow[]
   categories: FootballCategory[]
   team_state: TeamStateRow[]
   team_odds: TeamOddsRow[]
@@ -320,10 +360,56 @@ export interface PriceMovesBlock {
   ledger: PriceLedgerRow[]
 }
 
+export interface TemplateTeamPlayer {
+  player_id: number
+  name: string
+  team_code: number | null
+  ownership_pct: number
+  eo_percent: number | null
+  eo_source: 'sampled' | 'raw'
+  margin_of_error_pp: number | null
+  is_mine: boolean
+}
+
+export interface TemplateTeamPosition {
+  position: string
+  players: TemplateTeamPlayer[]
+}
+
+export interface TemplateTeamOverlap {
+  overlap_count: number
+  squad_size: number
+  differential_name: string | null
+  differential_pct: number | null
+  missing_top3: { player_id: number; name: string }[]
+}
+
+export interface TemplateTeamBlock {
+  positions: TemplateTeamPosition[]
+  overlap: TemplateTeamOverlap | null
+}
+
+export interface ExpectedDataRow {
+  player_id: number
+  name: string
+  team_short: string
+  team_code: number | null
+  xg: number
+  xa: number
+  xgi: number
+  xg_per90: number
+  xa_per90: number
+  xgi_per90: number
+  minutes: number
+  is_mine: boolean
+}
+
 export interface ScoutPayload {
   players: ScoutPlayerRow[]
   opportunities: ScoutOpportunities
   price_moves: PriceMovesBlock
+  template_team: TemplateTeamBlock
+  expected_data: ExpectedDataRow[]
 }
 
 export interface BenchmarkDivergenceRow {

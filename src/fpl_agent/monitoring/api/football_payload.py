@@ -1,19 +1,18 @@
-"""FOOTBALL screen JSON payload (2026-09-08, Phase 8.3). Reads the same real
-`squad_football_signals`/`team_outlook`/`_team_recent_form` data `monitoring/
-dashboard/football.py` already renders as HTML.
+"""FOOTBALL screen JSON payload (2026-09-08, Phase 8.3, extended Phase 9 -
+art-direction pass v3). Reads the same real `squad_football_signals`/
+`team_outlook`/`_team_recent_form` data `monitoring/dashboard/football.py`
+already renders as HTML.
 
-Real, disclosed scope for this pass (matching this project's own "disclosed
-partial scope, never faked completeness" discipline): the signals feed and
-the team-state table are the two real, primary "football intelligence"
-surfaces and are fully covered here. `football.py`'s own MANAGER/XI/
-AVAILABILITY changes feed, FIXTURE TICKER, Fixture Projections, Team Odds,
-and MATCH EVIDENCE disclosures are NOT yet exposed as JSON - each is real,
-already-computed data, but converting their own HTML renderers
-(`legacy.py::_squad_changes_html`/`_fixture_projections_html`/`market.py::
-render_team_odds_html`/`fixtures.py::render_fixture_tool_html`/`_match_
-report_strip_html`) to structured payloads is real, scoped, comparable-sized
-follow-up work of its own - the old dashboard stays the complete real
-reference for these until then."""
+2026-09-08 v3 update (direct user follow-up: "more football" - closes the
+gap this module's own docstring used to disclose): `change_feed` and
+`fixture_ticker` are now real, structured JSON too - the same real
+`change_events` table `legacy.py::_squad_changes_html` reads and the same
+real `team_fixture_ticker`/FDR `fixtures.py::render_fixture_tool_html`
+reads, reshaped as clean JSON fields (never HTML strings - a JSON API must
+never leak an HTML entity like `&rarr;` into a field a React client renders
+as plain text). `_fixture_projections_html` (the full 20-team x 8-GW goals/
+CS% grid) and `_match_report_strip_html` stay real, disclosed, NOT-yet-
+exposed gaps - the old dashboard stays the complete reference for those."""
 import threading
 import time
 
@@ -29,6 +28,20 @@ _CATEGORY_LABEL = {
     "SET_PIECE_CHANGE": "Set pieces", "ROLE_CHANGE": "Role change", "TACTICAL_CHANGE": "Tactical",
     "SET_PIECES": "Set pieces", "GOAL_THREAT": "Goal threat", "CREATION": "Creation", "MINUTES": "Minutes",
 }
+
+# Real MANAGER (squad churn)/XI (predicted lineup)/AVAILABILITY (status)
+# event types - the same real set `legacy.py::_squad_changes_html` reads,
+# minus `kickoff_reminder` (that one's a fixture-timing nudge, not a squad
+# change - out of scope for a "what changed" feed) and `start_percent_change`
+# (a noisier, more frequent secondary signal `predicted_lineup_change`
+# already summarizes for FPL purposes).
+_FEED_EVENT_TYPES = ("new_player", "removed_player", "club_change", "status_change", "predicted_lineup_change")
+_FEED_CATEGORY = {
+    "new_player": "MANAGER", "removed_player": "MANAGER", "club_change": "MANAGER",
+    "status_change": "AVAILABILITY", "predicted_lineup_change": "XI",
+}
+_STATUS_LABELS = {"a": "available", "i": "injured", "s": "suspended", "u": "unavailable", "d": "doubtful"}
+_STATUS_RANK = {"a": 0, "d": 1, "i": 2, "s": 2, "u": 3}
 
 
 def _signal_json(s, crest_by_team: dict, team_by_player: dict, squad_ids: set[int]) -> dict:
@@ -88,6 +101,89 @@ def run_football_refresh_loop(ctx_factory, stop_event: threading.Event, interval
             logging.getLogger("fpl_agent.dashboard").exception(
                 "background football-payload refresh failed - keeping the previous cached result, next tick will retry"
             )
+
+
+def _change_event_json(conn, r, crest_by_team: dict, team_by_player: dict) -> dict:
+    """One real `change_events` row, JSON-native (2026-09-08 v3) - plain
+    entity_name/old_label/new_label/dot fields, not `_describe_change_event`'s
+    HTML-string sentence (that helper is correct for the old HTML dashboard,
+    wrong for a JSON API a React client renders as plain text)."""
+    event_type, entity_id, old_value, new_value = r["event_type"], r["entity_id"], r["old_value"], r["new_value"]
+    player = conn.execute("SELECT web_name FROM players WHERE id=?", (entity_id,)).fetchone()
+    name = player["web_name"] if player else f"Player #{entity_id}"
+    team_code = crest_by_team.get(team_by_player.get(entity_id))
+
+    old_label, new_label, dot = None, None, "neutral"
+    if event_type == "club_change":
+        old_team = conn.execute("SELECT short_name FROM teams WHERE id=?", (old_value,)).fetchone()
+        new_team = conn.execute("SELECT short_name FROM teams WHERE id=?", (new_value,)).fetchone()
+        old_label = old_team["short_name"] if old_team else None
+        new_label = new_team["short_name"] if new_team else None
+    elif event_type == "status_change":
+        old_label = _STATUS_LABELS.get(old_value, old_value)
+        new_label = _STATUS_LABELS.get(new_value, new_value)
+        old_r, new_r = _STATUS_RANK.get(old_value), _STATUS_RANK.get(new_value)
+        if old_r is not None and new_r is not None:
+            dot = "good" if new_r < old_r else ("bad" if new_r > old_r else "neutral")
+    elif event_type == "predicted_lineup_change":
+        old_label = old_value or "unknown"
+        new_label = new_value or "dropped from lineup coverage"
+
+    return {
+        "category": _FEED_CATEGORY.get(event_type, event_type.upper()),
+        "event_type": event_type,
+        "entity_name": name,
+        "team_code": team_code,
+        "old_label": old_label,
+        "new_label": new_label,
+        "dot": dot,
+        "detected_at": r["detected_at"],
+    }
+
+
+def _change_feed_json(conn, crest_by_team: dict, team_by_player: dict, squad_ids: set[int], limit: int = 20) -> list[dict]:
+    placeholders = ",".join("?" * len(_FEED_EVENT_TYPES))
+    rows = conn.execute(
+        f"SELECT event_type, entity_id, old_value, new_value, detected_at FROM change_events "
+        f"WHERE event_type IN ({placeholders}) ORDER BY detected_at DESC LIMIT ?",
+        (*_FEED_EVENT_TYPES, limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        item = _change_event_json(conn, r, crest_by_team, team_by_player)
+        item["is_mine"] = r["entity_id"] in squad_ids
+        out.append(item)
+    return out
+
+
+def _fixture_ticker_json(conn, team_rows, crest_by_team: dict, squad_team_ids: set[int], n_gw: int = 5) -> list[dict]:
+    """Real per-squad-team FDR ticker (2026-09-08 v3) - the same real
+    `team_fixture_ticker` FPL-style 1-5 difficulty scale
+    `fixtures.py::render_fixture_tool_html` already renders, scoped to the
+    user's own squad teams (a real, deliberate narrowing - the 20-team grid
+    is the disclosed still-missing `_fixture_projections_html` gap, not this
+    one; a squad-scoped ticker is what the FOOTBALL screen's own "affects
+    your squad" framing actually needs)."""
+    from fpl_agent.models.fixtures import team_fixture_ticker
+
+    rows = []
+    for t in team_rows:
+        if t["id"] not in squad_team_ids:
+            continue
+        entries = team_fixture_ticker(conn, t["id"], n_gw=n_gw)
+        rows.append({
+            "team_id": t["id"], "team_code": t["code"], "team_short": t["short_name"],
+            "fixtures": [
+                {
+                    "event": e.event, "opponent_short": e.opponent_short,
+                    "opponent_code": crest_by_team.get(e.opponent_team_id),
+                    "is_home": e.is_home, "difficulty": e.difficulty,
+                }
+                for e in entries
+            ],
+        })
+    rows.sort(key=lambda r: r["team_short"])
+    return rows
 
 
 def _build_football_payload_uncached(ctx: DashboardContext) -> dict:
@@ -174,6 +270,8 @@ def _build_football_payload_uncached(ctx: DashboardContext) -> dict:
             })
         team_state.sort(key=lambda t: not t["in_squad"])
         team_odds = _team_odds_rows(conn, team_rows)
+        change_feed = _change_feed_json(conn, crest_by_team, team_by_player, squad_ids)
+        fixture_ticker = _fixture_ticker_json(conn, team_rows, crest_by_team, squad_team_ids)
     finally:
         conn.close()
 
@@ -181,6 +279,8 @@ def _build_football_payload_uncached(ctx: DashboardContext) -> dict:
         "signal_count": len(signals),
         "squad_signal_count": len(squad_ids & {s.entity_id for s in signals}) if squad_ids else 0,
         "squad_changes": squad_change_signals,
+        "change_feed": change_feed,
+        "fixture_ticker": fixture_ticker,
         "categories": categories,
         "team_state": team_state,
         "team_odds": team_odds,

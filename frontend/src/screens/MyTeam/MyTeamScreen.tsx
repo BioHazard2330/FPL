@@ -22,16 +22,23 @@ const CONFIDENCE_COLOR: Record<string, string> = {
 }
 
 function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolean; onSelect: (p: SquadPlayer) => void }) {
-  const shirt = shirtUrl(p.team_code, p.position === 'GKP')
+  // Real size hierarchy on the pitch itself (art-direction pass, 2026-09-08 v2)
+  // - CORE reads as the tactical focal point, WEAK_LINK/MINUTES_RISK shrink,
+  // never a decorative choice, the same tier the dot already encodes.
+  const big = p.tier === 'CORE' && !dim
+  const small = (p.tier === 'WEAK_LINK' || p.tier === 'MINUTES_RISK') && !dim
+  const shirtPx = big ? 150 : small ? 76 : 110
+  const shirt = shirtUrl(p.team_code, p.position === 'GKP', shirtPx)
   const crest = crestUrl(p.team_code)
   const flagged = p.lineup && (p.lineup.state === 'OUT_UNAVAILABLE' || p.lineup.state === 'CONFIRMED_BENCHED')
+  const boxClass = big ? 'h-20 w-20' : small ? 'h-11 w-11' : 'h-14 w-14'
   return (
     <HoverCard>
       <HoverCardTrigger
         render={
           <button
             onClick={() => onSelect(p)}
-            className={`relative flex w-24 flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${dim ? 'opacity-60' : ''}`}
+            className={`relative flex flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${big ? 'w-28' : 'w-24'} ${dim ? 'opacity-60' : ''}`}
             title={p.lineup?.detail ?? undefined}
           >
             {p.tier && (
@@ -46,19 +53,19 @@ function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolea
                 {p.is_captain ? 'C' : 'V'}
               </span>
             )}
-            <div className="relative h-14 w-14 drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]">
+            <div className={`relative ${boxClass} drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}>
               {shirt ? (
-                <img src={shirt} alt={`${p.team_short} shirt`} loading="lazy" className="h-14 w-14 object-contain" />
+                <img src={shirt} alt={`${p.team_short} shirt`} loading="lazy" className={`${boxClass} object-contain`} />
               ) : (
-                <div className="h-14 w-14 bg-raised" />
+                <div className={`${boxClass} bg-raised`} />
               )}
               {crest && <img src={crest} alt="" loading="lazy" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void shadow-[0_0_0_2px_var(--void)]" />}
             </div>
-            <div className="mt-1 w-full truncate text-xs font-bold text-text">{p.name}</div>
+            <div className={`mt-1 w-full truncate font-bold text-text ${big ? 'text-sm' : 'text-xs'}`}>{p.name}</div>
             <div className="text-[10px] text-text-faint">
               {p.team_short} &middot; £{p.price_m.toFixed(1)}m
             </div>
-            <div className="tabular text-sm font-bold text-pitch-green">{p.median.toFixed(1)}</div>
+            <div className={`tabular font-bold text-pitch-green ${big ? 'text-base' : 'text-sm'}`}>{p.median.toFixed(1)}</div>
             {flagged && p.lineup && (
               <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[9px] font-bold uppercase text-alert-red-ink">{p.lineup.label}</span>
             )}
@@ -265,10 +272,10 @@ export function MyTeamScreen() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px]">
-        {/* MAIN: the pitch (dominant object) + bench */}
-        <div className="border-r-0 border-divider px-10 py-8 lg:border-r-2">
-          <div className="pitch-surface flex flex-col justify-between gap-6 px-6 py-10">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px]">
+        {/* MAIN: the pitch — dominant object, most of the visual field */}
+        <div className="border-r-0 border-divider px-8 py-8 lg:border-r-2">
+          <div className="pitch-surface flex flex-col justify-between gap-6 px-6 py-12">
             {p.positions?.map((pos) => (
               <div key={pos.position} className="relative flex flex-wrap justify-center gap-6">
                 {pos.players.map((pl) => (
@@ -278,20 +285,46 @@ export function MyTeamScreen() {
             ))}
           </div>
 
-          {p.bench && p.bench.length > 0 && (
-            <div className="mt-6 flex items-center gap-6 border-t-2 border-divider pt-5">
-              <div className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-faint [writing-mode:vertical-lr]">Bench</div>
-              <div className="flex flex-1 flex-wrap gap-6">
-                {p.bench.map((pl) => (
-                  <PlayerTile key={pl.player_id} p={pl} dim onSelect={setSelected} />
-                ))}
+          {/* BENCH / WEAK LINKS / RISKS - three real, differently-composed strips */}
+          <div className="mt-6 grid grid-cols-1 gap-0 divide-y-2 divide-divider border-t-2 border-divider md:grid-cols-3 md:divide-x-2 md:divide-y-0">
+            {p.bench && p.bench.length > 0 && (
+              <div className="px-1 py-5 md:px-6">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
+                <div className="mt-4 flex flex-wrap gap-x-5 gap-y-4 opacity-70">
+                  {p.bench.map((pl) => (
+                    <PlayerTile key={pl.player_id} p={pl} dim onSelect={setSelected} />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+            {p.weak_links && p.weak_links.length > 0 && (
+              <div className="px-1 py-5 md:px-6">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-alert-red">Transfer pressure</div>
+                <div className="mt-3 divide-y divide-divider">
+                  {p.weak_links.map((w) => (
+                    <div key={w.name} className="flex items-baseline justify-between py-2">
+                      <span className="text-sm font-semibold text-text">{w.name}</span>
+                      <span className="tabular text-lg font-bold text-alert-red">{w.median.toFixed(1)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {p.risks && p.risks.length > 0 && (
+              <div className="bg-raised/40 px-1 py-5 md:px-6">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-broadcast-gold">Squad risks</div>
+                <div className="mt-3 space-y-3">
+                  {p.risks.map((r, i) => (
+                    <p key={i} className="border-l-2 border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* RIGHT: squad signals - one composition, three sections, rule-line separated */}
-        <aside className="bg-panel px-8 py-8">
+        {/* RIGHT: tactical margin - quiet, rule-line only, never a filled panel competing with the pitch */}
+        <aside className="px-6 py-8">
           <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Squad signals</div>
 
           {p.strong_link && (
@@ -299,31 +332,6 @@ export function MyTeamScreen() {
               <div className="text-[10px] font-bold uppercase tracking-wide text-pitch-green">Carrying</div>
               <div className="mt-1 font-display text-xl font-bold text-text">{p.strong_link.name}</div>
               <div className="tabular text-sm text-pitch-green">{p.strong_link.median.toFixed(1)} xP &middot; {p.strong_link.team_short}</div>
-            </div>
-          )}
-
-          {p.weak_links && p.weak_links.length > 0 && (
-            <div className="mt-5 border-t-2 border-divider pt-4">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-alert-red">Weak links</div>
-              <div className="mt-2 divide-y divide-divider">
-                {p.weak_links.map((w) => (
-                  <div key={w.name} className="flex justify-between py-1.5 text-sm">
-                    <span className="text-text">{w.name} <span className="text-text-faint">{w.team_short}</span></span>
-                    <span className="tabular font-semibold text-alert-red">{w.median.toFixed(1)} xP</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {p.risks && p.risks.length > 0 && (
-            <div className="mt-5 border-t-2 border-divider pt-4">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-broadcast-gold">Rotation / news</div>
-              <div className="mt-2 space-y-2.5">
-                {p.risks.map((r, i) => (
-                  <p key={i} className="text-sm leading-relaxed text-text-muted">{r}</p>
-                ))}
-              </div>
             </div>
           )}
         </aside>

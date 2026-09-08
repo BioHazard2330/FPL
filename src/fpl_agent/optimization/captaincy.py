@@ -36,6 +36,12 @@ class CaptainOption:
     # breakdown. See `captain_edge_driver`'s own docstring for how this
     # becomes a real, evidence-grounded "why" rather than a bare number.
     components: "ComponentBreakdown | None" = None
+    # Real team identity (2026-09-08, art-direction pass v3) - lets a JSON
+    # payload consumer (the React COMMAND screen's captain battle) resolve a
+    # real shirt/crest without a fragile cross-reference into a differently-
+    # scoped payload block. Defaulted so every pre-existing test fixture
+    # that builds a CaptainOption without it keeps working unchanged.
+    team_id: int = 0
 
 
 def _next_opponent(conn: sqlite3.Connection, team_id: int, event: int | None = None) -> tuple[str | None, bool | None]:
@@ -89,6 +95,7 @@ def evaluate_captaincy(conn: sqlite3.Connection, squad_ids: list[int], event: in
         options.append(
             CaptainOption(
                 player_id=player_id, web_name=player["web_name"], position=ep.position,
+                team_id=player["team_id"],
                 floor=ep.floor, median=ep.median, ceiling=ep.ceiling, confidence=ep.confidence,
                 expected_minutes=ep.expected_minutes,
                 is_penalty_taker=_is_penalty_taker(conn, player_id),

@@ -56,6 +56,24 @@ def test_captaincy_report_picks_best_by_median(db_conn, monkeypatch):
     assert report.second.player_id == 2  # second-highest median (5.0)
 
 
+def test_captaincy_report_options_carry_real_team_id(db_conn, monkeypatch):
+    """Real regression (2026-09-08, art-direction pass v3, direct user
+    follow-up: "more football") - `CaptainOption.team_id` is the same real
+    `players.team_id` column already queried for `_next_opponent`, now also
+    kept on the option itself so a JSON payload consumer can resolve a real
+    shirt/crest without a second query or a fragile cross-reference into a
+    different payload block."""
+    _seed(db_conn)
+    _patch(monkeypatch)
+
+    options = captaincy_mod.evaluate_captaincy(db_conn, [1, 2, 3])
+
+    by_id = {o.player_id: o for o in options}
+    assert by_id[1].team_id == 1
+    assert by_id[2].team_id == 1
+    assert by_id[3].team_id == 2
+
+
 def test_captaincy_report_safe_and_high_upside_can_differ_from_best(db_conn, monkeypatch):
     _seed(db_conn)
     _patch(monkeypatch)
