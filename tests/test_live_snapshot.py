@@ -173,6 +173,52 @@ def test_active_matches_block_reads_real_match_data_no_extra_network(db_conn):
     assert m["my_players"][0]["rating"] == 7.9
 
 
+def test_active_matches_block_win_probability_none_without_a_real_fitted_model(db_conn):
+    """`_seed_live_match` seeds no `match_results_history` at all, so the
+    real Dixon-Coles model genuinely can't fit - the field must come back
+    `None`, never a guessed 50/50, for a real live match with insufficient
+    league-wide history (true for every early-season match this session)."""
+    from fpl_agent.monitoring.live_snapshot import _active_matches_block
+
+    _seed_live_match(db_conn, 500, home_team_id=10, away_team_id=20)
+    active = _active_matches_block(db_conn, frozenset())
+    assert active[0]["win_probability"] is None
+
+
+def test_active_matches_block_win_probability_real_when_model_available(db_conn, monkeypatch):
+    from fpl_agent.monitoring.live_snapshot import _active_matches_block
+    import fpl_agent.models.expected_points as expected_points_mod
+    from fpl_agent.ingestion.market_identity import get_or_create_market_team
+    from fpl_agent.models.team_strength_dc import DixonColesModel, TeamStrength
+
+    _seed_live_match(db_conn, 500, home_team_id=10, away_team_id=20)
+    home_market = get_or_create_market_team(db_conn, "fpl", "Team10")
+    away_market = get_or_create_market_team(db_conn, "fpl", "Team20")
+    model = DixonColesModel(
+        teams={home_market: TeamStrength(home_market, 0.2, -0.1), away_market: TeamStrength(away_market, -0.1, 0.1)},
+        home_advantage=0.2, rho=0.0, reference_team_id=away_market,
+    )
+    monkeypatch.setattr(expected_points_mod, "_get_or_fit_dc_model", lambda conn, as_of_date: model)
+
+    active = _active_matches_block(db_conn, frozenset())
+    wp = active[0]["win_probability"]
+    assert wp is not None
+    # Real seeded state: 1-0 at minute 24 (see _seed_live_match) - the
+    # leading side must read as favoured, not a coin flip.
+    assert wp["home_win_pct"] > wp["away_win_pct"]
+    assert "basis" in wp
+
+
+def test_parse_live_minute_reads_real_fotmob_display_strings():
+    from fpl_agent.monitoring.live_snapshot import _parse_live_minute
+
+    assert _parse_live_minute("24'") == 24.0
+    assert _parse_live_minute("45+2'") == 47.0
+    assert _parse_live_minute("HT") == 45.0
+    assert _parse_live_minute(None) is None
+    assert _parse_live_minute("garbage") is None
+
+
 def test_active_matches_block_sorts_squad_matches_first(db_conn):
     from fpl_agent.monitoring.live_snapshot import _active_matches_block
 

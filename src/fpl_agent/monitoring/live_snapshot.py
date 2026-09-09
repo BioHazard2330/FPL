@@ -37,6 +37,7 @@ from pathlib import Path
 from fpl_agent.config import DATA_DIR
 from fpl_agent.database.decisions import latest_decision_of_type
 from fpl_agent.models.fixtures import live_or_reference_event
+from fpl_agent.models.match_intelligence import HALFTIME, LIVE
 from fpl_agent.optimization.locked_squad import get_locked_squad
 
 SNAPSHOT_PATH = DATA_DIR / "live_snapshot.json"
@@ -170,6 +171,52 @@ def _source_freshness_block(conn: sqlite3.Connection) -> list[dict]:
 _MAX_SHOTS_PER_MATCH = 40  # generous real cap - a real match rarely exceeds ~25-30 total shots
 
 
+def _parse_live_minute(raw: str | None) -> float | None:
+    """FotMob's own real display string ("17'", "45+2'", "HT") - the base
+    number only (added time folded in for the purpose of the win-
+    probability model's own time-remaining fraction, since the match clock
+    genuinely has run that long; never re-parsed anywhere the raw display
+    string itself is still shown to a user, per this project's own
+    `match_intelligence.py::Match.live_minute` docstring). Returns `None` for
+    a shape this hasn't confirmed (never guessed)."""
+    if not raw:
+        return None
+    if raw in ("HT", "Half Time"):
+        return 45.0
+    cleaned = raw.replace("'", "").replace("‎", "").strip()
+    parts = cleaned.split("+")
+    try:
+        return sum(float(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def _live_win_probability_block(conn: sqlite3.Connection, m: sqlite3.Row) -> dict | None:
+    """Real live win probability (`models/live_win_probability.py`) - only
+    for a match that's actually LIVE/HALFTIME with a real parseable minute;
+    a match this can't confidently place in time returns `None` rather than
+    a guessed 50/50."""
+    if m["status"] not in (LIVE, HALFTIME):
+        return None
+    minute = _parse_live_minute(m["live_minute"])
+    if minute is None or m["home_score"] is None or m["away_score"] is None:
+        return None
+    from datetime import date as date_cls
+
+    from fpl_agent.models.live_win_probability import remaining_win_probability
+
+    result = remaining_win_probability(
+        conn, m["home_team_id"], m["away_team_id"], m["home_score"], m["away_score"], minute,
+        date_cls.today().isoformat(),
+    )
+    if result is None:
+        return None
+    return {
+        "home_win_pct": result.home_win_pct, "draw_pct": result.draw_pct, "away_win_pct": result.away_win_pct,
+        "basis": result.basis,
+    }
+
+
 def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -> list[dict]:
     """Real LIVE/HALFTIME match data for the browser's fast poll channel
     (2026-08-29, "live command centre" pass - direct fix for the real,
@@ -279,6 +326,7 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
             "is_squad_match": is_squad_match,
             "team_stats": {"home": team_stats.get(m["home_team_id"]), "away": team_stats.get(m["away_team_id"])},
             "momentum": momentum, "shots": shots, "my_players": my_players,
+            "win_probability": _live_win_probability_block(conn, m),
             "retrieved_at": m["retrieved_at"],
         })
     out.sort(key=lambda x: not x["is_squad_match"])

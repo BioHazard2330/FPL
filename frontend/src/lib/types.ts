@@ -636,12 +636,20 @@ export interface LiveMatch {
   away_short: string
   home_score: number | null
   away_score: number | null
-  live_minute: number | null
+  /** FotMob's own real, already-complete display string ("17'", "HT",
+   * "45+2'") - stored and passed through raw (`match_intelligence.live_
+   * minute` is a TEXT column), never re-parsed into a bare number that a
+   * caller could mistakenly re-suffix with another apostrophe. */
+  live_minute: string | null
   is_squad_match: boolean
   team_stats: { home: LiveTeamMatchStats | null; away: LiveTeamMatchStats | null }
   momentum: LiveMomentumPoint[]
   shots: LiveShot[]
   my_players: LiveMatchPlayer[]
+  /** Real live win probability (`models/live_win_probability.py`) - `null`
+   * when the real Dixon-Coles model can't cover both clubs yet (true for
+   * most fixtures early in a season), never a guessed even split. */
+  win_probability: { home_win_pct: number; draw_pct: number; away_win_pct: number; basis: string } | null
   retrieved_at: string | null
 }
 

@@ -141,7 +141,12 @@ export function MatchCard({ m }: { m: LiveMatch }) {
           <div className="mt-1.5 flex items-center justify-center gap-1.5">
             <span className={`size-1.5 rounded-full ${m.status === 'LIVE' ? 'animate-pulse-live bg-alert-red' : 'bg-broadcast-gold'}`} />
             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-muted">
-              {m.status === 'HALFTIME' ? 'HT' : m.live_minute !== null ? `${m.live_minute}'` : m.status}
+              {/* FotMob's own display string is already complete ("17'",
+                  "HT", "45+2'") - a real, previously-dormant bug appended a
+                  second apostrophe on top of it (never caught live - this
+                  whole screen has been untestable without an actual live
+                  match). Rendered as-is now. */}
+              {m.live_minute ?? m.status}
             </span>
           </div>
         </div>
@@ -154,6 +159,25 @@ export function MatchCard({ m }: { m: LiveMatch }) {
       {m.is_squad_match && (
         <div className="bg-broadcast-gold px-6 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-broadcast-gold-ink">
           Your squad is in this match
+        </div>
+      )}
+
+      {m.win_probability && (
+        <div className="border-t-2 border-divider px-6 py-3" title={m.win_probability.basis}>
+          <div className="mb-1.5 flex items-baseline justify-between text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
+            <span>Win probability</span>
+            <span className="normal-case tracking-normal text-text-faint">real-time, not live-performance-adjusted</span>
+          </div>
+          <div className="flex h-3 w-full overflow-hidden">
+            <div className="bg-pitch-green" style={{ width: `${m.win_probability.home_win_pct}%` }} />
+            <div className="bg-text-faint" style={{ width: `${m.win_probability.draw_pct}%` }} />
+            <div className="bg-broadcast-blue" style={{ width: `${m.win_probability.away_win_pct}%` }} />
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] font-bold">
+            <span className="text-pitch-green">{m.win_probability.home_win_pct.toFixed(0)}%</span>
+            <span className="text-text-faint">{m.win_probability.draw_pct.toFixed(0)}% draw</span>
+            <span className="text-broadcast-blue">{m.win_probability.away_win_pct.toFixed(0)}%</span>
+          </div>
         </div>
       )}
 
