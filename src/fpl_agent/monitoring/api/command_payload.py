@@ -283,4 +283,34 @@ def build_command_payload(ctx: DashboardContext) -> dict:
         "monitor": _monitor_block(auth),
         "football_context": ctx.football_context,
         "action_squad": ctx.action_squad,
+        # Real upcoming FDR per club in the action squad (2026-09-09, "more
+        # football") - the XI graphic previously showed eleven projections
+        # with no opponent, venue or difficulty anywhere on it. Same
+        # `team_fixture_ticker` the FOOTBALL ticker uses.
+        "fixtures": _fixture_block(ctx),
     }
+
+
+def _fixture_block(ctx) -> dict:
+    """Read-only, HTTP-path only. Degrades to `{}` rather than taking the
+    whole decision payload down over fixture decoration."""
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code, squad_team_ids
+
+    squad = set(ctx.squad_ids or set())
+    action = ctx.action_squad or {}
+    for key in ("starting", "bench"):
+        for pl in action.get(key) or []:
+            pid = pl.get("player_id")
+            if pid is not None:
+                squad.add(pid)
+
+    conn = get_connection()
+    try:
+        return fixture_context_by_team_code(conn, squad_team_ids(conn, squad))
+    except Exception:
+        import logging
+        logging.getLogger("fpl_agent.dashboard").exception("fixture context build failed - omitting this cycle")
+        return {}
+    finally:
+        conn.close()

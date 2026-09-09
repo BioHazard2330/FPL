@@ -1,11 +1,15 @@
 import { useState } from 'react'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Link } from 'react-router-dom'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchMyTeamPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { SquadPlayer } from '@/lib/types'
+import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
+import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
+import { pressureInk, runPressure } from '@/lib/fdr'
+import { PitchMarkings } from '@/components/football/PitchMarkings'
+import type { FixtureContext, SquadPlayer } from '@/lib/types'
 
 const TIER_DOT: Record<string, string> = {
   CORE: 'bg-broadcast-gold',
@@ -21,7 +25,16 @@ const CONFIDENCE_COLOR: Record<string, string> = {
   HIGH: 'text-pitch-green', MEDIUM: 'text-broadcast-gold', LOW: 'text-alert-red', VERY_LOW: 'text-alert-red',
 }
 
-function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolean; onSelect: (p: SquadPlayer) => void }) {
+function PlayerTile({ p, dim = false, fixtures, onSelect }: {
+  p: SquadPlayer
+  dim?: boolean
+  fixtures?: FixtureContext
+  onSelect: (p: SquadPlayer) => void
+}) {
+  // Real next fixture for this player's own club. The pitch used to show
+  // eleven projections with no opponent anywhere on it - the first thing
+  // any FPL manager actually reads off a squad.
+  const run = p.team_code !== null ? fixtures?.[String(p.team_code)] : undefined
   // Real size hierarchy on the pitch itself (art-direction pass, 2026-09-08 v2)
   // - CORE reads as the tactical focal point, WEAK_LINK/MINUTES_RISK shrink,
   // never a decorative choice, the same tier the dot already encodes.
@@ -66,6 +79,7 @@ function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolea
               {p.team_short} &middot; £{p.price_m.toFixed(1)}m
             </div>
             <div className={`tabular font-bold text-pitch-green ${big ? 'text-base' : 'text-sm'}`}>{p.median.toFixed(1)}</div>
+            <NextFixture fixtures={run} className="mt-0.5" />
             {flagged && p.lineup && (
               <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[9px] font-bold uppercase text-alert-red-ink">{p.lineup.label}</span>
             )}
@@ -76,6 +90,7 @@ function PlayerTile({ p, dim = false, onSelect }: { p: SquadPlayer; dim?: boolea
         <div className="border-b-2 border-divider px-3 py-2">
           <div className="font-display text-sm font-bold text-text">{p.name}</div>
           <div className="text-[10px] text-text-faint">{p.team_short} &middot; {p.position}</div>
+          <FixtureRun fixtures={run} max={5} showEvent className="mt-1.5" />
         </div>
         <div className="grid grid-cols-3 gap-px bg-divider">
           <div className="bg-panel px-2 py-2 text-center">
@@ -180,6 +195,12 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
                     <span className="font-bold text-broadcast-gold">{player.is_captain ? 'Captain' : 'Vice-captain'}</span>
                   </div>
                 )}
+                <Link
+                  to={`/player/${player.player_id}`}
+                  className="mt-2 block bg-raised px-3 py-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-text hover:bg-divider"
+                >
+                  Open full player file
+                </Link>
               </div>
             </div>
           </>
@@ -187,6 +208,24 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
       </SheetContent>
     </Sheet>
   )
+}
+
+
+/** The real clubs this squad spans, each with its own upcoming run and that
+ * run's mean FDR. Built from the squad the payload already returned - never
+ * a second source, so a club can't appear here that isn't on the pitch. */
+function squadClubs(p: { positions?: { players: SquadPlayer[] }[]; bench?: SquadPlayer[]; fixtures?: FixtureContext }) {
+  const byCode = new Map<string, string>()
+  for (const pl of [...(p.positions?.flatMap((pos) => pos.players) ?? []), ...(p.bench ?? [])]) {
+    if (pl.team_code !== null) byCode.set(String(pl.team_code), pl.team_short)
+  }
+  return [...byCode.entries()]
+    .map(([code, short]) => {
+      const run = (p.fixtures?.[code] ?? []).slice(0, 5)
+      return { code, short, run, pressure: runPressure(run) }
+    })
+    .filter((c) => c.run.length > 0)
+    .sort((a, b) => (a.pressure ?? 99) - (b.pressure ?? 99))
 }
 
 export function MyTeamScreen() {
@@ -198,19 +237,40 @@ export function MyTeamScreen() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
   if (state.status === 'loading') {
+    // Shaped like the tactical board it precedes: fact column beside the
+    // star block, then the pitch with four occupied rows, then the rail.
     return (
-      <div className="space-y-3 p-10">
-        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading squad</div>
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-72 w-full" />
+      <div className="animate-pulse pb-16">
+        <SkelMasthead />
+        <div className="grid grid-cols-1 gap-8 border-b-2 border-divider px-10 py-8 lg:grid-cols-[auto_1fr]">
+          <div className="flex flex-col gap-3 lg:border-r-2 lg:border-divider lg:pr-10">
+            {[0, 1, 2, 3, 4].map((i) => <Skel key={i} className="h-6 w-40" />)}
+          </div>
+          <Skel className="h-32 w-64" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
+          <div className="space-y-6 px-10 py-8">
+            {[1, 4, 4, 2].map((count, row) => (
+              <div key={row} className="flex justify-center gap-4">
+                {Array.from({ length: count }, (_, i) => <Skel key={i} className="h-20 w-16" />)}
+              </div>
+            ))}
+          </div>
+          <div className="bg-panel px-7 py-10">
+            <Skel className="h-2 w-28" />
+            <SkelRail rows={8} className="mt-4" />
+          </div>
+        </div>
       </div>
     )
   }
   if (state.status === 'error') {
     return (
-      <div className="bg-alert-red p-6 font-semibold text-alert-red-ink">
-        Can't reach the backend ({state.error.message}).
-      </div>
+      <ScreenError
+        title="Squad unavailable"
+        description="The squad payload could not be fetched. Your real team is unaffected — this screen simply has nothing current to draw, and is not falling back to an older copy."
+        message={state.error.message}
+      />
     )
   }
 
@@ -225,7 +285,7 @@ export function MyTeamScreen() {
   const selected = selectedId !== null ? (allSquadPlayers.find((pl) => pl.player_id === selectedId) ?? null) : null
 
   return (
-    <div className="pb-16">
+    <div className="data-in pb-16">
       <Masthead edition="Squad Report" title={p.bar.pitch_heading ?? 'My Team'} />
 
       {/* HERO - one unified band, not two stacked sections: a compact facts
@@ -289,12 +349,19 @@ export function MyTeamScreen() {
           under a full-width pitch. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="border-r-0 border-divider px-8 py-10 lg:border-r-2">
-          <div className="pitch-surface flex flex-col justify-between gap-7 px-6 py-14">
+          <div className="pitch-surface relative flex flex-col justify-between gap-7 px-6 py-14">
+            <PitchMarkings />
             {p.positions?.map((pos) => (
-              <div key={pos.position} className="relative flex flex-wrap justify-center gap-6">
-                {pos.players.map((pl) => (
-                  <PlayerTile key={pl.player_id} p={pl} onSelect={(pl) => setSelectedId(pl.player_id)} />
-                ))}
+              <div key={pos.position} className="relative flex items-center gap-4">
+                <span className="w-9 shrink-0 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
+                  {pos.label}
+                </span>
+                <div className="flex flex-1 flex-wrap justify-center gap-6">
+                  {pos.players.map((pl) => (
+                    <PlayerTile key={pl.player_id} p={pl} fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
+                  ))}
+                </div>
+                <span className="w-9 shrink-0" />
               </div>
             ))}
           </div>
@@ -304,7 +371,7 @@ export function MyTeamScreen() {
               <div className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
               <div className="flex flex-1 flex-wrap gap-x-6 gap-y-4 opacity-70">
                 {p.bench.map((pl) => (
-                  <PlayerTile key={pl.player_id} p={pl} dim onSelect={(pl) => setSelectedId(pl.player_id)} />
+                  <PlayerTile key={pl.player_id} p={pl} dim fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
                 ))}
               </div>
             </div>
@@ -345,6 +412,31 @@ export function MyTeamScreen() {
               <div className="mt-3 space-y-3">
                 {p.risks.map((r, i) => (
                   <p key={i} className="border-l-2 border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* FIXTURE OUTLOOK - the squad's real clubs ranked by the mean FDR
+              of the same fixture cells drawn beside them. Arithmetic over
+              what is on screen, labelled as such, never a model output. The
+              question it answers - "whose run turns bad, and when" - is the
+              one a manager asks right after "who is in my team", and this
+              rail previously just ended in dead space. */}
+          {p.fixtures && Object.keys(p.fixtures).length > 0 && (
+            <div className="mt-6 border-t-2 border-divider pt-4">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-text-faint">Fixture outlook</div>
+              <div className="mt-0.5 text-[10px] text-text-faint">next 5 &middot; my clubs &middot; kindest run first</div>
+              <div className="mt-3 space-y-2.5">
+                {squadClubs(p).map((c) => (
+                  <div key={c.code} className="flex items-center gap-2">
+                    {crestUrl(Number(c.code)) && <img src={crestUrl(Number(c.code))!} alt="" className="h-4 w-4 shrink-0" />}
+                    <span className="w-10 shrink-0 text-[11px] font-bold text-text">{c.short}</span>
+                    <FixtureRun fixtures={c.run} max={5} />
+                    <span className={`tabular ml-auto shrink-0 text-sm font-bold ${pressureInk(c.pressure)}`}>
+                      {c.pressure?.toFixed(1) ?? '—'}
+                    </span>
+                  </div>
                 ))}
               </div>
             </div>

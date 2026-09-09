@@ -6,7 +6,8 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
-  AdvancedPayload, CommandPayload, FootballPayload, LiveSnapshot, MyTeamPayload, PlanPayload, ScoutPayload,
+  AdvancedPayload, ClubProfilePayload, CommandPayload, FootballPayload, LiveSnapshot, MatchweekPayload,
+  MatchReportPayload, MyTeamPayload, PlanPayload, PlayerProfilePayload, ScoutPayload,
 } from './types'
 
 export class ApiError extends Error {
@@ -40,6 +41,22 @@ export function fetchPlanPayload(): Promise<PlanPayload> {
 
 export function fetchFootballPayload(): Promise<FootballPayload> {
   return getJson<FootballPayload>('/api/football')
+}
+
+export function fetchMatchweekPayload(): Promise<MatchweekPayload> {
+  return getJson<MatchweekPayload>('/api/matchweek')
+}
+
+export function fetchClubProfile(teamId: number): Promise<ClubProfilePayload> {
+  return getJson<ClubProfilePayload>(`/api/club?id=${teamId}`)
+}
+
+export function fetchPlayerProfile(playerId: number): Promise<PlayerProfilePayload> {
+  return getJson<PlayerProfilePayload>(`/api/player?id=${playerId}`)
+}
+
+export function fetchMatchReport(matchId: number): Promise<MatchReportPayload> {
+  return getJson<MatchReportPayload>(`/api/match?id=${matchId}`)
 }
 
 export function fetchScoutPayload(): Promise<ScoutPayload> {

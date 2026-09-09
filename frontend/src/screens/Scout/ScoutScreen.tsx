@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchScoutPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { ExpectedDataRow, OpportunityRow, ScoutPlayerRow, TemplateTeamBlock } from '@/lib/types'
+import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
+import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
+import type { ExpectedDataRow, FixtureContext, OpportunityRow, ScoutPlayerRow, TemplateTeamBlock } from '@/lib/types'
 
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const
 type SortKey = 'total_points' | 'price_m' | 'owned_pct' | 'form' | 'xgi'
@@ -15,6 +17,8 @@ const PRICE_CEIL = 16.0
 const CONFIDENCE_COLOR: Record<string, string> = {
   HIGH: 'text-pitch-green', VERY_HIGH: 'text-pitch-green', MEDIUM: 'text-broadcast-gold', LOW: 'text-alert-red', VERY_LOW: 'text-alert-red',
 }
+
+const POSITION_ROW_LABEL: Record<string, string> = { GKP: 'GK', DEF: 'DEF', MID: 'MID', FWD: 'FWD' }
 
 const OPP_KIND_ACCENT: Record<string, string> = {
   Breakout: 'border-l-2 border-pitch-green',
@@ -51,7 +55,8 @@ function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
  * a row updates this panel in place, the table never gets obscured.
  * Same real fields as before, just never hidden behind an open/close
  * interaction. */
-function PlayerDetailPanel({ player }: { player: ScoutPlayerRow | null }) {
+function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null; fixtures?: FixtureContext }) {
+  const run = player?.team_code != null ? fixtures?.[String(player.team_code)] : undefined
   const shirt = player ? shirtUrl(player.team_code, player.position === 'GKP', 260) : null
   const crest = player ? crestUrl(player.team_code) : null
   const stats: { label: string; value: string | number | null }[] = player
@@ -88,6 +93,15 @@ function PlayerDetailPanel({ player }: { player: ScoutPlayerRow | null }) {
           {player.team_short} &middot; {player.position} &middot; {player.price_m !== null ? `£${player.price_m.toFixed(1)}m` : '—'}
         </div>
       </div>
+      {run && run.length > 0 && (
+        <div className="border-b-2 border-divider px-6 py-3">
+          <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Next five</div>
+          <div className="flex items-center justify-between gap-3">
+            <FixtureRun fixtures={run} max={5} showEvent />
+            <RunPressure fixtures={run} max={5} />
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-px bg-divider">
         {stats.map((s) => (
           <div key={s.label} className="bg-panel px-3 py-3">
@@ -115,7 +129,11 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
       <div className="mb-5 text-xs text-text-faint">Highest real-owned pool per position - not a formation, a market read.</div>
       <div className="pitch-surface flex flex-col gap-6 px-6 py-8">
         {block.positions.map((pos) => (
-          <div key={pos.position} className="flex flex-wrap items-start justify-center gap-6">
+          <div key={pos.position} className="relative flex items-start gap-4">
+            <span className="w-9 shrink-0 pt-4 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
+              {POSITION_ROW_LABEL[pos.position] ?? pos.position}
+            </span>
+            <div className="flex flex-1 flex-wrap items-start justify-center gap-6">
             {pos.players.map((tp) => {
               const shirt = shirtUrl(tp.team_code, pos.position === 'GKP')
               const crest = crestUrl(tp.team_code)
@@ -138,6 +156,7 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
                 </div>
               )
             })}
+            </div>
           </div>
         ))}
       </div>
@@ -194,7 +213,7 @@ function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
                   <td className="py-2 pr-4">
                     <span className="flex items-center gap-2 font-bold text-text">
                       {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                      {r.name}
+                      <Link to={`/player/${r.player_id}`} className="hover:text-pitch-green">{r.name}</Link>
                       <span className="font-normal text-text-faint">{r.team_short}</span>
                     </span>
                   </td>
@@ -242,19 +261,36 @@ export function ScoutScreen() {
   }, [rows, query, position, sortKey, maxPrice, mineOnly])
 
   if (state.status === 'loading') {
+    // Shaped like the workstation it precedes: header band, then the
+    // table beside its persistent detail panel.
     return (
-      <div className="space-y-3 p-10">
-        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading market data</div>
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-96 w-full" />
+      <div className="animate-pulse pb-16">
+        <SkelMasthead />
+        <div className="border-b-2 border-divider px-10 py-8">
+          <Skel className="h-2 w-32" />
+          <Skel className="mt-3 h-10 w-72" />
+        </div>
+        <div className="mt-6 flex gap-6 px-10">
+          <div className="min-w-0 flex-1">
+            <SkelTable rows={12} cols={8} />
+          </div>
+          <Skel className="h-[70vh] w-80 shrink-0" />
+        </div>
       </div>
     )
   }
   if (state.status === 'error') {
-    return <div className="bg-alert-red p-6 font-semibold text-alert-red-ink">Can't reach the backend ({state.error.message}).</div>
+    return (
+      <ScreenError
+        title="Scouting data unavailable"
+        description="The scout payload could not be fetched. No ownership, expected-output or differential data is being shown, and none is being estimated in its place."
+        message={state.error.message}
+      />
+    )
   }
 
   const opp = state.status === 'ready' ? state.data.opportunities : null
+  const fixtures = state.status === 'ready' ? state.data.fixtures : undefined
   const oppCategories: { label: string; rows: OpportunityRow[] }[] = opp
     ? [
         { label: 'Breakout', rows: opp.breakout },
@@ -265,7 +301,7 @@ export function ScoutScreen() {
     : []
 
   return (
-    <div className="pb-16">
+    <div className="data-in pb-16">
       <Masthead edition="Market Desk" title="Player Market" right={<>{filtered.length} of {rows.length} players</>} />
 
       {/* MARKET OVERVIEW - real category counts as boards, not prose */}
@@ -410,12 +446,13 @@ export function ScoutScreen() {
           drawer that slides over the table it came from. */}
       <div className="mt-6 flex gap-6 px-10">
         <div className="min-w-0 flex-1 overflow-x-auto">
-          <div className="max-h-[70vh] overflow-y-auto border-2 border-divider bg-panel px-4">
+          <div className="max-h-[70vh] overflow-y-auto border-t-2 border-divider">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-panel">
                 <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
                   <th className="py-2 pr-4">Player</th>
                   <th className="py-2 pr-4">Pos</th>
+                  <th className="py-2 pr-4">Next 3</th>
                   <th className="tabular py-2 pr-4">Price</th>
                   <th className="tabular py-2 pr-4">Owned</th>
                   <th className="tabular py-2 pr-4">Pts</th>
@@ -440,13 +477,22 @@ export function ScoutScreen() {
                       <td className={`py-2 pr-4 ${active ? 'border-l-2 border-pitch-green' : ''}`}>
                         <span className="flex items-center gap-2 font-bold text-text">
                           {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                          {r.name}
+                          <Link
+                            to={`/player/${r.player_id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="hover:text-pitch-green"
+                          >
+                            {r.name}
+                          </Link>
                           <span className="font-normal text-text-faint">{r.team_short}</span>
                           {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MINE</span>}
                         </span>
                       </td>
                       <td className="py-2 pr-4">
                         <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <FixtureRun fixtures={r.team_code !== null ? fixtures?.[String(r.team_code)] : undefined} max={3} />
                       </td>
                       <td className="tabular py-2 pr-4 text-text-muted">{r.price_m !== null ? `£${r.price_m.toFixed(1)}m` : '—'}</td>
                       <td className="tabular py-2 pr-4 text-text-muted">{r.owned_pct !== null ? `${r.owned_pct.toFixed(1)}%` : '—'}</td>
@@ -464,7 +510,7 @@ export function ScoutScreen() {
             </table>
           </div>
         </div>
-        <PlayerDetailPanel player={selected} />
+        <PlayerDetailPanel player={selected} fixtures={fixtures} />
       </div>
 
       {/* PRICE MOVES - real rise/fall forecast + confirmed change ledger */}

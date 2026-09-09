@@ -418,6 +418,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         {"event": lifecycle.event, "state": lifecycle.state} if lifecycle is not None
         else {"event": event, "state": None}
     )
+    gw_block.update(_deadline_block(conn))
 
     live_rank_decision = latest_decision_of_type(conn, "live_rank")
     rank_block = None
@@ -496,6 +497,58 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "cadence": _cadence_block(conn, rank_block["retrieved_at"] if rank_block else None),
         "charts": _charts_block(conn),
     }
+
+
+
+def _deadline_block(conn: sqlite3.Connection) -> dict:
+    """The next real FPL deadline, and the one just gone.
+
+    2026-09-09. FPL is a clock - deadline, lock, live, settle, repeat - and
+    until now no part of this app said what time it was. `events.
+    deadline_time` has always been synced and has never once been read by the
+    frontend, so the interface looked identical at 3am on a Tuesday and with
+    six matches live.
+
+    This rides the existing fast-poll channel deliberately: the browser
+    already reads `live_snapshot.json` every 10-15s for its chrome, so the
+    whole app gets a live clock for the cost of one indexed SELECT per poll,
+    with no new endpoint and no new fetch.
+
+    Two indexed reads over a ~38-row table, and the whole thing is wrapped:
+    this runs inside the real live-match poll cycle, and a clock is never
+    worth risking that cycle for. On any failure it returns empty and the UI
+    simply shows no countdown - honest, and non-fatal.
+
+    `deadline_time` is FPL's own UTC string, passed through verbatim. No
+    countdown is computed here on purpose: a value computed server-side is
+    stale the moment it is serialized, and the browser can tick a real
+    timestamp itself.
+    """
+    try:
+        nxt = conn.execute(
+            "SELECT id, name, deadline_time FROM events "
+            "WHERE finished = 0 AND deadline_time IS NOT NULL "
+            "ORDER BY deadline_time LIMIT 1"
+        ).fetchone()
+        prev = conn.execute(
+            "SELECT id, deadline_time FROM events "
+            "WHERE deadline_time IS NOT NULL AND deadline_time <= ? "
+            "ORDER BY deadline_time DESC LIMIT 1",
+            (datetime.now(timezone.utc).isoformat(),),
+        ).fetchone()
+        return {
+            "next_deadline_event": nxt["id"] if nxt else None,
+            "next_deadline_name": nxt["name"] if nxt else None,
+            "next_deadline_time": nxt["deadline_time"] if nxt else None,
+            "last_deadline_time": prev["deadline_time"] if prev else None,
+        }
+    except Exception:
+        import logging
+
+        logging.getLogger("fpl_agent.live").exception(
+            "deadline block build failed - omitting; the live poll continues unaffected"
+        )
+        return {}
 
 
 def _charts_block(conn: sqlite3.Connection) -> dict | None:

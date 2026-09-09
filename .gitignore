@@ -39,3 +39,10 @@ Thumbs.db
 # Dev-only Playwright visual-QA tooling (2026-09-03, Phase 7)
 node_modules/
 package-lock.json
+
+# Scratch / profiling artefacts (2026-09-09). These have been dodged by hand
+# on every commit for several sessions - a raw scraped page kept for a
+# one-off investigation, and timing dumps from cache-performance work.
+# Neither is source, neither should ever land in the repo.
+data/ffp_raw.html
+perf_*.txt

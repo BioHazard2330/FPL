@@ -26,6 +26,7 @@ visible slowdown."""
 import threading
 import time
 
+from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _CACHE_LOCK = threading.Lock()
@@ -422,12 +423,24 @@ def _build_scout_payload_uncached(ctx: DashboardContext) -> dict:
         price_moves = _price_moves_block(conn, squad_ids)
         template_team = _template_team_json(conn, squad_ids)
         expected_data = _expected_data_json(conn, squad_ids)
+        # Real league-wide upcoming FDR (2026-09-09, "more football") - one
+        # indexed ticker read per club, so a scouting row can say WHO a
+        # player actually plays next instead of a bare points column. Same
+        # `team_fixture_ticker` the FOOTBALL ticker and the squad pitch use.
+        try:
+            all_team_ids = {r["id"] for r in conn.execute("SELECT id FROM teams").fetchall()}
+            fixtures = fixture_context_by_team_code(conn, all_team_ids)
+        except Exception:
+            import logging
+            logging.getLogger("fpl_agent.dashboard").exception("fixture context build failed - omitting this cycle")
+            fixtures = {}
     finally:
         conn.close()
 
     return {
         "players": players, "opportunities": opportunities, "price_moves": price_moves,
         "template_team": template_team, "expected_data": expected_data,
+        "fixtures": fixtures,
     }
 
 

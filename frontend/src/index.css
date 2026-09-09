@@ -262,8 +262,87 @@ body,
   animation: pulse-live 1.6s ease-in-out infinite;
 }
 
+/* ===================================================================
+   MOTION SYSTEM (2026-09-09)
+   -------------------------------------------------------------------
+   Three motions, and only three. Every one of them marks a real event:
+   data arriving, a magnitude being drawn, or something genuinely live.
+   Nothing here loops for decoration, nothing floats, nothing glows.
+
+   The timing function is the same broadcast ease everywhere - a fast
+   start settling hard, the way a scoreboard graphic snaps into place -
+   so motion reads as one system rather than per-component taste.
+   =================================================================== */
+:root {
+  --ease-broadcast: cubic-bezier(0.16, 1, 0.3, 1);
+  --pitch-line: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+/* 1. DATA ARRIVAL. A screen's content replaces its skeleton exactly once,
+      when the real payload lands - so a mount animation here IS a
+      data-arrival animation, not a page-load flourish. Poll refreshes
+      update in place and never re-trigger this. */
+@keyframes data-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.data-in {
+  animation: data-in 320ms var(--ease-broadcast) both;
+}
+
+/* A band that arrives just after the one above it, so a long screen reads
+   top-down on arrival instead of appearing as one flat slab. Capped at six
+   steps - past that it stops reading as sequence and starts reading as lag. */
+.data-in-seq > * {
+  animation: data-in 320ms var(--ease-broadcast) both;
+}
+.data-in-seq > *:nth-child(1) { animation-delay: 0ms; }
+.data-in-seq > *:nth-child(2) { animation-delay: 45ms; }
+.data-in-seq > *:nth-child(3) { animation-delay: 90ms; }
+.data-in-seq > *:nth-child(4) { animation-delay: 135ms; }
+.data-in-seq > *:nth-child(5) { animation-delay: 180ms; }
+.data-in-seq > *:nth-child(n + 6) { animation-delay: 225ms; }
+
+/* 2. MAGNITUDE. Every comparison bar in this app encodes a real quantity
+      as a length. Drawing that length rather than pasting it makes the
+      quantity itself the thing that moves - the same reason a broadcast
+      stat bar wipes in. Scale, never width: no layout is recalculated. */
+@keyframes bar-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.bar-draw {
+  transform-origin: left center;
+  animation: bar-draw 620ms var(--ease-broadcast) both;
+}
+
+.bar-draw-right {
+  transform-origin: right center;
+  animation: bar-draw 620ms var(--ease-broadcast) both;
+}
+
+/* 3. LIVE. The one continuous animation in the system, and it is a signal:
+      it runs only where something is genuinely live right now. */
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse-live {
+  .animate-pulse-live,
+  .animate-pulse,
+  .data-in,
+  .data-in-seq > *,
+  .bar-draw,
+  .bar-draw-right {
     animation: none;
   }
 }

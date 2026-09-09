@@ -1,10 +1,11 @@
-import type { CSSProperties } from 'react'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchFootballPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { ScreenError } from '@/components/shell/ScreenStates'
 import { relativeTime } from '@/lib/time'
-import type { ChangeFeedRow, FixtureTickerRow, FootballSignal } from '@/lib/types'
+import { NextFixture } from '@/components/football/FixtureRun'
+import type { ChangeFeedRow, FixtureContext, FixtureTickerRow, FootballSignal, TeamStateRow } from '@/lib/types'
 
 // Real FPL 1-5 FDR scale (fixture_ticker's own `difficulty` field) - the
 // same broadcast-ticker color convention every FPL tool uses: 1-2 easy
@@ -14,30 +15,47 @@ const FDR_COLOR: Record<number, string> = {
   3: 'bg-raised text-text-muted', 4: 'bg-alert-red/70 text-alert-red-ink', 5: 'bg-alert-red text-alert-red-ink',
 }
 
-/** Real, squad-scoped FDR ticker (art-direction pass v3, direct user
- * follow-up: "more football" - the payload previously had no real fixture
- * data at all beyond next-GW Team Odds). One row per squad team, one flat
- * color cell per upcoming real fixture - broadcast fixture-ticker
- * convention, not a table. */
+/** Real, squad-scoped FDR ticker, promoted to the broadcast strip that
+ * opens the desk. One row per squad team, one flat colour cell per real
+ * upcoming fixture - fixture-ticker convention, never a table.
+ *
+ * Rows are ordered by schedule pressure: the mean of the REAL `difficulty`
+ * values already drawn in that row's own cells, nothing else. That is
+ * arithmetic over what the reader can see, not a new model output - the
+ * easiest run sits at the top because "who has the kind run" is the actual
+ * question a fixture ticker exists to answer, and an alphabetical/ID order
+ * buries it. Teams whose fixture list is empty keep their place rather than
+ * being scored against a fabricated average. */
 function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
   if (rows.length === 0) return null
+  const pressure = (r: FixtureTickerRow): number | null =>
+    r.fixtures.length === 0 ? null : r.fixtures.reduce((a, f) => a + f.difficulty, 0) / r.fixtures.length
+  const ordered = rows
+    .slice()
+    .sort((a, b) => (pressure(a) ?? 99) - (pressure(b) ?? 99))
+  const width = Math.max(...rows.map((r) => r.fixtures.length), 1)
+
   return (
-    <div className="border-b-2 border-divider px-10 py-6">
-      <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture ticker</div>
-      <div className="space-y-2">
-        {rows.map((r) => {
+    <div className="border-b-2 border-divider py-6">
+      <div className="mb-4 flex flex-wrap items-baseline gap-3 px-10">
+        <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture ticker</span>
+        <span className="text-[11px] text-text-faint">my clubs &middot; easiest run first &middot; next {width} gameweeks</span>
+      </div>
+      <div>
+        {ordered.map((r) => {
           const crest = crestUrl(r.team_code)
+          const p = pressure(r)
           return (
-            <div key={r.team_id} className="flex items-center gap-4">
-              <div className="flex w-24 shrink-0 items-center gap-2">
-                {crest && <img src={crest} alt="" className="h-5 w-5 rounded-full" />}
-                <span className="text-sm font-bold text-text">{r.team_short}</span>
+            <div key={r.team_id} className="flex items-stretch gap-4 border-t border-divider px-10 py-1.5 first:border-t-0">
+              <div className="flex w-28 shrink-0 items-center gap-2">
+                {crest && <img src={crest} alt="" className="h-6 w-6" />}
+                <span className="font-display text-base font-bold uppercase tracking-wide text-text">{r.team_short}</span>
               </div>
               <div className="flex gap-1.5">
                 {r.fixtures.map((f) => (
                   <div
                     key={f.event}
-                    className={`flex w-16 flex-col items-center justify-center gap-0.5 px-1 py-1.5 ${FDR_COLOR[f.difficulty] ?? 'bg-raised text-text-muted'}`}
+                    className={`flex w-[4.5rem] flex-col items-center justify-center gap-0.5 px-1 py-1.5 ${FDR_COLOR[f.difficulty] ?? 'bg-raised text-text-muted'}`}
                   >
                     <span className="text-[9px] font-bold uppercase opacity-80">GW{f.event}</span>
                     <span className="text-xs font-bold">
@@ -46,6 +64,18 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
                   </div>
                 ))}
               </div>
+              {p !== null && (
+                <div className="ml-auto flex shrink-0 items-baseline gap-2 self-center">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Avg FDR</span>
+                  <span
+                    className={`tabular font-display text-xl font-bold ${
+                      p <= 2.4 ? 'text-pitch-green' : p >= 3.6 ? 'text-alert-red' : 'text-text-muted'
+                    }`}
+                  >
+                    {p.toFixed(1)}
+                  </span>
+                </div>
+              )}
             </div>
           )
         })}
@@ -182,49 +212,143 @@ function SignalRow({ s }: { s: FootballSignal }) {
   )
 }
 
-/** Real heat-map cell background - color intensity scaled to the real xG/
- * xGA value already in the payload, never a new computation (Phase 9 v2
- * follow-up, `FPL_TEMPLATE_LINEAGE.md`'s own disclosed FOOTBALL item).
- * `good` means a higher raw value is the GOOD direction (attack xG); false
- * means higher is BAD (defence xGA) - the color hue flips accordingly. */
-function heatStyle(value: number | null, min: number, max: number, good: boolean): CSSProperties {
-  if (value === null || max === min) return {}
-  const t = Math.max(0, Math.min(1, (value - min) / (max - min)))
-  const color = good ? 'var(--pitch-green)' : 'var(--alert-red)'
-  return { backgroundColor: `color-mix(in srgb, ${color} ${Math.round(t * 35)}%, transparent)` }
+/** Real attack-vs-defence team grid, replacing a table sat inside a
+ * bordered card. Each club gets one row where xG and xGA are drawn as
+ * OPPOSED bars off a shared centre line, both scaled to the same real
+ * league-wide max - so "creates a lot but leaks a lot" is a shape you read
+ * at a glance rather than two numbers you have to compare by hand. A club
+ * with no real attack or defence row renders that side empty; nothing is
+ * substituted. Squad clubs are marked, never re-ordered away from the real
+ * ranking (which is by attack, the direction FPL points come from). */
+function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: FixtureContext }) {
+  const xgMax = Math.max(...rows.map((t) => t.attack?.xg ?? 0), 0.01)
+  const xgaMax = Math.max(...rows.map((t) => t.defence?.xga ?? 0), 0.01)
+  const ordered = rows.slice().sort((a, b) => (b.attack?.xg ?? -1) - (a.attack?.xg ?? -1))
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 border-b-2 border-divider px-10 pb-2">
+        <span className="w-40 shrink-0" />
+        <span className="w-20 shrink-0 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Next</span>
+        <span className="flex-1 text-right text-[9px] font-bold uppercase tracking-[0.16em] text-alert-red">xGA conceded</span>
+        <span className="w-px" />
+        <span className="flex-1 text-[9px] font-bold uppercase tracking-[0.16em] text-pitch-green">xG created</span>
+        <span className="hidden w-[26rem] shrink-0 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint xl:block">
+          Shape &amp; FPL implication
+        </span>
+      </div>
+      {ordered.map((t) => {
+        const crest = crestUrl(t.team_code)
+        const xg = t.attack?.xg ?? null
+        const xga = t.defence?.xga ?? null
+        return (
+          <div
+            key={t.team_id}
+            className={`flex items-center gap-4 border-b border-divider px-10 py-2 ${t.in_squad ? 'bg-panel' : ''}`}
+          >
+            <div className="flex w-40 shrink-0 items-center gap-2">
+              {crest && <img src={crest} alt="" className="h-5 w-5" />}
+              <Link
+                to={`/club/${t.team_id}`}
+                className="truncate font-display text-sm font-bold uppercase tracking-wide text-text hover:text-pitch-green"
+              >
+                {t.team_name}
+              </Link>
+              {t.in_squad && <span className="ml-auto bg-broadcast-gold px-1 py-0.5 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
+            </div>
+            {/* Who they actually play next, beside how good they are - the
+                two halves of the same football question. */}
+            <div className="w-20 shrink-0">
+              <NextFixture fixtures={fixtures?.[String(t.team_code)]} />
+            </div>
+
+            <div className="flex flex-1 items-center justify-end gap-2">
+              <span className="tabular text-xs text-text-muted">{xga !== null ? xga.toFixed(2) : '—'}</span>
+              <span className="h-3 flex-1 bg-void">
+                <span className="bar-draw-right ml-auto block h-full bg-alert-red" style={{ width: `${xga !== null ? (xga / xgaMax) * 100 : 0}%`, marginLeft: 'auto' }} />
+              </span>
+            </div>
+            <span className="w-px self-stretch bg-divider" />
+            <div className="flex flex-1 items-center gap-2">
+              <span className="h-3 flex-1 bg-void">
+                <span className="bar-draw block h-full bg-pitch-green" style={{ width: `${xg !== null ? (xg / xgMax) * 100 : 0}%` }} />
+              </span>
+              <span className="tabular text-xs text-text-muted">{xg !== null ? xg.toFixed(2) : '—'}</span>
+            </div>
+
+            <div className="hidden w-[26rem] shrink-0 text-[11px] leading-snug xl:block">
+              {(t.formation || t.tactical) && (
+                <span className="text-text-faint">{[t.formation, t.tactical].filter(Boolean).join(' · ')} </span>
+              )}
+              {t.fpl_implication && <span className="text-text-muted">{t.fpl_implication}</span>}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Skeleton shaped like the broadcast desk it precedes - headline count,
+ * fixture-ticker rows, then the featured/wire split - so the page does not
+ * visibly re-flow into a different layout once the real scan lands. The
+ * cold-cache warning stays: this payload is a genuine league-wide scan. */
+function FootballSkeleton() {
+  return (
+    <div className="animate-pulse pb-16">
+      <div className="border-b border-divider px-10 py-3"><div className="h-3 w-64 bg-raised" /></div>
+      <div className="px-10 pb-6 pt-7">
+        <div className="h-2 w-40 bg-raised" />
+        <div className="mt-2 h-9 w-56 bg-raised" />
+        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">
+          Loading football intelligence &mdash; a league-wide scan, can take up to 30s on a cold cache
+        </div>
+      </div>
+      <div className="border-y-2 border-divider py-6">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex items-center gap-4 border-t border-divider px-10 py-2 first:border-t-0">
+            <div className="h-6 w-28 shrink-0 bg-raised" />
+            <div className="flex gap-1.5">
+              {[0, 1, 2, 3, 4].map((j) => <div key={j} className="h-9 w-[4.5rem] bg-raised" />)}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-8 px-10 py-6 lg:grid-cols-[7fr_3fr]">
+        <div className="space-y-3">
+          <div className="h-24 w-full bg-raised" />
+          <div className="flex gap-4">
+            {[0, 1, 2].map((i) => <div key={i} className="h-24 flex-1 bg-raised" />)}
+          </div>
+        </div>
+        <div className="space-y-2">
+          {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-8 w-full bg-raised" />)}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function FootballScreen() {
   const state = useFetch(fetchFootballPayload, [], 60000)
 
-  if (state.status === 'loading') {
-    return (
-      <div className="space-y-3 p-10">
-        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">
-          Loading football intelligence &mdash; a league-wide scan, can take up to 30s on a cold cache
-        </div>
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    )
-  }
+  if (state.status === 'loading') return <FootballSkeleton />
   if (state.status === 'error') {
-    return <div className="bg-alert-red p-6 font-semibold text-alert-red-ink">Can't reach the backend ({state.error.message}).</div>
+    return (
+      <ScreenError
+        title="Football wire unavailable"
+        description="The league-wide intelligence scan could not be fetched. No fixture ticker, change wire or team state is being shown from cache — an empty desk here means unknown, not quiet."
+        message={state.error.message}
+      />
+    )
   }
 
   const p = state.data
-  const xgValues = p.team_state.map((t) => t.attack?.xg).filter((v): v is number => v !== null && v !== undefined)
-  const xgaValues = p.team_state.map((t) => t.defence?.xga).filter((v): v is number => v !== null && v !== undefined)
-  const xgMin = xgValues.length ? Math.min(...xgValues) : 0
-  const xgMax = xgValues.length ? Math.max(...xgValues) : 1
-  const xgaMin = xgaValues.length ? Math.min(...xgaValues) : 0
-  const xgaMax = xgaValues.length ? Math.max(...xgaValues) : 1
-
   const leftBoard = p.categories.filter((c) => LEFT_BOARD_CATEGORIES.includes(c.category))
   const rightBoard = p.categories.filter((c) => !LEFT_BOARD_CATEGORIES.includes(c.category))
 
   return (
-    <div className="pb-16">
+    <div className="data-in pb-16">
       <Masthead edition="Match Intelligence Wire" title="Football" />
 
       <div className="relative overflow-hidden px-10 pb-6 pt-7">
@@ -274,72 +398,36 @@ export function FootballScreen() {
         </div>
       )}
 
-      {/* TWO-COLUMN INTELLIGENCE BOARD - categories grouped, each visually distinct */}
-      <div className="mt-8 grid grid-cols-1 gap-px bg-divider lg:grid-cols-2">
-        <div className="bg-void px-10 py-6">
-          {leftBoard.map((c) => (
-            <div key={c.category} className="mb-8 last:mb-0">
-              <div className={`mb-2 flex items-center gap-2 border-l-4 pl-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
-                {c.label}
-                <span className="tabular text-text-faint">{c.count}</span>
+      {/* INTELLIGENCE BOARD - full-width editorial bands, category label in
+          a fixed left gutter, signals flowing in the content column. The
+          previous two equal side-by-side stacks were a card grid wearing a
+          different name: both columns had identical weight, so no category
+          could ever read as more important than another. Change-of-state
+          categories (set-piece/tactical) still render as timeline ticks
+          inside their band; trend categories render as prose rows. */}
+      <div className="mt-8">
+        {[...leftBoard, ...rightBoard].map((c) => (
+          <div key={c.category} className="grid grid-cols-1 gap-x-8 border-t-2 border-divider px-10 py-6 lg:grid-cols-[13rem_1fr]">
+            <div className="mb-3 lg:mb-0">
+              <div className={`border-l-4 pl-3 ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
+                <div className="font-display text-xl font-bold uppercase leading-tight tracking-wide text-text">{c.label}</div>
+                <div className="tabular mt-0.5 text-[11px] text-text-faint">{c.count} tracked</div>
               </div>
+            </div>
+            <div>
               {c.signals.slice(0, 6).map((s, i) => <SignalRow key={i} s={s} />)}
             </div>
-          ))}
-        </div>
-        <div className="bg-void px-10 py-6">
-          {rightBoard.map((c) => (
-            <div key={c.category} className="mb-8 last:mb-0">
-              <div className={`mb-2 flex items-center gap-2 border-l-4 pl-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
-                {c.label}
-                <span className="tabular text-text-faint">{c.count}</span>
-              </div>
-              {c.signals.slice(0, 6).map((s, i) => <SignalRow key={i} s={s} />)}
-            </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
 
       {p.team_state.length > 0 && (
-        <div className="mt-10 px-10">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</div>
-          <div className="overflow-x-auto border-2 border-divider bg-panel px-4">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
-                  <th className="py-2 pr-4">Team</th>
-                  <th className="py-2 pr-4">Attack</th>
-                  <th className="py-2 pr-4">Defence</th>
-                  <th className="py-2 pr-4">Tactical</th>
-                  <th className="py-2 pr-4">FPL implication</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.team_state.map((t) => {
-                  const crest = crestUrl(t.team_code)
-                  return (
-                    <tr key={t.team_id} className={`border-b-2 border-divider ${t.in_squad ? 'bg-raised' : ''}`}>
-                      <td className="py-2 pr-4 font-bold text-text">
-                        <span className="flex items-center gap-2">
-                          {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-                          {t.team_name.toUpperCase()}
-                          {t.in_squad && <span className="bg-broadcast-gold px-1 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MINE</span>}
-                        </span>
-                      </td>
-                      <td className="tabular py-2 pr-4 text-text" style={heatStyle(t.attack?.xg ?? null, xgMin, xgMax, true)}>
-                        {t.attack ? `${t.attack.xg?.toFixed(2)} xG${t.attack.shots !== null ? ` · ${t.attack.shots.toFixed(1)} shots` : ''}` : '—'}
-                      </td>
-                      <td className="tabular py-2 pr-4 text-text" style={heatStyle(t.defence?.xga ?? null, xgaMin, xgaMax, false)}>
-                        {t.defence ? `${t.defence.xga?.toFixed(2)} xGA${t.defence.conceded !== null ? ` · ${t.defence.conceded.toFixed(1)} conceded` : ''}` : '—'}
-                      </td>
-                      <td className="py-2 pr-4 text-text-muted">{[t.formation, t.tactical].filter(Boolean).join(' - ') || '—'}</td>
-                      <td className="py-2 pr-4 text-text-muted">{t.fpl_implication ?? '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+        <div className="mt-10 border-t-2 border-divider pt-8">
+          <div className="mb-3 flex flex-wrap items-baseline gap-3 px-10">
+            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</span>
+            <span className="text-[11px] text-text-faint">real rolling xG / xGA, opposed on one shared scale</span>
           </div>
+          <TeamStateGrid rows={p.team_state} fixtures={p.fixtures} />
         </div>
       )}
 
@@ -353,10 +441,12 @@ export function FootballScreen() {
               return (
                 <div key={t.team_id} className="flex items-center gap-3 py-2">
                   {crest && <img src={crest} alt="" className="h-5 w-5 shrink-0 rounded-full" />}
-                  <span className="w-12 shrink-0 font-bold text-text">{t.team_short}</span>
+                  <Link to={`/club/${t.team_id}`} className="w-12 shrink-0 font-bold text-text hover:text-pitch-green">
+                    {t.team_short}
+                  </Link>
                   <span className="w-24 shrink-0 text-[11px] text-text-faint">vs {t.opponent_short} {t.is_home ? '(H)' : '(A)'}</span>
                   <span className="relative h-4 flex-1 border border-divider bg-void">
-                    <span className="absolute inset-y-0 left-0 bg-pitch-green" style={{ width: `${t.clean_sheet_pct}%` }} />
+                    <span className="bar-draw absolute inset-y-0 left-0 bg-pitch-green" style={{ width: `${t.clean_sheet_pct}%` }} />
                   </span>
                   <span className="tabular w-12 shrink-0 text-right text-sm font-bold text-pitch-green">{t.clean_sheet_pct.toFixed(0)}%</span>
                   <span className="tabular w-14 shrink-0 text-right text-xs text-text-faint">{t.projected_goals.toFixed(1)} gf</span>

@@ -5,12 +5,13 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
-import { DESTINATIONS } from '@/lib/nav'
+import { DESTINATIONS, NAV_SECTIONS } from '@/lib/nav'
 import { useLiveMeta } from '@/lib/useLiveMeta'
 import { relativeTime } from '@/lib/time'
 
@@ -49,33 +50,40 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup className="px-0">
-          <SidebarGroupContent>
-            <SidebarMenu className="gap-0">
-              {DESTINATIONS.map((d) => {
-                const isActive = 'end' in d && d.end ? pathname === d.to : pathname.startsWith(d.to)
-                return (
-                  <SidebarMenuItem key={d.to}>
-                    <SidebarMenuButton
-                      tooltip={d.label}
-                      className={
-                        isActive
-                          ? 'rounded-none border-l-[3px] border-pitch-green bg-transparent pl-[13px] font-bold text-text hover:bg-raised/60 hover:text-text'
-                          : 'rounded-none border-l-[3px] border-transparent pl-[13px] text-text-muted hover:bg-raised/40 hover:text-text'
-                      }
-                      render={
-                        <NavLink to={d.to} end={'end' in d ? d.end : false}>
-                          <d.icon strokeWidth={2.25} className="size-4" />
-                          <span className="text-[13px] font-semibold uppercase tracking-wide">{d.label}</span>
-                        </NavLink>
-                      }
-                    />
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {NAV_SECTIONS.map((section) => (
+          <SidebarGroup key={section.label} className="px-0 py-1">
+            <SidebarGroupLabel className="px-4 text-[9px] font-bold uppercase tracking-[0.18em] text-text-faint">
+              {section.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0">
+                {section.routes.map((route) => {
+                  const d = DESTINATIONS.find((x) => x.to === route)
+                  if (!d) return null
+                  const isActive = 'end' in d && d.end ? pathname === d.to : pathname.startsWith(d.to)
+                  return (
+                    <SidebarMenuItem key={d.to}>
+                      <SidebarMenuButton
+                        tooltip={d.label}
+                        className={
+                          isActive
+                            ? 'rounded-none border-l-[3px] border-pitch-green bg-transparent pl-[13px] font-bold text-text hover:bg-raised/60 hover:text-text'
+                            : 'rounded-none border-l-[3px] border-transparent pl-[13px] text-text-muted hover:bg-raised/40 hover:text-text'
+                        }
+                        render={
+                          <NavLink to={d.to} end={'end' in d ? d.end : false}>
+                            <d.icon strokeWidth={2.25} className="size-4" />
+                            <span className="text-[13px] font-semibold uppercase tracking-wide">{d.label}</span>
+                          </NavLink>
+                        }
+                      />
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter className="border-t-2 border-divider">
         <div className="space-y-1 px-3 py-2.5">

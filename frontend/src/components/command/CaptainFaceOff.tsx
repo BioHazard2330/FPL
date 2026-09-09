@@ -1,13 +1,19 @@
 import { MetricNumber } from '@/components/shell/MetricNumber'
 import { shirtUrl } from '@/lib/api'
-import type { CaptainBlock } from '@/lib/types'
+import { NextFixture } from '@/components/football/FixtureRun'
+import type { CaptainBlock, FixtureContext } from '@/lib/types'
 
 /** THE CAPTAIN BATTLE as a true face-off, not two option cards - a real
  * central VS axis, real shirts, and a real bar-magnitude read under each
  * name keyed to the same median xP the numbers already show. Flat colour
  * fields (no `atmosphere-green` gradient wash, no drop-shadow glow on the
  * shirts) - the split itself, not a gradient, is what signals "versus." */
-export function CaptainFaceOff({ block }: { block: CaptainBlock }) {
+export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtures?: FixtureContext }) {
+  // Captaincy is a fixture decision before it is a projection decision -
+  // the face-off used to name two players and two numbers with no
+  // opponent anywhere in the graphic.
+  const bestRun = block.best.team_code !== null ? fixtures?.[String(block.best.team_code)] : undefined
+  const secondRun = block.second?.team_code != null ? fixtures?.[String(block.second.team_code)] : undefined
   const bestShirt = block.best.team_code !== null ? shirtUrl(block.best.team_code, block.best.position === 'GKP', 220) : null
   const secondShirt =
     block.second && block.second.team_code !== null ? shirtUrl(block.second.team_code, block.second.position === 'GKP', 180) : null
@@ -26,8 +32,11 @@ export function CaptainFaceOff({ block }: { block: CaptainBlock }) {
             <div className="tabular mt-1 text-4xl font-bold text-pitch-green">
               <MetricNumber value={block.best.median} suffix=" xP" />
             </div>
+            <div className="mt-1.5 flex justify-end">
+              <NextFixture fixtures={bestRun} />
+            </div>
             <div className="mt-2 h-2 w-full bg-panel">
-              <div className="ml-auto h-full bg-pitch-green" style={{ width: `${(block.best.median / max) * 100}%` }} />
+              <div className="bar-draw-right ml-auto h-full bg-pitch-green" style={{ width: `${(block.best.median / max) * 100}%` }} />
             </div>
             {(block.best.floor !== null || block.best.ceiling !== null) && (
               <div className="tabular mt-1 text-xs text-text-faint">
@@ -51,8 +60,11 @@ export function CaptainFaceOff({ block }: { block: CaptainBlock }) {
             <div className="min-w-0">
               <div className="truncate font-display text-2xl font-bold uppercase text-text-muted md:text-3xl">{block.second.name}</div>
               <div className="tabular mt-1 text-2xl font-bold text-text-muted">{block.second.median.toFixed(1)} xP</div>
+              <div className="mt-1.5">
+                <NextFixture fixtures={secondRun} />
+              </div>
               <div className="mt-2 h-2 w-full bg-panel">
-                <div className="h-full bg-text-faint/60" style={{ width: `${(block.second.median / max) * 100}%` }} />
+                <div className="bar-draw h-full bg-text-faint/60" style={{ width: `${(block.second.median / max) * 100}%` }} />
               </div>
               {(block.second.floor !== null || block.second.ceiling !== null) && (
                 <div className="tabular mt-1 text-xs text-text-faint">

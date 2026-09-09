@@ -3,13 +3,18 @@ Health (`monitoring/readiness.py::run_readiness_checks`, `monitoring/
 source_status.py::get_source_health`) - real, simple, already-structured
 dataclasses, a direct JSON shape with no HTML-parsing work needed.
 
-Real, disclosed deferred scope: Decision Detail, Chip Strategy, Player Odds,
-Model-vs-Market Divergence, Optimizer Delta, Independent Model Benchmark,
-Regret Analysis, and the raw News/Injuries/Points-Changes feeds
-(`legacy.py`'s own many `<details>` disclosures) are real and already
-computed, but each needs its own real JSON-shaping pass - comparable-sized
-follow-up work, not attempted this pass. The old dashboard's ADVANCED screen
-stays the complete real reference until then.
+Scope since (kept current deliberately - this docstring's earlier version
+listed blocks as "deferred" long after they had shipped, and a false
+deferred-scope note is the same doc-drift bug class this project has hit
+before): Chip Strategy, Model-vs-Market Divergence and the Independent Model
+Benchmark shipped in the full-redesign pass; the adversarial Decision Audit,
+squad Player Odds and post-match Points Revisions shipped 2026-09-09 (see the
+three `_*_block` builders below).
+
+Real, still-deferred scope: Optimizer Delta (the from-scratch squad rebuild
+comparison) and Regret Analysis, plus the raw News/Injuries feeds
+(`legacy.py`'s own `<details>` disclosures). Each needs its own JSON-shaping
+pass; the old dashboard's ADVANCED screen stays their reference view.
 
 **Real, found-live latency fix (Phase 9)**: `run_readiness_checks` itself
 runs a real, full `optimise_squad(conn, n_gw=1)` pass (its own "Squad
@@ -33,6 +38,9 @@ _cached_readiness: list | None = None
 _cached_sources: list | None = None
 _cached_benchmark: dict | None = None
 _cached_chips: list | None = None
+_cached_player_odds: list | None = None
+_cached_points_revisions: dict | None = None
+_cached_decision_audit: dict | None = None
 _cached_at: float = 0.0
 _TTL_SECONDS = 600.0
 
@@ -122,31 +130,177 @@ def _build_chip_strategy_block(conn, squad_ids: set[int]) -> list[dict]:
     return rows
 
 
-def _get_cached_readiness(conn, squad_ids: set[int] | None = None) -> tuple[list, list, dict | None, list]:
+def _player_odds_block(conn, squad_ids: set[int]) -> list[dict]:
+    """Real anytime-goalscorer odds for squad players, straight off
+    `player_odds_live` (`ingestion/player_odds_source.py::sync_player_odds`,
+    already wired into `run_scheduled` with its own per-fixture freshness
+    throttle) - the same real rows `legacy.py::_player_odds_html` renders
+    for the old dashboard, reshaped as JSON so the React ADVANCED screen no
+    longer has to send the reader back there.
+
+    `implied_probability_raw` is exactly that: the bookmaker's own overround
+    is NOT removed (a goalscorer market cannot be devigged the same simple
+    way a 2/3-outcome match-result market can - see that ingestion module's
+    own docstring). It must stay labelled raw in the UI, never presented as
+    a calibrated probability. Returns `[]` when no odds have been synced for
+    the squad's upcoming fixtures - never a fabricated market."""
+    if not squad_ids:
+        return []
+    placeholders = ",".join("?" * len(squad_ids))
+    # One row per player: `player_odds_live` keeps every real historical
+    # quote (a player has a row per fixture per sync), so an unqualified
+    # SELECT genuinely returns the same player several times at different
+    # prices - the old HTML panel did exactly that. Only the most recently
+    # retrieved quote is a live market price; the older ones are history.
+    rows = conn.execute(
+        f"SELECT po.player_id, po.player_name_raw, po.anytime_scorer_price, po.implied_probability_raw, "
+        f"po.retrieved_at, p.web_name, t.short_name AS team_short "
+        f"FROM player_odds_live po LEFT JOIN players p ON p.id = po.player_id "
+        f"LEFT JOIN teams t ON t.id = p.team_id "
+        f"WHERE po.id = (SELECT id FROM player_odds_live WHERE player_id = po.player_id "
+        f"ORDER BY retrieved_at DESC, id DESC LIMIT 1) "
+        f"AND po.player_id IN ({placeholders}) "
+        f"ORDER BY po.implied_probability_raw DESC LIMIT 15",
+        tuple(squad_ids),
+    ).fetchall()
+    return [
+        {
+            "player_id": r["player_id"],
+            "web_name": r["web_name"] or r["player_name_raw"],
+            "team_short": r["team_short"],
+            "anytime_scorer_price": r["anytime_scorer_price"],
+            "implied_probability_raw": r["implied_probability_raw"],
+            "retrieved_at": r["retrieved_at"],
+        }
+        for r in rows
+    ]
+
+
+def _points_revisions_block(conn, squad_ids: set[int]) -> dict | None:
+    """Real post-match Bonus/DefCon revisions for the latest FINISHED
+    gameweek, reusing `models/points_changes.py::detect_points_revisions`
+    directly - the same real snapshot diff the old dashboard's Points
+    Changes panel and the live snapshot's own counter already run, never a
+    second detection heuristic. `None` when no gameweek has finished yet
+    (never a fabricated zero-revision block for a GW that hasn't happened).
+    Squad players sort first, then by the size of the real points swing."""
+    from fpl_agent.models.points_changes import detect_points_revisions, is_gw_locked
+
+    row = conn.execute("SELECT id FROM events WHERE finished = 1 ORDER BY id DESC LIMIT 1").fetchone()
+    if row is None:
+        return None
+    event = row["id"]
+    revisions = detect_points_revisions(conn, event=event)
+    ordered = sorted(
+        revisions,
+        key=lambda x: (x.player_id not in squad_ids, -abs(x.new_points - x.old_points)),
+    )
+    return {
+        "event": event,
+        "locked": is_gw_locked(conn, event),
+        "total_revisions": len(revisions),
+        "squad_revisions": sum(1 for r in revisions if r.player_id in squad_ids),
+        "rows": [
+            {
+                "player_id": r.player_id, "web_name": r.web_name, "team_short": r.team_short,
+                "position": r.position, "category": r.category,
+                "old_value": r.old_value, "new_value": r.new_value,
+                "old_points": r.old_points, "new_points": r.new_points,
+                "detected_gap_hours": r.detected_gap_hours,
+                "is_mine": r.player_id in squad_ids,
+            }
+            for r in ordered[:20]
+        ],
+    }
+
+
+def _decision_audit_block(conn) -> dict | None:
+    """Real adversarial decision audit, READ (never recomputed) from the
+    already-cached `decision_type="decision_audit"` journal entry that
+    `fpl decision-audit` writes - the same real trace
+    `legacy.py::_decision_audit_html` renders. This is the single richest
+    "why should I trust this, and what would make it wrong" artefact this
+    project produces, and it had no home in the React app at all.
+
+    `None` when the command has never been run - the UI must then say so
+    and name the command, never imply an unaudited decision was audited.
+    `created_at` is carried through because this artefact is expensive and
+    manual: it can legitimately be days older than the decision it audits,
+    and any UI showing it has to disclose that age."""
+    from fpl_agent.database.decisions import latest_decision_of_type
+
+    audit = latest_decision_of_type(conn, "decision_audit")
+    if audit is None:
+        return None
+    d = audit.detail or {}
+    sc = d.get("scorecard") or {}
+    return {
+        "created_at": audit.created_at,
+        "summary": audit.summary,
+        "cross_check_note": d.get("cross_check_note"),
+        "scorecard": {
+            "final_decision": sc.get("final_decision"),
+            "confidence": sc.get("confidence"),
+            "decision_robustness": sc.get("decision_robustness"),
+            "data_quality": sc.get("data_quality"),
+            "market_evidence": sc.get("market_evidence"),
+            "why_trust": list(sc.get("why_trust") or []),
+            "why_might_not_trust": list(sc.get("why_might_not_trust") or []),
+        },
+        "falsifiers": [
+            {"description": f.get("description"), "threshold_note": f.get("threshold_note")}
+            for f in (d.get("falsifiers") or [])
+        ],
+        "stress_tests": [
+            {"note": t.get("note"), "decision_flips": bool(t.get("decision_flips"))}
+            for t in (d.get("stress_tests") or [])
+        ],
+        "causal_chain": [
+            {"label": c.get("label"), "detail": c.get("detail")} for c in (d.get("causal_chain") or [])
+        ],
+        "league_wide": d.get("league_wide") or None,
+    }
+
+
+def _build_block(name: str, fn, fallback):
+    """Every optional ADVANCED block is independently fallible (an optional
+    table that was never populated, a feed that has never been synced). One
+    failing block must never blank the whole screen - it degrades to its own
+    honest fallback and the exception is logged. Exactly the posture the
+    benchmark/chip blocks already had, factored out now that there are five
+    of them."""
+    try:
+        return fn()
+    except Exception:
+        import logging
+        logging.getLogger("fpl_agent.dashboard").exception("%s block build failed - omitting this cycle", name)
+        return fallback
+
+
+def _get_cached_readiness(
+    conn, squad_ids: set[int] | None = None
+) -> tuple[list, list, dict | None, list, list, dict | None, dict | None]:
     from fpl_agent.monitoring.readiness import run_readiness_checks
     from fpl_agent.monitoring.source_status import get_source_health
 
     global _cached_readiness, _cached_sources, _cached_benchmark, _cached_chips, _cached_at
+    global _cached_player_odds, _cached_points_revisions, _cached_decision_audit
     now = time.monotonic()
+    ids = squad_ids or set()
     with _CACHE_LOCK:
         if _cached_readiness is not None and (now - _cached_at) < _TTL_SECONDS:
-            return _cached_readiness, _cached_sources, _cached_benchmark, _cached_chips
+            return (_cached_readiness, _cached_sources, _cached_benchmark, _cached_chips,
+                    _cached_player_odds, _cached_points_revisions, _cached_decision_audit)
         _cached_readiness = run_readiness_checks(conn)
         _cached_sources = get_source_health(conn)
-        try:
-            _cached_benchmark = _build_benchmark_block(conn)
-        except Exception:
-            import logging
-            logging.getLogger("fpl_agent.dashboard").exception("benchmark block build failed - omitting this cycle")
-            _cached_benchmark = None
-        try:
-            _cached_chips = _build_chip_strategy_block(conn, squad_ids or set())
-        except Exception:
-            import logging
-            logging.getLogger("fpl_agent.dashboard").exception("chip strategy block build failed - omitting this cycle")
-            _cached_chips = []
+        _cached_benchmark = _build_block("benchmark", lambda: _build_benchmark_block(conn), None)
+        _cached_chips = _build_block("chip strategy", lambda: _build_chip_strategy_block(conn, ids), [])
+        _cached_player_odds = _build_block("player odds", lambda: _player_odds_block(conn, ids), [])
+        _cached_points_revisions = _build_block("points revisions", lambda: _points_revisions_block(conn, ids), None)
+        _cached_decision_audit = _build_block("decision audit", lambda: _decision_audit_block(conn), None)
         _cached_at = time.monotonic()
-        return _cached_readiness, _cached_sources, _cached_benchmark, _cached_chips
+        return (_cached_readiness, _cached_sources, _cached_benchmark, _cached_chips,
+                _cached_player_odds, _cached_points_revisions, _cached_decision_audit)
 
 
 def run_readiness_refresh_loop(conn_factory, stop_event: threading.Event, interval: float = 480.0) -> None:
@@ -239,7 +393,8 @@ def build_advanced_payload(ctx: DashboardContext) -> dict:
 
     conn = get_connection()
     try:
-        checks, sources, benchmark, chips = _get_cached_readiness(conn, ctx.squad_ids)
+        (checks, sources, benchmark, chips, player_odds, points_revisions,
+         decision_audit) = _get_cached_readiness(conn, ctx.squad_ids)
         pipeline = _pipeline_block(checks, conn)
     finally:
         conn.close()
@@ -264,6 +419,9 @@ def build_advanced_payload(ctx: DashboardContext) -> dict:
         "pipeline": pipeline,
         "benchmark": benchmark,
         "chips": chips,
+        "player_odds": player_odds,
+        "points_revisions": points_revisions,
+        "decision_audit": decision_audit,
         "freshness": {
             "computed_at": freshness.computed_at if freshness else None,
             "is_stale": freshness.is_stale if freshness else None,

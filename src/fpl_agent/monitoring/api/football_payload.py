@@ -16,6 +16,7 @@ exposed gaps - the old dashboard stays the complete reference for those."""
 import threading
 import time
 
+from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 from fpl_agent.monitoring.dashboard.football import _CATEGORY_PRIORITY, _DECISION_EFFECT_RANK
 
@@ -270,6 +271,14 @@ def _build_football_payload_uncached(ctx: DashboardContext) -> dict:
             })
         team_state.sort(key=lambda t: not t["in_squad"])
         team_odds = _team_odds_rows(conn, team_rows)
+        try:
+            fixtures = fixture_context_by_team_code(conn, {r['id'] for r in team_rows})
+        except Exception:
+            import logging
+            logging.getLogger('fpl_agent.dashboard').exception(
+                'fixture context build failed - omitting this cycle'
+            )
+            fixtures = {}
         change_feed = _change_feed_json(conn, crest_by_team, team_by_player, squad_ids)
         fixture_ticker = _fixture_ticker_json(conn, team_rows, crest_by_team, squad_team_ids)
     finally:
@@ -284,6 +293,12 @@ def _build_football_payload_uncached(ctx: DashboardContext) -> dict:
         "categories": categories,
         "team_state": team_state,
         "team_odds": team_odds,
+        # League-wide upcoming FDR (2026-09-09, "more football"), keyed by
+        # team code - the squad-scoped `fixture_ticker` above answers "how do
+        # MY clubs' runs look"; this answers "who does this team play next"
+        # beside every team-state row. Same `team_fixture_ticker` source, so
+        # the two can never disagree.
+        "fixtures": fixtures,
     }
 
 

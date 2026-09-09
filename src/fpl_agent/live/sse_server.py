@@ -25,12 +25,14 @@ primary" instruction. SSE is additive: when this server is reachable, real
 updates arrive close to immediately; when it isn't (not started, or a
 dashboard opened without it), the existing poll continues working exactly
 as before - zero regression risk."""
+import inspect
 import json
 import logging
 import queue
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 _logger = logging.getLogger("fpl_agent.live_server")
 
@@ -243,15 +245,36 @@ def make_handler(broadcaster: Broadcaster, data_dir: Path, conn_factory=None) ->
             from fpl_agent.monitoring.api import API_BUILDERS
             from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context
 
-            screen = self.path.removeprefix("/api/").split("?", 1)[0].strip("/")
+            raw = self.path.removeprefix("/api/")
+            screen, _, query = raw.partition("?")
+            screen = screen.strip("/")
             builder = API_BUILDERS.get(screen)
             if builder is None:
                 self.send_error(404, f"no real API payload for '{screen}'")
                 return
+
+            # Real query-parameter support (2026-09-09). Every screen payload
+            # up to this point answered one fixed question and needed no
+            # arguments, so this dispatcher discarded the query string
+            # outright. A club page and a player page are inherently
+            # parameterised ("which club?"), and shipping every club and every
+            # player in one payload is not a serious option - so a builder may
+            # now opt in by declaring a `params` argument. Builders that do not
+            # declare one are called exactly as before, unchanged.
+            params = {k: v[0] for k, v in parse_qs(query).items() if v}
             conn = conn_factory()
             try:
                 ctx = get_cached_dashboard_context(conn)
-                payload = builder(ctx)
+                if "params" in inspect.signature(builder).parameters:
+                    payload = builder(ctx, params=params)
+                else:
+                    payload = builder(ctx)
+            except LookupError as exc:
+                # A real "no such club/player" - a 404, never a 500 and never
+                # an empty-but-successful payload the browser would render as
+                # a real profile full of blanks.
+                self.send_error(404, str(exc))
+                return
             except Exception:
                 _logger.exception("building the '%s' API payload failed", screen)
                 self.send_error(500, "payload build failed - see server log")

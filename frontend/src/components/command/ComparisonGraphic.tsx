@@ -28,7 +28,7 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
         </span>
       </div>
       <div className="mt-1.5 h-5 w-full bg-panel">
-        <div className="h-full bg-pitch-green transition-[width] duration-500" style={{ width: `${(chosenTotal / max) * 100}%` }} />
+        <div className="bar-draw h-full bg-pitch-green transition-[width] duration-500" style={{ width: `${(chosenTotal / max) * 100}%` }} />
       </div>
 
       <div className="mt-4 flex items-baseline justify-between">
@@ -38,7 +38,7 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
         </span>
       </div>
       <div className="mt-1.5 h-5 w-full bg-panel">
-        <div className="h-full bg-text-faint/60 transition-[width] duration-500" style={{ width: `${(altTotal / max) * 100}%` }} />
+        <div className="bar-draw h-full bg-text-faint/60 transition-[width] duration-500" style={{ width: `${(altTotal / max) * 100}%` }} />
       </div>
 
       <div className="mt-4 flex items-baseline gap-2 border-t-2 border-divider pt-3">

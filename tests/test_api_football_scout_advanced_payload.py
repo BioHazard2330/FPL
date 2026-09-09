@@ -4,7 +4,12 @@ file already uses: seed a real DB state, call the builder, assert JSON-
 serializable and internally consistent."""
 import json
 
-from fpl_agent.monitoring.api.advanced_payload import build_advanced_payload
+from fpl_agent.monitoring.api.advanced_payload import (
+    _decision_audit_block,
+    _player_odds_block,
+    _points_revisions_block,
+    build_advanced_payload,
+)
 from fpl_agent.monitoring.api.football_payload import _build_football_payload_uncached, build_football_payload
 from fpl_agent.monitoring.api.scout_payload import _expected_data_json, _template_team_json, build_scout_payload
 from fpl_agent.monitoring.dashboard.context import build_dashboard_context
@@ -226,3 +231,121 @@ def test_advanced_payload_benchmark_is_none_without_a_real_solio_snapshot(db_con
     payload = build_advanced_payload(ctx)
     json.dumps(payload)
     assert payload["benchmark"] is None
+
+
+# --- ADVANCED: the three real blocks ported off the old dashboard --------
+# These call the block builders directly rather than going through
+# `build_advanced_payload`, which serves them from a process-wide 600s TTL
+# cache - a cached reading from an earlier test's DB would make any
+# assertion here meaningless.
+
+
+def test_player_odds_block_returns_one_row_per_player_not_one_per_stored_quote(db_conn):
+    """`player_odds_live` keeps every real historical quote (a row per
+    player per fixture per sync), so an unqualified SELECT genuinely
+    returns the same player several times at several prices - which is
+    exactly what the old HTML panel did. Only the most recently retrieved
+    quote is a live market price."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    pid = _PLAYERS[0][0]
+    team_h, team_a = _PLAYERS[0][2], _PLAYERS[1][2]
+    for fid in (1, 2, 3):
+        db_conn.execute(
+            "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+            "VALUES (?,?,?,?,?,?,0,0,?)",
+            (fid, 1000 + fid, None, "2026-09-12T14:00:00+00:00", team_h, team_a, "t0"),
+        )
+    rows = [
+        (1, pid, "P%d" % pid, "oddsapi", "book", 1.75, 0.5714, "2026-08-23T09:06:43+00:00"),
+        (2, pid, "P%d" % pid, "oddsapi", "book", 1.67, 0.5988, "2026-08-27T12:22:14+00:00"),
+        (3, pid, "P%d" % pid, "oddsapi", "book", 1.49, 0.6711, "2026-09-05T04:19:21+00:00"),
+    ]
+    for fixture_id, player_id, raw, source, book, price, prob, retrieved in rows:
+        db_conn.execute(
+            "INSERT INTO player_odds_live (fixture_id, player_id, player_name_raw, source, bookmaker, "
+            "anytime_scorer_price, implied_probability_raw, retrieved_at) VALUES (?,?,?,?,?,?,?,?)",
+            (fixture_id, player_id, raw, source, book, price, prob, retrieved),
+        )
+    db_conn.commit()
+
+    out = _player_odds_block(db_conn, {pid})
+    json.dumps(out)
+    assert len(out) == 1
+    # the newest quote, never an average and never the first row found
+    assert out[0]["anytime_scorer_price"] == 1.49
+    assert out[0]["implied_probability_raw"] == 0.6711
+
+
+def test_player_odds_block_is_empty_without_a_squad_or_synced_odds(db_conn):
+    """Never a fabricated market - an empty list, not a placeholder row."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    assert _player_odds_block(db_conn, set()) == []
+    assert _player_odds_block(db_conn, {_PLAYERS[0][0]}) == []
+
+
+def test_points_revisions_block_is_none_when_no_gameweek_has_finished(db_conn):
+    """A revision can only be judged once a gameweek has actually finished.
+    `None` (honestly absent), never a fabricated zero-revision block for a
+    gameweek that has not happened."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    assert _points_revisions_block(db_conn, {_PLAYERS[0][0]}) is None
+
+
+def test_decision_audit_block_is_none_until_the_audit_command_has_run(db_conn):
+    """`fpl decision-audit` is expensive and manual. With no cached journal
+    entry the block is absent, so the UI can say so by name rather than
+    implying an unaudited decision was audited."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    assert _decision_audit_block(db_conn) is None
+
+
+def test_decision_audit_block_reshapes_the_real_cached_journal_entry(db_conn):
+    """Read-only reshaping of the SAME real `decision_audit` entry the old
+    dashboard's own renderer reads - never a live recomputation, and
+    `created_at` is carried through because this artefact can legitimately
+    be days older than the decision it audits."""
+    from fpl_agent.database.decisions import log_decision
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    log_decision(
+        db_conn,
+        "decision_audit",
+        "audit summary",
+        {
+            "scorecard": {
+                "final_decision": "ACT", "confidence": "MEDIUM", "decision_robustness": "ROBUST",
+                "data_quality": "MEDIUM", "market_evidence": "NO TRAP FLAG",
+                "why_trust": ["clear margin"], "why_might_not_trust": [],
+            },
+            "falsifiers": [{"description": "minutes swing reverses it", "threshold_note": "0-100% range"}],
+            "stress_tests": [{"note": "minutes -15%", "decision_flips": False},
+                             {"note": "minutes -30%", "decision_flips": True}],
+            "causal_chain": [{"label": "STARTING ACTION", "detail": "PLAY FREEHIT"}],
+            "league_wide": {"breakout_count": 168, "chosen_in_is_trap": False},
+            "cross_check_note": "methodology note",
+        },
+    )
+
+    out = _decision_audit_block(db_conn)
+    json.dumps(out)
+    assert out["scorecard"]["final_decision"] == "ACT"
+    assert out["scorecard"]["why_might_not_trust"] == []
+    assert len(out["falsifiers"]) == 1
+    assert [t["decision_flips"] for t in out["stress_tests"]] == [False, True]
+    assert out["causal_chain"][0]["label"] == "STARTING ACTION"
+    assert out["league_wide"]["breakout_count"] == 168
+    assert out["cross_check_note"] == "methodology note"
+    assert out["created_at"]
+
+
+def test_advanced_payload_exposes_the_three_new_blocks(db_conn):
+    """They must always be present as keys (even when honestly empty/None),
+    or the frontend has to guess whether a missing key means "no data" or
+    "old backend"."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    ctx = build_dashboard_context(db_conn)
+    payload = build_advanced_payload(ctx)
+    json.dumps(payload)
+    assert "player_odds" in payload
+    assert "points_revisions" in payload
+    assert "decision_audit" in payload

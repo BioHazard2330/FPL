@@ -5,7 +5,7 @@ interface MastheadProps {
 }
 
 /** The shared "Bulletin Terminal" masthead bar (2026-09-08, Phase 9 design-
- * lab winner, `frontend/design-lab/DECISION.md`) - real, consistent
+ * lab winner, `docs/history/50-design-lab-decision.md`) - real, consistent
  * cross-screen identity per Part 14's own "one coherent design system"
  * rule, each screen's own real bulletin edition label distinguishing it
  * (e.g. "DECISION WIRE" for Command, "SQUAD REPORT" for My Team). */

@@ -19,7 +19,7 @@ const ITEMS: Item[] = [
 
 /** Real global Cmd/Ctrl+K navigation palette (Part 16 - "a real capability,
  * not decoration"). Modeled on the researched Action Search Bar pattern
- * (kokonutd, `docs/FPL_21ST_VISUAL_GRAMMAR.md`'s SEARCH section) - an input
+ * (kokonutd, `docs/history/48-21st-visual-grammar.md`'s SEARCH section) - an input
  * that filters a real action list, arrow-key navigable. Screen-navigation
  * only in this v1 - player/action search (Part 16's fuller scope) needs a
  * real cross-screen player index, a disclosed, scoped follow-up. */
@@ -65,7 +65,7 @@ export function CommandPalette() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-void/80 pt-32" onClick={() => setOpen(false)}>
-      <div className="w-full max-w-lg border-2 border-divider bg-panel shadow-[0_32px_64px_-16px_rgba(0,0,0,0.9)]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg border-2 border-divider bg-panel" onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           value={query}

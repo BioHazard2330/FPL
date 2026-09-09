@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import Chart from 'react-apexcharts'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Masthead } from '@/components/shell/Masthead'
 import { fetchPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { CHART_COLORS, baseChart, gwAxisLabels, intAxisLabels } from '@/lib/chartTheme'
+import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import type { PlanPath } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -177,16 +178,35 @@ export function PlanScreen() {
   const [activePath, setActivePath] = useState(1)
 
   if (state.status === 'loading') {
+    // Shaped like the strategy desk it precedes: headline path, then the
+    // gameweek-by-path grid, then the selected-path step rail.
     return (
-      <div className="space-y-3 p-10">
-        <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Loading strategy</div>
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-64 w-full" />
+      <div className="animate-pulse pb-16">
+        <SkelMasthead />
+        <div className="border-b-2 border-divider px-10 py-8">
+          <Skel className="h-2 w-28" />
+          <Skel className="mt-3 h-14 w-[22rem]" />
+        </div>
+        <div className="bg-panel px-10 py-8">
+          <Skel className="h-2 w-28" />
+          <div className="mt-5">
+            <SkelTable rows={5} cols={7} />
+          </div>
+        </div>
+        <div className="flex gap-3 px-10 py-8">
+          {[0, 1, 2, 3, 4].map((i) => <Skel key={i} className="h-28 flex-1" />)}
+        </div>
       </div>
     )
   }
   if (state.status === 'error') {
-    return <div className="bg-alert-red p-6 font-semibold text-alert-red-ink">Can't reach the backend ({state.error.message}).</div>
+    return (
+      <ScreenError
+        title="No strategy to show"
+        description="The plan payload could not be fetched, so no path, sequence or chip timing is being shown. An empty desk here means the strategy is unknown right now, not that there is no move to make."
+        message={state.error.message}
+      />
+    )
   }
 
   const p = state.data
@@ -198,19 +218,32 @@ export function PlanScreen() {
   const current = p.paths?.find((pp) => pp.idx === activePath) ?? p.paths?.[0]
 
   const series = (p.trajectory_series ?? []).map((s) => ({ name: s.name, data: s.points.map((pt) => [pt.x, pt.y]) }))
-  const chartOptions = {
-    chart: { type: 'line' as const, toolbar: { show: false }, background: 'transparent', foreColor: 'var(--text-muted)' },
-    stroke: { width: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? 4 : 2)), curve: 'straight' as const },
-    colors: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? 'var(--pitch-green)' : 'var(--divider)')),
-    grid: { borderColor: 'var(--divider)' },
-    xaxis: { type: 'numeric' as const, title: { text: 'Gameweek' }, tickAmount: (p.horizon_gw ?? 8) - 3 },
-    yaxis: { title: { text: 'Cumulative pts' } },
-    legend: { show: false },
-    dataLabels: { enabled: false },
-  }
+  const xs = (p.trajectory_series ?? []).flatMap((s) => s.points.map((pt) => pt.x))
+  const gwMin = xs.length ? Math.floor(Math.min(...xs)) : 0
+  const gwMax = xs.length ? Math.ceil(Math.max(...xs)) : 1
+  const chartOptions = baseChart({
+    chart: { type: 'line' },
+    stroke: { width: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? 4 : 2)), curve: 'straight' },
+    colors: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? CHART_COLORS.primary : CHART_COLORS.muted)),
+    // Gameweeks are integers. `tickAmount` alone let ApexCharts pick its own
+    // evenly-spaced numeric ticks, which rendered a real axis reading
+    // "4.0 / 5.4 / 6.8 / 8.2 / 9.6 / 11.0" - fractional gameweeks that do not
+    // exist. Force one tick per real gameweek in the plotted range and label
+    // them the way the rest of the app writes a gameweek.
+    xaxis: {
+      type: 'numeric' as const,
+      title: { text: 'Gameweek' },
+      min: gwMin,
+      max: gwMax,
+      tickAmount: Math.max(1, gwMax - gwMin),
+      labels: gwAxisLabels,
+    },
+    yaxis: { title: { text: 'Cumulative pts' }, labels: intAxisLabels },
+    tooltip: { x: { formatter: (v: number) => `GW${Math.round(v)}` } },
+  })
 
   return (
-    <div className="pb-16">
+    <div className="data-in pb-16">
       <Masthead edition="Strategy Desk" title={`${p.horizon_gw}-gameweek plan`} />
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
         <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
@@ -269,7 +302,19 @@ export function PlanScreen() {
           whitespace-only separation from the panel band above */}
       {series.length > 0 && (
         <div className="mt-12 px-10">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative edge</div>
+          <div className="mb-3 flex flex-wrap items-baseline gap-4">
+            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative edge</span>
+            {/* Direct labels instead of a legend - the chart draws the real
+                leading path against the real rolling baseline, and with
+                `legend: false` there was previously nothing at all telling
+                the reader which line was which. */}
+            {(p.trajectory_series ?? []).map((s) => (
+              <span key={s.name} className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                <span className={`h-0.5 w-4 ${s.role === 'leading' ? 'bg-pitch-green' : 'bg-divider'}`} />
+                {s.name}
+              </span>
+            ))}
+          </div>
           <Chart options={chartOptions} series={series} type="line" height={300} />
           {current?.horizon_breakdown && (
             <div className="mt-2 flex gap-10 border-t-2 border-divider pt-4">
@@ -300,7 +345,7 @@ export function PlanScreen() {
               <div key={s.label} className="flex items-center gap-4 border-l-2 border-broadcast-gold/50 pl-3">
                 <div className="w-64 shrink-0 truncate text-sm text-text-muted">{s.label}</div>
                 <div className="h-2 flex-1 bg-panel">
-                  <div className="h-full bg-broadcast-gold" style={{ width: `${Math.min(s.pct, 100)}%` }} />
+                  <div className="bar-draw h-full bg-broadcast-gold" style={{ width: `${Math.min(s.pct, 100)}%` }} />
                 </div>
                 <div className="tabular w-14 text-right text-sm font-semibold text-text">~{s.pct}%</div>
               </div>

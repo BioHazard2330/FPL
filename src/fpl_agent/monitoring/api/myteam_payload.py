@@ -4,9 +4,10 @@ _pitch_html_from_xi` already render as HTML - team codes, lineup states, the
 CORE/WEAK_LINK/MINUTES_RISK tier classification - never a second projection
 pass.
 
-Deliberately scoped out of this first pass, disclosed rather than silently
-dropped: the per-player Player Inspector drawer (tooltip football/market
-signal, ACTUAL/LIVE-vs-NEXT point states, next-fixture difficulty). Those
+Next-fixture difficulty per squad club landed 2026-09-09 (`fixtures`, via
+`api/fixture_context.py`). Still deliberately scoped out, disclosed rather
+than silently dropped: the rest of the per-player Player Inspector drawer
+(tooltip football/market signal, ACTUAL/LIVE-vs-NEXT point states). Those
 need their own real per-player Solio/football-intelligence reads
 (`_market_signal_for`/`_football_signal_for` in `legacy.py`) - a genuinely
 separate, bounded-cost feature, not required for the pitch itself to be
@@ -17,6 +18,10 @@ from fpl_agent.monitoring.dashboard.context import DashboardContext
 _WEAK_LINK_FLOOR_XP = 3.0
 _MINUTES_RISK_FLOOR = 60.0
 _POSITION_ORDER = ["GKP", "DEF", "MID", "FWD"]
+# Real football notation (GK, not the raw GKP position code) - matches the
+# same row-label convention Command's own PlayerGallery already hardcodes,
+# so the two pitches don't disagree on how a goalkeeper row is labelled.
+_POSITION_LABEL = {"GKP": "GK", "DEF": "DEF", "MID": "MID", "FWD": "FWD"}
 _LINEUP_LABEL = {
     "CONFIRMED_STARTING": "Confirmed",
     "PREDICTED_START": "Predicted",
@@ -114,8 +119,33 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
             "pitch_heading": ctx.pitch_heading,
         },
         "risks": ctx.risks_list or [],
-        "positions": [{"position": p, "label": p, "players": by_position[p]} for p in _POSITION_ORDER if by_position[p]],
+        "positions": [
+            {"position": p, "label": _POSITION_LABEL[p], "players": by_position[p]} for p in _POSITION_ORDER if by_position[p]
+        ],
         "bench": [_to_json(c) for c in xi.bench],
         "weak_links": weak_links,
         "strong_link": strong_link,
+        # Real upcoming FDR per squad club (2026-09-09, "more football") -
+        # closes the next-fixture gap this module's own docstring disclosed
+        # above. Same `team_fixture_ticker` the FOOTBALL screen's ticker
+        # uses, so a difficulty can never disagree between two screens.
+        "fixtures": _fixture_block(ctx),
     }
+
+
+def _fixture_block(ctx: DashboardContext) -> dict:
+    """Read-only, HTTP-path only. Degrades to `{}` on any failure rather
+    than taking the whole squad payload down over decoration - a pitch with
+    no fixture chips is still a correct pitch."""
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code, squad_team_ids
+
+    conn = get_connection()
+    try:
+        return fixture_context_by_team_code(conn, squad_team_ids(conn, set(ctx.squad_ids or set())))
+    except Exception:
+        import logging
+        logging.getLogger("fpl_agent.dashboard").exception("fixture context build failed - omitting this cycle")
+        return {}
+    finally:
+        conn.close()

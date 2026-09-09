@@ -37,6 +37,11 @@ export function EvidenceRail({ rows }: { rows: FootballContextRow[] }) {
             {f.fpl_effect && <div className={`mt-2 text-xs font-bold ${DIRECTION_COLOR[f.direction] ?? 'text-text'}`}>{f.fpl_effect}</div>}
           </div>
         ))}
+        {/* The rail's own `bg-divider` shows through as a bare grey block
+            whenever the real evidence items don't fill the row (confirmed
+            live with three items at 1440px). This filler collapses to zero
+            the moment the rail genuinely overflows and scrolls. */}
+        <div className="min-w-0 flex-1 bg-panel" />
       </div>
     </section>
   )

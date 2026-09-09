@@ -779,3 +779,565 @@ detail panel silently stopped updating. Fixed by storing only the real
 every render - the panel now always reflects whatever the last real poll
 returned, and degrades to `null` (not a stale ghost) if a player ever
 disappears from the payload entirely.
+
+
+## Stage 8 - the three screens the earlier passes only restyled
+
+Stages 5-7 rebuilt Command, My Team, Plan and Scout structurally but left
+Football, Advanced and Live with cosmetic-only changes (shadow removal, one
+new section). This stage closes that, and in doing so removes two real
+"go and use the old dashboard instead" escape hatches that had been sitting
+in the React app since it was built.
+
+### LIVE - a real control room, and a real rendering bug fixed
+
+The screen previously told the reader, in prose, that a full match centre
+"is not yet ported to this screen" and linked to the old dashboard. That
+was true of the UI but NOT of the data: `live_snapshot.json::active_matches`
+has carried real scoreline, live minute, per-team possession/shots/xG/
+corners/big-chances/chances-created, a full FotMob momentum series, up to 40
+real shots with x/y/xG/outcome, and per-player in-match returns for my own
+squad since the 2026-08-29 live-command-centre pass. All of it was fetched
+by the browser every 10 seconds and thrown away.
+
+New `components/live/MatchCentre.tsx` renders it as a broadcast match card:
+scoreline dominant, the contest as opposed rules off a shared centre line
+(so "who is actually on top" is one shape, not fourteen numbers), a
+two-sided momentum band on FotMob's own -100..100 scale, and a real
+two-half shot map. The shot map follows the same display convention this
+project's own backend renderer already settled on - both teams are reported
+on their own attacking 0-100 x-axis, so the away side is mirrored to
+`100 - x`, and values are clamped because the real feed occasionally lands
+just outside 0-100 (unclamped, a genuine shot draws off-pitch and is
+clipped away entirely).
+
+**Real bug found and fixed**: the Match Events panel rendered `e.minute`,
+`e.event_type` and `e.description`. None of those fields exist. The backend
+emits `{player_id, web_name, kind, count}` - cumulative goal/assist/red
+counts, not a minute-stamped feed - so the panel printed a column of em
+dashes for every row, and had done since the screen was written. It is now
+a Squad Returns board against the real field names, labelled as running
+totals rather than a timed feed.
+
+Three more real fields that were fetched every tick and never rendered are
+now on the screen: `bonus_defcon` (live provisional BPS plus each player's
+real progress toward their own defensive-contribution threshold - the one
+place on this app where "provisional" genuinely has to be labelled, since a
+provisional bonus can still evaporate), `points_changes` (post-settlement
+Bonus/DefCon revisions on the last finished gameweek), and `recommendation`
+(whether the standing decision is CURRENT/STALE/RECOMPUTING). Those four
+readouts plus live-match count now form one rule-separated console strip -
+one band, no cards.
+
+**Real defect found in live QA and fixed**: a `grid gap-px bg-divider`
+two-column band renders its empty track as a solid grey block. With squad
+returns present but no recent change events - a genuinely common real state
+- half the row was a bare grey rectangle. Column counts now follow the
+number of panels that actually have data.
+
+### ADVANCED - the adversarial audit finally has a home
+
+The screen's footer used to say Decision Detail, Player Odds, Optimizer
+Delta and Regret Analysis were "real and already computed - not yet ported",
+and sent the reader to the old dashboard. Two of those are now ported, plus
+one the footer never mentioned:
+
+- **Decision audit** (`_decision_audit_block`) - a pure read of the cached
+  `decision_type="decision_audit"` journal entry `fpl decision-audit`
+  writes. Never recomputed. This is the richest artefact the project
+  produces - falsifiers with real thresholds, counterfactual stress tests
+  flagged by whether they actually flip the call, a trust scorecard with
+  both sides stated, the causal chain, and the league-wide opportunity
+  check - and it had no presence in the React app at all. It is now the
+  screen's dominant object, because "what would make this wrong" is the
+  analyst's real question, not "what does the model say". Its `created_at`
+  is carried through and shown, because that command is expensive and
+  manual and its output can legitimately be days older than the decision it
+  audits.
+- **Player odds** (`_player_odds_block`) - real anytime-goalscorer quotes
+  for squad players. `implied_probability_raw` keeps the bookmaker's own
+  overround (a goalscorer market cannot be devigged the way a 2/3-outcome
+  market can) and is labelled raw on screen, never as a calibrated
+  probability. **Real bug fixed while porting**: `player_odds_live` stores
+  every historical quote, so the old HTML panel's unqualified SELECT
+  returned the same player several times at several different prices -
+  confirmed live against production (Haaland appeared three times). Only
+  the newest quote per player is a live market price; the block now
+  selects exactly that.
+- **Points revisions** (`_points_revisions_block`) - reuses
+  `detect_points_revisions`/`is_gw_locked` directly, never a second
+  detector. A measured zero is stated as a measured zero rather than the
+  section hiding itself.
+
+Optimizer Delta and Regret Analysis remain genuinely unported; the footer
+now says only that, rather than overstating the gap.
+
+Source health also stopped being a table inside a bordered box - thick
+header rule, dense rows, a state dot in the row gutter, proper `th`
+scoping.
+
+### FOOTBALL - a broadcast desk instead of two identical stacks
+
+- The fixture ticker is promoted to the strip that opens the desk and is
+  ordered by schedule pressure: the mean of the real `difficulty` values
+  already drawn in that row's own cells. That is arithmetic over what the
+  reader can already see, not a new model output - and "who has the kind
+  run" is the actual question a ticker exists to answer, which an ID-order
+  list buries.
+- Team State was a table inside a bordered card - the exact pattern the
+  brief names. It is now a real attack-vs-defence grid: xGA and xG drawn as
+  opposed bars off a shared centre line on the same league-wide scale, so
+  "creates a lot, leaks a lot" is a shape rather than two numbers to
+  compare by hand.
+- The intelligence board was two side-by-side stacks of equal weight - a
+  card grid wearing a different name, in which no category could ever read
+  as more important than another. It is now full-width editorial bands with
+  the category label in a fixed left gutter.
+
+### COMMAND - the XI reads as a football team again
+
+`PlayerGallery` sorted the starting XI by projected median. The real,
+live result was a row that opened with a defender and put the goalkeeper
+eleventh: eleven strangers ranked on a leaderboard, which is the brief's own
+named failure mode. It now lays out GK / DEF / MID / FWD as centred rows
+with the real formation string derived from the counts, and stops using
+size to encode rank inside a row (position already carries a spatial
+meaning there; two competing spatial meanings read as neither). If the
+payload's position data cannot support a legitimate shape, it falls back to
+a flat list and says so - a fabricated 4-4-2 would be a lie about the team.
+
+`EvidenceRail` had the same empty-grid-track defect as Live: its own
+`bg-divider` showed through as a grey block whenever the real evidence
+items did not fill the row.
+
+### PLAN - a chart that claimed gameweeks that do not exist
+
+The cumulative-edge chart used ApexCharts' own numeric tick spacing, which
+rendered a real axis reading "4.0 / 5.4 / 6.8 / 8.2 / 9.6 / 11.0". There is
+no gameweek 6.8. Ticks are now one per real gameweek in range and labelled
+GW4..GW11, and the second (baseline) line - previously drawn with
+`legend: false` and no annotation of any kind - has a direct label.
+
+### Loading, error and empty states
+
+New `components/shell/ScreenStates.tsx`. Every screen's skeleton is now
+shaped like the screen it precedes (Command's decision field, My Team's
+pitch rows, Plan's gameweek grid, Scout's table-beside-panel, Live's console
+strip, Advanced's verdict band, Football's ticker) rather than a stack of
+grey rounded rectangles promising a card grid none of them render. Skeleton
+blocks are square-cornered and flat, because the design system has no
+rounded cards.
+
+Error states moved off the full-bleed red banner onto one shared
+composition, and every one of them now says what is specifically unknown
+and states that nothing is being served from cache or filled in with a
+fallback. A fetch failure is information, not an alarm.
+
+### Shell
+
+Nav gained a real three-section hierarchy over the same seven routes -
+Decision / Intelligence / Operations - the three genuinely different
+questions the product answers. No new routes, no collapsible tree, and no
+change to within-group ordering.
+
+
+## Stage 9 - DESIGN.md rewritten as the authority, and the football put back in
+
+Direct user instruction: take ownership of DESIGN.md ("it's stale, be the
+master"), make the app feel closer to the game, and never let the automation
+side bug out.
+
+### DESIGN.md
+
+Rewritten end to end. The old version had drifted into being wrong rather
+than merely incomplete: it declared "monospace is not used anywhere in this
+system" while fifteen real components used `font-mono`; it described angled
+`clip-path` cuts as a core layering device with exactly one real call site;
+it had a bolted-on "Phase 8.3 addendum"; and it said nothing at all about
+charts, motion, loading/error/empty states, tables, or the seven screens'
+distinct identities - every one of which had by then been designed and
+shipped. A design system that describes a different app than the one running
+is worse than no design system, because it gets cited in review.
+
+The new file states the rule the code actually follows (monospace is the
+voice of the system talking about itself - mastheads, timestamps, CLI names,
+cadence - and never carries football content), and adds the sections that
+were missing: a full Football Language section, a three-motion system, a
+chart contract, table rules, state rules, per-screen identities, and a set of
+honesty rules that explicitly outrank aesthetics. It opens by stating that
+where the document and the code disagree, the code is the bug.
+
+### Real fixture context everywhere (the "more football" ask)
+
+The gap: a squad tile showed a projection with no opponent, no venue and no
+difficulty anywhere on it. That is the first thing any FPL manager reads off
+a squad, and `myteam_payload.py`'s own docstring had disclosed "next-fixture
+difficulty" as a scoped-out gap since it was written.
+
+New `monitoring/api/fixture_context.py` - one small read-only helper reusing
+`models/fixtures.py::team_fixture_ticker` unchanged, so a fixture's
+difficulty can never disagree between two screens. Keyed by `teams.code`,
+the identifier every player row in these payloads already carries. Wired into
+COMMAND, MY TEAM and SCOUT. Measured at 1ms for a real squad's 11 clubs.
+
+**Deliberately not in the automation path.** This is payload shaping on the
+HTTP request path only - nothing in `run_scheduled`, no scheduled task, no
+sync cycle touched. The frontend work in this stage is static-asset only.
+
+Frontend: `lib/fdr.ts` holds the one FDR scale (a fixture can no longer read
+"easy green" on the ticker and neutral grey on the pitch), and
+`components/football/FixtureRun.tsx` renders it as `NextFixture` (opponent
+crest + short name + H/A, under every player on every pitch), `FixtureRun`
+(a run of cells, in the Scout table and detail panel), and `RunPressure`
+(the run's mean FDR, labelled as arithmetic rather than a model output).
+
+### A real pitch
+
+`components/football/PitchMarkings.tsx` draws actual pitch geometry at real
+proportions - 68m x 105m, 40.32 x 16.5 penalty areas, 18.32 x 5.5 six-yard
+boxes, 9.15m centre circle and D arc, 1m corner arcs, goal frames - portrait,
+because a squad reads goalkeeper-first. The squad pitch previously had mowed
+stripes and a centre circle: enough to read as "green rectangle", not enough
+to read as a football pitch. Now used by My Team's squad AND Command's action
+XI, which also gained the same pitch so the two screens speak one language.
+
+### Motion system
+
+Three motions, each marking a real event, all disabled under
+`prefers-reduced-motion`, all sharing one broadcast easing:
+
+- `.data-in` (320ms) - a screen's content replaces its skeleton exactly once,
+  when the real payload lands, so a mount animation here IS a data-arrival
+  animation. Poll refreshes update in place and never re-trigger it.
+- `.bar-draw` (620ms, `scaleX` so no layout is recalculated) - every
+  comparison bar in the app draws its length rather than pasting it, making
+  the quantity itself the thing that moves. Applied to chip values, market
+  odds, clean-sheet bars, team xG/xGA, live match stats, DefCon progress and
+  strategy-risk bars.
+- `.animate-pulse-live` - the only continuous animation, and it runs only
+  where something is genuinely live.
+
+### One chart language
+
+`lib/chartTheme.ts::baseChart()`. Four charts had each been re-declaring
+their own grid colour, tooltip theme, toolbar and stroke width, and had
+drifted apart: one grew a two-stop gradient fill (which DESIGN.md's own
+no-gradient rule forbids), one rendered fractional gameweek ticks. All four
+now derive from one base. Gameweek axes format through `gwAxisLabels` so no
+chart can render "GW6.8" again; rank axes reverse and abbreviate through
+`rankAxisLabels`, since an unreversed rank axis draws a real climb as a fall.
+
+
+## Stage 10 - the app learns what time it is
+
+Direct user push: the previous stages were "so damn small when you look at
+the big picture." Correct. Chips, pitch markings and a motion system are
+polish on a layout; none of them changed what the product *is*.
+
+The real gap was structural and had been there since the React rebuild
+began: **the app had no clock.** It rendered identically at 3am on a Tuesday
+and with six matches live and the captain on the pitch. Worse, in both cases
+Command led with the same giant `PLAY FREE HIT` instruction - telling the
+user to do something that, during a live gameweek, is impossible.
+`events.deadline_time` had been synced since week one and had never once
+been read by the frontend.
+
+### The season clock
+
+`live_snapshot.py::_deadline_block` - two indexed reads over a ~38-row table,
+fully wrapped, returning the next and previous real FPL deadlines. It rides
+the existing fast-poll channel deliberately: the browser already reads
+`live_snapshot.json` every 10-15s for its chrome, so the whole app gets a
+live clock with no new endpoint and no new fetch. No countdown is computed
+server-side - a countdown is stale the instant it is serialized, so the
+browser ticks a real timestamp itself.
+
+**This is the one part of this work that touches the automation path**
+(`build_live_snapshot` runs inside the real live-match poll), so it is
+wrapped to return `{}` on any failure, and it was verified through the real
+`write_live_snapshot` writer rather than by hand: 4.6s end to end (unchanged,
+the deadline read itself is sub-millisecond), still JSON-serializable, all 16
+top-level keys intact.
+
+`lib/clock.ts` turns the real `gw.state` lifecycle machine plus that deadline
+into seven phases - BUILD_UP / IMMINENT / FINAL_CALL / LOCKED / LIVE /
+SETTLING / REVIEW. The lifecycle state always wins; the countdown only splits
+PRE_DEADLINE into how urgent it actually is. A live match overrides
+everything, because football being played now outranks any cached state.
+
+### The Matchday Bar
+
+A persistent broadcast strip under the header on every screen: the phase as a
+flat colour block, the countdown in the Display register, one line saying
+what the phase means for what you can do, and - only when football is
+genuinely on - live scorelines with crests, how many of your own players are
+on the pitch, and their goals and assists. The app now has an ambient sense
+of the gameweek; you no longer have to open Live to find out whether football
+is being played.
+
+### Phase drives composition - the section order is the product
+
+Command holds one set of sections and two orders. When the squad can still
+change, the decision leads. Once it is locked or live, the XI you are
+actually fielding leads, the captain (who is on the pitch) follows, and the
+decision drops to the bottom as a record of what was chosen - with a banner
+saying so outright.
+
+Verified across all five phases by intercepting the snapshot in the browser
+only (production state never written), asserting the real DOM order:
+
+| phase | order |
+|---|---|
+| build-up, final call | DECISION -> squad -> captain -> confidence |
+| locked, settling | SQUAD -> decision -> captain -> confidence |
+| live | SQUAD -> CAPTAIN -> decision -> confidence |
+
+Zero console errors in any phase. DESIGN.md gained a new section 5A carrying
+the phase table and the rule that follows from it: any screen showing an
+instruction must ask the phase whether that instruction is still possible.
+
+
+## Stage 11 - THE MATCHWEEK: it becomes a football tool, not just an FPL tool
+
+Direct user push, and the sharpest note of the whole effort: "I get this is
+an FPL tool but I want it to be a football tool as well."
+
+That was exactly right, and the previous stage had not answered it. A clock
+is still present-tense, and fixture chips are still the Premier League seen
+through the narrow window of one manager's fifteen players. A football fan
+opening this app could not answer the two questions every football site
+answers above the fold: **who is top, and who plays who this weekend.**
+
+There was no league table. There was no fixture calendar. There were no
+results. The most basic object in the sport did not exist anywhere in the
+product.
+
+### None of it needed new data
+
+All of it had been sitting in the database, untouched by the frontend since
+the app was built:
+
+- `fixtures` - all 380 real fixtures with real kickoff times, and real scores
+  for the 30 that have been played.
+- `match_intelligence` + `team_match_state` + `match_momentum` + `match_shots`
+  - 30 real FULL_TIME matches carrying real possession, shots, xG, momentum
+  series and shot maps. The Match Centre only ever rendered LIVE matches, so
+  after the final whistle the app forgot the game had happened and threw all
+  of it away.
+
+### What was built
+
+New `monitoring/api/matchweek_payload.py` and a `/api/matchweek` route:
+
+- **The league table, computed from real results** - three points a win, one
+  a draw, ordered points then goal difference then goals for (the real
+  Premier League tiebreak order, and it stops there: the competition's next
+  tiebreak is head-to-head and then a play-off, neither worth inventing).
+  Real form guide (most recent first, and genuinely short for a club that has
+  played twice rather than padded). Real per-match xG/xGA joined through
+  `match_intelligence`, honestly null for a match FotMob was never fetched
+  for. A season that has not started renders twenty real zero rows, not an
+  empty screen.
+- **The fixture calendar** - the last completed gameweek, the current one and
+  the next two, grouped by real matchday the way a fixture list is actually
+  published. A fixture is in one of the two states football has: a result, or
+  a kickoff time. Never both, and never a placeholder score for a match that
+  has not happened. Kickoff times pass through as real UTC and are rendered
+  in the viewer's local time, which is the only place the timezone is known.
+- **Full-time detail** - clicking any completed fixture opens the real
+  possession/xG contest, momentum band and shot map through the same
+  `MatchCard` the live screen uses. Thirty matches of real broadcast data
+  that the product previously discarded the moment the whistle went.
+
+The screen leads with a standings hero (who is top, with crest, points and
+form - football opens with the leader, not with a metric), then the full
+table with the real European and relegation zone marks in the position
+gutter, then the calendar, then the detail.
+
+Nav gained a new section, "The football", holding MATCHWEEK and FOOTBALL -
+the sport and the intelligence over it - separating both from SCOUT, which is
+about the fantasy market.
+
+Measured at 21ms to build the whole payload. Read-only, HTTP request path
+only: nothing here runs in `run_scheduled` or any scheduled task.
+
+
+## Stage 12 - the app becomes browsable: club, player and match pages
+
+Continuing the "football tool" push. Stage 11 gave the app a league table and
+a calendar; this stage makes every crest and every player name in it a door.
+
+Before this, a club was decoration and a player was a table cell. Nothing was
+clickable. You could see that Hull City were third and never find out who
+played for them, how they got there, or what happened in any of their
+matches.
+
+### First parameterised endpoints
+
+Every payload up to this point answered one fixed question and needed no
+arguments, so `live/sse_server.py` discarded the query string outright. A
+club page and a player page are inherently parameterised, and shipping every
+club and every player in one payload is not a serious option.
+
+The dispatcher now parses the query string and passes `params` to any builder
+that declares it - builders that do not are called exactly as before,
+unchanged. It also turns a `LookupError` into a real **404**, so a bad id can
+never come back as an empty-but-successful payload that the browser would
+render as a real page full of blanks. Four new tests cover exactly that,
+across all three profile builders and four kinds of bad id.
+
+### Club file (`/club/:id`)
+
+Real results from that club's own point of view - the same fixture is a 2-1
+win for one side and a 1-2 defeat for the other, and the W/D/L letter
+follows. Each result carries its real xG alongside the scoreline, plus how
+far the scoreline beat the xG, because a 1-0 off 0.3 xG and a 1-0 off 2.4 xG
+are different football. Real form guide, real upcoming run with its average
+FDR, and the club's full FPL-registered squad with real season totals, the
+user's own players marked, every row a link to that player.
+
+### Player file (`/player/:id`)
+
+**The match log.** 57,200 real per-match rows have been in this database
+since the project began and the frontend had never rendered one of them -
+every rate the app showed was a season aggregate. A player now has a real
+per-match record: minutes, returns, shots, xG, xA, key passes and cards, most
+recent first, with a divider where the log crosses into last season (without
+it, a May fixture reads as recent form). Plus real per-match xG-vs-xA as a
+chart, real recorded season totals, the real upcoming run, availability and
+news, and the real price history as a stepline.
+
+### Match report (`/match/:id`)
+
+A real report for a real game: scoreline and formations, the contest as
+opposed bars, a two-sided timeline with the minute as its spine, and **both**
+teams' player ratings - the live Match Centre had only ever listed the user's
+own players and threw everything away at full time.
+
+Two real data-honesty defects were found by looking at the rendered page and
+then at the data behind it, and both are fixed:
+
+- **298 substitution rows carry no player at all** (`player_id IS NULL`, the
+  description is the literal string "Substitution"). They rendered as a dozen
+  blank rows per match that pushed the goals off the screen while saying
+  nothing. An event this project cannot attribute is not an event it can
+  report, so substitutions are excluded from the timeline and the reason is
+  recorded next to the exclusion list.
+- **`player_match_state.minutes` is NULL for many matches** (434 of 1,056
+  rows have real minutes, 580 have real ratings). The first version rendered
+  `minutes ?? 0`, printing a fabricated `0'` for every one of them - exactly
+  the "never render 0 where the truth is unknown" rule this project sets for
+  itself. Now an em dash, and a match with no per-player detail at all says
+  so in one line rather than showing a column of dashes with no explanation.
+
+### Navigation
+
+Club, player and match pages are real destinations with no nav entry of their
+own - reached by clicking, not from the rail. `currentDestination` gained a
+detail-route table, because without it the header fell through to
+`DESTINATIONS[0]` and every player file announced itself as "COMMAND".
+
+A completed fixture on MATCHWEEK now opens its own report rather than
+expanding an inline panel further down the page; the inline panel it
+superseded was removed rather than left dead.
+
+
+## Stage 13 - season leaderboards, and a real coverage gap closed
+
+### Leaderboards
+
+Three boards on MATCHWEEK, because they answer three different football
+questions: who is scoring, who is creating, and who the underlying numbers
+say is about to. The third is ordered by real xG + xA rather than by output,
+which is the board an FPL manager actually acts on.
+
+A player with no stat snapshot is excluded from a board rather than ranked as
+a zero - "we have no record" and "they did nothing" are different statements,
+and a leaderboard that conflates them is lying quietly.
+
+### A real 500, and the test that should have caught it
+
+While verifying the match report end to end, the route sweep found
+`/api/match?id=1` returning a **500**. Cause: an earlier edit of mine that
+rewrote the comment above `_TIMELINE_TYPES` deleted the constant itself along
+with it.
+
+The important part is not the typo, it is that **the full suite was green
+while that bug was live**. Every existing match test passed a deliberately
+bad id and raised `LookupError` in the first few lines, so nothing ever
+executed the body of the builder. Twenty-three tests, complete coverage of
+the failure paths, zero coverage of the success path.
+
+Fixed by adding `test_match_report_builds_end_to_end_for_a_real_match`, which
+seeds a real match, a real goal event, a real unattributable substitution, a
+real team-state row and a real player performance, then walks the whole
+builder. Verified the way a regression test should be: deleting the constant
+again makes it fail, restoring it makes it pass.
+
+The lesson generalises and is worth stating for the next parameterised
+endpoint - a bad-id matrix proves the 404 path, not the payload. Both need a
+test.
+
+
+## Stage 14 - documentation and dead-file cleanup
+
+Direct user instruction: delete what is no longer used, and clear stale
+content out of the prominent docs.
+
+### The prominent docs had drifted into their own anti-pattern
+
+`CLAUDE.md` states its own job in its first section: operating manual -
+constraints, architecture, conventions, commands, current blockers. It had
+grown to 431 lines of which **210 were a chronological backlog of finished
+work**. It had been cleaned once before, on 2026-08-27, from ~6300 lines, and
+had drifted straight back.
+
+`docs/PROJECT_STATE.md` is the "read this first when resuming" document. It
+had reached 1020 lines containing roughly **twenty stacked
+`## Where things stand` snapshots** going back to 2026-08-27, each superseded
+by the one above it. A resume document you have to read backwards through
+twenty obsolete snapshots is not doing its job.
+
+Both were split, not truncated - every entry moved verbatim into
+`docs/history/`, and both moves were verified by diffing bullet sets and
+non-empty lines to prove nothing was lost:
+
+| | before | after | moved to history |
+|---|---|---|---|
+| `CLAUDE.md` | 431 | 266 | 25 resolved blocker entries |
+| `docs/PROJECT_STATE.md` | 1020 | 312 | 27 superseded snapshots |
+
+A third, subtler staleness: PROJECT_STATE's **"Next recommended work (real
+candidates, not started)"** section held 22 items, of which **18 were
+finished** - including several this session appended there itself. Split into
+a "Completed work log" and a genuinely-not-started list of four.
+
+`CLAUDE.md`'s documentation map also listed only three documents while the
+project had six live ones; `DESIGN.md`, `PRODUCT.md` and the redesign
+decision log were all missing from the map that is supposed to tell the next
+session where to look.
+
+### Files deleted
+
+Frontend, verified unreferenced by grep across the whole source tree:
+`components/ui/badge.tsx`, `components/ui/count-up.tsx`,
+`components/ui/tabs.tsx`, `screens/ComingSoon.tsx`. `CountUp` was a duplicate
+of `components/shell/MetricNumber.tsx`, which is the one actually used -
+DESIGN.md referenced the dead one and now names the real one.
+
+`frontend/design-lab/`'s three HTML prototypes and shared stylesheet: a
+one-off comparison exercise whose winner has been the shipped design for
+several stages. Its `DECISION.md` moved to history rather than being deleted,
+because the reasoning still explains why the direction was chosen.
+
+Four superseded 21st.dev research documents and the completed frontend
+migration plan moved to `docs/history/`. Every dangling reference to a moved
+file was repointed rather than left broken (`Masthead.tsx`,
+`CommandPalette.tsx`, `lib/types.ts`).
+
+The bundle got smaller for it: CSS 90.97 kB to 82.97 kB.
+
+**Deliberately not deleted**: three `monitoring/dashboard/` modules
+(`injuries`, `intelligence`, `points_changes`) that a first grep suggested
+were unreferenced. They are imported in a comma-separated import list in
+`assemble.py` and are live. Checking before deleting is the whole point.
