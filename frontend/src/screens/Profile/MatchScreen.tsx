@@ -5,6 +5,7 @@ import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates
 import { crestUrl, fetchMatchReport } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
+import { MomentumBand, type MomentumMarker } from '@/components/football/MomentumBand'
 import type { LiveShot, MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
 
 const EVENT_MARK: Record<string, { label: string; ink: string; fill: string }> = {
@@ -401,6 +402,25 @@ export function MatchScreen() {
       )}
 
       <ShotQuality shots={p.shots} homeTeamId={m.home.team_id} homeShort={m.home.short} awayShort={m.away.short} />
+
+      {/* MOMENTUM + THE TIMELINE - one shape, not two disconnected panels.
+          The band gives the real pressure swing across the whole match at a
+          glance; every marker on it is a real timeline event at its real
+          minute, not inferred from the pressure shape itself. The detailed
+          list below stays for the real player-level detail (who, what) a
+          compact band can't carry. */}
+      {p.momentum.length > 1 && (
+        <div className="border-b-2 border-divider px-10 py-8">
+          <MomentumBand
+            points={p.momentum}
+            maxMinuteOverride={Math.max(...p.momentum.map((pt) => pt.minute), 90)}
+            markers={p.timeline
+              .filter((e): e is MatchTimelineRow & { minute: number; event_type: MomentumMarker['kind'] } =>
+                e.minute !== null && (['Goal', 'Card', 'OwnGoal', 'MissedPenalty', 'Penalty', 'VAR'] as const).includes(e.event_type as never))
+              .map((e): MomentumMarker => ({ minute: e.minute, isHome: e.is_home, kind: e.event_type }))}
+          />
+        </div>
+      )}
 
       {/* THE TIMELINE */}
       {p.timeline.length > 0 && (

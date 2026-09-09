@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { crestUrl } from '@/lib/api'
+import { MomentumBand } from '@/components/football/MomentumBand'
 import type { LiveMatch, LiveMatchPlayer, LiveShot, LiveTeamMatchStats } from '@/lib/types'
 
 /** Real opposed stat bar - one rule split between the two sides in
@@ -23,39 +24,6 @@ function OpposedStat({ label, home, away, decimals = 0 }: { label: string; home:
         </div>
       </div>
       <span className="tabular text-sm font-bold text-text">{away !== null ? away.toFixed(decimals) : '—'}</span>
-    </div>
-  )
-}
-
-/** Real FotMob momentum, drawn as a two-sided pressure band off the
- * baseline: above = home, below = away, on the raw -100..100 scale the
- * feed already reports. No smoothing and no interpolation across minutes
- * the feed never sent - the polyline only connects real samples. */
-function MomentumBand({ points }: { points: { minute: number; value: number }[] }) {
-  if (points.length < 2) return null
-  const maxMinute = Math.max(...points.map((p) => p.minute), 1)
-  const W = 100
-  const H = 34
-  const mid = H / 2
-  const xy = points.map((p) => [
-    (p.minute / maxMinute) * W,
-    mid - (Math.max(-100, Math.min(100, p.value)) / 100) * mid,
-  ] as const)
-  const line = xy.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
-  const homeArea = `0,${mid} ${xy.map(([x, y]) => `${x.toFixed(2)},${Math.min(y, mid).toFixed(2)}`).join(' ')} ${W},${mid}`
-  const awayArea = `0,${mid} ${xy.map(([x, y]) => `${x.toFixed(2)},${Math.max(y, mid).toFixed(2)}`).join(' ')} ${W},${mid}`
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Momentum</span>
-        <span className="text-[9px] uppercase tracking-wide text-text-faint">to {maxMinute}&prime;</span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-9 w-full" role="img" aria-label="Match momentum: home pressure above the line, away below">
-        <polygon points={homeArea} fill="var(--pitch-green)" opacity="0.35" />
-        <polygon points={awayArea} fill="var(--broadcast-blue)" opacity="0.35" />
-        <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--divider)" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
-        <polyline points={line} fill="none" stroke="var(--text-muted)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
-      </svg>
     </div>
   )
 }
