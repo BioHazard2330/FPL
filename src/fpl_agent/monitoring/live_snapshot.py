@@ -242,10 +242,16 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
                 "minute": r["minute"], "x": r["x"], "y": r["y"], "xg": r["xg"], "outcome": r["outcome"],
                 "is_on_target": bool(r["is_on_target"]) if r["is_on_target"] is not None else None,
                 "team_id": r["team_id"], "player_name": r["player_name"],
+                # Real, confirmed-live 2026-09-10 additions - same
+                # `match_shots` table the match report already exposes these
+                # from; xGOT is a genuine separate field from xg, goal_crossed_y/z
+                # are real goal-frame placement for on-target shots.
+                "xgot": r["xgot"], "goal_crossed_y": r["goal_crossed_y"], "goal_crossed_z": r["goal_crossed_z"],
             }
             for r in conn.execute(
-                "SELECT minute, x, y, xg, outcome, is_on_target, team_id, player_name FROM match_shots "
-                "WHERE match_id=? ORDER BY minute DESC LIMIT ?", (m["id"], _MAX_SHOTS_PER_MATCH),
+                "SELECT minute, x, y, xg, outcome, is_on_target, team_id, player_name, xgot, goal_crossed_y, "
+                "goal_crossed_z FROM match_shots WHERE match_id=? ORDER BY minute DESC LIMIT ?",
+                (m["id"], _MAX_SHOTS_PER_MATCH),
             ).fetchall()
         ]
         is_squad_match = m["home_team_id"] in squad_team_ids or m["away_team_id"] in squad_team_ids

@@ -17,6 +17,7 @@ Wrapped defensively (`_safe_team_stats`): any shape mismatch degrades to
 `{"shots": [], "Periods": {"All": []}}` was observed directly), the more
 reliable of the two once a real shot has been taken.
 """
+import re
 from dataclasses import dataclass
 
 PRE_MATCH = "PRE_MATCH"
@@ -110,6 +111,28 @@ class TeamMatchState:
     corners: int | None
     big_chances: int | None
     big_chances_missed: int | None
+    # Real, confirmed-live 2026-09-10 additions - same content.stats.Periods.
+    # All.stats block above, ~11 more real categories that were fetched
+    # every sync and simply never parsed. Exact FotMob "title" strings this
+    # project matched against: "Touches in opposition box", "Accurate
+    # passes", "Tackles", "Interceptions", "Blocks", "Clearances", "Duels
+    # won", "Yellow cards", "Red cards", "Distance covered", "Number of
+    # sprints" - see `_safe_team_stats`'s own updated `_wanted` mapping.
+    touches_opp_box: int | None
+    # Real raw format confirmed live: "361 (86%)" - a real count and a real
+    # accuracy percentage bundled in one string, split into two genuine
+    # fields rather than parsed into one number that would lose the other.
+    accurate_passes: int | None
+    pass_accuracy_pct: float | None
+    tackles: int | None
+    interceptions: int | None
+    blocks: int | None
+    clearances: int | None
+    duels_won: int | None
+    yellow_cards: int | None
+    red_cards: int | None
+    distance_covered_m: int | None  # real raw metres, confirmed live (e.g. 112473) - not km, no invented conversion
+    sprints: int | None
 
 
 @dataclass(frozen=True)
@@ -143,6 +166,49 @@ class ShotEvent:
     shot_type: str | None
     situation: str | None
     period: str | None
+    # Real, confirmed-live 2026-09-10 additions - `expectedGoalsOnTarget` is
+    # a genuine separate field from `expectedGoals` per shot (never derived
+    # from it). `goal_crossed_y`/`goal_crossed_z` are FotMob's own real
+    # goal-frame placement for on-target shots specifically - horizontal
+    # position and real height in metres (confirmed against 2 real
+    # on-target goals: 0.77m/0.24m, consistent with a 2.44m crossbar) - both
+    # `None` for a shot that never reached the goal line, never guessed.
+    xgot: float | None
+    goal_crossed_y: float | None
+    goal_crossed_z: float | None
+
+
+@dataclass(frozen=True)
+class MatchInsight:
+    """Real FotMob-authored storyline (`content.insights[]`, confirmed live
+    2026-09-10 against a real finished match - e.g. "Everton have scored 11
+    goals in their last 5 matches"). `.text` is FotMob's own real,
+    ready-to-display sentence - never LLM-authored or derived by this
+    project. `team_fotmob_id`/`player_fotmob_id` are whichever the real
+    insight is actually scoped to (an insight can be team-scoped,
+    player-scoped, or neither) - never forced onto a team it isn't about."""
+    fotmob_insight_key: str
+    team_fotmob_id: int | None
+    player_fotmob_id: int | None
+    priority: int | None
+    text: str
+    color: str | None
+
+
+@dataclass(frozen=True)
+class MatchReview:
+    """Real FotMob editorial article (`content.postReview` once finished,
+    `content.preReview` before kickoff - confirmed live 2026-09-10, real
+    headline/summary/image/publish metadata, filtered to the real "en"
+    language entry). Never LLM-authored - this is FotMob's own published
+    journalism, read as-is."""
+    kind: str  # "pre" | "post"
+    fotmob_review_id: str | None
+    title: str | None
+    description: str | None
+    image_url: str | None
+    content_url: str | None
+    published_at: str | None
 
 
 def derive_status(general: dict, header_status: dict | None = None) -> str:
@@ -430,7 +496,40 @@ def parse_player_states(payload: dict) -> list[PlayerMatchState]:
     return states
 
 
-_TEAM_STATS_FIELDS = ("possession_pct", "shots", "shots_on_target", "xg", "corners", "big_chances", "big_chances_missed")
+_TEAM_STATS_FIELDS = (
+    "possession_pct", "shots", "shots_on_target", "xg", "corners", "big_chances", "big_chances_missed",
+    "touches_opp_box", "accurate_passes", "pass_accuracy_pct", "tackles", "interceptions", "blocks",
+    "clearances", "duels_won", "yellow_cards", "red_cards", "distance_covered_m", "sprints",
+)
+_FLOAT_TEAM_STATS_FIELDS = {"possession_pct", "xg", "pass_accuracy_pct"}
+# Every simple (non-compound) real "title" this project reads from the same
+# content.stats.Periods.All.stats block, confirmed live 2026-09-10 to be a
+# plain number, optionally with a trailing "%" (possession only) - safe for
+# the single %-strip below. "Accurate passes" is handled separately (see
+# `_ACCURATE_PASSES_RE`) because its real raw value is a compound string
+# ("361 (86%)"), not a bare number - a blind strip-to-digits on that string
+# would silently concatenate the count and the percentage into one wrong
+# number, a real bug caught before this shipped.
+_SIMPLE_TEAM_STATS_TITLES = {
+    "Ball possession": "possession_pct",
+    "Total shots": "shots",
+    "Shots on target": "shots_on_target",
+    "Expected goals (xG)": "xg",
+    "Corners": "corners",
+    "Big chances": "big_chances",
+    "Big chances missed": "big_chances_missed",
+    "Touches in opposition box": "touches_opp_box",
+    "Tackles": "tackles",
+    "Interceptions": "interceptions",
+    "Blocks": "blocks",
+    "Clearances": "clearances",
+    "Duels won": "duels_won",
+    "Yellow cards": "yellow_cards",
+    "Red cards": "red_cards",
+    "Distance covered": "distance_covered_m",  # real raw metres, confirmed live (e.g. 112473)
+    "Number of sprints": "sprints",
+}
+_ACCURATE_PASSES_RE = re.compile(r"^\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)\s*$")
 
 
 def _safe_team_stats(stats_block: dict | None, side_index: int) -> dict:
@@ -443,28 +542,26 @@ def _safe_team_stats(stats_block: dict | None, side_index: int) -> dict:
         return result
     try:
         groups = ((stats_block.get("Periods") or {}).get("All") or {}).get("stats") or []
-        wanted = {
-            "Ball possession": "possession_pct",
-            "Total shots": "shots",
-            "Shots on target": "shots_on_target",
-            "Expected goals (xG)": "xg",
-            "Corners": "corners",
-            "Big chances": "big_chances",
-            "Big chances missed": "big_chances_missed",
-        }
         for group in groups:
             for item in group.get("stats", []):
-                field = wanted.get(item.get("title"))
-                if field is None:
-                    continue
+                title = item.get("title")
                 values = item.get("stats")
                 if not values or len(values) <= side_index:
                     continue
                 raw = values[side_index]
                 if raw in (None, ""):
                     continue
+                if title == "Accurate passes":
+                    m = _ACCURATE_PASSES_RE.match(str(raw))
+                    if m:
+                        result["accurate_passes"] = int(m.group(1))
+                        result["pass_accuracy_pct"] = float(m.group(2))
+                    continue
+                field = _SIMPLE_TEAM_STATS_TITLES.get(title)
+                if field is None:
+                    continue
                 cleaned = str(raw).replace("%", "").strip()
-                result[field] = float(cleaned) if field in ("possession_pct", "xg") else int(float(cleaned))
+                result[field] = float(cleaned) if field in _FLOAT_TEAM_STATS_FIELDS else int(float(cleaned))
     except (TypeError, ValueError, KeyError, IndexError):
         return {field: None for field in _TEAM_STATS_FIELDS}
     return result
@@ -491,6 +588,18 @@ def parse_team_states(payload: dict) -> list[TeamMatchState]:
                 corners=stats["corners"],
                 big_chances=stats["big_chances"],
                 big_chances_missed=stats["big_chances_missed"],
+                touches_opp_box=stats["touches_opp_box"],
+                accurate_passes=stats["accurate_passes"],
+                pass_accuracy_pct=stats["pass_accuracy_pct"],
+                tackles=stats["tackles"],
+                interceptions=stats["interceptions"],
+                blocks=stats["blocks"],
+                clearances=stats["clearances"],
+                duels_won=stats["duels_won"],
+                yellow_cards=stats["yellow_cards"],
+                red_cards=stats["red_cards"],
+                distance_covered_m=stats["distance_covered_m"],
+                sprints=stats["sprints"],
             )
         )
     return team_states
@@ -513,6 +622,63 @@ def parse_momentum(payload: dict) -> list[MomentumPoint]:
             continue
         points.append(MomentumPoint(minute=int(minute), value=int(value)))
     return points
+
+
+def parse_insights(payload: dict) -> list[MatchInsight]:
+    """`content.insights` - confirmed live 2026-09-10, a real array of
+    FotMob-authored storylines, e.g. "Everton have scored 11 goals in their
+    last 5 matches." Real absent/empty for a payload that doesn't carry any
+    (never fabricated to fill the gap). The dedup key composes
+    `localizedTextId` with whichever real scope (team/player/match-wide) the
+    insight actually carries - two different teams can legitimately get the
+    same `localizedTextId` (e.g. both sides get their own "scored X in last
+    Y" line), so the bare id alone is not a safe unique key across re-syncs."""
+    insights = (payload.get("content") or {}).get("insights") or []
+    out: list[MatchInsight] = []
+    for i in insights:
+        text = i.get("text")
+        localized_id = i.get("localizedTextId")
+        if not text or not localized_id:
+            continue
+        team_id = i.get("teamId")
+        player_id = i.get("playerId")
+        scope = f"team{team_id}" if team_id is not None else (f"player{player_id}" if player_id is not None else "match")
+        out.append(MatchInsight(
+            fotmob_insight_key=f"{localized_id}|{scope}",
+            team_fotmob_id=team_id,
+            player_fotmob_id=player_id,
+            priority=i.get("priority"),
+            text=text,
+            color=i.get("color"),
+        ))
+    return out
+
+
+def parse_reviews(payload: dict) -> list[MatchReview]:
+    """`content.postReview` (once finished) / `content.preReview` (before
+    kickoff) - confirmed live 2026-09-10, each a real list of per-language
+    editorial entries; filtered to the real "en" entry. Real FotMob
+    journalism (headline/summary/image/publish metadata), read as-is, never
+    LLM-authored or summarized further by this project."""
+    content = payload.get("content") or {}
+    out: list[MatchReview] = []
+    for kind, key in (("post", "postReview"), ("pre", "preReview")):
+        entries = content.get(key)
+        if not isinstance(entries, list):
+            continue
+        entry = next((e for e in entries if isinstance(e, dict) and e.get("lang") == "en"), None)
+        if entry is None:
+            continue
+        out.append(MatchReview(
+            kind=kind,
+            fotmob_review_id=str(entry["id"]) if entry.get("id") is not None else None,
+            title=entry.get("title"),
+            description=entry.get("description"),
+            image_url=entry.get("image"),
+            content_url=entry.get("contentUrl"),
+            published_at=entry.get("dateUpdated"),
+        ))
+    return out
 
 
 def parse_shot_map(payload: dict) -> list[ShotEvent]:
@@ -538,5 +704,8 @@ def parse_shot_map(payload: dict) -> list[ShotEvent]:
             shot_type=s.get("shotType"),
             situation=s.get("situation"),
             period=s.get("period"),
+            xgot=s.get("expectedGoalsOnTarget"),
+            goal_crossed_y=s.get("goalCrossedY"),
+            goal_crossed_z=s.get("goalCrossedZ"),
         ))
     return out

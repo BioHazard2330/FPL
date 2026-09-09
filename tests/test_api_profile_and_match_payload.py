@@ -204,6 +204,64 @@ def test_match_report_builds_end_to_end_for_a_real_match(db_conn):
     assert home_players[0]["rating"] == 8.1 and home_players[0]["minutes"] == 90
 
 
+def test_match_report_includes_real_insights_review_and_shot_placement(db_conn):
+    """2026-09-10 addition - storylines, the real editorial review, and
+    xGOT/goal-frame placement per shot, all confirmed live in the same
+    FotMob payload this project already fetches and previously discarded."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _match(db_conn)
+    db_conn.execute(
+        "INSERT INTO match_insights (match_id, fotmob_insight_key, team_id, priority, text, color, "
+        "source, retrieved_at) VALUES (?,?,?,?,?,?,?,?)",
+        (1, "insights_goals_team|team1", 1, 1338, "Have scored 11 goals in their last 5 matches", "#00359C",
+         "fotmob", "t0"),
+    )
+    db_conn.execute(
+        "INSERT INTO match_reviews (match_id, kind, title, description, image_url, content_url, "
+        "published_at, source, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (1, "post", "A real headline", "A real summary.", "https://images.fotmob.com/x.jpg",
+         "https://www.fotmob.com/x", "2026-08-21T21:00:00Z", "fotmob", "t0"),
+    )
+    db_conn.execute(
+        "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, minute, x, y, xg, is_on_target, "
+        "outcome, xgot, goal_crossed_y, goal_crossed_z, source, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (1, "s1", 1, 46, 87.21, 22.25, 0.31, 1, "Goal", 0.612, 36.97, 0.77, "fotmob", "t0"),
+    )
+    db_conn.commit()
+
+    out = build_match_report(_Ctx(), {"id": "1"})
+    json.dumps(out)
+
+    assert out["insights"] == [
+        {"text": "Have scored 11 goals in their last 5 matches", "team_id": 1, "player_id": None,
+         "priority": 1338, "color": "#00359C"}
+    ]
+    assert out["review"]["kind"] == "post"
+    assert out["review"]["title"] == "A real headline"
+    shot = out["shots"][0]
+    assert abs(shot["xgot"] - 0.612) < 1e-9
+    assert abs(shot["goal_crossed_y"] - 36.97) < 1e-9
+    assert abs(shot["goal_crossed_z"] - 0.77) < 1e-9
+
+
+def test_match_report_review_prefers_post_over_pre(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _match(db_conn)
+    db_conn.execute(
+        "INSERT INTO match_reviews (match_id, kind, title, source, retrieved_at) VALUES (?,?,?,?,?)",
+        (1, "pre", "Preview headline", "fotmob", "t0"),
+    )
+    db_conn.execute(
+        "INSERT INTO match_reviews (match_id, kind, title, source, retrieved_at) VALUES (?,?,?,?,?)",
+        (1, "post", "Real result headline", "fotmob", "t0"),
+    )
+    db_conn.commit()
+    out = build_match_report(_Ctx(), {"id": "1"})
+    assert out["review"]["kind"] == "post"
+    assert out["review"]["title"] == "Real result headline"
+
+
 def test_match_report_never_invents_a_lineup_or_stats_it_does_not_have(db_conn):
     """A match with no per-player rows is a real state (FotMob detail was
     never fetched). It must come back empty, not padded."""
@@ -216,3 +274,5 @@ def test_match_report_never_invents_a_lineup_or_stats_it_does_not_have(db_conn):
     assert out["timeline"] == []
     assert out["team_stats"] == {"home": None, "away": None}
     assert out["match"]["is_squad_match"] is False
+    assert out["insights"] == []
+    assert out["review"] is None

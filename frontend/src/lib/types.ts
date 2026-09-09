@@ -593,6 +593,13 @@ export interface LiveShot {
   is_on_target: boolean | null
   team_id: number | null
   player_name: string | null
+  /** Real, separate field from xg - confirmed live 2026-09-10. */
+  xgot: number | null
+  /** Real goal-frame placement for on-target shots specifically - horizontal
+   * position and real height in metres (crossbar ~2.44m) - both null for a
+   * shot that never reached the goal line. */
+  goal_crossed_y: number | null
+  goal_crossed_z: number | null
 }
 
 /** Real FotMob momentum sample: -100..100, positive = home pressure. */
@@ -1009,6 +1016,45 @@ export interface MatchTeamStats {
   big_chances_missed: number | null
   formation: string | null
   chances_created: number | null
+  /** Real fields confirmed live 2026-09-10 - same FotMob stats block, ~11
+   * more categories that were fetched every sync and previously discarded.
+   * "Accurate passes" was a compound raw string ("361 (86%)") split at
+   * parse time into two real fields, never one combined/guessed number. */
+  touches_opp_box: number | null
+  accurate_passes: number | null
+  pass_accuracy_pct: number | null
+  tackles: number | null
+  interceptions: number | null
+  blocks: number | null
+  clearances: number | null
+  duels_won: number | null
+  yellow_cards: number | null
+  red_cards: number | null
+  distance_covered_m: number | null
+  sprints: number | null
+}
+
+/** Real FotMob-authored storyline, e.g. "Everton have scored 11 goals in
+ * their last 5 matches" - FotMob's own real, ready-to-display sentence,
+ * never derived or LLM-authored by this project. */
+export interface MatchInsight {
+  text: string
+  team_id: number | null
+  player_id: number | null
+  priority: number | null
+  color: string | null
+}
+
+/** Real FotMob editorial article - the post-match review once a match has
+ * finished, or the pre-match preview before kickoff. Real headline/summary/
+ * image/publish metadata, read as-is. */
+export interface MatchReview {
+  kind: 'pre' | 'post'
+  title: string | null
+  description: string | null
+  image_url: string | null
+  content_url: string | null
+  published_at: string | null
 }
 
 export interface MatchLineupRow {
@@ -1053,4 +1099,6 @@ export interface MatchReportPayload {
   lineups: { home: MatchLineupRow[]; away: MatchLineupRow[] }
   momentum: LiveMomentumPoint[]
   shots: LiveShot[]
+  insights: MatchInsight[]
+  review: MatchReview | null
 }

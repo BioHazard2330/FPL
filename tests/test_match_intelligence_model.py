@@ -4,10 +4,12 @@ from fpl_agent.models.match_intelligence import (
     LIVE,
     PRE_MATCH,
     derive_status,
+    parse_insights,
     parse_match,
     parse_match_events,
     parse_momentum,
     parse_player_states,
+    parse_reviews,
     parse_shot_map,
     parse_team_states,
 )
@@ -230,6 +232,193 @@ def test_parse_shot_map_reads_real_coordinates_and_outcome():
     assert abs(s.x - 99.78) < 1e-9
     assert s.outcome == "Miss"
     assert s.is_on_target is False
+
+
+# Real values confirmed live 2026-09-10 against a real finished match
+# (Everton 2-2 Man Utd, fotmob matchId 5795438) - a real on-target goal by
+# Bryan Mbeumo, not invented.
+def test_parse_shot_map_reads_real_xgot_and_goal_crossed_coordinates():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["shotmap"] = {"shots": [{
+        "id": 4123456789, "eventType": "Goal", "teamId": 8586, "playerId": 1123877,
+        "fullName": "Bryan Mbeumo", "x": 87.21, "y": 22.25, "min": 46, "isOnTarget": True,
+        "expectedGoals": 0.31, "expectedGoalsOnTarget": 0.612, "goalCrossedY": 36.97, "goalCrossedZ": 0.77,
+        "shotType": "RightFoot", "situation": "RegularPlay", "period": "SecondHalf",
+    }]}
+    shots = parse_shot_map(payload)
+    assert len(shots) == 1
+    s = shots[0]
+    assert abs(s.xgot - 0.612) < 1e-9
+    assert abs(s.goal_crossed_y - 36.97) < 1e-9
+    assert abs(s.goal_crossed_z - 0.77) < 1e-9
+
+
+def test_parse_shot_map_goal_crossed_none_for_a_shot_that_never_reached_goal():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["shotmap"] = {"shots": [{
+        "id": 999, "eventType": "BlockedShot", "teamId": 1, "playerId": 2, "fullName": "Test Player",
+        "x": 80.0, "y": 40.0, "min": 10, "isOnTarget": False, "expectedGoals": 0.05,
+    }]}
+    s = parse_shot_map(payload)[0]
+    assert s.xgot is None
+    assert s.goal_crossed_y is None
+    assert s.goal_crossed_z is None
+
+
+# Real raw stat values confirmed live 2026-09-10 against the same Everton
+# 2-2 Man Utd match - the "Accurate passes" compound string was confirmed
+# character-for-character, along with the "Distance covered" real metres
+# figure (not km).
+_REAL_RICHER_STATS = {
+    "Periods": {"All": {"stats": [
+        {"title": "Top stats", "stats": [
+            {"title": "Ball possession", "stats": ["45%", "55%"]},
+            {"title": "Touches in opposition box", "stats": [32, 26]},
+            {"title": "Accurate passes", "stats": ["361 (86%)", "458 (87%)"]},
+            {"title": "Tackles", "stats": [16, 11]},
+            {"title": "Interceptions", "stats": [12, 9]},
+            {"title": "Blocks", "stats": [5, 7]},
+            {"title": "Clearances", "stats": [18, 31]},
+            {"title": "Duels won", "stats": [51, 40]},
+            {"title": "Yellow cards", "stats": [3, 3]},
+            {"title": "Red cards", "stats": [0, 0]},
+            {"title": "Distance covered", "stats": [112473, 110010]},
+            {"title": "Number of sprints", "stats": [97, 87]},
+        ]},
+    ]}},
+}
+
+
+def test_parse_team_states_extracts_richer_stats_including_compound_accurate_passes():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["stats"] = _REAL_RICHER_STATS
+    home, away = parse_team_states(payload)
+    # "361 (86%)" must split into a real count and a real percentage - never
+    # concatenated into one wrong number (the real bug this test guards).
+    assert home.accurate_passes == 361
+    assert abs(home.pass_accuracy_pct - 86.0) < 1e-9
+    assert away.accurate_passes == 458
+    assert abs(away.pass_accuracy_pct - 87.0) < 1e-9
+    assert home.touches_opp_box == 32
+    assert home.tackles == 16
+    assert home.interceptions == 12
+    assert home.blocks == 5
+    assert home.clearances == 18
+    assert home.duels_won == 51
+    assert home.yellow_cards == 3
+    assert home.red_cards == 0
+    # Real raw metres, not a fabricated km conversion.
+    assert home.distance_covered_m == 112473
+    assert home.sprints == 97
+
+
+def test_parse_team_states_richer_stats_none_on_malformed_shape():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["stats"] = {"totally": "unexpected shape"}
+    home, away = parse_team_states(payload)
+    assert home.accurate_passes is None
+    assert home.pass_accuracy_pct is None
+    assert home.distance_covered_m is None
+
+
+# Real example confirmed live 2026-09-10 against the same Everton v Man Utd
+# match's real content.insights[0].
+_REAL_INSIGHT = {
+    "type": "team", "playerId": None, "teamId": 8668, "priority": 1338,
+    "defaultText": "Have scored {0} goals in their last {1} matches",
+    "localizedTextId": "insights_goals_team",
+    "statValues": [{"value": 11, "name": None, "type": "integer"}, {"value": 5, "name": None, "type": "integer"}],
+    "text": "Have scored 11 goals in their last 5 matches", "color": "#00359C",
+}
+
+
+def test_parse_insights_reads_real_storyline():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["insights"] = [_REAL_INSIGHT]
+    insights = parse_insights(payload)
+    assert len(insights) == 1
+    i = insights[0]
+    assert i.text == "Have scored 11 goals in their last 5 matches"
+    assert i.team_fotmob_id == 8668
+    assert i.player_fotmob_id is None
+    assert i.priority == 1338
+    assert i.color == "#00359C"
+    assert i.fotmob_insight_key == "insights_goals_team|team8668"
+
+
+def test_parse_insights_composes_distinct_keys_for_duplicate_localized_id_across_teams():
+    # The same real localizedTextId can legitimately fire for both sides -
+    # the dedup key must not collapse them into one row.
+    home_insight = dict(_REAL_INSIGHT)
+    away_insight = dict(_REAL_INSIGHT, teamId=9825, text="Have scored 4 goals in their last 5 matches")
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["insights"] = [home_insight, away_insight]
+    insights = parse_insights(payload)
+    keys = {i.fotmob_insight_key for i in insights}
+    assert len(keys) == 2
+
+
+def test_parse_insights_empty_when_absent():
+    assert parse_insights(_PAYLOAD) == []
+
+
+def test_parse_insights_skips_entries_missing_text_or_id():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["insights"] = [{"teamId": 1, "text": None, "localizedTextId": "x"}, {"teamId": 1, "text": "ok", "localizedTextId": None}]
+    assert parse_insights(payload) == []
+
+
+# Real example confirmed live 2026-09-10 against the same match's real
+# content.postReview (trimmed to the fields this project reads).
+_REAL_REVIEW_ENTRY = {
+    "id": "46ycqbva0iu415b0ra60g02of", "lang": "en",
+    "title": "Everton 2-2 Manchester United: Debutant Maitland-Niles salvages last-gasp draw",
+    "image": "https://images.fotmob.com/image_resources/review/example.jpg",
+    "description": "A late equaliser rescued a point for Everton.",
+    "contentUrl": "https://www.fotmob.com/match-review/example",
+    "dateUpdated": "2026-09-06T17:30:00Z",
+}
+
+
+def test_parse_reviews_reads_real_en_entry_and_filters_other_languages():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["postReview"] = [
+        dict(_REAL_REVIEW_ENTRY, lang="de", title="German title, must be skipped"),
+        _REAL_REVIEW_ENTRY,
+    ]
+    reviews = parse_reviews(payload)
+    assert len(reviews) == 1
+    r = reviews[0]
+    assert r.kind == "post"
+    assert r.title == _REAL_REVIEW_ENTRY["title"]
+    assert r.image_url == _REAL_REVIEW_ENTRY["image"]
+    assert r.content_url == _REAL_REVIEW_ENTRY["contentUrl"]
+    assert r.published_at == _REAL_REVIEW_ENTRY["dateUpdated"]
+
+
+def test_parse_reviews_prefers_post_and_pre_independently():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["preReview"] = [dict(_REAL_REVIEW_ENTRY, title="Preview headline")]
+    reviews = parse_reviews(payload)
+    assert len(reviews) == 1
+    assert reviews[0].kind == "pre"
+    assert reviews[0].title == "Preview headline"
+
+
+def test_parse_reviews_empty_when_not_a_list():
+    payload = dict(_PAYLOAD)
+    payload["content"] = dict(_PAYLOAD["content"])
+    payload["content"]["postReview"] = None
+    assert parse_reviews(payload) == []
 
 
 def test_parse_shot_map_empty_pre_match():

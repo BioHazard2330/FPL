@@ -204,6 +204,66 @@ def test_sync_match_stores_real_momentum_and_shot_map(monkeypatch, db_conn):
     assert shot["outcome"] == "Miss"
 
 
+def test_sync_match_stores_real_insights_reviews_and_richer_team_stats(monkeypatch, db_conn):
+    """2026-09-10 - `content.insights`/`content.postReview`/`content.preReview`
+    and ~11 more `content.stats.Periods.All.stats` categories were confirmed
+    present in the real payload `sync_match` already fetches but were never
+    parsed or stored. Real regression coverage for migration 0042 + the new
+    storage wiring, including the compound "Accurate passes" string."""
+    _seed(db_conn)
+    payload = dict(_DETAILS_PAYLOAD)
+    payload["content"] = dict(_DETAILS_PAYLOAD["content"])
+    payload["content"]["insights"] = [{
+        "type": "team", "playerId": None, "teamId": 9825, "priority": 1338,
+        "localizedTextId": "insights_goals_team", "text": "Have scored 11 goals in their last 5 matches",
+        "color": "#00359C",
+    }]
+    payload["content"]["postReview"] = [{
+        "id": "review1", "lang": "en", "title": "Arsenal 2-2 Coventry City: a real headline",
+        "image": "https://images.fotmob.com/example.jpg", "description": "A real summary.",
+        "contentUrl": "https://www.fotmob.com/match-review/example", "dateUpdated": "2026-08-21T21:00:00Z",
+    }]
+    payload["content"]["stats"] = {
+        "Periods": {"All": {"stats": [
+            {"title": "Top stats", "stats": [
+                {"title": "Accurate passes", "stats": ["361 (86%)", "458 (87%)"]},
+                {"title": "Tackles", "stats": [16, 11]},
+                {"title": "Distance covered", "stats": [112473, 110010]},
+            ]},
+        ]}},
+    }
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: payload)
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    result = sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    match_id = result["match_id"]
+
+    insight_rows = db_conn.execute("SELECT * FROM match_insights WHERE match_id=?", (match_id,)).fetchall()
+    assert len(insight_rows) == 1
+    assert insight_rows[0]["text"] == "Have scored 11 goals in their last 5 matches"
+    assert insight_rows[0]["team_id"] == 1  # resolved via general.homeTeam.id -> our own Arsenal team_id
+
+    review_rows = db_conn.execute("SELECT * FROM match_reviews WHERE match_id=?", (match_id,)).fetchall()
+    assert len(review_rows) == 1
+    assert review_rows[0]["kind"] == "post"
+    assert review_rows[0]["title"] == "Arsenal 2-2 Coventry City: a real headline"
+
+    team_row = db_conn.execute(
+        "SELECT * FROM team_match_state WHERE match_id=? AND team_id=1", (match_id,)
+    ).fetchone()
+    assert team_row["accurate_passes"] == 361
+    assert abs(team_row["pass_accuracy_pct"] - 86.0) < 1e-9
+    assert team_row["tackles"] == 16
+    assert team_row["distance_covered_m"] == 112473
+
+    # Re-sync (the real "keep re-running against a live match" path) must
+    # upsert in place, never duplicate rows.
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    assert db_conn.execute("SELECT COUNT(*) c FROM match_insights WHERE match_id=?", (match_id,)).fetchone()["c"] == 1
+    assert db_conn.execute("SELECT COUNT(*) c FROM match_reviews WHERE match_id=?", (match_id,)).fetchone()["c"] == 1
+
+
 def test_sync_match_updates_rating_on_resync_real_upsert_bug(monkeypatch, db_conn):
     """Real bug found + fixed 2026-08-29: the `player_match_state` upsert's
     `ON CONFLICT DO UPDATE SET` list omitted `rating` (present in the

@@ -91,7 +91,14 @@ function ShotMap({ shots, homeTeamId }: { shots: LiveShot[]; homeTeamId: number 
           const cx = Math.max(0, Math.min(100, displayX))
           const cy = Math.max(0, Math.min(100, s.y as number)) * (H / 100)
           const isGoal = s.outcome === 'Goal'
-          const r = Math.max(0.9, Math.min(3.4, Math.sqrt(s.xg ?? 0.02) * 5))
+          // Real xGOT (confirmed live 2026-09-10, `expectedGoalsOnTarget` -
+          // a genuine separate field from xg) drives radius for an
+          // on-target shot specifically, since it's the more honest read of
+          // "how good was this chance" once the effort is actually on
+          // frame - xg alone can't distinguish a well-placed on-target shot
+          // from a tame one. Off-target/blocked shots keep xg, the only
+          // real quality figure they have.
+          const r = Math.max(0.9, Math.min(3.4, Math.sqrt((s.is_on_target ? s.xgot : null) ?? s.xg ?? 0.02) * 5))
           const color = isHome ? 'var(--pitch-green)' : 'var(--broadcast-blue)'
           return (
             <circle
@@ -107,6 +114,7 @@ function ShotMap({ shots, homeTeamId }: { shots: LiveShot[]; homeTeamId: number 
               <title>
                 {s.player_name ?? 'Unknown'}{s.minute !== null ? ` ${s.minute}'` : ''} · {s.outcome ?? 'shot'}
                 {s.xg !== null ? ` · ${s.xg.toFixed(2)} xG` : ''}
+                {s.is_on_target && s.xgot !== null ? ` · ${s.xgot.toFixed(2)} xGOT` : ''}
               </title>
             </circle>
           )

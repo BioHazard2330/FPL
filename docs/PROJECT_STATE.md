@@ -284,6 +284,7 @@ the exact thing that makes a resume document untrustworthy.
 
 ## Next recommended work (real candidates, genuinely not started)
 
+0. **Football features roadmap - large, in progress, 2026-09-10**: direct user request for pure football features (live match visualizations, 3D presentation, real editorial content the FotMob feed already carries and this project never reads) - explicitly not more FPL analytics. Full backlog with real feasibility notes (each claim verified live against the actual endpoint, nothing assumed): `docs/FOOTBALL_FEATURES_ROADMAP.md`. Update that file's own status markers as pieces land; only a one-line pointer belongs here.
 1. **Value-of-information folded into `compare_starting_actions`' own ranking**, not just the single-swap decision's separate `information_value_note`.
 2. **Team-level qualitative → projection propagation**, done safely (an xG-regression supplement on `team_match_state`, not touching the Dixon-Coles fit itself).
 3. **Manager-change → prior-shrink wiring** — a real, scoped, previously-deferred fix.

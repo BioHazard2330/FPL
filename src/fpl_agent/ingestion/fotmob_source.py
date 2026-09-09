@@ -27,10 +27,12 @@ from fpl_agent.models.match_intelligence import (
     HALFTIME,
     LIVE,
     PRE_MATCH,
+    parse_insights,
     parse_match,
     parse_match_events,
     parse_momentum,
     parse_player_states,
+    parse_reviews,
     parse_shot_map,
     parse_team_states,
 )
@@ -309,6 +311,8 @@ def sync_match(
     match = parse_match(payload)
     player_states = parse_player_states(payload)
     team_states = parse_team_states(payload)
+    insights = parse_insights(payload)
+    reviews = parse_reviews(payload)
 
     now = datetime.now(timezone.utc).isoformat()
     home_fpl_team_id = _resolve_fpl_team_id(conn, match.home_team_name)
@@ -413,15 +417,24 @@ def sync_match(
         conn.execute(
             "INSERT INTO team_match_state "
             "(match_id, team_id, formation, possession_pct, shots, shots_on_target, xg, corners, "
-            "big_chances, big_chances_missed, source, retrieved_at, confidence) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "big_chances, big_chances_missed, touches_opp_box, accurate_passes, pass_accuracy_pct, tackles, "
+            "interceptions, blocks, clearances, duels_won, yellow_cards, red_cards, distance_covered_m, sprints, "
+            "source, retrieved_at, confidence) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(match_id, team_id) DO UPDATE SET "
             "formation=excluded.formation, possession_pct=excluded.possession_pct, shots=excluded.shots, "
             "shots_on_target=excluded.shots_on_target, xg=excluded.xg, corners=excluded.corners, "
             "big_chances=excluded.big_chances, big_chances_missed=excluded.big_chances_missed, "
+            "touches_opp_box=excluded.touches_opp_box, accurate_passes=excluded.accurate_passes, "
+            "pass_accuracy_pct=excluded.pass_accuracy_pct, tackles=excluded.tackles, "
+            "interceptions=excluded.interceptions, blocks=excluded.blocks, clearances=excluded.clearances, "
+            "duels_won=excluded.duels_won, yellow_cards=excluded.yellow_cards, red_cards=excluded.red_cards, "
+            "distance_covered_m=excluded.distance_covered_m, sprints=excluded.sprints, "
             "retrieved_at=excluded.retrieved_at",
             (match_id, fpl_team_id, ts.formation, ts.possession_pct, ts.shots, ts.shots_on_target, ts.xg,
-             ts.corners, ts.big_chances, ts.big_chances_missed, _SOURCE_NAME, now, "medium"),
+             ts.corners, ts.big_chances, ts.big_chances_missed, ts.touches_opp_box, ts.accurate_passes,
+             ts.pass_accuracy_pct, ts.tackles, ts.interceptions, ts.blocks, ts.clearances, ts.duels_won,
+             ts.yellow_cards, ts.red_cards, ts.distance_covered_m, ts.sprints, _SOURCE_NAME, now, "medium"),
         )
 
     # Real live match-feed incidents (goals/cards/subs/shots) - separate
@@ -521,11 +534,49 @@ def sync_match(
         conn.execute(
             "INSERT OR REPLACE INTO match_shots "
             "(match_id, fotmob_shot_id, team_id, player_id, fotmob_player_id, player_name, minute, x, y, xg, "
-            "is_on_target, outcome, shot_type, situation, period, source, retrieved_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "is_on_target, outcome, shot_type, situation, period, xgot, goal_crossed_y, goal_crossed_z, "
+            "source, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (match_id, shot.fotmob_shot_id, shot_team_id, shot_player_id, shot.fotmob_player_id, shot.player_name,
              shot.minute, shot.x, shot.y, shot.xg, int(shot.is_on_target) if shot.is_on_target is not None else None,
-             shot.outcome, shot.shot_type, shot.situation, shot.period, _SOURCE_NAME, now),
+             shot.outcome, shot.shot_type, shot.situation, shot.period, shot.xgot, shot.goal_crossed_y,
+             shot.goal_crossed_z, _SOURCE_NAME, now),
+        )
+
+    # Real storylines + editorial review (2026-09-10) - both confirmed live
+    # in this SAME payload, no new network cost. `team_fotmob_id` resolves
+    # via `general.homeTeam.id`/`general.awayTeam.id` (the same real fotmob
+    # numeric ids `parse_match_events` already reads for its own is_home
+    # resolution) - a player-scoped insight instead resolves through the
+    # same fotmob_player_id crosswalk the shots loop above already uses.
+    general = payload.get("general", {}) or {}
+    fotmob_team_id_to_fpl = {
+        (general.get("homeTeam") or {}).get("id"): home_fpl_team_id,
+        (general.get("awayTeam") or {}).get("id"): away_fpl_team_id,
+    }
+    for insight in parse_insights(payload):
+        insight_team_id = fotmob_team_id_to_fpl.get(insight.team_fotmob_id) if insight.team_fotmob_id is not None else None
+        insight_player_id = _resolve_player(str(insight.player_fotmob_id)) if insight.player_fotmob_id is not None else None
+        conn.execute(
+            "INSERT INTO match_insights (match_id, fotmob_insight_key, team_id, player_id, priority, text, "
+            "color, source, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(match_id, fotmob_insight_key) DO UPDATE SET "
+            "team_id=excluded.team_id, player_id=excluded.player_id, priority=excluded.priority, "
+            "text=excluded.text, color=excluded.color, retrieved_at=excluded.retrieved_at",
+            (match_id, insight.fotmob_insight_key, insight_team_id, insight_player_id, insight.priority,
+             insight.text, insight.color, _SOURCE_NAME, now),
+        )
+
+    for review in parse_reviews(payload):
+        conn.execute(
+            "INSERT INTO match_reviews (match_id, kind, fotmob_review_id, title, description, image_url, "
+            "content_url, published_at, source, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(match_id, kind) DO UPDATE SET "
+            "fotmob_review_id=excluded.fotmob_review_id, title=excluded.title, description=excluded.description, "
+            "image_url=excluded.image_url, content_url=excluded.content_url, published_at=excluded.published_at, "
+            "retrieved_at=excluded.retrieved_at",
+            (match_id, review.kind, review.fotmob_review_id, review.title, review.description,
+             review.image_url, review.content_url, review.published_at, _SOURCE_NAME, now),
         )
 
     conn.commit()

@@ -88,6 +88,16 @@ def build_match_report(ctx: DashboardContext, params: dict | None = None) -> dic
                 "shots_on_target": r["shots_on_target"], "xg": r["xg"], "corners": r["corners"],
                 "big_chances": r["big_chances"], "big_chances_missed": r["big_chances_missed"],
                 "formation": r["formation"], "chances_created": None,
+                # Real, previously-fetched-and-discarded fields (2026-09-10) -
+                # same content.stats.Periods.All.stats block above, ~11 more
+                # real categories. "Accurate passes" was a compound raw
+                # string ("361 (86%)") split at parse time into two real
+                # fields, never one combined/guessed number.
+                "touches_opp_box": r["touches_opp_box"], "accurate_passes": r["accurate_passes"],
+                "pass_accuracy_pct": r["pass_accuracy_pct"], "tackles": r["tackles"],
+                "interceptions": r["interceptions"], "blocks": r["blocks"], "clearances": r["clearances"],
+                "duels_won": r["duels_won"], "yellow_cards": r["yellow_cards"], "red_cards": r["red_cards"],
+                "distance_covered_m": r["distance_covered_m"], "sprints": r["sprints"],
             }
             for r in conn.execute("SELECT * FROM team_match_state WHERE match_id = ?", (match_id,))
         }
@@ -127,13 +137,50 @@ def build_match_report(ctx: DashboardContext, params: dict | None = None) -> dic
                 "minute": r["minute"], "x": r["x"], "y": r["y"], "xg": r["xg"], "outcome": r["outcome"],
                 "is_on_target": bool(r["is_on_target"]) if r["is_on_target"] is not None else None,
                 "team_id": r["team_id"], "player_name": r["player_name"],
+                # Real, confirmed-live 2026-09-10 additions - xGOT is a
+                # genuine separate field from xg; goal_crossed_y/z are real
+                # goal-frame placement (horizontal position + real height in
+                # metres) for on-target shots specifically, both None for a
+                # shot that never reached the goal line, never guessed.
+                "xgot": r["xgot"], "goal_crossed_y": r["goal_crossed_y"], "goal_crossed_z": r["goal_crossed_z"],
             }
             for r in conn.execute(
-                "SELECT minute, x, y, xg, outcome, is_on_target, team_id, player_name FROM match_shots "
-                "WHERE match_id = ? ORDER BY minute DESC LIMIT ?",
+                "SELECT minute, x, y, xg, outcome, is_on_target, team_id, player_name, xgot, goal_crossed_y, "
+                "goal_crossed_z FROM match_shots WHERE match_id = ? ORDER BY minute DESC LIMIT ?",
                 (match_id, _MAX_SHOTS),
             )
         ]
+
+        # Real FotMob-authored storylines (2026-09-10) - the model already
+        # doesn't force team/player scope, so the API doesn't either.
+        insights = [
+            {
+                "text": r["text"], "team_id": r["team_id"], "player_id": r["player_id"],
+                "priority": r["priority"], "color": r["color"],
+            }
+            for r in conn.execute(
+                "SELECT text, team_id, player_id, priority, color FROM match_insights "
+                "WHERE match_id = ? ORDER BY priority DESC",
+                (match_id,),
+            )
+        ]
+
+        # Real FotMob editorial article - prefer the post-match review once
+        # it exists, fall back to the pre-match preview, never both at once
+        # (a finished match's real story supersedes its own preview).
+        review_row = conn.execute(
+            "SELECT kind, title, description, image_url, content_url, published_at FROM match_reviews "
+            "WHERE match_id = ? ORDER BY CASE kind WHEN 'post' THEN 0 ELSE 1 END LIMIT 1",
+            (match_id,),
+        ).fetchone()
+        review = (
+            {
+                "kind": review_row["kind"], "title": review_row["title"], "description": review_row["description"],
+                "image_url": review_row["image_url"], "content_url": review_row["content_url"],
+                "published_at": review_row["published_at"],
+            }
+            if review_row is not None else None
+        )
 
         return {
             "match": {
@@ -157,6 +204,8 @@ def build_match_report(ctx: DashboardContext, params: dict | None = None) -> dic
             "lineups": lineups,
             "momentum": momentum,
             "shots": shots,
+            "insights": insights,
+            "review": review,
         }
     finally:
         conn.close()

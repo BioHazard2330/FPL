@@ -1,0 +1,97 @@
+# Football Features Roadmap
+
+Direct user brief (2026-09-10, live chat, not a written spec): pure football
+features - live match visualizations, 3D presentation, real editorial content
+FotMob already publishes and this project has never read - explicitly NOT
+more FPL analytics/stat panels. Only real constraint: no paid resources.
+Everything else genuinely open. User wants ALL of this built, verified, and
+deployed - not just brainstormed. This file is the backlog so nothing gets
+lost across a long build; update status inline as each item lands (see
+status key below). Session narrative for what each pass actually did stays
+in `docs/UI_REDESIGN_DECISIONS.md` / `docs/history/`, same as every other
+frontend pass - this file is only the tracked list + real feasibility notes.
+
+**Status key**: `[ ]` not started · `[~]` in progress · `[x]` shipped,
+verified (tests + build + live-checked) · `[!]` blocked/needs a real decision.
+
+**Non-negotiable for every item below**: no fabrication. Where a "real data"
+claim needed verifying, it was verified live against the actual endpoint
+before being written down here as buildable (see Verified facts section).
+Anything not yet verified is marked so explicitly - never silently assumed.
+
+## Verified facts (checked live this session, ground truth for the plan below)
+
+- This project already calls `https://www.fotmob.com/api/data/matchDetails?matchId=<id>`
+  (`ingestion/fotmob_source.py::fetch_match_details`) but only parses
+  `momentum`, `shotmap.shots` (x/y/xg/outcome), `matchFacts.events`, and
+  `stats.Periods.All.stats` (partial - only 7 of the real stat categories).
+  Direct live fetch of a real finished match (`matchId=5795438`,
+  Everton 2-2 Man Utd, 2026-09-06) confirmed real, populated, currently-unread
+  fields:
+  - `shotmap.shots[].expectedGoalsOnTarget` (xGOT) - separate from `expectedGoals`, confirmed present per shot.
+  - `content.insights` - real FotMob-written storylines, e.g. "Everton have scored 11 goals in their last 5 matches." Structured array: type, team id, priority, text.
+  - `content.postReview` / `content.preReview` - real editorial article: headline, description, image URL, 8-language variants, publish metadata.
+  - `content.stats.Periods.All.stats` real categories beyond what's parsed today: touches in opposition box, accurate passes, **passes by zone**, tackles/interceptions/blocks/clearances, duels won, discipline, **physical performance (distance covered, sprints)**.
+  - `content.topPlayers` - real per-match ratings (likely redundant with what `playerStats` already gives `match_payload.py`, check before adding a second read path).
+  - Confirmed ABSENT: `content.lineup` key does not exist on this endpoint (no formation string, no starting XI, no player coordinates) - official lineups are NOT sourced from FotMob in this project; they already come from `models/lineup_state.py` (fantasyfootballscout.co.uk, existing pipeline). Confirmed ABSENT: no heatmap/average-position data anywhere in the response, no pass-network (player-to-player) data - only aggregate per-player pass counts. Both ideas involving those were dropped from this list.
+- `models/lineup_state.py` already tracks PREDICTED vs CONFIRMED per player - real, already-ingested, already flowing into `SquadPlayer.lineup.state`. No new ingestion needed for the lineup-reveal feature.
+- No PL match was live at research time (2026-09-10 evening) - the LIVE (in-progress) shape of `matchDetails` has NOT been directly verified yet. Everything keyed to live-only fields (`live_minute`, in-progress `stats`, whether `insights`/`postReview` populate differently pre-full-time) needs a real check during an actual live window before being trusted. Flagged per-item below.
+- `three-globe` (npm, MIT-style open source, `vasturiano/three-globe`) is real and does exactly the flight-arc-over-a-sphere thing needed for the travel globe - confirmed via its own README, same library GitHub's own homepage globe uses.
+- Premier League stadium lat/longs are public, uncontroversial, well-documented (Wikipedia carries exact coordinates for every ground) - one-time static lookup, not a live data source.
+- Real per-club honours/trophy history exists on Wikidata (REST API, free, no key) - not yet directly queried against this project's real 20-club list; do that before building the trophy shelf, don't assume the shape.
+- **Correction to the above, verified with exact field names 2026-09-10**: FotMob's `shotmap.shots[]` DOES carry real goal-frame placement for on-target shots - `goalCrossedY` (horizontal position across the goal line) and `goalCrossedZ` (real height in meters, confirmed against 2 real on-target goals this match: 0.77m and 0.24m, consistent with a 2.44m crossbar as the real upper bound). So a "shots into the net" goalmouth placement graphic IS backed by real data for on-target shots specifically - only the mid-air trajectory ARC (the curve between strike point and goal line) remains a stylized flourish; start point (`x`/`y`), end point (`goalCrossedY`/`goalCrossedZ`), and xG/xGOT are all real. Also confirmed: no "passes by zone" breakdown exists (dropped from the battle-panel item below) - real exact stat titles that DO exist: "Touches in opposition box", "Accurate passes", "Tackles", "Interceptions", "Blocks", "Clearances", "Duels won", "Yellow cards", "Red cards", "Distance covered", "Number of sprints". `content.insights[]` real shape: `{type, playerId, teamId, priority, text, color, ...}` - `.text` is the ready-to-display real sentence. `content.postReview`/`preReview` is a LIST of per-language entries (`id, title, image, description, lang, contentUrl, dateUpdated, source, shareUrl`) - filter for `lang == "en"`.
+
+## Phase 0 - foundation (unlocks everything else)
+
+- [x] Add `three` + `three-globe` to `frontend/package.json` (free, MIT/BSD-style licenses, no payment). Installed clean, 0 vulnerabilities.
+- [x] Extend `models/match_intelligence.py` parsing to capture: `shots[].expectedGoalsOnTarget`, `shots[].goalCrossedY`/`goalCrossedZ` (real goal-frame placement, upgraded from "not backed by data" per the correction above), `content.insights`, `content.postReview`/`preReview`, and the additional real `stats.Periods.All.stats` categories (touches-in-box, accurate-passes-with-accuracy-split, tackles/interceptions/blocks/clearances, duels won, discipline, distance-covered-in-metres, sprints - "passes by zone" dropped, confirmed absent). Migration `0042_match_insights_reviews_richer_stats.sql`, applied and verified against real production DB. New dataclasses `MatchInsight`/`MatchReview`, 13 new tests, `sync_match` wired end-to-end (parse -> DB), verified with a real integration test including re-sync idempotency. A real bug was caught and fixed before shipping: "Accurate passes"' raw value is a compound string (`"361 (86%)"`) - a naive digit-strip would have concatenated the count and percentage into one wrong number; parsed instead into two real, separate fields via regex.
+- [x] Source 20 real PL stadium lat/longs as a static data file (`frontend/src/lib/stadiums.ts`) - one real error caught: the Wikipedia summary table's own Everton row was wrong (repeated across two independent fetches), corrected against Everton's own dedicated article and cross-checked against Anfield's known-correct coordinate for plausibility.
+- [ ] Live-check the actual in-progress `matchDetails` shape the next time a PL match is genuinely live (needed before trusting anything below marked "needs live verification").
+
+## Phase 1 - match report enrichment - SHIPPED 2026-09-10 (backend: `match_payload.py` + `live_snapshot.py`; frontend: `MatchScreen.tsx` + `MatchCentre.tsx`)
+
+- [x] **Storylines strip** - `content.insights`, real FotMob-written lines, own section on Match Report. Dedup key composes `localizedTextId` with real team/player/match scope (a bare id alone collides when both sides get the same real storyline).
+- [x] **"The Story" article block** - real headline/summary/image from `postReview`/`preReview`, `post` preferred over `pre` once a match has finished. Placed as the lead section, above the scoreline.
+- [x] **Richer "battle of the pitch" panel** - opposed bars (same `Opposed` pattern already built) for touches-in-box, accurate-passes + real pass-accuracy%, tackles/interceptions/blocks/clearances/duels-won, yellow/red cards, distance covered (converted metres->km for display only, raw metres stored), sprints.
+- [x] **Shot-quality refinement, not a "BIG CHANCE" badge** - deliberately did NOT ship an invented "BIG CHANCE" flag: FotMob's `team_match_state.big_chances` is already a real, distinct, editorially-judged stat this project tracks, and a second xGOT-threshold-based "big chance" definition under a similar name would create two different real meanings for the same words. Shipped instead: on-target shots in the live shot map now scale radius off real xGOT (more honest than xg once a shot is actually on frame) and show xGOT in the tooltip - real data surfaced, no invented category.
+- Backend: 3 new tests on `test_api_profile_and_match_payload.py` (25 total, all passing), full targeted suite across `test_match_intelligence_model.py`/`test_fotmob_source.py`/`test_api_profile_and_match_payload.py`/`test_live_snapshot.py` green.
+- Frontend: typecheck clean after every edit.
+- **Real, honest complication found running this against real production data** (2026-09-10, same session): ran `fpl sync-match "Everton" "Man Utd" --date 2026-09-06` for real against the actual match this whole plan's research was grounded in. The richer team stats and shot fields worked exactly as verified - real DB row confirmed with `accurate_passes=361`, `pass_accuracy_pct=86.0`, `tackles=16`, `distance_covered_m=112473`, `sprints=97`, and a real on-target shot with `xgot`/`goal_crossed_y`/`goal_crossed_z` populated. **But `match_insights`/`match_reviews` came back empty** - the real raw payload this project's own `fetch_match_details` (bare `requests.get`, `User-Agent: Mozilla/5.0`) received for this exact match has `content.insights`/`content.postReview`/`content.preReview` all `null`, even though the same matchId returned real populated values for those same fields earlier this session via a different fetch path. Reproduced directly with both a minimal and a full browser-realistic header set (Chrome UA, Accept, Referer, Origin) - same null result both times, so this is NOT a User-Agent/bot-detection issue on this project's side. No fresher match existed to test a time-decay theory (GW3's last match was already the one being tested, GW4 deadline still 2 days out). **Real, honest conclusion**: FotMob's `matchDetails` response for `insights`/`postReview`/`preReview` is inconsistent/non-deterministic across fetches for reasons not yet determined (possibly CDN-edge caching variance, possibly time-limited editorial-content availability, possibly something else) - the parsing/storage code is correct and tested (13 unit tests + 1 real DB integration test all pass against real captured shapes), and degrades safely to an honest empty state when the fields are absent (no fabrication, frontend sections simply don't render), but **this feature's real-world reliability is unconfirmed** and needs monitoring across several more real `sync_match` runs (ideally right after a fresh, still-recent full-time whistle) before trusting it as a dependable part of the product. Flagged, not hidden - the richer-stats and shot-placement wins are solid regardless.
+- Not yet done this pass: full frontend production build + deploy + live-checked screenshot + commit/push.
+
+## Phase 2 - live match visualizations (needs live-window verification per item; `LiveScreen.tsx` / `MatchCentre.tsx`)
+
+- [ ] Live win-probability graph - real Dixon-Coles team-strength model already fitted in this project (`models/team_strength_dc.py`), applied to real current score + minute remaining. Needs a real new small model function (P(home)/draw/P(away) given state) - genuinely new backend logic, not just field-exposure; scope and build carefully, same rigor as any other decision-layer addition (no fabricated confidence).
+- [ ] Live cumulative xG race chart - shot list already has minute+xg, frontend-only, promote from static number to a live line.
+- [ ] Live shot-quality bubble timeline - same shot data, minute × xG × team scatter.
+- [ ] Momentum band with goal/card markers merged onto one timeline (currently two disconnected panels).
+- [ ] Live "game state" tug-of-war bar - derived from already-fetched possession/xG/territory-adjacent fields, frontend-only.
+- [ ] Live "time since last shot" ticker - derived from shot timestamps already parsed.
+- [ ] Live discipline meter - derived from card events already in the timeline.
+- [ ] Live formation-swap flag - needs confirming whether an in-progress match's `stats` block carries a formation string the way a finished one does (not yet checked for the LIVE state specifically).
+- [x] **Already built, checked 2026-09-10 - no new work needed.** "Score Centre wall" (every live PL match at once) was assumed to need backend scoping work; verified it doesn't. `models/match_discovery.py::discover_and_register_matches` registers a `match_intelligence` row for EVERY real fixture in the discovery window (`SELECT ... FROM fixtures` with no squad filter at all), `live_match_poll_cmd` refreshes every tracked not-FULL_TIME match (not a squad subset), and `live_snapshot.py::_active_matches_block`'s own SQL (`WHERE mi.status IN ('LIVE','HALFTIME')`) already has no team restriction either. `LiveScreen.tsx` already renders every match in `active_matches` in a real grid (`{matches.map((m) => <MatchCard .../>)}`), not filtered to squad-only. The only real remaining polish (not required, cosmetic) would be a denser compact-card mode for a real multi-match Saturday 3pm kickoff pile-up - not scoped, low priority.
+- [ ] Official lineup reveal - real `lineup_state.py` PREDICTED→CONFIRMED transition, broadcast-style teamsheet reveal reusing existing shirt/PitchMarkings components instead of a small badge. Scoped 2026-09-10: no new backend needed - `ingestion/change_detection.py::detect_lineup_confirmations` already writes a real, squad-scoped `change_events` row with `event_type='lineup_confirmed'` the first time `player_match_state` goes from empty to populated for a tracked player's match (fires from `sync_match` already). The reveal is a frontend-only consumption of that already-existing signal (e.g. a recent `lineup_confirmed` event within the last few minutes triggers the reveal treatment on that player's `MyTeamScreen`/`CommandScreen` pitch tile) - no new detector, no new table.
+
+## Phase 3 - 3D presentation layer (Phase 0's three.js dependency required first)
+
+- [ ] Travel globe - real stadium coordinates + real upcoming fixtures as `three-globe` flight arcs.
+- [ ] Tilted 3D pitch camera for the lineup reveal (Phase 2's official-lineup feature, presented in 3D instead of flat).
+- [ ] 3D league table podium - real points driving podium block height, top 3.
+- [ ] 3D trophy shelf - real Wikidata honours list per club (needs the actual Wikidata query built and checked against this project's real 20 clubs before promising the shape of the data).
+- [ ] CSS 3D player card flip (no WebGL needed) - shirt flips to stat face.
+- [ ] Ghost XI overlay - real locked squad vs real recommended squad, two translucent 3D layers on one pitch, divergence points fade one silhouette out and the other in. Both squads' data already computed (`CommandPayload`'s action squad vs `MyTeamPayload`'s locked squad) - a presentation layer over data that already exists, not new computation.
+- [ ] Season DNA helix - real per-gameweek W/D/L sequence as a 3D double helix; needs the full season result sequence exposed (currently only last-5 form exists on `LeagueTableRow.form` - check whether extending to the full season is a real, cheap query or needs new aggregation).
+- [ ] Fluid win-probability orb - depends on Phase 2's live win-probability model; presentation layer once that model exists.
+- [ ] Transfer wormhole - Plan's real OUT→IN leg, theatrical 3D transition, frontend-only over existing `PlanStep.player_out`/`player_in` data.
+- [ ] War-room string board - Advanced's real `DecisionAuditBlock` (falsifiers, stress tests, causal chain) already fully modeled - spatial 3D presentation layer, not new data.
+- [ ] xG mountain range - real per-match season-long xG terraformed into a 3D landscape; needs a season-long per-match xG series (check what's already queryable vs needs new aggregation).
+- [ ] Captain battle 3D push-in - `CaptainFaceOff`'s real data, camera-driven 3D reveal instead of the current flat VS graphic.
+- [ ] Live energy field - particle system over the live match centre, density/color driven by real accumulating live xG per team.
+
+## Explicitly ruled out this session, with the real reason
+
+- Reddit live match-thread embed - unauthenticated `.json` API shut down May 2026, confirmed dead.
+- X/Twitter embed feed - oEmbed still technically responds but is rate-limited/gated since 2023, not reliable enough to build on.
+- Live text commentary scrape - FotMob's own minute-by-minute ticker is behind a JS-rendered Opta widget with no plain JSON endpoint (this project's own `match_intelligence.py` docstring already recorded this finding 2026-08-21).
+- Pass-network (player-to-player) diagram and player heatmap/average-position map - confirmed absent from the `matchDetails` endpoint this project already calls; would need a genuinely different, unverified data source.
+- AI-generated commentary/radio/back-page ideas from earlier in this same brainstorm - explicitly rejected by the user in favor of the live/visualization direction above.

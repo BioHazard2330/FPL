@@ -3,7 +3,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchReport } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { MatchLineupRow, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
+import type { MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
 
 const EVENT_MARK: Record<string, { label: string; ink: string; fill: string }> = {
   Goal: { label: 'Goal', ink: 'text-pitch-green', fill: 'bg-pitch-green' },
@@ -34,6 +34,67 @@ function Opposed({ label, home, away, decimals = 0 }: { label: string; home: num
         </div>
       </div>
       <span className="tabular text-sm font-bold text-text">{away !== null ? away.toFixed(decimals) : '—'}</span>
+    </div>
+  )
+}
+
+/** Real FotMob-authored storylines - already-written editorial one-liners
+ * ("Everton have scored 11 goals in their last 5 matches"), never derived
+ * or generated here. A real narrative strip, not a stat. */
+function Storylines({ insights, home, away }: { insights: MatchInsight[]; home: number; away: number }) {
+  if (insights.length === 0) return null
+  return (
+    <div className="border-b-2 border-divider px-10 py-6">
+      <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Storylines</div>
+      <div className="flex flex-wrap gap-x-8 gap-y-2">
+        {insights.slice(0, 6).map((ins, i) => (
+          <div key={i} className="flex items-baseline gap-2 text-sm">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: ins.color ?? 'var(--text-faint)' }}
+              aria-hidden="true"
+            />
+            <span className="text-text-muted">{ins.text}</span>
+            {ins.team_id !== null && (
+              <span className="text-[10px] font-bold uppercase text-text-faint">
+                {ins.team_id === home ? '(home)' : ins.team_id === away ? '(away)' : ''}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Real FotMob editorial article - a genuine published headline/summary/
+ * image, read as-is. Turns the report from a stats sheet into an actual
+ * piece someone wrote. Never LLM-authored or paraphrased by this project. */
+function TheStory({ review }: { review: MatchReview }) {
+  return (
+    <div className="border-b-2 border-divider">
+      <div className="grid grid-cols-1 gap-6 px-10 py-8 md:grid-cols-[1fr_auto]">
+        <div className="min-w-0">
+          <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+            {review.kind === 'post' ? 'The story' : 'Match preview'}
+          </div>
+          <div className="mt-2 font-display text-2xl font-bold leading-tight text-text">{review.title}</div>
+          {review.description && <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-muted">{review.description}</p>}
+          {review.content_url && (
+            <a
+              href={review.content_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-block text-[11px] font-bold uppercase tracking-wide text-broadcast-blue hover:underline"
+            >
+              Read the full story &rarr;
+            </a>
+          )}
+        </div>
+        {review.image_url && (
+          <img src={review.image_url} alt="" className="h-32 w-full shrink-0 object-cover md:h-32 md:w-52" />
+        )}
+      </div>
     </div>
   )
 }
@@ -168,6 +229,8 @@ export function MatchScreen() {
         right={<span className="text-text-faint">{m.status.replace(/_/g, ' ')}</span>}
       />
 
+      {p.review && <TheStory review={p.review} />}
+
       {/* THE SCORELINE */}
       <div className="border-b-2 border-divider px-10 py-8">
         <div className="flex items-center justify-center gap-6">
@@ -200,6 +263,8 @@ export function MatchScreen() {
         )}
       </div>
 
+      <Storylines insights={p.insights} home={m.home.team_id} away={m.away.team_id} />
+
       {/* THE CONTEST */}
       {(hs || as) && (
         <div className="border-b-2 border-divider px-10 py-6">
@@ -209,6 +274,34 @@ export function MatchScreen() {
           <Opposed label="On target" home={stat(hs, 'shots_on_target')} away={stat(as, 'shots_on_target')} />
           <Opposed label="Big chances" home={stat(hs, 'big_chances')} away={stat(as, 'big_chances')} />
           <Opposed label="Corners" home={stat(hs, 'corners')} away={stat(as, 'corners')} />
+        </div>
+      )}
+
+      {/* BATTLE OF THE PITCH - real fields this project fetched every sync
+          and never rendered: touches in the box, real pass accuracy (not
+          just a count), the physical duel (tackles/interceptions/blocks/
+          clearances/duels won), discipline, and - the real sleeper - who
+          actually ran further. */}
+      {(hs || as) && (
+        <div className="border-b-2 border-divider px-10 py-6">
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Battle of the pitch</div>
+          <Opposed label="Touches in box" home={stat(hs, 'touches_opp_box')} away={stat(as, 'touches_opp_box')} />
+          <Opposed label="Accurate passes" home={stat(hs, 'accurate_passes')} away={stat(as, 'accurate_passes')} />
+          <Opposed label="Pass accuracy %" home={stat(hs, 'pass_accuracy_pct')} away={stat(as, 'pass_accuracy_pct')} />
+          <Opposed label="Tackles" home={stat(hs, 'tackles')} away={stat(as, 'tackles')} />
+          <Opposed label="Interceptions" home={stat(hs, 'interceptions')} away={stat(as, 'interceptions')} />
+          <Opposed label="Blocks" home={stat(hs, 'blocks')} away={stat(as, 'blocks')} />
+          <Opposed label="Clearances" home={stat(hs, 'clearances')} away={stat(as, 'clearances')} />
+          <Opposed label="Duels won" home={stat(hs, 'duels_won')} away={stat(as, 'duels_won')} />
+          <Opposed label="Yellow cards" home={stat(hs, 'yellow_cards')} away={stat(as, 'yellow_cards')} />
+          <Opposed label="Red cards" home={stat(hs, 'red_cards')} away={stat(as, 'red_cards')} />
+          <Opposed
+            label="Distance covered (km)"
+            home={hs?.distance_covered_m !== null && hs?.distance_covered_m !== undefined ? hs.distance_covered_m / 1000 : null}
+            away={as?.distance_covered_m !== null && as?.distance_covered_m !== undefined ? as.distance_covered_m / 1000 : null}
+            decimals={1}
+          />
+          <Opposed label="Sprints" home={stat(hs, 'sprints')} away={stat(as, 'sprints')} />
         </div>
       )}
 
