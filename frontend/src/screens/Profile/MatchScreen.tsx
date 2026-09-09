@@ -1,9 +1,11 @@
 import { Link, useParams } from 'react-router-dom'
+import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchReport } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
+import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
+import type { LiveShot, MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
 
 const EVENT_MARK: Record<string, { label: string; ink: string; fill: string }> = {
   Goal: { label: 'Goal', ink: 'text-pitch-green', fill: 'bg-pitch-green' },
@@ -181,6 +183,99 @@ function LineupTable({ rows, title }: { rows: MatchLineupRow[]; title: string })
   )
 }
 
+/** THE SHOT QUALITY - two real reads of the same shot list, because they
+ * answer different questions. The race line shows the running total, which
+ * team accumulated more expected threat overall; the bubble timeline shows
+ * exactly when the real chances fell and how big each one was - a 2-0 xG
+ * lead built from one huge chance in the 3rd minute reads completely
+ * differently from the same total built steadily. Neither invents a value:
+ * every point is a real shot already in `p.shots`, just never charted. */
+function ShotQuality({ shots, homeTeamId, homeShort, awayShort }: {
+  shots: LiveShot[]
+  homeTeamId: number
+  homeShort: string
+  awayShort: string
+}) {
+  const withMinute = shots.filter((s): s is LiveShot & { minute: number } => s.minute !== null)
+  if (withMinute.length === 0) return null
+  // Payload orders shots minute DESC (most recent first, for the live feed's
+  // own convenience) - reversed here so a cumulative sum runs forward in
+  // real time, not backward.
+  const chronological = [...withMinute].sort((a, b) => a.minute - b.minute)
+
+  let homeCum = 0
+  let awayCum = 0
+  const homeSeries: [number, number][] = [[0, 0]]
+  const awaySeries: [number, number][] = [[0, 0]]
+  for (const s of chronological) {
+    if (s.xg === null) continue
+    if (s.team_id === homeTeamId) {
+      homeCum += s.xg
+      homeSeries.push([s.minute, Number(homeCum.toFixed(2))])
+    } else {
+      awayCum += s.xg
+      awaySeries.push([s.minute, Number(awayCum.toFixed(2))])
+    }
+  }
+  const lastMinute = chronological[chronological.length - 1].minute
+  homeSeries.push([lastMinute, homeSeries[homeSeries.length - 1][1]])
+  awaySeries.push([lastMinute, awaySeries[awaySeries.length - 1][1]])
+
+  const bubbleHome: [number, number, number][] = chronological
+    .filter((s) => s.team_id === homeTeamId && s.xg !== null)
+    .map((s) => [s.minute, 1, Number((s.xg as number).toFixed(2))])
+  const bubbleAway: [number, number, number][] = chronological
+    .filter((s) => s.team_id !== homeTeamId && s.xg !== null)
+    .map((s) => [s.minute, 0, Number((s.xg as number).toFixed(2))])
+
+  return (
+    <div className="border-b-2 border-divider px-10 py-8">
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Shot quality</div>
+      <div className="mb-4 flex flex-wrap items-center gap-4 text-[11px] text-text-muted">
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-pitch-green" /> {homeShort}</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-broadcast-blue" /> {awayShort}</span>
+      </div>
+
+      <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Cumulative xG</div>
+      <Chart
+        type="line"
+        height={220}
+        options={baseChart({
+          chart: { type: 'line' },
+          stroke: { width: 3, curve: 'stepline' },
+          colors: [CHART_COLORS.primary, CHART_COLORS.secondary],
+          xaxis: { type: 'numeric', title: { text: 'Minute' }, labels: { formatter: (v: string) => `${Math.round(Number(v))}'`, style: { cssClass: 'tabular' } } },
+          yaxis: { title: { text: 'xG' }, labels: intAxisLabels, decimalsInFloat: 2 },
+          tooltip: { x: { formatter: (v: number) => `${Math.round(v)}'` } },
+        })}
+        series={[
+          { name: homeShort, data: homeSeries },
+          { name: awayShort, data: awaySeries },
+        ]}
+      />
+
+      <div className="mb-2 mt-8 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">
+        Every chance, by minute &middot; bubble size = xG
+      </div>
+      <Chart
+        type="bubble"
+        height={140}
+        options={baseChart({
+          chart: { type: 'bubble' },
+          colors: [CHART_COLORS.primary, CHART_COLORS.secondary],
+          xaxis: { type: 'numeric', title: { text: 'Minute' }, tickAmount: 6, labels: { formatter: (v: string) => `${Math.round(Number(v))}'`, style: { cssClass: 'tabular' } } },
+          yaxis: { show: false, min: -0.5, max: 1.5 },
+          tooltip: { y: { formatter: (v: number) => `${v.toFixed(2)} xG` } },
+        })}
+        series={[
+          { name: homeShort, data: bubbleHome },
+          { name: awayShort, data: bubbleAway },
+        ]}
+      />
+    </div>
+  )
+}
+
 function stat(s: MatchTeamStats | null, k: keyof MatchTeamStats): number | null {
   const v = s ? s[k] : null
   return typeof v === 'number' ? v : null
@@ -304,6 +399,8 @@ export function MatchScreen() {
           <Opposed label="Sprints" home={stat(hs, 'sprints')} away={stat(as, 'sprints')} />
         </div>
       )}
+
+      <ShotQuality shots={p.shots} homeTeamId={m.home.team_id} homeShort={m.home.short} awayShort={m.away.short} />
 
       {/* THE TIMELINE */}
       {p.timeline.length > 0 && (
