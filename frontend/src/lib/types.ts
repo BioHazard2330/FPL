@@ -576,6 +576,16 @@ export interface LiveTeamMatchStats {
   big_chances: number | null
   big_chances_missed: number | null
   chances_created: number | null
+  /** Real FotMob team-level card counts (migration 0042) - not derived from
+   * the timeline, an independent FotMob-reported aggregate. */
+  yellow_cards: number | null
+  red_cards: number | null
+  /** Real current formation string ("4-3-3") when FotMob reports one for
+   * this match - genuinely sparse (not every fetch carries it), never a
+   * guessed default. A single current reading, not a swap-detected diff
+   * against an earlier value - a real, disclosed, scoped-down version of
+   * the original "formation-swap flag" idea. */
+  formation: string | null
 }
 
 /** Real FotMob shot. `x`/`y` are FotMob's own 0-100 attacking-direction

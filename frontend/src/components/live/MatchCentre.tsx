@@ -116,6 +116,17 @@ function stat(s: LiveTeamMatchStats | null, k: keyof LiveTeamMatchStats): number
   return s ? (s[k] as number | null) : null
 }
 
+/** The leading real minute out of FotMob's own already-complete display
+ * string ("24'" -> 24, "45+2'" -> 45, "HT"/"FT" -> null - no real "current
+ * minute" during a break). Only ever used for a real elapsed-time
+ * calculation (the last-shot ticker below), never re-rendered as if it
+ * were the real display string itself (`live_minute` already is one). */
+function parseLiveMinute(live_minute: string | null): number | null {
+  if (!live_minute) return null
+  const match = /^(\d+)/.exec(live_minute)
+  return match ? Number(match[1]) : null
+}
+
 /** One real live match, composed as a broadcast match card rather than a
  * data card: scoreline dominant, the contest expressed as opposed rules,
  * then the two genuinely spatial objects (momentum band, shot map), then
@@ -216,8 +227,40 @@ export function MatchCard({ m }: { m: LiveMatch }) {
           <OpposedStat label="Big chances" home={stat(hs, 'big_chances')} away={stat(as, 'big_chances')} />
           <OpposedStat label="Chances created" home={stat(hs, 'chances_created')} away={stat(as, 'chances_created')} />
           <OpposedStat label="Corners" home={stat(hs, 'corners')} away={stat(as, 'corners')} />
+          {/* Real discipline meter - the same real FotMob team-card counts
+              (migration 0042) other screens already show for a finished
+              match, now on the live card too. Yellow and red kept as two
+              separate real opposed rows rather than one blended "discipline
+              score" - a weighting scheme (is a red really "worth" 2
+              yellows?) would be an invented number, not a real one. */}
+          <OpposedStat label="Yellow cards" home={stat(hs, 'yellow_cards')} away={stat(as, 'yellow_cards')} />
+          <OpposedStat label="Red cards" home={stat(hs, 'red_cards')} away={stat(as, 'red_cards')} />
+          {(hs?.formation || as?.formation) && (
+            <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted">
+              <span>{hs?.formation ?? '—'}</span>
+              <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Formation</span>
+              <span>{as?.formation ?? '—'}</span>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Real "time since last shot" ticker - FotMob's own real shot
+          timestamps (`m.shots`, already ordered most-recent-first by the
+          backend) diffed against the real current live minute. Omitted
+          entirely at kickoff/half-time/before any shot - never a
+          fabricated "0m" reading. */}
+      {m.shots.length > 0 && m.shots[0].minute !== null && (() => {
+        const nowMinute = parseLiveMinute(m.live_minute)
+        if (nowMinute === null) return null
+        const elapsed = Math.max(nowMinute - m.shots[0].minute!, 0)
+        return (
+          <div className="border-t-2 border-divider px-6 py-2 text-center text-[10px] font-bold uppercase tracking-[0.12em] text-text-faint">
+            {elapsed === 0 ? 'Shot just now' : `${elapsed}' since last shot`}
+            {m.shots[0].player_name && <span className="normal-case tracking-normal text-text-muted"> &middot; {m.shots[0].player_name}</span>}
+          </div>
+        )
+      })()}
 
       {(m.momentum.length > 1 || m.shots.length > 0) && (
         <div className="grid grid-cols-1 gap-6 border-t-2 border-divider px-6 py-4 xl:grid-cols-2">

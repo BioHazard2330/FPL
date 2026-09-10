@@ -256,10 +256,16 @@ def _active_matches_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
                 "possession_pct": r["possession_pct"], "shots": r["shots"], "shots_on_target": r["shots_on_target"],
                 "xg": r["xg"], "corners": r["corners"], "big_chances": r["big_chances"],
                 "big_chances_missed": r["big_chances_missed"], "chances_created": None,
+                # Real, already-parsed FotMob team-level stats (migration
+                # 0042) - yellow/red cards for a real live discipline read,
+                # formation for a real current-formation display. Neither is
+                # new data; both already existed on this same table and this
+                # same query, just never selected for the live channel.
+                "yellow_cards": r["yellow_cards"], "red_cards": r["red_cards"], "formation": r["formation"],
             }
             for r in conn.execute(
-                "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners, big_chances, big_chances_missed "
-                "FROM team_match_state WHERE match_id=?", (m["id"],),
+                "SELECT team_id, possession_pct, shots, shots_on_target, xg, corners, big_chances, big_chances_missed, "
+                "yellow_cards, red_cards, formation FROM team_match_state WHERE match_id=?", (m["id"],),
             ).fetchall()
         }
         # Real team-level "chances created" (2026-08-29 forensic product

@@ -125,13 +125,15 @@ def _seed_live_match(conn, match_id_hint, home_team_id, away_team_id, status="LI
     )
     conn.execute(
         "INSERT INTO team_match_state (match_id, team_id, possession_pct, shots, shots_on_target, xg, corners, "
-        "big_chances, big_chances_missed, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (match_id_hint, home_team_id, 45.0, 6, 2, 0.8, 3, 1, 1, "2026-08-29T18:24:00+00:00"),
+        "big_chances, big_chances_missed, yellow_cards, red_cards, formation, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, home_team_id, 45.0, 6, 2, 0.8, 3, 1, 1, 2, 0, "4-3-3", "2026-08-29T18:24:00+00:00"),
     )
     conn.execute(
         "INSERT INTO team_match_state (match_id, team_id, possession_pct, shots, shots_on_target, xg, corners, "
-        "big_chances, big_chances_missed, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (match_id_hint, away_team_id, 55.0, 8, 4, 1.4, 5, 2, 0, "2026-08-29T18:24:00+00:00"),
+        "big_chances, big_chances_missed, yellow_cards, red_cards, formation, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (match_id_hint, away_team_id, 55.0, 8, 4, 1.4, 5, 2, 0, 1, 1, "4-2-3-1", "2026-08-29T18:24:00+00:00"),
     )
     conn.execute(
         "INSERT INTO match_momentum (match_id, minute, value, retrieved_at) VALUES (?,?,?,?), (?,?,?,?)",
@@ -166,6 +168,9 @@ def test_active_matches_block_reads_real_match_data_no_extra_network(db_conn):
     assert m["live_minute"] == "24'"
     assert m["team_stats"]["home"]["possession_pct"] == 45.0
     assert m["team_stats"]["away"]["big_chances"] == 2
+    assert m["team_stats"]["home"]["yellow_cards"] == 2 and m["team_stats"]["home"]["red_cards"] == 0
+    assert m["team_stats"]["away"]["red_cards"] == 1
+    assert m["team_stats"]["home"]["formation"] == "4-3-3"
     assert [(p["minute"], p["value"]) for p in m["momentum"]] == [(0, 0), (24, -35)]
     assert m["shots"][0]["outcome"] == "Goal"
     assert len(m["my_players"]) == 1
