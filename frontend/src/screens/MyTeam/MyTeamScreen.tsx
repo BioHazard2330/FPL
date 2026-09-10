@@ -44,8 +44,15 @@ function PlayerTile({ p, dim = false, fixtures, onSelect }: {
   const shirtPx = big ? 150 : small ? 76 : 110
   const shirt = shirtUrl(p.team_code, p.position === 'GKP', shirtPx)
   const crest = crestUrl(p.team_code)
-  const flagged = p.lineup && (p.lineup.state === 'OUT_UNAVAILABLE' || p.lineup.state === 'CONFIRMED_BENCHED')
+  // Real lineup reveal (2026-09-10): a confirmed starter used to render
+  // identically to a merely-predicted one - the one moment that actually
+  // matters (the real teamsheet dropping) was invisible. A confirmed OUT
+  // already had a badge; a confirmed IN gets the equivalent positive one.
+  const confirmedIn = p.lineup?.state === 'CONFIRMED_STARTING'
+  const confirmedOut = p.lineup !== null && p.lineup !== undefined
+    && (p.lineup.state === 'OUT_UNAVAILABLE' || p.lineup.state === 'CONFIRMED_BENCHED')
   const boxClass = big ? 'h-20 w-20' : small ? 'h-11 w-11' : 'h-14 w-14'
+  const ringClass = confirmedIn ? 'ring-2 ring-pitch-green' : confirmedOut ? 'ring-2 ring-alert-red' : ''
   return (
     <HoverCard>
       <HoverCardTrigger
@@ -67,7 +74,7 @@ function PlayerTile({ p, dim = false, fixtures, onSelect }: {
                 {p.is_captain ? 'C' : 'V'}
               </span>
             )}
-            <div className={`relative ${boxClass}`}>
+            <div className={`relative ${boxClass} ${ringClass}`}>
               {shirt ? (
                 <img src={shirt} alt={`${p.team_short} shirt`} loading="lazy" className={`${boxClass} object-contain`} />
               ) : (
@@ -81,7 +88,10 @@ function PlayerTile({ p, dim = false, fixtures, onSelect }: {
             </div>
             <div className={`tabular font-bold text-pitch-green ${big ? 'text-base' : 'text-sm'}`}>{p.median.toFixed(1)}</div>
             <NextFixture fixtures={run} className="mt-0.5" />
-            {flagged && p.lineup && (
+            {confirmedIn && (
+              <span className="mt-0.5 bg-pitch-green px-1 py-0.5 text-[9px] font-bold uppercase text-pitch-green-ink">Confirmed</span>
+            )}
+            {confirmedOut && p.lineup && (
               <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[9px] font-bold uppercase text-alert-red-ink">{p.lineup.label}</span>
             )}
           </button>
@@ -285,6 +295,12 @@ export function MyTeamScreen() {
   const starShirt = star ? shirtUrl(star.team_code, star.position === 'GKP', 220) : null
   const allSquadPlayers = [...(p.positions?.flatMap((pos) => pos.players) ?? []), ...(p.bench ?? [])]
   const selected = selectedId !== null ? (allSquadPlayers.find((pl) => pl.player_id === selectedId) ?? null) : null
+  // Real teamsheet-drop moment: at least one squad player's own match has a
+  // real confirmed lineup (`lineup_state.py`'s CONFIRMED_STARTING/BENCHED),
+  // not just a pre-match prediction.
+  const lineupsConfirmed = allSquadPlayers.some(
+    (pl) => pl.lineup?.state === 'CONFIRMED_STARTING' || pl.lineup?.state === 'CONFIRMED_BENCHED',
+  )
 
   return (
     <div className="data-in pb-16">
@@ -351,7 +367,15 @@ export function MyTeamScreen() {
           under a full-width pitch. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="border-r-0 border-divider px-8 py-10 lg:border-r-2">
-          <div className="mb-3 flex justify-end">
+          <div className="mb-3 flex items-center justify-between">
+            {lineupsConfirmed ? (
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-pitch-green">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-pitch-green" aria-hidden="true" />
+                Lineups confirmed
+              </div>
+            ) : (
+              <span />
+            )}
             <button
               type="button"
               onClick={() => setView3D((v) => !v)}
