@@ -3,14 +3,42 @@ import { Link } from 'react-router-dom'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
-import { crestUrl, fetchMyTeamPayload, shirtUrl } from '@/lib/api'
+import { crestUrl, fetchCommandPayload, fetchMyTeamPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
 import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
 import { pressureInk, runPressure } from '@/lib/fdr'
 import { PitchMarkings } from '@/components/football/PitchMarkings'
 import { Pitch3D, type Pitch3DPlayer } from '@/components/three/Pitch3D'
-import type { FixtureContext, SquadPlayer } from '@/lib/types'
+import type { ActionSquadPlayer, FixtureContext, SquadPlayer } from '@/lib/types'
+
+const CHIP_DISPLAY_NAME: Record<string, string> = {
+  wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
+}
+function actionLabel(action: string | null): string {
+  if (!action) return 'the recommended action'
+  return CHIP_DISPLAY_NAME[action] ?? action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/** A translucent stand-in for a real recommended player who isn't part of
+ * the actual locked squad - deliberately NOT `PlayerTile` (that needs the
+ * full `SquadPlayer` shape: floor/ceiling/confidence/tier/lineup, none of
+ * which `ActionSquadPlayer` carries), a plain dashed outline instead so it
+ * reads as "not really on your pitch" rather than a slightly-different real
+ * tile. */
+function GhostInTile({ pl }: { pl: ActionSquadPlayer }) {
+  const crest = crestUrl(pl.team_code)
+  return (
+    <div className="flex w-24 flex-col items-center text-center opacity-70" title={`${pl.name} - part of ${actionLabel(null)}, not your real locked squad`}>
+      <div className="flex h-14 w-14 items-center justify-center border-2 border-dashed border-broadcast-blue bg-void/40">
+        {crest ? <img src={crest} alt="" className="h-8 w-8 object-contain" /> : null}
+      </div>
+      <div className="mt-1 w-full truncate text-xs font-bold text-broadcast-blue">{pl.name}</div>
+      <div className="tabular text-sm font-bold text-broadcast-blue">{pl.median.toFixed(1)}</div>
+      <span className="mt-0.5 bg-broadcast-blue px-1 py-0.5 text-[9px] font-bold uppercase text-void">In</span>
+    </div>
+  )
+}
 
 const TIER_DOT: Record<string, string> = {
   CORE: 'bg-broadcast-gold',
@@ -26,11 +54,12 @@ const CONFIDENCE_COLOR: Record<string, string> = {
   HIGH: 'text-pitch-green', MEDIUM: 'text-broadcast-gold', LOW: 'text-alert-red', VERY_LOW: 'text-alert-red',
 }
 
-function PlayerTile({ p, dim = false, fixtures, onSelect }: {
+function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
   p: SquadPlayer
   dim?: boolean
   fixtures?: FixtureContext
   onSelect: (p: SquadPlayer) => void
+  ghostOut?: boolean
 }) {
   // Real next fixture for this player's own club. The pitch used to show
   // eleven projections with no opponent anywhere on it - the first thing
@@ -59,7 +88,7 @@ function PlayerTile({ p, dim = false, fixtures, onSelect }: {
         render={
           <button
             onClick={() => onSelect(p)}
-            className={`relative flex flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${big ? 'w-28' : 'w-24'} ${dim ? 'opacity-60' : ''}`}
+            className={`relative flex flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${big ? 'w-28' : 'w-24'} ${dim ? 'opacity-60' : ''} ${ghostOut ? 'opacity-40 grayscale' : ''}`}
             title={p.lineup?.detail ?? undefined}
           >
             {p.tier && (
@@ -93,6 +122,9 @@ function PlayerTile({ p, dim = false, fixtures, onSelect }: {
             )}
             {confirmedOut && p.lineup && (
               <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[9px] font-bold uppercase text-alert-red-ink">{p.lineup.label}</span>
+            )}
+            {ghostOut && (
+              <span className="mt-0.5 border border-dashed border-broadcast-blue px-1 py-0.5 text-[9px] font-bold uppercase text-broadcast-blue">Out</span>
             )}
           </button>
         }
@@ -247,6 +279,16 @@ export function MyTeamScreen() {
   // once a poll refresh replaces the squad with new objects).
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [view3D, setView3D] = useState(false)
+  const [showGhost, setShowGhost] = useState(false)
+  // Ghost XI (2026-09-10): the SAME `action_squad` CommandScreen already
+  // renders (the resulting squad from `optimization/decision_analysis.py`'s
+  // own single CURRENT RECOMMENDED ACTION, not a second competing "what if"
+  // rebuild - `context.py`'s `action_squad` resolves the chosen strategic
+  // step's own `resulting_squad_ids`), overlaid on the real locked pitch -
+  // a presentation layer over data that already exists, not new
+  // computation. A separate, independent fetch: this screen's own pitch
+  // must render correctly with or without it.
+  const cmd = useFetch(fetchCommandPayload, [])
 
   if (state.status === 'loading') {
     // Shaped like the tactical board it precedes: fact column beside the
@@ -301,6 +343,23 @@ export function MyTeamScreen() {
   const lineupsConfirmed = allSquadPlayers.some(
     (pl) => pl.lineup?.state === 'CONFIRMED_STARTING' || pl.lineup?.state === 'CONFIRMED_BENCHED',
   )
+
+  // Ghost XI divergence - the locked squad's real starting XI vs the real
+  // resulting starting XI of the CURRENT RECOMMENDED ACTION. Only ever
+  // compares starting-XI to starting-XI (never against `action_squad.bench`)
+  // since a locked bench player moving to the action squad's bench isn't a
+  // real recommended change worth flagging.
+  const actionSquad = cmd.status === 'ready' ? cmd.data.action_squad : null
+  const lockedStartingIds = new Set(p.positions?.flatMap((pos) => pos.players.map((pl) => pl.player_id)) ?? [])
+  const actionStartingIds = new Set(actionSquad?.starting.map((a) => a.player_id) ?? [])
+  const ghostOutIds = new Set([...lockedStartingIds].filter((id) => !actionStartingIds.has(id)))
+  const ghostInByPosition = new Map<string, ActionSquadPlayer[]>()
+  for (const a of actionSquad?.starting ?? []) {
+    if (lockedStartingIds.has(a.player_id)) continue
+    if (!ghostInByPosition.has(a.position)) ghostInByPosition.set(a.position, [])
+    ghostInByPosition.get(a.position)!.push(a)
+  }
+  const hasGhostDivergence = ghostOutIds.size > 0 || ghostInByPosition.size > 0
 
   return (
     <div className="data-in pb-16">
@@ -376,13 +435,25 @@ export function MyTeamScreen() {
             ) : (
               <span />
             )}
-            <button
-              type="button"
-              onClick={() => setView3D((v) => !v)}
-              className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${view3D ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
-            >
-              {view3D ? 'Flat view' : '3D view'}
-            </button>
+            <div className="flex gap-2">
+              {hasGhostDivergence && !view3D && (
+                <button
+                  type="button"
+                  onClick={() => setShowGhost((v) => !v)}
+                  title={`Overlay the real resulting XI if you played the current recommended action (${actionLabel(actionSquad?.action ?? null)}) - the same squad CommandScreen's own recommendation resolves to, never a second competing suggestion.`}
+                  className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${showGhost ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+                >
+                  {showGhost ? 'Hide ghost XI' : `Ghost XI: ${actionLabel(actionSquad?.action ?? null)}`}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setView3D((v) => !v)}
+                className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${view3D ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
+              >
+                {view3D ? 'Flat view' : '3D view'}
+              </button>
+            </div>
           </div>
           {view3D ? (
             <div className="h-[28rem] w-full border-2 border-divider">
@@ -406,8 +477,15 @@ export function MyTeamScreen() {
                   </span>
                   <div className="flex flex-1 flex-wrap justify-center gap-6">
                     {pos.players.map((pl) => (
-                      <PlayerTile key={pl.player_id} p={pl} fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
+                      <PlayerTile
+                        key={pl.player_id}
+                        p={pl}
+                        fixtures={p.fixtures}
+                        onSelect={(pl) => setSelectedId(pl.player_id)}
+                        ghostOut={showGhost && ghostOutIds.has(pl.player_id)}
+                      />
                     ))}
+                    {showGhost && (ghostInByPosition.get(pos.position) ?? []).map((a) => <GhostInTile key={a.player_id} pl={a} />)}
                   </div>
                   <span className="w-9 shrink-0" />
                 </div>
