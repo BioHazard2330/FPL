@@ -4,6 +4,8 @@ import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchClubProfile } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { SeasonDnaHelix } from '@/components/three/SeasonDnaHelix'
+import { XgMountainRange } from '@/components/three/XgMountainRange'
 import type { ClubResultRow } from '@/lib/types'
 
 const RESULT_FILL: Record<string, string> = {
@@ -89,6 +91,13 @@ export function ClubScreen() {
   const c = p.club
   const crest = crestUrl(c.code)
   const form = p.results.slice(0, 5).map((r) => r.result)
+  // `p.results` is most-recent-first (a form guide's own natural order) -
+  // both 3D season shapes below read as a timeline instead, so they need
+  // the same real matches oldest-first.
+  const chronological = p.results.slice().reverse()
+  const xgMatches = chronological.filter(
+    (r): r is ClubResultRow & { xg: number; xga: number } => r.xg !== null && r.xga !== null,
+  )
 
   return (
     <div className="data-in pb-16">
@@ -126,6 +135,37 @@ export function ClubScreen() {
           </div>
         </div>
       </div>
+
+      {/* SEASON SHAPE - the same real results/xG the tables below already
+          show, read instead as a timeline: a real single-strand spiral
+          through the W/D/L sequence, and real per-match xG-for/xG-against
+          ridgelines. Two real 3D data views, not a decorative pair - each
+          renders `null` (and this whole section stays hidden) with nothing
+          real to draw yet. */}
+      {(chronological.length > 0 || xgMatches.length > 0) && (
+        <div className="grid grid-cols-1 gap-px border-b-2 border-divider bg-divider lg:grid-cols-2">
+          {chronological.length > 0 && (
+            <div className="bg-void px-10 py-7">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Season shape</div>
+              <div className="mb-3 text-[11px] text-text-faint">real results this season, oldest at the base</div>
+              <div className="h-64 w-full">
+                <SeasonDnaHelix matches={chronological.map((r) => ({ result: r.result, opponent_short: r.opponent_short }))} />
+              </div>
+            </div>
+          )}
+          {xgMatches.length > 0 && (
+            <div className="bg-void px-10 py-7">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">xG range</div>
+              <div className="mb-3 text-[11px] text-text-faint">
+                <span className="text-pitch-green">real xG for</span> vs <span className="text-alert-red">real xG against</span>, per match
+              </div>
+              <div className="h-64 w-full">
+                <XgMountainRange matches={xgMatches.map((r) => ({ xg: r.xg, xga: r.xga, opponent_short: r.opponent_short }))} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-px bg-divider xl:grid-cols-[5fr_7fr]">
         {/* RESULTS - with the xG read beside the scoreline, because a 1-0 off
