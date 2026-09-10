@@ -5,6 +5,7 @@ import { fetchPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, baseChart, gwAxisLabels, intAxisLabels } from '@/lib/chartTheme'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
+import { TransferWormhole } from '@/components/three/TransferWormhole'
 import type { PlanPath } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -129,24 +130,25 @@ function StepRail({ path }: { path: PlanPath }) {
               {/* real out->in shirt swap (art-direction pass v3, direct user
                   follow-up: "more football" - a transfer leg used to be
                   pure text) - only renders when the payload resolved real
-                  identity for both sides, never a placeholder shirt */}
+                  identity for both sides, never a placeholder shirt.
+                  2026-09-10: upgraded to a real hover-driven CSS 3D flip
+                  (`TransferWormhole`) instead of a static side-by-side pair -
+                  the "3D" ask, scoped to real shirts on a real rotating
+                  plane rather than an invented portal effect. */}
               {s.player_out && s.player_in && (
                 <div className="mt-1 flex items-center gap-1.5">
-                  {s.player_out.team_code !== null && (
-                    <img
-                      src={shirtUrl(s.player_out.team_code, s.player_out.position === 'GKP', 66) ?? undefined}
-                      alt=""
-                      className="h-6 w-6 object-contain opacity-50 grayscale"
-                    />
-                  )}
-                  <span className="text-xs opacity-70">&rarr;</span>
-                  {s.player_in.team_code !== null && (
-                    <img
-                      src={shirtUrl(s.player_in.team_code, s.player_in.position === 'GKP', 66) ?? undefined}
-                      alt=""
-                      className="h-6 w-6 object-contain"
-                    />
-                  )}
+                  <TransferWormhole
+                    outShirt={s.player_out.team_code !== null ? shirtUrl(s.player_out.team_code, s.player_out.position === 'GKP', 66) : null}
+                    inShirt={s.player_in.team_code !== null ? shirtUrl(s.player_in.team_code, s.player_in.position === 'GKP', 66) : null}
+                    outName={s.player_out.name}
+                    inName={s.player_in.name}
+                  />
+                  {/* Names stay visible without hovering - the flip is a
+                      real bonus flourish, never the only way to read who's
+                      actually moving. */}
+                  <span className="truncate text-xs opacity-70">
+                    {s.player_out.name} <span aria-hidden="true">&rarr;</span> {s.player_in.name}
+                  </span>
                 </div>
               )}
               {s.gw_ev !== null && (
