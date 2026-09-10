@@ -3,6 +3,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchweekPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { Podium3D } from '@/components/three/Podium3D'
 import type { LeaderRow, LeagueTableRow, MatchweekBlock, MatchweekFixture } from '@/lib/types'
 
 const FORM_FILL: Record<string, string> = {
@@ -270,31 +271,40 @@ export function MatchweekScreen() {
           <span className="ghost-watermark pointer-events-none absolute -top-12 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
             TABLE
           </span>
-          <div className="relative flex flex-wrap items-end gap-x-10 gap-y-4">
-            {p.table.slice(0, 3).map((r: LeagueTableRow) => {
-              const crest = crestUrl(r.code)
-              const first = r.position === 1
-              return (
-                <div key={r.team_id} className="flex items-end gap-3">
-                  <span className={`tabular font-display font-bold leading-none ${first ? 'text-5xl text-pitch-green' : 'text-2xl text-text-faint'}`}>
-                    {r.position}
-                  </span>
-                  {crest && <img src={crest} alt="" className={first ? 'h-12 w-12' : 'h-7 w-7'} />}
-                  <div>
-                    <Link
-                      to={`/club/${r.team_id}`}
-                      className={`block font-display font-bold uppercase leading-none text-text hover:text-pitch-green ${first ? 'text-3xl' : 'text-lg'}`}
-                    >
-                      {r.name}
-                    </Link>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className={`tabular font-bold ${first ? 'text-xl text-text' : 'text-sm text-text-muted'}`}>{r.points} pts</span>
-                      <Form form={r.form} />
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end">
+            <div className="h-56 w-full shrink-0 lg:w-96">
+              <Podium3D
+                entries={p.table.slice(0, 3).map((r: LeagueTableRow) => ({
+                  position: r.position, name: r.name, points: r.points, crestUrl: crestUrl(r.code),
+                }))}
+              />
+            </div>
+            <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
+              {p.table.slice(0, 3).map((r: LeagueTableRow) => {
+                const crest = crestUrl(r.code)
+                const first = r.position === 1
+                return (
+                  <div key={r.team_id} className="flex items-end gap-3">
+                    <span className={`tabular font-display font-bold leading-none ${first ? 'text-5xl text-pitch-green' : 'text-2xl text-text-faint'}`}>
+                      {r.position}
+                    </span>
+                    {crest && <img src={crest} alt="" className={first ? 'h-12 w-12' : 'h-7 w-7'} />}
+                    <div>
+                      <Link
+                        to={`/club/${r.team_id}`}
+                        className={`block font-display font-bold uppercase leading-none text-text hover:text-pitch-green ${first ? 'text-3xl' : 'text-lg'}`}
+                      >
+                        {r.name}
+                      </Link>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className={`tabular font-bold ${first ? 'text-xl text-text' : 'text-sm text-text-muted'}`}>{r.points} pts</span>
+                        <Form form={r.form} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
         </div>
       )}
