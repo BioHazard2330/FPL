@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { crestUrl } from '@/lib/api'
 import { MomentumBand } from '@/components/football/MomentumBand'
+import { WinProbabilityOrb3D } from '@/components/three/WinProbabilityOrb3D'
 import type { LiveMatch, LiveMatchPlayer, LiveShot, LiveTeamMatchStats } from '@/lib/types'
 
 /** Real opposed stat bar - one rule split between the two sides in
@@ -126,6 +128,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
   const hs = m.team_stats.home
   const as = m.team_stats.away
   const hasStats = hs !== null || as !== null
+  const [orbView, setOrbView] = useState(false)
 
   return (
     <div className={`bg-void border-l-4 ${m.is_squad_match ? 'border-broadcast-gold' : 'border-divider'}`}>
@@ -166,18 +169,41 @@ export function MatchCard({ m }: { m: LiveMatch }) {
         <div className="border-t-2 border-divider px-6 py-3" title={m.win_probability.basis}>
           <div className="mb-1.5 flex items-baseline justify-between text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
             <span>Win probability</span>
-            <span className="normal-case tracking-normal text-text-faint">real-time, not live-performance-adjusted</span>
+            <div className="flex items-center gap-2">
+              <span className="normal-case tracking-normal text-text-faint">real-time, not live-performance-adjusted</span>
+              <button
+                type="button"
+                onClick={() => setOrbView((v) => !v)}
+                className={`px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${orbView ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+              >
+                {orbView ? 'Bar' : '3D'}
+              </button>
+            </div>
           </div>
-          <div className="flex h-3 w-full overflow-hidden">
-            <div className="bg-pitch-green" style={{ width: `${m.win_probability.home_win_pct}%` }} />
-            <div className="bg-text-faint" style={{ width: `${m.win_probability.draw_pct}%` }} />
-            <div className="bg-broadcast-blue" style={{ width: `${m.win_probability.away_win_pct}%` }} />
-          </div>
-          <div className="mt-1 flex justify-between text-[10px] font-bold">
-            <span className="text-pitch-green">{m.win_probability.home_win_pct.toFixed(0)}%</span>
-            <span className="text-text-faint">{m.win_probability.draw_pct.toFixed(0)}% draw</span>
-            <span className="text-broadcast-blue">{m.win_probability.away_win_pct.toFixed(0)}%</span>
-          </div>
+          {orbView ? (
+            <div className="h-28 w-full">
+              <WinProbabilityOrb3D
+                split={{
+                  homeWinPct: m.win_probability.home_win_pct,
+                  drawPct: m.win_probability.draw_pct,
+                  awayWinPct: m.win_probability.away_win_pct,
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="flex h-3 w-full overflow-hidden">
+                <div className="bg-pitch-green" style={{ width: `${m.win_probability.home_win_pct}%` }} />
+                <div className="bg-text-faint" style={{ width: `${m.win_probability.draw_pct}%` }} />
+                <div className="bg-broadcast-blue" style={{ width: `${m.win_probability.away_win_pct}%` }} />
+              </div>
+              <div className="mt-1 flex justify-between text-[10px] font-bold">
+                <span className="text-pitch-green">{m.win_probability.home_win_pct.toFixed(0)}%</span>
+                <span className="text-text-faint">{m.win_probability.draw_pct.toFixed(0)}% draw</span>
+                <span className="text-broadcast-blue">{m.win_probability.away_win_pct.toFixed(0)}%</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
