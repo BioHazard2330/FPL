@@ -1,7 +1,7 @@
-import ThreeGlobe from 'three-globe'
 import * as THREE from 'three'
 import { useThreeScene } from '@/lib/three/useThreeScene'
 import { STADIUMS } from '@/lib/stadiums'
+import { crestUrl } from '@/lib/api'
 
 export interface TravelLeg {
   fromTeamCode: number
@@ -13,86 +13,137 @@ export interface TravelLeg {
 
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'
 
-/** Every real upcoming away fixture for the squad's clubs, as real flight
- * arcs between real stadium coordinates on an actual 3D globe. Every
- * Premier League ground sits within a few hundred kilometres of every
- * other - a full-earth view would show 20 indistinguishable dots, so the
- * camera frames England specifically rather than the whole planet. No
- * texture image: the globe material is one flat colour from this app's own
- * palette plus real lat/long graticule lines, matching the flat/no-glow
- * design system rather than a photorealistic earth. */
+// Real English Premier League ground coordinates cluster within about 5
+// degrees of latitude/longitude of each other - a rotating globe (the
+// first version of this component) is the wrong metaphor entirely for a
+// single domestic country: the sphere's curvature is imperceptible at this
+// scale, so it just reads as an abstract grid ball, and spinning it drifts
+// the view away from the one region that actually matters. This version
+// drops the planet metaphor and renders a flat, tilted tactical board
+// instead - the same visual language this app already uses for a pitch or
+// a scouting board - with real club positions placed via a simple local
+// flat projection (negligible distortion over ~5 degrees, no need for a
+// real map projection library).
+const CENTER_LAT = 52.8
+const CENTER_LNG = -1.6
+const SCALE = 9
+const COS_CENTER_LAT = Math.cos((CENTER_LAT * Math.PI) / 180)
+
+function boardPosition(lat: number, lng: number): [number, number] {
+  const x = (lng - CENTER_LNG) * COS_CENTER_LAT * SCALE
+  const z = -(lat - CENTER_LAT) * SCALE
+  return [x, z]
+}
+
 export function TravelGlobe({ legs }: { legs: TravelLeg[] }) {
   const canvasRef = useThreeScene((_canvas, renderer) => {
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 2000)
-
-    const globe = new ThreeGlobe()
-      .showGlobe(true)
-      .showGraticules(true)
-      .globeMaterial(
-        new THREE.MeshStandardMaterial({
-          color: cssVar('--panel'), transparent: true, opacity: 0.92, roughness: 0.9,
-        }),
-      )
-      .showAtmosphere(true)
-      .atmosphereColor(cssVar('--pitch-green'))
-      .atmosphereAltitude(0.12)
-      .arcsData(legs)
-      .arcStartLat((d: object) => STADIUMS[(d as TravelLeg).fromTeamCode]?.lat ?? 0)
-      .arcStartLng((d: object) => STADIUMS[(d as TravelLeg).fromTeamCode]?.lng ?? 0)
-      .arcEndLat((d: object) => STADIUMS[(d as TravelLeg).toTeamCode]?.lat ?? 0)
-      .arcEndLng((d: object) => STADIUMS[(d as TravelLeg).toTeamCode]?.lng ?? 0)
-      .arcColor(() => cssVar('--broadcast-gold'))
-      .arcStroke(0.35)
-      .arcAltitude(0.15)
-      .arcDashLength(0.4)
-      .arcDashGap(0.2)
-      .arcDashAnimateTime(2200)
-      .pointsData(
-        // Real stadium markers - only the ones this squad's actual travel
-        // legs touch, never every ground in the league.
-        [...new Set(legs.flatMap((l) => [l.fromTeamCode, l.toTeamCode]))]
-          .filter((code) => STADIUMS[code])
-          .map((code) => ({ code })),
-      )
-      .pointLat((d: object) => STADIUMS[(d as { code: number }).code]?.lat ?? 0)
-      .pointLng((d: object) => STADIUMS[(d as { code: number }).code]?.lng ?? 0)
-      .pointColor(() => cssVar('--broadcast-blue'))
-      .pointAltitude(0.01)
-      .pointRadius(0.35)
-
-    scene.add(globe)
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9))
-    const key = new THREE.DirectionalLight(0xffffff, 0.6)
-    key.position.set(1, 1, 1)
-    scene.add(key)
-
-    // Frame England specifically, tightly - real PL grounds span barely 5
-    // degrees of lat/long, so even a "zoomed to England" framing at a
-    // normal globe-viewing distance still renders every ground as one
-    // indistinguishable point. Real bug caught live: the first pass used
-    // altitude 2.05 (a normal "here's the country" distance) and every arc
-    // collapsed into a single dot - pulled in to 1.12 (close enough that
-    // the real curvature of individual arcs between neighbouring cities is
-    // actually visible) at the cost of the globe itself filling most of the
-    // frame, which is the honest tradeoff for a league whose whole
-    // footprint is one small island.
-    const englandLat = 52.8
-    const englandLng = -1.5
-    const cam = globe.getCoords(englandLat, englandLng, 1.12)
-    camera.position.set(cam.x, cam.y, cam.z)
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200)
+    // A real, fixed war-room-table angle - looking down and across the
+    // board, never rotating. The only motion on this whole board is a
+    // small marker actually flying each real route (meaning "this club is
+    // travelling here"), not a decorative spin of the board itself.
+    camera.position.set(0, 16, 15)
     camera.lookAt(0, 0, 0)
 
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8))
+    const key = new THREE.DirectionalLight(0xffffff, 0.9)
+    key.position.set(-6, 14, 8)
+    scene.add(key)
+
+    const codes = [...new Set(legs.flatMap((l) => [l.fromTeamCode, l.toTeamCode]))].filter((c) => STADIUMS[c])
+    const positions = new Map(codes.map((c) => [c, boardPosition(STADIUMS[c].lat, STADIUMS[c].lng)]))
+    const xs = codes.map((c) => positions.get(c)![0])
+    const zs = codes.map((c) => positions.get(c)![1])
+    const boardW = Math.max(...xs) - Math.min(...xs) + 6
+    const boardH = Math.max(...zs) - Math.min(...zs) + 6
+
+    const group = new THREE.Group()
+
+    const board = new THREE.Mesh(
+      new THREE.BoxGeometry(boardW, 0.3, boardH),
+      new THREE.MeshStandardMaterial({ color: cssVar('--panel'), roughness: 0.95 }),
+    )
+    board.position.y = -0.2
+    group.add(board)
+
+    // Real hairline grid on the board face - the same flat, no-photo
+    // reference-marks convention `PitchMarkings.tsx` already uses for a
+    // pitch, applied here instead of a photographic earth texture.
+    const grid = new THREE.GridHelper(Math.max(boardW, boardH), 10, cssVar('--divider'), cssVar('--divider'))
+    grid.position.y = -0.04
+    group.add(grid)
+
+    const loader = new THREE.TextureLoader()
+    for (const code of codes) {
+      const [x, z] = positions.get(code)!
+      const isEndpointOnly = !legs.some((l) => l.fromTeamCode === code) // an opponent ground, never a squad club's own
+      const peg = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.5, 12),
+        new THREE.MeshStandardMaterial({ color: isEndpointOnly ? cssVar('--broadcast-blue') : cssVar('--broadcast-gold') }),
+      )
+      peg.position.set(x, 0.25, z)
+      group.add(peg)
+
+      const crest = crestUrl(code)
+      if (crest) {
+        loader.load(crest, (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace
+          const plane = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.9, 0.9),
+            new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+          )
+          plane.position.set(x, 1.1, z)
+          plane.rotation.x = -Math.PI / 5
+          group.add(plane)
+        })
+      }
+    }
+
+    // Each real travel leg gets a static path line plus one small marker
+    // that actually flies the route, looping - real, meaningful motion
+    // ("this club is travelling here"), not a decorative spin of the board.
+    const travellers: { curve: THREE.QuadraticBezierCurve3; mesh: THREE.Mesh; speed: number }[] = []
+    for (const leg of legs) {
+      const from = positions.get(leg.fromTeamCode)
+      const to = positions.get(leg.toTeamCode)
+      if (!from || !to) continue
+      const dist = Math.hypot(to[0] - from[0], to[1] - from[1])
+      const mid = new THREE.Vector3((from[0] + to[0]) / 2, Math.max(0.6, dist * 0.22), (from[1] + to[1]) / 2)
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(from[0], 0.15, from[1]),
+        mid,
+        new THREE.Vector3(to[0], 0.15, to[1]),
+      )
+      const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(32))
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: cssVar('--pitch-green'), transparent: true, opacity: 0.55 }))
+      group.add(line)
+
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 8, 8),
+        new THREE.MeshStandardMaterial({ color: cssVar('--pitch-green') }),
+      )
+      group.add(marker)
+      travellers.push({ curve, mesh: marker, speed: 0.15 + Math.random() * 0.08 })
+    }
+
+    scene.add(group)
+
+    let t = 0
     return {
       render: (width, height) => {
         camera.aspect = width / height
         camera.updateProjectionMatrix()
-        globe.rotation.y += 0.0006
+        t += 0.01
+        for (const trav of travellers) {
+          const progress = (t * trav.speed) % 1
+          trav.curve.getPointAt(progress, trav.mesh.position)
+        }
         renderer.render(scene, camera)
       },
       dispose: () => {
-        scene.traverse((obj) => {
-          if (obj instanceof THREE.Mesh) {
+        group.traverse((obj) => {
+          if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
             obj.geometry?.dispose()
             const mat = obj.material as THREE.Material | THREE.Material[]
             if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
@@ -104,5 +155,5 @@ export function TravelGlobe({ legs }: { legs: TravelLeg[] }) {
   }, [legs])
 
   if (legs.length === 0) return null
-  return <canvas ref={canvasRef} className="h-full w-full" aria-label="Squad clubs' real upcoming away trips, shown as flight paths on a globe" />
+  return <canvas ref={canvasRef} className="h-full w-full" aria-label="Squad clubs' real upcoming away trips on a tactical board" />
 }

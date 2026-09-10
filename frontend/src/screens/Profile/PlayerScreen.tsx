@@ -6,6 +6,7 @@ import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile, shirtUrl } from '@/lib/api'
+import { FlipCard } from '@/components/three/FlipCard'
 import { useFetch } from '@/lib/useFetch'
 import type { PlayerMatchRow } from '@/lib/types'
 
@@ -97,7 +98,25 @@ export function PlayerScreen() {
           {pl.position}
         </span>
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          {shirt && <img src={shirt} alt="" className="h-32 w-32 shrink-0 object-contain" />}
+          {shirt && (
+            <FlipCard
+              className="h-32 w-32 shrink-0"
+              ariaLabel={`Flip ${pl.name}'s card to see season totals`}
+              front={<img src={shirt} alt="" className="h-32 w-32 object-contain" />}
+              back={
+                <div className="flex h-32 w-32 flex-col items-center justify-center gap-1 border-2 border-divider bg-panel text-center">
+                  <span className="text-[8px] font-bold uppercase tracking-wide text-text-faint">This season</span>
+                  <span className="tabular font-display text-2xl font-bold text-pitch-green">{totals?.total_points ?? '—'}</span>
+                  <span className="text-[9px] uppercase tracking-wide text-text-faint">points</span>
+                  {totals && (
+                    <span className="tabular mt-1 text-[10px] text-text-muted">
+                      {totals.goals_scored}G &middot; {totals.assists}A
+                    </span>
+                  )}
+                </div>
+              }
+            />
+          )}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
               {crest && <img src={crest} alt="" className="h-6 w-6" />}
