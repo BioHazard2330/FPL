@@ -6,6 +6,8 @@ import { crestUrl, fetchClubProfile } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { SeasonDnaHelix } from '@/components/three/SeasonDnaHelix'
 import { XgMountainRange } from '@/components/three/XgMountainRange'
+import { TrophyShelf3D } from '@/components/three/TrophyShelf3D'
+import { HONOURS } from '@/lib/honours'
 import type { ClubResultRow } from '@/lib/types'
 
 const RESULT_FILL: Record<string, string> = {
@@ -98,6 +100,7 @@ export function ClubScreen() {
   const xgMatches = chronological.filter(
     (r): r is ClubResultRow & { xg: number; xga: number } => r.xg !== null && r.xga !== null,
   )
+  const honours = HONOURS[c.code]
 
   return (
     <div className="data-in pb-16">
@@ -142,6 +145,23 @@ export function ClubScreen() {
           ridgelines. Two real 3D data views, not a decorative pair - each
           renders `null` (and this whole section stays hidden) with nothing
           real to draw yet. */}
+      {/* TROPHY SHELF - real major-honours counts (`lib/honours.ts`), one
+          small trophy mesh per title this club has actually won, a real
+          bare shelf when it has won nothing. Absent (not a zero shelf) for
+          any club `HONOURS` doesn't cover - a future season's promoted/
+          relegated club, never guessed at. */}
+      {honours && (
+        <div className="border-b-2 border-divider bg-void px-10 py-7">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Trophy shelf</div>
+          <div className="mb-3 text-[11px] text-text-faint">
+            real major honours &middot; league {honours.league} &middot; FA Cup {honours.faCup} &middot; League Cup {honours.leagueCup} &middot; European {honours.european}
+          </div>
+          <div className="h-72 w-full">
+            <TrophyShelf3D honours={honours} />
+          </div>
+        </div>
+      )}
+
       {(chronological.length > 0 || xgMatches.length > 0) && (
         <div className="grid grid-cols-1 gap-px border-b-2 border-divider bg-divider lg:grid-cols-2">
           {chronological.length > 0 && (
