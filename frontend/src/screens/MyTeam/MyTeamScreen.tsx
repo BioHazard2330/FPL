@@ -9,6 +9,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
 import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
 import { pressureInk, runPressure } from '@/lib/fdr'
 import { PitchMarkings } from '@/components/football/PitchMarkings'
+import { Pitch3D, type Pitch3DPlayer } from '@/components/three/Pitch3D'
 import type { FixtureContext, SquadPlayer } from '@/lib/types'
 
 const TIER_DOT: Record<string, string> = {
@@ -235,6 +236,7 @@ export function MyTeamScreen() {
   // object reference would freeze the detail sheet on stale data forever
   // once a poll refresh replaces the squad with new objects).
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [view3D, setView3D] = useState(false)
 
   if (state.status === 'loading') {
     // Shaped like the tactical board it precedes: fact column beside the
@@ -349,22 +351,45 @@ export function MyTeamScreen() {
           under a full-width pitch. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="border-r-0 border-divider px-8 py-10 lg:border-r-2">
-          <div className="pitch-surface relative flex flex-col justify-between gap-7 px-6 py-14">
-            <PitchMarkings />
-            {p.positions?.map((pos) => (
-              <div key={pos.position} className="relative flex items-center gap-4">
-                <span className="w-9 shrink-0 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
-                  {pos.label}
-                </span>
-                <div className="flex flex-1 flex-wrap justify-center gap-6">
-                  {pos.players.map((pl) => (
-                    <PlayerTile key={pl.player_id} p={pl} fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
-                  ))}
-                </div>
-                <span className="w-9 shrink-0" />
-              </div>
-            ))}
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setView3D((v) => !v)}
+              className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${view3D ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
+            >
+              {view3D ? 'Flat view' : '3D view'}
+            </button>
           </div>
+          {view3D ? (
+            <div className="h-[28rem] w-full border-2 border-divider">
+              <Pitch3D
+                players={(p.positions ?? []).flatMap((pos, rowIdx) =>
+                  pos.players.map((pl, slot): Pitch3DPlayer => ({
+                    playerId: pl.player_id, name: pl.name, row: rowIdx, rowCount: pos.players.length, slot,
+                    isCaptain: pl.is_captain,
+                    crestUrl: crestUrl(pl.team_code),
+                  })),
+                )}
+              />
+            </div>
+          ) : (
+            <div className="pitch-surface relative flex flex-col justify-between gap-7 px-6 py-14">
+              <PitchMarkings />
+              {p.positions?.map((pos) => (
+                <div key={pos.position} className="relative flex items-center gap-4">
+                  <span className="w-9 shrink-0 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
+                    {pos.label}
+                  </span>
+                  <div className="flex flex-1 flex-wrap justify-center gap-6">
+                    {pos.players.map((pl) => (
+                      <PlayerTile key={pl.player_id} p={pl} fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
+                    ))}
+                  </div>
+                  <span className="w-9 shrink-0" />
+                </div>
+              ))}
+            </div>
+          )}
 
           {p.bench && p.bench.length > 0 && (
             <div className="mt-6 flex items-center gap-6 border-t-2 border-divider pt-5">
