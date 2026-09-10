@@ -7,7 +7,18 @@ import type { CaptainBlock, FixtureContext } from '@/lib/types'
  * central VS axis, real shirts, and a real bar-magnitude read under each
  * name keyed to the same median xP the numbers already show. Flat colour
  * fields (no `atmosphere-green` gradient wash, no drop-shadow glow on the
- * shirts) - the split itself, not a gradient, is what signals "versus." */
+ * shirts) - the split itself, not a gradient, is what signals "versus."
+ *
+ * Real 3D depth (2026-09-10), deliberately STATIC, never animated: a real
+ * `perspective` + `translateZ` composition pushes the real leading
+ * candidate's shirt/card literal millimetres toward the camera while the
+ * second option recedes, a genuine broadcast-camera depth read rather than
+ * a bigger font size standing in for "this one matters more." This project's
+ * own `DESIGN.md` motion law bans exactly the animated version of this idea
+ * ("page-load flourishes", "parallax" are both explicitly forbidden) - a
+ * one-time camera push-in on mount would violate that rule outright, so the
+ * depth is baked into the layout itself instead of triggered by an
+ * animation. Real 3D substance without a single new frame of motion. */
 export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtures?: FixtureContext }) {
   // Captaincy is a fixture decision before it is a projection decision -
   // the face-off used to name two players and two numbers with no
@@ -23,9 +34,11 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
     <section className="bg-void px-10 py-10">
       <div className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain battle</div>
 
-      <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-[1fr_auto_1fr]">
-        {/* best - right-aligned into the axis */}
-        <div className="flex items-center justify-end gap-6 text-right">
+      <div className="grid grid-cols-1 items-center gap-6 md:[perspective:1200px] md:grid-cols-[1fr_auto_1fr]">
+        {/* best - right-aligned into the axis, real static Z-depth pushing
+            it toward the camera (see module docstring: static, never
+            animated, per this project's own motion law) */}
+        <div className="flex items-center justify-end gap-6 text-right md:[transform:translateZ(40px)]">
           {bestShirt && <img src={bestShirt} alt="" className="h-28 w-28 shrink-0 object-contain md:h-36 md:w-36" />}
           <div className="min-w-0">
             <div className="truncate font-display text-4xl font-bold uppercase text-text md:text-5xl">{block.best.name}</div>
@@ -53,9 +66,10 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
           </div>
         </div>
 
-        {/* second option */}
+        {/* second option - recedes on the same real Z axis, the other half
+            of the static depth read */}
         {block.second ? (
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-6 md:[transform:translateZ(-50px)]">
             {secondShirt && <img src={secondShirt} alt="" className="h-20 w-20 shrink-0 object-contain opacity-80 md:h-24 md:w-24" />}
             <div className="min-w-0">
               <div className="truncate font-display text-2xl font-bold uppercase text-text-muted md:text-3xl">{block.second.name}</div>
