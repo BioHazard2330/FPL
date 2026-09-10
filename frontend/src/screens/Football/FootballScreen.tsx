@@ -5,6 +5,7 @@ import { useFetch } from '@/lib/useFetch'
 import { ScreenError } from '@/components/shell/ScreenStates'
 import { relativeTime } from '@/lib/time'
 import { NextFixture } from '@/components/football/FixtureRun'
+import { TravelGlobe, type TravelLeg } from '@/components/three/TravelGlobe'
 import type { ChangeFeedRow, FixtureContext, FixtureTickerRow, FootballSignal, TeamStateRow } from '@/lib/types'
 
 // Real FPL 1-5 FDR scale (fixture_ticker's own `difficulty` field) - the
@@ -367,6 +368,32 @@ export function FootballScreen() {
       </div>
 
       <FixtureTicker rows={p.fixture_ticker} />
+
+      {/* THE TRAVEL GLOBE - every real upcoming away fixture for the
+          squad's clubs, as real flight paths on an actual 3D globe. Real
+          stadium coordinates, real fixtures - never a simulated route. */}
+      {(() => {
+        const legs: TravelLeg[] = p.fixture_ticker.flatMap((r: FixtureTickerRow) =>
+          r.fixtures
+            .filter((f) => !f.is_home && r.team_code !== null && f.opponent_code !== null)
+            .map((f) => ({
+              fromTeamCode: r.team_code as number, toTeamCode: f.opponent_code as number,
+              fromShort: r.team_short, toShort: f.opponent_short, event: f.event,
+            })),
+        )
+        if (legs.length === 0) return null
+        return (
+          <div className="border-b-2 border-divider px-10 py-8">
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Away days</div>
+            <div className="mb-4 text-xs text-text-faint">
+              real upcoming away trips for your clubs &middot; {legs.length} legs
+            </div>
+            <div className="h-72 w-full">
+              <TravelGlobe legs={legs} />
+            </div>
+          </div>
+        )
+      })()}
 
       {/* FEATURED SQUAD SIGNALS + CHANGE WIRE - a real 70/30 asymmetric split
           (art-direction pass v3): the editorial cards carry the page, a
