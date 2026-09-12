@@ -283,6 +283,13 @@ export function LiveScreen() {
                     const live = livePointsById.get(s.player_id)
                     const hasActual = live !== undefined && live.play_state !== 'yet_to_play'
                     const actual = hasActual ? live.points * live.multiplier : null
+                    // Real differential tag (2026-09-12, direct user ask to
+                    // match livefpl.net's own framing): low real ownership%
+                    // (FPL's own official figure, not fabricated) hauling a
+                    // real live score - the exact combination that moves
+                    // rank the most. Thresholds are presentation-only, same
+                    // convention as this file's own CLASS_COLOR/tie labels.
+                    const isDiff = hasActual && (actual ?? 0) >= 5 && s.ownership_percent !== null && s.ownership_percent < 10
                     return (
                       <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
                         {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">C</span>}
@@ -291,6 +298,10 @@ export function LiveScreen() {
                           {s.web_name}
                         </Link>
                         <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
+                        {s.ownership_percent !== null && (
+                          <span className="shrink-0 text-[10px] text-text-faint">{s.ownership_percent.toFixed(1)}% owned</span>
+                        )}
+                        {isDiff && <span className="shrink-0 text-[9px] font-bold uppercase text-broadcast-gold">Diff</span>}
                         {s.classification && s.classification !== 'FIT' && (
                           <span className={`shrink-0 text-[9px] font-bold uppercase ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
                             {s.classification}

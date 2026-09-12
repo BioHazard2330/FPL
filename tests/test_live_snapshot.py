@@ -287,6 +287,28 @@ def test_squad_block_reports_slot_captain_and_availability(db_conn, monkeypatch)
     assert squad[2]["classification"] in ("CONFIRMED UNAVAILABLE", "LIKELY UNAVAILABLE", "DOUBTFUL")
 
 
+def test_squad_block_carries_real_ownership_percent(db_conn, monkeypatch):
+    """Real gap found 2026-09-12 (direct user ask to match livefpl.net's own
+    differential framing) - FPL's own real `selected_by_percent` was
+    already synced into `player_ownership_history` every regular cycle but
+    never threaded into the live squad block."""
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+
+    _seed_event(db_conn)
+    _seed_player(db_conn, 1, web_name="Haaland", status="a")
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (1, 45.5, '2026-09-12T00:00:00Z', NULL)"
+    )
+    db_conn.commit()
+    locked = _fake_locked_squad(1, starting_ids=[1], bench_ids=[], captain_id=1)
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: locked)
+
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    squad = {row["player_id"]: row for row in snap["squad"]}
+    assert squad[1]["ownership_percent"] == 45.5
+
+
 def test_squad_block_empty_without_a_locked_squad(db_conn, monkeypatch):
     import fpl_agent.monitoring.live_snapshot as ls_mod
 

@@ -243,11 +243,17 @@ export function PlanScreen() {
         </div>
       </div>
 
-      {/* THE STRATEGY GRID - the real planning-desk centrepiece: every shown
-          path laid out across the same real gameweek axis at once, spatial
-          comparison instead of a ranked list. Selecting a row drives the
-          detail rail + chart below. */}
-      {p.paths && p.paths.length > 0 && (
+      {/* THE STRATEGY GRID - real spatial comparison across 2+ genuinely
+          distinct paths. Real gap found 2026-09-12 (direct user report: the
+          Plan screen "gives me a headache") - once only one path survives
+          the reality-consistency filter (a chip is already played, so
+          there is nothing left to compare), this grid was rendering the
+          exact same 8-step sequence the hero headline and the step rail
+          below it ALSO render, in a THIRD horizontally-scrolling format -
+          three copies of one fact is the headache, not any one of them.
+          Only worth its own real estate when there is an actual choice to
+          compare. */}
+      {p.paths && p.paths.length > 1 && (
         <div className="mt-8 bg-panel px-10 py-8">
           <div className="mb-5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Strategy grid</div>
           <StrategyGrid paths={p.paths} activePath={activePath} onSelect={setActivePath} />
@@ -255,11 +261,13 @@ export function PlanScreen() {
       )}
 
       {/* DETAIL: the selected path's own real per-leg breakdown (shirts,
-          hit-taken flags, per-GW EV) - the grid above is the overview, this
-          is the drill-down, whitespace-only separation between them. */}
+          hit-taken flags, per-GW EV). With only one real path this IS the
+          plan, not a drill-down under a grid that no longer exists. */}
       {current && (
         <div className="mt-10 px-10">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Selected path detail</div>
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+            {p.paths && p.paths.length > 1 ? 'Selected path detail' : 'Path detail'}
+          </div>
           <StepRail path={current} />
           <div className="mt-4 flex flex-wrap gap-x-8 gap-y-1 text-sm text-text-muted">
             <span>

@@ -113,6 +113,18 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
     ).fetchall()
     avail_by_id = {r["player_id"]: r for r in avail_rows}
 
+    # Real official overall ownership% (2026-09-12, direct user ask to
+    # match livefpl.net's own differential framing) - `selected_by_percent`
+    # is FPL's own real per-player figure (all ~11M managers, not a sampled
+    # top-10k subset like `eo_sample.py`), already synced every regular sync
+    # cycle. `valid_until IS NULL` is the current row - never a stale one.
+    own_rows = conn.execute(
+        f"SELECT player_id, selected_by_percent FROM player_ownership_history "
+        f"WHERE valid_until IS NULL AND player_id IN ({placeholders})",
+        tuple(locked.squad_ids),
+    ).fetchall()
+    own_by_id = {r["player_id"]: r["selected_by_percent"] for r in own_rows}
+
     out = []
     for slot, players in (("starting", locked.xi.starting), ("bench", locked.xi.bench)):
         for c in players:
@@ -129,6 +141,7 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
                     if a else None
                 ),
                 "news": a["news"] if a else None,
+                "ownership_percent": own_by_id.get(c.player_id),
             })
     return out
 

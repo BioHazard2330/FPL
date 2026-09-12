@@ -61,8 +61,8 @@ def test_build_plan_payload_drops_paths_that_contradict_the_real_played_chip(db_
     fake_sd = {
         "horizon_gw": 6,
         "paths": [
-            {"steps": [{"event": 4, "action": "PLAY WILDCARD", "chip_played": "wildcard", "gw_ev": 60.0}], "path_total": 60.0, "delta_vs_roll": 10.0},
-            {"steps": [{"event": 4, "action": "PLAY FREE HIT", "chip_played": "freehit", "gw_ev": 57.1}], "path_total": 57.1, "delta_vs_roll": 8.0},
+            {"steps": [{"event": 4, "action": "PLAY WILDCARD", "chip_played": "wildcard", "gw_ev": 60.0}], "path_total": 60.0, "delta_vs_roll": 10.0, "delta_vs_second_best": 5.0},
+            {"steps": [{"event": 4, "action": "PLAY FREE HIT", "chip_played": "freehit", "gw_ev": 57.1}], "path_total": 57.1, "delta_vs_roll": 8.0, "delta_vs_second_best": 5.0},
         ],
     }
     ctx = build_dashboard_context(db_conn)
@@ -72,6 +72,34 @@ def test_build_plan_payload_drops_paths_that_contradict_the_real_played_chip(db_
     assert payload["has_plan"] is True
     assert payload["leader"]["descriptor"].lower().startswith("free hit")
     assert all(row["descriptor"].lower().startswith("free hit") for row in payload["paths"])
+    # `delta_vs_second_best` was computed against the real beam's own
+    # runner-up (WILDCARD at GW4) - now filtered out for contradicting the
+    # real played chip, so a "CLEAR LEAD"/tie badge over it would be
+    # comparing against a competitor that can no longer happen.
+    assert payload["leader"]["tie"] is None
+
+
+def test_build_plan_payload_keeps_tie_when_two_real_alternatives_survive(db_conn):
+    """No chip played yet - every path is still a genuinely open decision,
+    so the reality filter is a no-op and the real tie/lead badge must
+    still show (this must not regress into always suppressing it)."""
+    import dataclasses
+
+    from fpl_agent.monitoring.dashboard.context import build_dashboard_context
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    fake_sd = {
+        "horizon_gw": 6,
+        "paths": [
+            {"steps": [{"event": 4, "action": "ROLL", "gw_ev": 60.0}], "path_total": 60.0, "delta_vs_roll": 0.0, "delta_vs_second_best": 5.0},
+            {"steps": [{"event": 4, "action": "PLAY WILDCARD", "chip_played": "wildcard", "gw_ev": 57.1}], "path_total": 57.1, "delta_vs_roll": -3.0, "delta_vs_second_best": 5.0},
+        ],
+    }
+    ctx = build_dashboard_context(db_conn)
+    ctx = dataclasses.replace(ctx, sd=fake_sd, locked=object(), reference_event=4, played_chip_this_event=None)
+
+    payload = build_plan_payload(ctx)
+    assert payload["leader"]["tie"] == "CLEAR_LEAD"
 
 
 def test_trajectory_series_plots_delta_vs_the_leading_path_not_raw_cumulative_pts():

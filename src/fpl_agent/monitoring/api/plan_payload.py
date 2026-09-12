@@ -167,12 +167,18 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
     reality_consistent = [
         p for p in paths if _matches_the_real_played_chip(p, ctx.reference_event, ctx.played_chip_this_event)
     ]
+    # `delta_vs_second_best` (which `near_tie_state` reads) was computed
+    # against the ORIGINAL beam's real runner-up - once that runner-up has
+    # been filtered out for contradicting the real played chip, "CLEAR
+    # LEAD"/"NEAR TIE" would describe a lead over a competitor that can no
+    # longer happen. Only meaningful when a genuine alternative survives.
+    filtered_some = len(reality_consistent) < len(paths)
     if reality_consistent:
         paths = reality_consistent
     horizon_gw = sd.get("horizon_gw")
     primary_indices, family_of = primary_path_indices(paths)
     leader = paths[0]
-    tie = near_tie_state(leader)
+    tie = near_tie_state(leader) if not (filtered_some and len(paths) == 1) else None
 
     conn = get_connection()
     try:
