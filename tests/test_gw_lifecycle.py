@@ -189,6 +189,49 @@ def test_missing_source_health_row_blocks_gw_finished(db_conn):
     assert state.data_valid is False
 
 
+# --- Real bug fixed 2026-09-12: FPL's own `is_current` lagged a real deadline ---
+
+def test_is_current_lag_after_deadline_hands_off_to_the_next_gameweek(db_conn):
+    """Real bug found live: FPL's own `events.is_current` stayed pinned to a
+    fully-finished gameweek well past the NEXT gameweek's own deadline
+    (confirmed directly against FPL's live API, not just this project's
+    synced copy - `is_current` doesn't flip at the deadline, only once
+    kickoffs start). GW1 is_current=1 but fully finished; GW2's own deadline
+    has passed and its fixture hasn't kicked off yet - lifecycle state must
+    anchor on GW2 (LOCKED), never stay on GW1's stale READY_FOR_NEXT_DEADLINE."""
+    _seed_teams(db_conn)
+    _seed_event(db_conn, 1, _PAST, is_current=1)
+    _seed_fixture(db_conn, 1, 1, 1, 2, started=1, finished=1)
+    _seed_event(db_conn, 2, _PAST, is_current=0)
+    _seed_fixture(db_conn, 2, 2, 3, 4, started=0, finished=0)
+    _seed_healthy_fixtures_source(db_conn)
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('post_gw_pipeline_done_event', '1', 't0')"
+    )
+    db_conn.commit()
+
+    state = compute_gw_lifecycle_state(db_conn)
+    assert state.event == 2
+    assert state.state == "LOCKED"
+
+
+def test_is_current_still_trusted_while_its_own_fixtures_are_unfinished(db_conn):
+    """The fix must not break the common case: while `is_current`'s own
+    gameweek genuinely still has a real unfinished fixture, it stays the
+    anchor even if a later gameweek's deadline has also passed (a real
+    double-gameweek-adjacent scenario, not just the simple lag case)."""
+    _seed_teams(db_conn)
+    _seed_event(db_conn, 1, _PAST, is_current=1)
+    _seed_fixture(db_conn, 1, 1, 1, 2, started=1, finished=0)  # GW1 still live
+    _seed_event(db_conn, 2, _PAST, is_current=0)
+    _seed_fixture(db_conn, 2, 2, 3, 4, started=0, finished=0)
+    _seed_healthy_fixtures_source(db_conn)
+
+    state = compute_gw_lifecycle_state(db_conn)
+    assert state.event == 1
+    assert state.state == "LIVE"
+
+
 def test_restart_recovery_two_independent_calls_agree(db_conn):
     _seed_teams(db_conn)
     _seed_event(db_conn, 1, _PAST)

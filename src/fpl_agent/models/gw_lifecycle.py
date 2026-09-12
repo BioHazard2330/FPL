@@ -42,10 +42,35 @@ class GWLifecycleState:
 
 
 def _resolve_anchor_event(conn: sqlite3.Connection) -> int | None:
+    """Real bug found live 2026-09-12, ~13 minutes after a real GW4 deadline:
+    FPL's own `events.is_current` stayed pinned to GW3 well past GW4's
+    deadline (confirmed directly against FPL's own live bootstrap-static API,
+    not just this project's synced copy - `is_current` genuinely doesn't
+    flip until kickoffs start, not at the deadline). Blindly trusting
+    `is_current` therefore anchored the whole lifecycle/dashboard state to a
+    gameweek that had been fully finished for a week, showing a stale
+    "next deadline" countdown for a deadline that had already passed - the
+    same real product-visible bug `live_or_reference_event`'s own
+    `current_live_event`/`_imminent_unfinished_event` helpers exist to avoid
+    for other callers, just never applied here.
+
+    Fixed by keeping `is_current` as the anchor ONLY while that gameweek
+    still has a real fixture that isn't finished yet (i.e. it could
+    plausibly still be "current") - once every one of its own fixtures is
+    finished, defer to `live_or_reference_event` the same way every other
+    real caller in this codebase already does."""
     row = conn.execute("SELECT id FROM events WHERE is_current=1 LIMIT 1").fetchone()
-    if row is not None:
-        return row["id"]
-    return live_or_reference_event(conn)
+    fallback = live_or_reference_event(conn)
+    if row is None:
+        return fallback
+    anchor = row["id"]
+    if fallback is not None and fallback != anchor:
+        unfinished = conn.execute(
+            "SELECT 1 FROM fixtures WHERE event=? AND (finished=0 OR finished IS NULL) LIMIT 1", (anchor,)
+        ).fetchone()
+        if unfinished is None:
+            return fallback
+    return anchor
 
 
 def _fixture_data_is_trustworthy(conn: sqlite3.Connection, event: int) -> bool:
