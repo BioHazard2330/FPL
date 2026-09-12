@@ -361,7 +361,7 @@ class TestNewDetectorCategoriesDecisionImpact:
 
         s = next(s for s in signals if s.category == "ROLE_CHANGE")
         assert s.persistence == "PERSISTENT_TREND"
-        assert s.xp_effect == round(2.0 * 0.15, 4)
+        assert s.xp_effect == round(2.0 * 0.35, 4)
         assert s.decision_effect == "MATERIAL"
         assert s.fpl_relevance == "FPL_RELEVANT"
 

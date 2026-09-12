@@ -120,7 +120,8 @@ def _quantify_qualitative_gap(conn, qual_id: int, qual_signal: str | None, qual_
     return (
         f"already added {adjustment.delta:+.2f} xP to this player's own {adjustment.component} component "
         f"(bounded to {MAX_ADJUSTMENT_FRACTION:.0%} of that component's real {component_base:.2f}pt value) - "
-        f"real, but not enough on its own to move the model's overall pick"
+        f"folded directly into the model's own median (2026-09-12), so this has already moved the real pick, "
+        f"not just an annotation next to it"
     )
 
 

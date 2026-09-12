@@ -36,7 +36,7 @@ def test_no_adjustment_without_any_qualitative_evidence(db_conn):
 
     assert ep.qualitative_adjustment == 0.0
     assert ep.qualitative_note is None
-    assert round(ep.components.total, 2) == ep.median  # median genuinely untouched
+    assert round(ep.components.total, 2) == ep.median  # no signal -> nothing to fold in, median == the pure quant total
 
 
 def test_a_single_match_signal_never_adjusts_the_number(db_conn):
@@ -81,15 +81,19 @@ def test_a_real_persistent_trend_produces_a_bounded_targeted_adjustment(db_conn)
     assert adjustment.component == "goals"
     assert adjustment.direction == "POSITIVE"
     assert adjustment.delta > 0  # real, positive, evidence-earned
-    # Bounded: never more than 15% of the real goals component it targets.
-    assert adjustment.delta == round(2.0 * 0.15, 4)
+    # Bounded: never more than 35% of the real goals component it targets.
+    assert adjustment.delta == round(2.0 * 0.35, 4)
 
 
-def test_expected_points_integration_surfaces_the_adjustment_without_touching_median(db_conn):
-    """Full-pipeline integration proof: the real expected_points() call
-    correctly surfaces whatever compute_qualitative_adjustment() finds
-    (here, a real but near-zero GKP goals component - the mechanism fires,
-    the note is real, and the layering rule holds regardless of magnitude)."""
+def test_expected_points_integration_folds_the_adjustment_into_median(db_conn):
+    """Full-pipeline integration proof (2026-09-12, direct and repeated user
+    instruction: "qualitative analysis has to be the biggest mover for the
+    optimizer" - the original layering rule kept this a side-channel that
+    never reached any real optimizer decision, reversed here). The real
+    expected_points() call correctly surfaces whatever compute_qualitative_
+    adjustment() finds AND now actually adds it to `median`/`floor`/
+    `ceiling` - `components` stays the pure quant baseline so both numbers
+    are still independently inspectable."""
     bootstrap = _bootstrap_two_teams()
     _seed_full(db_conn, bootstrap, "t0")
     _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
@@ -101,10 +105,38 @@ def test_expected_points_integration_surfaces_the_adjustment_without_touching_me
     ep = expected_points(db_conn, 1)
 
     assert ep.qualitative_note is not None and "GOAL_THREAT" in ep.qualitative_note
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
-    # The layering rule: median itself is completely unaffected by the
-    # adjustment - callers that only read `median` see zero behavior change.
-    assert round(ep.components.total, 2) == ep.median
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
+    # The new rule: median now genuinely includes the real adjustment -
+    # components (the pure quant baseline) stays separately inspectable.
+    # (This fixture's player is a GKP with a real, near-zero goals
+    # component, same as the original version of this test - the mechanism
+    # firing correctly at zero is still a real, correct proof.)
+    assert round(ep.median - ep.qualitative_adjustment, 2) == round(ep.components.total, 2)
+
+
+def test_expected_points_window_also_folds_the_adjustment_in(db_conn):
+    """`optimization/transfers.py`'s entire beam search (every transfer/
+    chip/strategic-plan candidate this project ranks) reads `expected_
+    points_window().total_median` exclusively - it never calls single-match
+    `expected_points()` at all. Folding the adjustment into THAT function
+    alone would leave it invisible to the actual optimizer, so
+    `expected_points_window` needs the identical fix, proven here
+    independently rather than assumed from the single-match test above."""
+    from fpl_agent.models.expected_points import expected_points_window
+
+    bootstrap = _bootstrap_two_teams()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+    _seed_implication(db_conn, player_id=1, match_id=1, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored", created_at="2026-08-15T15:00:00Z")
+    _seed_implication(db_conn, player_id=1, match_id=2, signal="GOAL_THREAT", direction="POSITIVE",
+                       reason="scored again", created_at="2026-08-22T15:00:00Z")
+
+    w = expected_points_window(db_conn, 1, n_gw=3)
+
+    assert w.qualitative_note is not None and "GOAL_THREAT" in w.qualitative_note
+    assert w.qualitative_adjustment == round(w.components.goals * 0.35, 4)
+    assert round(w.total_median - w.qualitative_adjustment, 2) == round(w.components.total, 2)
 
 
 def test_role_change_persistent_trend_produces_a_bounded_goals_adjustment(db_conn):
@@ -128,7 +160,7 @@ def test_role_change_persistent_trend_produces_a_bounded_goals_adjustment(db_con
     assert adjustment is not None
     assert adjustment.component == "goals"
     assert adjustment.signal == "ROLE_CHANGE"
-    assert adjustment.delta == round(2.0 * 0.15, 4)
+    assert adjustment.delta == round(2.0 * 0.35, 4)
 
 
 def test_set_piece_change_persistent_trend_produces_a_bounded_goals_adjustment(db_conn):
@@ -149,7 +181,7 @@ def test_set_piece_change_persistent_trend_produces_a_bounded_goals_adjustment(d
     assert adjustment is not None
     assert adjustment.component == "goals"
     assert adjustment.signal == "SET_PIECE_CHANGE"
-    assert adjustment.delta == round(2.0 * 0.15, 4)
+    assert adjustment.delta == round(2.0 * 0.35, 4)
 
 
 def test_role_change_expected_points_integration_surfaces_the_adjustment(db_conn):
@@ -167,8 +199,8 @@ def test_role_change_expected_points_integration_surfaces_the_adjustment(db_conn
     ep = expected_points(db_conn, 1)
 
     assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
-    assert round(ep.components.total, 2) == ep.median
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
+    assert round(ep.median - ep.qualitative_adjustment, 2) == round(ep.components.total, 2)
 
 
 def test_role_change_adjustment_scales_down_with_lower_minutes_never_an_independent_bump(db_conn):
@@ -197,7 +229,7 @@ def test_role_change_adjustment_scales_down_with_lower_minutes_never_an_independ
 
     assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
     # Same real 15% proportion as the high-minutes case - the RULE never changes...
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.15, 4)
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
     # ...but the ABSOLUTE adjustment is real and small here, scaled by this player's
     # own genuinely low minutes-adjusted goals baseline - not the same absolute size
     # a nailed 90-minute starter with an identical signal would get (see

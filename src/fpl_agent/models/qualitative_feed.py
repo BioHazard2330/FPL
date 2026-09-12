@@ -1,18 +1,29 @@
 """Structured qualitative evidence -> bounded, component-targeted xP
-adjustment (2026-08-26, GW1-postmortem gap audit, P0 item 3).
+adjustment (2026-08-26, GW1-postmortem gap audit, P0 item 3; folded into
+the real projection 2026-09-12, direct and repeated user instruction:
+"qualitative analysis has to be the biggest mover for the optimizer, along
+with projections and data").
 
-Hard constraints, taken directly from the audit's own explicit rules:
-- Never a global weight ("do not simply assign 10% weight to AI analysis").
-- Never silently mixed into the pure quant `median` every existing
-  optimizer/squad-build caller already trusts - this project's own FACTS/
-  DERIVED/REASONING layering rule (see decision_fusion.py's identical
-  precedent: a captain/transfer verdict never gets silently overridden,
-  only annotated). The adjustment is a separate, clearly-labeled field;
-  `ExpectedPoints.median` is completely unaffected by this module.
-- Only earns an adjustment when a real PERSISTENT_TREND exists
+Constraints, updated from the original P0 item 3 audit:
+- Still never a raw global weight ("do not simply assign 10% weight to AI
+  analysis") - the adjustment is always sized off THIS player's own
+  already-computed component value, never an invented absolute number.
+- **Now folded into `median`/`total_median`** (both `expected_points()`
+  and `expected_points_window()`) - the original 2026-08-26 design kept
+  this a side-channel that never touched the number every optimizer caller
+  reads, which meant qualitative analysis had zero real influence on any
+  transfer/captain/squad/strategic-plan decision no matter how strong the
+  evidence. That was the wrong tradeoff for this project's own stated
+  priorities - reversed here, deliberately, not silently: `qualitative_
+  adjustment`/`qualitative_note` stay on the object so every caller can
+  still SEE what was added and why, but the number itself now moves.
+- Still only earns an adjustment when a real PERSISTENT_TREND exists
   (qualitative_trends.py) - the exact same 2+-real-match bar this project
   already applies to captain/transfer fusion. A single-match NEW_SIGNAL
-  never adjusts a number, only a note (handled elsewhere, unaffected here).
+  still never adjusts a number, only a note (handled elsewhere, unaffected
+  here) - this bar is a genuine noise filter, not the reason qualitative
+  signal was previously toothless (the "never folded into median" line
+  above was).
 - The adjustment size is a bounded PROPORTION of the model's own
   already-computed value for the SPECIFIC component the signal is about -
   never an invented absolute number untethered from the model's own
@@ -47,12 +58,15 @@ _COMPONENT_SIGNAL_MAP = {
     "SET_PIECE_CHANGE": "goals",
 }
 
-# Real, disclosed, uncalibrated bound - same honesty posture as every other
-# threshold constant in this project (market_conviction's 10% ownership bar,
-# the thin-debut 2-gameweek window, etc). Not fit to real outcome data yet -
-# there is only one real analyzed gameweek in production as of this writing,
-# nowhere near enough to calibrate a real magnitude against honestly.
-MAX_ADJUSTMENT_FRACTION = 0.15
+# Raised 0.15 -> 0.35 (2026-09-12, direct and repeated user instruction that
+# qualitative analysis must be a REAL mover, not a token gesture) - still a
+# real, disclosed, uncalibrated bound (same honesty posture as every other
+# threshold constant in this project - market_conviction's 10% ownership
+# bar, the thin-debut 2-gameweek window, etc), not fit to real outcome data
+# yet. Bounded well short of 1.0 deliberately: a real PERSISTENT_TREND signal
+# should be able to meaningfully swing a close transfer/captain call, but
+# never fully replace the component it targets on its own.
+MAX_ADJUSTMENT_FRACTION = 0.35
 
 
 @dataclass(frozen=True)

@@ -1008,14 +1008,22 @@ class ExpectedPoints:
     expected_minutes: float
     model_version: str
     # Real component breakdown (2026-08-26, GW1-postmortem audit P0 item 1) -
-    # sums to `median` (before its own independent rounding) by construction,
-    # see ComponentBreakdown.total. Every existing caller that only reads the
-    # fields above is completely unaffected - this is purely additive.
+    # sums to `median` MINUS `qualitative_adjustment` (before its own
+    # independent rounding) by construction, see ComponentBreakdown.total -
+    # `components` itself is always the pure quant read, never including the
+    # qualitative bump, so a caller can still isolate "what did the quant
+    # model alone say" from "what did we actually project." Every existing
+    # caller that only reads the fields above is completely unaffected -
+    # this is purely additive.
     components: "ComponentBreakdown | None" = None
-    # Real, bounded, evidence-gated qualitative adjustment (P0 item 3) -
-    # deliberately NOT folded into `median`, see models/qualitative_feed.py's
-    # own module docstring for why. 0.0/None is the honest, common state for
-    # almost every player - only a real PERSISTENT_TREND signal ever sets these.
+    # Real, bounded, evidence-gated qualitative adjustment (P0 item 3, folded
+    # into `median`/`floor`/`ceiling` above 2026-09-12 - see models/
+    # qualitative_feed.py's own module docstring for why). Kept as its own
+    # field purely for disclosure - every caller can still see how much of
+    # `median` came from qualitative evidence and why, even though the
+    # number itself already includes it. 0.0/None is the honest, common
+    # state for almost every player - only a real PERSISTENT_TREND signal
+    # ever sets these.
     qualitative_adjustment: float = 0.0
     qualitative_note: str | None = None
     # Real threshold-crossing probabilities (2026-09-07, Phase 7.3 Part 1) -
@@ -1108,10 +1116,13 @@ def expected_points(
         conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,  # noqa: B905
     )
 
-    # Real, bounded, evidence-gated qualitative signal (2026-08-26, P0 item 3) -
-    # a real failure (e.g. no player_fpl_implications rows at all, the common
-    # case) must never break a live projection call; caught and left as the
-    # honest zero/None default rather than raised.
+    # Real, bounded, evidence-gated qualitative signal (2026-08-26, P0 item 3;
+    # folded into median/floor/ceiling 2026-09-12, direct and repeated user
+    # instruction - see qualitative_feed.py's own module docstring for why
+    # the original "never touches median" design was reversed). A real
+    # failure (e.g. no player_fpl_implications rows at all, the common case)
+    # must never break a live projection call; caught and left as the honest
+    # zero/None default rather than raised.
     qual_adjustment = 0.0
     qual_note = None
     try:
@@ -1123,6 +1134,15 @@ def expected_points(
             qual_note = f"{adjustment.signal} ({adjustment.direction}): {adjustment.reason}"
     except Exception:
         pass
+
+    # The whole distribution shifts by the same real delta, not just the
+    # point estimate - a positive qualitative signal that only moved
+    # `median` while leaving `floor`/`ceiling` anchored to the old center
+    # would be internally inconsistent (a real, evidence-earned upward
+    # signal should raise the floor and ceiling too, not just the middle).
+    median = median + qual_adjustment
+    floor = round(floor + qual_adjustment, 2)
+    ceiling = round(ceiling + qual_adjustment, 2)
 
     return ExpectedPoints(
         player_id=player_id, position=rates["position"], floor=floor, median=round(median, 2),
@@ -1142,8 +1162,20 @@ class WindowExpectedPoints:
     model_version: str
     # Real component breakdown across the whole window (2026-08-26, P0 item
     # 1) - additive, defaults to None so any direct-construction caller
-    # (tests) that doesn't pass it is unaffected.
+    # (tests) that doesn't pass it is unaffected. Sums to `total_median`
+    # MINUS `qualitative_adjustment`, same convention as `ExpectedPoints`.
     components: "ComponentBreakdown | None" = None
+    # Real, bounded, evidence-gated qualitative adjustment - same mechanism
+    # and same real fold-in as `ExpectedPoints` (2026-09-12, direct and
+    # repeated user instruction: "qualitative analysis has to be the biggest
+    # mover for the optimizer"). This is the field that matters most for
+    # that instruction: `optimization/transfers.py`'s whole beam search
+    # (every transfer/chip/strategic-plan candidate this project ranks)
+    # reads `total_median` exclusively, never single-match `expected_
+    # points()` - qualitative signal folded in there alone would never have
+    # reached the actual optimizer at all.
+    qualitative_adjustment: float = 0.0
+    qualitative_note: str | None = None
 
 
 def expected_points_window(
@@ -1167,9 +1199,23 @@ def expected_points_window(
     combined = _sum_breakdowns(breakdowns) if breakdowns else ComponentBreakdown(0, 0, 0, 0, 0, 0, 0, 0)
     total = combined.total
 
+    qual_adjustment = 0.0
+    qual_note = None
+    try:
+        from fpl_agent.models.qualitative_feed import compute_qualitative_adjustment
+
+        adjustment = compute_qualitative_adjustment(conn, player_id, combined)
+        if adjustment is not None:
+            qual_adjustment = adjustment.delta
+            qual_note = f"{adjustment.signal} ({adjustment.direction}): {adjustment.reason}"
+    except Exception:
+        pass
+    total = total + qual_adjustment
+
     return WindowExpectedPoints(
         player_id=player_id, n_gw=n_gw, fixture_count=len(fixtures),
         total_median=round(total, 2), model_version=MODEL_VERSION, components=combined,
+        qualitative_adjustment=qual_adjustment, qualitative_note=qual_note,
     )
 
 
