@@ -404,10 +404,11 @@ def _cadence_block(conn: sqlite3.Connection, rank_retrieved_at: str | None) -> d
     real sync interval) and `source_health.fpl_api_bootstrap.last_success`
     (the real core sync's own last-success timestamp) - never a second,
     invented interval. `rank_next_due_minutes` is a real, honest FLOOR
-    (rank can't refresh faster than the tighter of LiveFPL's own stated
-    ~5min minimum and this system's own current sync cadence) - not a
-    promise a fetch will happen exactly then, since the real underlying
-    cadence is genuinely adaptive/event-driven, not a fixed clock."""
+    (rank can't refresh faster than the tighter of this project's own
+    throttle - lowered 5min->1min, 2026-09-12, direct user request - and
+    this system's own current sync cadence) - not a promise a fetch will
+    happen exactly then, since the real underlying cadence is genuinely
+    adaptive/event-driven, not a fixed clock."""
     from fpl_agent.scheduler.cadence import recommended_cadence
 
     cadence = recommended_cadence(conn)
@@ -416,7 +417,11 @@ def _cadence_block(conn: sqlite3.Connection, rank_retrieved_at: str | None) -> d
     ).fetchone()
     last_sync_at = sync_row["last_success"] if sync_row is not None else None
 
-    rank_next_due_minutes = max(5, cadence.interval_minutes)
+    # Real floor, kept in sync with `cli/main.py::_LIVEFPL_MIN_REFRESH_MINUTES`
+    # (lowered 5->1, 2026-09-12, direct user request: "live rank needs to
+    # update faster") - never faster than this system's own broader sync
+    # cadence either, since a rank refresh piggybacks on that same tick.
+    rank_next_due_minutes = max(1, cadence.interval_minutes)
 
     return {
         "system": {

@@ -429,7 +429,7 @@ def test_cadence_block_reports_real_derived_interval_and_last_sync(db_conn):
     assert cadence["system"]["last_sync_at"] == "2026-08-29T10:00:00+00:00"
     assert cadence["system"]["interval_minutes"] > 0
     assert cadence["system"]["reason"]  # a real, non-empty explanation, never blank
-    assert cadence["rank"]["next_due_floor_minutes"] >= 5  # LiveFPL's own real minimum
+    assert cadence["rank"]["next_due_floor_minutes"] >= 1  # LiveFPL's own real minimum (lowered 5->1, 2026-09-12)
 
 
 def test_decision_status_is_recomputing_while_a_real_auto_trigger_lock_is_fresh(db_conn):

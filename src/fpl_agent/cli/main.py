@@ -1863,7 +1863,7 @@ def _log_livefpl_rank_decision(conn, snapshot) -> int:
     )
 
 
-_LIVEFPL_MIN_REFRESH_MINUTES = 5  # cheap single GET - lowered 10->5 (2026-08-29) to meet the "~5min during an active GW" cadence spec via live-match-poll's own faster loop; still throttled so a tight scheduler interval can't hammer a free third-party endpoint
+_LIVEFPL_MIN_REFRESH_MINUTES = 1  # cheap single GET - lowered 5->1 (2026-09-12, direct user request: "live rank needs to update faster") - still throttled (never zero) so a tight scheduler interval can't hammer a free third-party endpoint on every single tick
 
 
 def _maybe_refresh_livefpl_rank(conn) -> dict | None:
