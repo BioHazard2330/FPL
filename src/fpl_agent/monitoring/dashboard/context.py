@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
-from fpl_agent.ingestion.my_team import get_my_team_entry_id, get_used_chips
+from fpl_agent.ingestion.my_team import get_active_chip_for_event, get_my_team_entry_id, get_used_chips
 from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.lineup_state import squad_lineup_states
 from fpl_agent.models.live_rank import classify_precision
@@ -120,6 +120,7 @@ class DashboardContext:
     live_snapshot_for_strip: dict | None
     used_chip_names: set[str]
     chips_available: list[str]
+    played_chip_this_event: str | None
 
 
 def build_dashboard_context(
@@ -526,6 +527,19 @@ def build_dashboard_context(
     used_chip_names = get_used_chips(conn, my_team_entry_id) if my_team_entry_id is not None else set()
     chips_available = [c for c in SUPPORTED_CHIP_NAMES if c not in used_chip_names]
 
+    # Real bug fixed 2026-09-12: the recommendation hero kept saying
+    # "PLAY FREE HIT" as a live instruction even after the user had already
+    # played it for real (confirmed via FPL's own API, `active_chip` on
+    # this exact event's synced picks) - this project never submits a chip
+    # itself, so once one is active here it happened on the real FPL site.
+    # `played_chip_this_event` (None most of the time - only real once a
+    # chip has actually been used for the CURRENT locked event) lets
+    # `_action_word`/`_action_reason` show a real past confirmation instead.
+    played_chip_this_event = (
+        get_active_chip_for_event(conn, my_team_entry_id, reference_event)
+        if my_team_entry_id is not None and reference_event is not None else None
+    )
+
     return DashboardContext(
         generated_at_iso=generated_at_iso, locked=locked, ta=ta, ca=ca, decision=decision,
         primary_verdict=primary_verdict, sd=sd, current_rec=current_rec, report=report, primary=primary,
@@ -542,6 +556,7 @@ def build_dashboard_context(
         xp_summary_label=xp_summary_label, gw_label_html=gw_label_html, freshness=freshness,
         cross_check=cross_check, live_snapshot_for_strip=live_snapshot_for_strip,
         used_chip_names=used_chip_names, chips_available=chips_available,
+        played_chip_this_event=played_chip_this_event,
     )
 
 
@@ -565,6 +580,28 @@ _cached_at: float = 0.0
 # normal operation, never something a real user hits.
 _DEFAULT_TTL_SECONDS = 600.0
 _REFRESH_INTERVAL_SECONDS = 480.0
+# Real gap found 2026-09-12 (direct user report: "live dashboard of points"
+# not updating - My Team/Command/Plan/etc. all read this SAME cached
+# context, which the 8-minute `_REFRESH_INTERVAL_SECONDS` above was tuned
+# for an idle/preseason cadence, not a genuinely LIVE gameweek where the
+# user's own points move every few minutes as bonus/goals land. The
+# dedicated `live_snapshot.json` channel (10s browser poll) already covers
+# the LIVE screen specifically - this closes the same real gap for every
+# OTHER screen that shares this cache.
+_LIVE_REFRESH_INTERVAL_SECONDS = 45.0
+
+
+def _any_match_live(conn_factory) -> bool:
+    conn = conn_factory()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM match_intelligence WHERE status IN ('LIVE', 'HALFTIME') LIMIT 1"
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
 
 
 def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = _DEFAULT_TTL_SECONDS) -> DashboardContext:
@@ -614,8 +651,9 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
     served cached context is a real, honest degrade (the payload's own
     `freshness`/`is_stale` field already discloses this to the client)."""
     global _cached_context, _cached_at
+    next_wait = _LIVE_REFRESH_INTERVAL_SECONDS if _any_match_live(conn_factory) else interval
     while not stop_event.is_set():
-        if stop_event.wait(interval):
+        if stop_event.wait(next_wait):
             break
         conn = conn_factory()
         try:
@@ -629,3 +667,4 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
             )
         finally:
             conn.close()
+        next_wait = _LIVE_REFRESH_INTERVAL_SECONDS if _any_match_live(conn_factory) else interval

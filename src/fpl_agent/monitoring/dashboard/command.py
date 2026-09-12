@@ -459,11 +459,14 @@ def render_command_screen(
     ft_value: str, ft_title: str, actual_points: float | None, next_xp: float, bank_m: float, squad_value_m: float,
     captain_name: str, rank_tile_html: str, chips_available: list[str],
     freshness=None, cross_check=None, live_snapshot: dict | None = None,
-    paths: list[dict] | None = None,
+    paths: list[dict] | None = None, played_chip: str | None = None,
 ) -> str:
-    word, cls = _action_word(current_rec, ta)
+    word, cls = _action_word(current_rec, ta, played_chip)
     freshness_html = _freshness_html(freshness)
-    if freshness is not None and freshness.is_stale:
+    # A real chip already played for the current locked event is a past
+    # fact, never overwritten by the RECOMPUTING banner - see
+    # `played_chip_this_event`'s own docstring in context.py.
+    if freshness is not None and freshness.is_stale and not word.endswith("PLAYED"):
         word = "RECOMPUTING"
         cls = "review"
 

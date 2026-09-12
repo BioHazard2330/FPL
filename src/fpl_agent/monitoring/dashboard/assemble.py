@@ -86,7 +86,7 @@ def generate_dashboard_html(
         next_xp=headline_xp, bank_m=bank_m, squad_value_m=squad_value_m,
         captain_name=captain_name, rank_tile_html=live_rank_tile_html, chips_available=chips_available,
         freshness=freshness, cross_check=cross_check, live_snapshot=live_snapshot_for_strip,
-        paths=(sd.get("paths") if sd else None),
+        paths=(sd.get("paths") if sd else None), played_chip=ctx.played_chip_this_event,
     )
     plan_section_html = f"""<section class="panel panel-plan-workspace" id="plan" data-cat="decision">
   <h2>Plan <span class="panel-subtitle">the multi-GW Strategic Plan - select a path to update its timeline and the squad below</span></h2>

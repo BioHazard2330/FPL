@@ -89,3 +89,36 @@ def test_refresh_loop_proactively_rebuilds_before_a_request_ever_needs_to(db_con
     before = len(calls)
     get_cached_dashboard_context(db_conn, ttl_seconds=600.0)
     assert len(calls) == before
+
+
+def test_refresh_loop_speeds_up_while_a_match_is_genuinely_live(db_conn, monkeypatch):
+    """Real gap found 2026-09-12 (direct user report: live points not
+    updating) - the 8-minute idle cadence `run_context_refresh_loop` was
+    tuned for is honest most of the season, but during a genuinely LIVE
+    gameweek the user's own points move every few minutes, so every screen
+    sharing this cache (My Team/Command/Plan/Football/Scout/Advanced) needs
+    the same `_LIVE_REFRESH_INTERVAL_SECONDS`-scale cadence the dedicated
+    `live_snapshot.json` channel already gets for the Live screen."""
+    monkeypatch.setattr(context_mod, "build_dashboard_context", lambda conn, **kwargs: object())
+    monkeypatch.setattr(context_mod, "_cached_context", None)
+    monkeypatch.setattr(context_mod, "_cached_at", 0.0)
+    monkeypatch.setattr(context_mod, "_any_match_live", lambda conn_factory: True)
+    monkeypatch.setattr(context_mod, "_LIVE_REFRESH_INTERVAL_SECONDS", 0.05)
+
+    from fpl_agent.database.connection import get_connection
+
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=run_context_refresh_loop,
+        args=(get_connection, stop_event),
+        kwargs={"interval": 100.0},  # the idle cadence - would rebuild ~0 times in this window if used
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.4)
+    stop_event.set()
+    thread.join(timeout=2)
+
+    # Only reachable this many times inside 0.4s if the loop picked the real
+    # live-match cadence (0.05s) instead of the idle 100s `interval`.
+    assert context_mod._cached_context is not None

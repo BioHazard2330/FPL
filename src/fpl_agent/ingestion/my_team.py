@@ -206,6 +206,25 @@ def set_my_team_entry_id(conn: sqlite3.Connection, entry_id: int) -> None:
     conn.commit()
 
 
+def get_active_chip_for_event(conn: sqlite3.Connection, entry_id: int, event: int) -> str | None:
+    """Real bug found live 2026-09-12: the user actually played Free Hit for
+    the current locked gameweek (confirmed via FPL's own official API,
+    `active_chip='freehit'` on this exact event's synced picks), but
+    Command's hero kept saying "PLAY FREE HIT" - an imperative future
+    instruction for something that had already genuinely happened.
+    `get_used_chips` (below) answers "has this entry EVER played chip X",
+    correct for filtering future availability but not precise enough here -
+    this answers the sharper real question, "is a chip already active for
+    THIS SPECIFIC event", so a recommendation can be shown as a real past
+    confirmation instead of a live instruction once it's already been acted
+    on outside this app (this project never submits chips itself)."""
+    row = conn.execute(
+        "SELECT active_chip FROM my_team_picks WHERE entry_id=? AND event=? AND active_chip IS NOT NULL LIMIT 1",
+        (entry_id, event),
+    ).fetchone()
+    return row["active_chip"] if row else None
+
+
 def get_used_chips(conn: sqlite3.Connection, entry_id: int) -> set[str]:
     """Real chip names this entry has actually played, straight from the
     `active_chip` field on each synced picks row - closes a real gap

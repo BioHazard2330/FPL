@@ -20,7 +20,17 @@ from fpl_agent.monitoring.dashboard.plan import (
 
 
 def _trajectory_series(paths: list[dict], shown_indices: list[int]) -> list[dict]:
-    series = []
+    """Real chart-design fix (2026-09-12, direct user report: the raw
+    cumulative-points lines for near-tied paths (e.g. 486.3 vs 477.2 over an
+    8-GW horizon, ~2% apart) rendered as visually indistinguishable
+    overlapping lines on an absolute 0-500pt axis - exactly what a panel
+    literally titled "Cumulative Edge" should never do. `y` is now each
+    path's cumulative total MINUS the leading path's own cumulative total at
+    the same real gameweek - the leading path is therefore always a flat
+    zero reference line, and every alternative path's own real edge (or
+    deficit) against it is what's actually plotted, matching the panel's
+    own name instead of just its own absolute score."""
+    raw = []
     for rank, i in enumerate(shown_indices):
         p = paths[i - 1]
         steps = p.get("steps") or []
@@ -36,9 +46,21 @@ def _trajectory_series(paths: list[dict], shown_indices: list[int]) -> list[dict
             if action != "ROLL":
                 label = s["chip_played"].upper() if s.get("chip_played") else action
                 events.append({"x": gw, "label": label})
+        raw.append({"idx": i, "rank": rank, "points": points, "events": events})
+
+    if not raw:
+        return []
+
+    leader_by_gw = {pt["x"]: pt["y"] for pt in raw[0]["points"]}
+    series = []
+    for r in raw:
+        delta_points = [
+            {"x": pt["x"], "y": round(pt["y"] - leader_by_gw[pt["x"]], 2) if pt["x"] in leader_by_gw else None}
+            for pt in r["points"]
+        ]
         series.append({
-            "name": f"Path {i}", "path_idx": i, "role": "leading" if rank == 0 else "alt",
-            "points": points, "events": events,
+            "name": f"Path {r['idx']}", "path_idx": r["idx"], "role": "leading" if r["rank"] == 0 else "alt",
+            "points": delta_points, "events": r["events"],
         })
     return series
 
@@ -136,7 +158,9 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
             siblings = family_of[i][1:]
             path_rows.append({
                 "idx": i,
-                "descriptor": path_descriptor(p),
+                "descriptor": path_descriptor(
+                    p, played_chip=ctx.played_chip_this_event, reference_event=ctx.reference_event
+                ),
                 "score": p.get("path_total"),
                 "confidence": _CONFIDENCE_LABEL.get(conf, "-") if conf else "-",
                 "is_leading": i == 1,
@@ -157,12 +181,22 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
 
     shown_indices = primary_indices[:4]
     trajectory_series = _trajectory_series(paths, shown_indices)
+    leader_chip_steps = [s for s in (leader.get("steps") or []) if s.get("chip_played")]
+    leader_already_played = bool(
+        leader_chip_steps
+        and ctx.played_chip_this_event is not None
+        and leader_chip_steps[0]["event"] == ctx.reference_event
+        and leader_chip_steps[0]["chip_played"].lower() == ctx.played_chip_this_event.lower()
+    )
 
     return {
         "has_plan": True,
         "horizon_gw": horizon_gw,
         "leader": {
-            "descriptor": path_descriptor(leader),
+            "descriptor": path_descriptor(
+                leader, played_chip=ctx.played_chip_this_event, reference_event=ctx.reference_event
+            ),
+            "already_played_chip": leader_already_played,
             "tie": tie,
             "confidence": _CONFIDENCE_LABEL.get(leader_conf, "-") if leader_conf else "-",
             "score": leader.get("path_total"),

@@ -34,18 +34,36 @@ def path_confidence(conn, path: dict) -> str | None:
     return None
 
 
-def path_descriptor(path: dict) -> str:
+def path_descriptor(
+    path: dict, *, played_chip: str | None = None, reference_event: int | None = None
+) -> str:
     """One short phrase describing this path's shape - real composition
     over the already-computed step list, not a new clustering model (that's
     tracked separately in PROJECT_STATE.md's "path-diversity clustering" as
     real future work; this is just a display label for what's already
-    there)."""
+    there).
+
+    `played_chip`/`reference_event` (both `None` by default, so every
+    existing caller/test is unaffected) let this flip a chip step from a
+    live instruction to a past-tense confirmation when the path's own first
+    chip step is the real chip the user already played this event (synced
+    from `my_team_picks.active_chip` - never guessed) - the same real fact
+    `dashboard/home.py`'s `_action_word` already checks for the Command
+    screen, applied here so the Plan hero/grid stop reading as a still-open
+    recommendation for a chip that was locked in on the real FPL site."""
     steps = path.get("steps") or []
     transfer_events = [s["event"] for s in steps if s.get("player_out_id") is not None]
     chip_steps = [s for s in steps if s.get("chip_played")]
     if chip_steps:
         chip = chip_steps[0]
-        bit = f"{_chip_display_name(chip['chip_played'])} at GW{chip['event']}"
+        already_played = (
+            played_chip is not None
+            and reference_event is not None
+            and chip["event"] == reference_event
+            and chip["chip_played"].lower() == played_chip.lower()
+        )
+        name = _chip_display_name(chip["chip_played"])
+        bit = f"{name} played at GW{chip['event']}" if already_played else f"{name} at GW{chip['event']}"
         if transfer_events:
             bit += f" + {len(transfer_events)} transfer{'s' if len(transfer_events) != 1 else ''}"
         return bit

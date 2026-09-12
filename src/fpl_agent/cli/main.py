@@ -2931,14 +2931,29 @@ def live_match_poll_cmd(interval: int, max_hours: float):
                 except Exception as e:
                     click.echo(f"live-match-poll: dashboard regen failed this tick ({e}) - continuing", err=True)
 
-            if any_live:
-                try:
-                    from fpl_agent.monitoring.live_snapshot import write_live_snapshot
+            # Real bug found live 2026-09-12: this used to be gated the same
+            # `if any_live:` as the network-bound livefpl-rank refresh above,
+            # but `write_live_snapshot` is pure local DB reads (its own
+            # module docstring: "never runs Dixon-Coles, Monte Carlo, or the
+            # strategic beam search") - not a network call, nothing to save
+            # by skipping it pre-kickoff. Gating it to `any_live` meant the
+            # ENTIRE fast channel (recent_changes/gw lifecycle state/
+            # deadline countdown - everything `LiveScreen`/the header strip
+            # read) only ever refreshed on the slow 15min `run_scheduled`
+            # cadence during the whole pre-kickoff window - confirmed live:
+            # a real deadline-lock transition and several real lineup
+            # confirmations sat unreflected in `live_snapshot.json` for
+            # 20+ minutes with no live match yet to trigger a write. Now
+            # runs every tick regardless of `any_live` (still only as often
+            # as the loop's own already-adaptive interval - `interval`
+            # while live, `pre_kickoff_interval` otherwise).
+            try:
+                from fpl_agent.monitoring.live_snapshot import write_live_snapshot
 
-                    live_payload = _maybe_fetch_live_payload(conn)
-                    write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
-                except Exception as e:
-                    click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)
+                live_payload = _maybe_fetch_live_payload(conn) if any_live else None
+                write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
+            except Exception as e:
+                click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)
 
             consecutive_failures = consecutive_failures + 1 if any_failure else 0
             if consecutive_failures:

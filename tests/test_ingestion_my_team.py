@@ -1,7 +1,8 @@
 from fpl_agent.ingestion import my_team
 from fpl_agent.ingestion.fpl_api import RawFetch
 from fpl_agent.ingestion.my_team import (
-    get_latest_squad, get_latest_squad_detail, get_my_team_entry_id, set_my_team_entry_id, sync_my_team,
+    get_active_chip_for_event, get_latest_squad, get_latest_squad_detail, get_my_team_entry_id, get_used_chips,
+    set_my_team_entry_id, sync_my_team,
 )
 
 
@@ -250,3 +251,27 @@ def test_sync_my_team_records_active_chip(db_conn, monkeypatch):
 
     row = db_conn.execute("SELECT active_chip FROM my_team_picks WHERE entry_id=7378572 LIMIT 1").fetchone()
     assert row["active_chip"] == "wildcard"
+
+
+def test_get_active_chip_for_event_is_precise_to_the_real_event(db_conn):
+    """Real bug fixed 2026-09-12: Command's hero kept saying "PLAY FREE HIT"
+    even after the user had actually played it, because nothing checked
+    whether a chip was active for THIS SPECIFIC event - `get_used_chips`
+    (any event, ever) isn't precise enough for that. A chip active on a
+    different, past event must never be mistaken for one active now."""
+    now = "t0"
+    db_conn.executemany(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            (7378572, 2, 1, 1, 1, 1, 0, "wildcard", now),
+            (7378572, 4, 1, 1, 1, 1, 0, "freehit", now),
+        ],
+    )
+    db_conn.commit()
+
+    assert get_active_chip_for_event(db_conn, 7378572, 4) == "freehit"
+    assert get_active_chip_for_event(db_conn, 7378572, 2) == "wildcard"
+    assert get_active_chip_for_event(db_conn, 7378572, 3) is None
+    # The broader "ever used" check still sees both real chips.
+    assert get_used_chips(db_conn, 7378572) == {"wildcard", "freehit"}

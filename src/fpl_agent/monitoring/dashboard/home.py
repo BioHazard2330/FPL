@@ -8,18 +8,21 @@ just no longer competing with the one thing Home exists to answer)."""
 from fpl_agent.monitoring.dashboard.legacy import _captain_html, _chip_display_name, _esc, _humanize, _relative_time
 
 
-def _chip_label_from_rec(label: str) -> str:
+def _chip_code_from_rec(label: str) -> str:
     """`current_rec['label']` for a chip action is always `f"PLAY {code.upper()}"`
-    (`optimization/transfers.py`'s `StartingActionOption` construction) - this
-    recovers the raw code to run it through `_chip_display_name` so the
-    dashboard never shows the internal code ("BBOOST"/"3XC"/"FREEHIT") as
-    real FPL chip terminology instead ("Bench Boost"/"Triple Captain"/
-    "Free Hit")."""
-    code = label[5:] if label.upper().startswith("PLAY ") else label
-    return _chip_display_name(code)
+    (`optimization/transfers.py`'s `StartingActionOption` construction) -
+    recovers the raw code (e.g. "FREEHIT")."""
+    return label[5:] if label.upper().startswith("PLAY ") else label
 
 
-def _action_reason(current_rec: dict | None, ta) -> str:
+def _chip_label_from_rec(label: str) -> str:
+    """Runs the raw code through `_chip_display_name` so the dashboard never
+    shows the internal code ("BBOOST"/"3XC"/"FREEHIT") as real FPL chip
+    terminology instead ("Bench Boost"/"Triple Captain"/"Free Hit")."""
+    return _chip_display_name(_chip_code_from_rec(label))
+
+
+def _action_reason(current_rec: dict | None, ta, played_chip: str | None = None) -> str:
     """The one reason line - composed directly from structured fields
     (verdict/action_kind/label/evidence_confidence, real names split out of
     `label`), never from `current_rec['reason']`/`ta.reason` (those are
@@ -29,10 +32,19 @@ def _action_reason(current_rec: dict | None, ta) -> str:
     `strategic_plan` decision) when a real multi-GW search has been run;
     falls back to `ta` (the always-live `analyze_transfer_decision` result)
     when it hasn't, so Home never goes blank just because `fpl
-    strategic-plan` hasn't been run this session."""
+    strategic-plan` hasn't been run this session.
+
+    `played_chip` (2026-09-12, real bug fix): the real chip already active
+    for the CURRENT locked event, straight from FPL's own API
+    (`my_team.get_active_chip_for_event`) - this project never submits a
+    chip itself, so if one is already active here the user did it on the
+    real FPL site. A recommendation that happens to match is a real past
+    confirmation, not a live instruction to go do something already done."""
     if current_rec is not None:
         kind = current_rec["action_kind"]
         verdict = current_rec["verdict"]
+        if kind == "chip" and played_chip and played_chip.lower() == _chip_code_from_rec(current_rec["label"]).lower():
+            return f"You already played {_chip_label_from_rec(current_rec['label'])} this gameweek - this is the real locked-in squad it produced."
         if verdict == "REVIEW":
             return "The model has a lean here, but evidence is thin - worth a manual look before you commit."
         if kind == "roll":
@@ -58,15 +70,20 @@ def _action_reason(current_rec: dict | None, ta) -> str:
     return "No transfer clears the bar this week - hold your transfer."
 
 
-def _action_word(current_rec: dict | None, ta) -> tuple[str, str]:
+def _action_word(current_rec: dict | None, ta, played_chip: str | None = None) -> tuple[str, str]:
     """(word, css-verdict-class) - same verdict vocabulary the rest of the
     dashboard already uses (ROLL/TRANSFER/CHIP/REVIEW), read from the same
     single authoritative source `_action_reason` uses above, never a second
-    independently-derived word."""
+    independently-derived word. `played_chip` - see `_action_reason`'s own
+    docstring for why this matters: a chip already active for the real
+    locked event reads as a past confirmation, never a live "PLAY X"
+    instruction for something already done outside this app."""
     if current_rec is not None:
+        kind = current_rec["action_kind"]
+        if kind == "chip" and played_chip and played_chip.lower() == _chip_code_from_rec(current_rec["label"]).lower():
+            return f"{_chip_label_from_rec(current_rec['label']).upper()} PLAYED", "chip"
         if current_rec["verdict"] == "REVIEW":
             return "REVIEW", "review"
-        kind = current_rec["action_kind"]
         if kind == "roll":
             return "ROLL", "roll"
         if kind == "chip":

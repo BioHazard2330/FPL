@@ -205,9 +205,16 @@ def build_command_payload(ctx: DashboardContext) -> dict:
     traces to `ctx.current_rec`/`ctx.ta`/`ctx.ca`/`ctx.freshness`/
     `ctx.cross_check`, already computed once by `build_dashboard_context`."""
     current_rec = ctx.current_rec
-    word, cls = _action_word(current_rec, ctx.ta)
+    word, cls = _action_word(current_rec, ctx.ta, ctx.played_chip_this_event)
     is_stale = bool(ctx.freshness is not None and ctx.freshness.is_stale)
-    if is_stale:
+    # A real chip already played for the current locked event is a past
+    # fact, not a live recommendation that can go stale - never overwritten
+    # by the RECOMPUTING banner (see `played_chip_this_event`'s own
+    # docstring in context.py). `word.endswith("PLAYED")` is the one real,
+    # precise signal for that specific branch - a normal not-yet-acted
+    # chip recommendation is still real "PLAY X" and still goes stale
+    # normally.
+    if is_stale and not word.endswith("PLAYED"):
         word, cls = "RECOMPUTING", "review"
 
     auth = (current_rec or {}).get("authoritative")

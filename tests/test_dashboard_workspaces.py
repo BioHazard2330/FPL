@@ -50,6 +50,32 @@ def test_home_reason_chip_from_current_rec():
     assert home._action_word(current_rec, None) == ("PLAY WILDCARD", "chip")
 
 
+def test_home_word_shows_past_tense_when_the_recommended_chip_was_already_played(monkeypatch):
+    """Real bug fixed 2026-09-12: the hero kept saying "PLAY FREE HIT" as a
+    live instruction even after the user had actually played it for real on
+    the official FPL site - confirmed via FPL's own API (`active_chip` on
+    the current locked event's synced picks). This project never submits a
+    chip itself, so `played_chip` being set here always means a real,
+    already-completed action, never an assumption."""
+    current_rec = {"verdict": "ACT", "action_kind": "chip", "label": "PLAY FREEHIT", "path_total": 20.0}
+    assert home._action_word(current_rec, None, played_chip="freehit") == ("FREE HIT PLAYED", "chip")
+    reason = home._action_reason(current_rec, None, played_chip="freehit")
+    assert "already played" in reason.lower() and "free hit" in reason.lower()
+
+
+def test_home_word_stays_a_live_instruction_when_a_different_chip_was_played():
+    """A real chip played for a DIFFERENT reason than the one currently
+    recommended (e.g. the model's own runner-up horizon shifted since) must
+    never be mistaken for confirmation of THIS recommendation."""
+    current_rec = {"verdict": "ACT", "action_kind": "chip", "label": "PLAY WILDCARD", "path_total": 20.0}
+    assert home._action_word(current_rec, None, played_chip="freehit") == ("PLAY WILDCARD", "chip")
+
+
+def test_home_word_stays_a_live_instruction_when_no_chip_played_yet():
+    current_rec = {"verdict": "ACT", "action_kind": "chip", "label": "PLAY FREEHIT", "path_total": 20.0}
+    assert home._action_word(current_rec, None, played_chip=None) == ("PLAY FREE HIT", "chip")
+
+
 def test_home_reason_review_never_claims_confidence():
     current_rec = {"verdict": "REVIEW", "action_kind": "transfer", "label": "A -> B", "path_total": 1.0}
     reason = home._action_reason(current_rec, None)
@@ -357,6 +383,27 @@ def test_path_descriptor_chip_with_transfers():
         {"event": 5, "action": "A -> B", "player_out_id": 1, "player_in_id": 2},
     ]}
     assert plan.path_descriptor(path) == "Wildcard at GW3 + 1 transfer"
+
+
+def test_path_descriptor_shows_past_tense_when_chip_already_played_this_event():
+    path = {"steps": [
+        {"event": 4, "action": "PLAY FREE HIT", "chip_played": "freehit"},
+        {"event": 5, "action": "A -> B", "player_out_id": 1, "player_in_id": 2},
+    ]}
+    assert (
+        plan.path_descriptor(path, played_chip="freehit", reference_event=4)
+        == "Free Hit played at GW4 + 1 transfer"
+    )
+
+
+def test_path_descriptor_stays_a_live_instruction_when_chip_is_for_a_future_gw():
+    path = {"steps": [{"event": 6, "action": "PLAY FREE HIT", "chip_played": "freehit"}]}
+    assert plan.path_descriptor(path, played_chip="freehit", reference_event=4) == "Free Hit at GW6"
+
+
+def test_path_descriptor_stays_a_live_instruction_when_no_chip_played_yet():
+    path = {"steps": [{"event": 4, "action": "PLAY FREE HIT", "chip_played": "freehit"}]}
+    assert plan.path_descriptor(path, played_chip=None, reference_event=4) == "Free Hit at GW4"
 
 
 def test_path_confidence_none_for_pure_roll():

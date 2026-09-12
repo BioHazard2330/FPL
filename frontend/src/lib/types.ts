@@ -179,6 +179,7 @@ export interface PlanPayload {
   horizon_gw?: number
   leader?: {
     descriptor: string
+    already_played_chip: boolean
     tie: string | null
     confidence: string
     score: number | null

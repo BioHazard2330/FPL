@@ -8,7 +8,7 @@ honest empty-state contract instead, matching `test_api_command_payload.py`'s
 own no-op-locked-squad coverage."""
 import json
 
-from fpl_agent.monitoring.api.plan_payload import _player_identity_map, _steps_json, build_plan_payload
+from fpl_agent.monitoring.api.plan_payload import _player_identity_map, _steps_json, _trajectory_series, build_plan_payload
 from fpl_agent.monitoring.dashboard.context import build_dashboard_context
 from test_optimization_squad import _seed
 
@@ -20,6 +20,26 @@ def test_plan_payload_is_honest_with_no_locked_squad(db_conn):
     json.dumps(payload)
     assert payload["has_plan"] is False
     assert "reason" in payload
+
+
+def test_trajectory_series_plots_delta_vs_the_leading_path_not_raw_cumulative_pts():
+    """Real chart-design regression (2026-09-12, direct user report: near-
+    tied paths' raw cumulative totals render as indistinguishable
+    overlapping lines on an absolute scale). The leading path (rank 0, shown
+    first in `shown_indices`) must always plot as a flat zero line; an
+    alternative path's own `y` at each gw is its real deficit/edge against
+    the leader, not its own raw score."""
+    paths = [
+        {"steps": [{"event": 4, "gw_ev": 50.0, "action": "ROLL"}, {"event": 5, "gw_ev": 50.0, "action": "ROLL"}]},
+        {"steps": [{"event": 4, "gw_ev": 48.0, "action": "ROLL"}, {"event": 5, "gw_ev": 47.0, "action": "ROLL"}]},
+    ]
+    series = _trajectory_series(paths, [1, 2])
+
+    leader, alt = series[0], series[1]
+    assert leader["role"] == "leading" and alt["role"] == "alt"
+    assert [pt["y"] for pt in leader["points"]] == [0.0, 0.0]
+    # alt: GW4 cumulative 48 vs leader's 50 (-2); GW5 cumulative 95 vs 100 (-5)
+    assert [pt["y"] for pt in alt["points"]] == [-2.0, -5.0]
 
 
 def test_steps_json_carries_real_transfer_player_identity(db_conn):

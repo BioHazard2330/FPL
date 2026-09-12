@@ -240,8 +240,18 @@ export function PlanScreen() {
       tickAmount: Math.max(1, gwMax - gwMin),
       labels: gwAxisLabels,
     },
-    yaxis: { title: { text: 'Cumulative pts' }, labels: intAxisLabels },
-    tooltip: { x: { formatter: (v: number) => `GW${Math.round(v)}` } },
+    // The chart plots each path's cumulative-points DELTA vs the leading
+    // path (see `plan_payload.py::_trajectory_series`), not raw absolute
+    // totals - near-tied paths used to render as indistinguishable
+    // overlapping lines on a 0-500pt scale. The leader is therefore always
+    // a flat zero line; a dashed reference annotation makes that explicit
+    // rather than leaving a bare 0 line unexplained.
+    yaxis: { title: { text: 'Pts vs leading path' }, labels: intAxisLabels },
+    annotations: { yaxis: [{ y: 0, borderColor: 'var(--divider)', strokeDashArray: 4 }] },
+    tooltip: {
+      x: { formatter: (v: number) => `GW${Math.round(v)}` },
+      y: { formatter: (v: number) => (v === 0 ? 'Leading path' : `${v > 0 ? '+' : ''}${v.toFixed(1)} pts vs leader`) },
+    },
   })
 
   return (
@@ -252,7 +262,7 @@ export function PlanScreen() {
           PLAN
         </span>
         <div className="relative text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">
-          Leading strategy over {p.horizon_gw} gameweeks
+          {leader.already_played_chip ? 'Locked in this gameweek · leading follow-up plan' : `Leading strategy over ${p.horizon_gw} gameweeks`}
           {leader.tie && <span className={`ml-2 ${TIE_COLOR[leader.tie]}`}>{leader.tie.replace(/_/g, ' ')}</span>}
         </div>
         <div className="relative mt-1 font-display text-6xl font-bold uppercase text-text">{leader.descriptor}</div>
