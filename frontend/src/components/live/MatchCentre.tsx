@@ -264,7 +264,17 @@ export function MatchCard({ m }: { m: LiveMatch }) {
 
       {(m.momentum.length > 1 || m.shots.length > 0) && (
         <div className="grid grid-cols-1 gap-6 border-t-2 border-divider px-6 py-4 xl:grid-cols-2">
-          <MomentumBand points={m.momentum} />
+          <MomentumBand
+            points={m.momentum}
+            isLive={m.status === 'LIVE' || m.status === 'HALFTIME'}
+            // Real goal markers derived from the same shot list the shot
+            // map already renders (`outcome === 'Goal'`, FotMob's own raw
+            // eventType) - no new source, never a fabricated card marker
+            // (this project has no per-match card timeline to draw from).
+            markers={m.shots
+              .filter((s) => s.outcome === 'Goal' && s.minute !== null)
+              .map((s) => ({ minute: s.minute!, isHome: s.team_id === m.home_team_id, kind: 'Goal' as const }))}
+          />
           <ShotMap shots={m.shots} homeTeamId={m.home_team_id} />
         </div>
       )}
