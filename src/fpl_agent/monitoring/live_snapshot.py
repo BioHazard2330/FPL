@@ -493,6 +493,21 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
             # same real rule the dashboard's own rank tile already applies.
             "is_current": d.get("event") == event,
             "retrieved_at": live_rank_decision.created_at,
+            # Real gap found 2026-09-12 (direct user comparison against
+            # livefpl.net's own live-rank page): this project's own LiveFPL
+            # connector (`ingestion/livefpl_source.py`) already fetches and
+            # logs every one of these fields every real refresh - they were
+            # simply never threaded through to the live snapshot the
+            # frontend actually reads. `None` for every field below when the
+            # source is the self-built estimator (never fabricated for a
+            # source that doesn't provide them).
+            "old_rank": d.get("old_rank"),
+            "rank_gain": d.get("rank_gain"),
+            "change_pct": d.get("change_pct"),
+            "safety_score": d.get("safety_score"),
+            "template_pct": d.get("template_pct"),
+            "chip_played": d.get("chip_played"),
+            "gw_rank": d.get("gw_rank"),
         }
 
     points_block = None

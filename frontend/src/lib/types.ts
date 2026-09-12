@@ -724,6 +724,34 @@ export interface LiveRank {
   event: number | null
   is_current: boolean | null
   retrieved_at: string | null
+  /** Real LiveFPL fields (source `"livefpl"` only - `null` for the
+   * self-built estimator fallback, never fabricated). */
+  old_rank: number | null
+  rank_gain: number | null
+  change_pct: number | null
+  safety_score: number | null
+  template_pct: number | null
+  chip_played: string | null
+  gw_rank: number | null
+}
+
+export interface LivePointsByPlayer {
+  player_id: number
+  points: number
+  multiplier: number
+  play_state: string
+}
+
+export interface LivePoints {
+  points: number
+  captain_points: number | null
+  captain_name: string | null
+  captain_play_state: string | null
+  played: number
+  live: number
+  yet_to_play: number
+  bench: number
+  by_player: LivePointsByPlayer[]
 }
 
 export interface LiveSnapshot {
@@ -744,7 +772,7 @@ export interface LiveSnapshot {
     last_deadline_time?: string | null
   }
   rank: LiveRank | null
-  points: Record<string, unknown> | null
+  points: LivePoints | null
   squad: LiveSquadPlayer[]
   active_matches: LiveMatch[]
   bonus_defcon: BonusDefconRow[]

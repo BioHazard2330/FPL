@@ -1,9 +1,7 @@
 import { useState } from 'react'
-import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
 import { fetchPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import { CHART_COLORS, baseChart, gwAxisLabels, intAxisLabels } from '@/lib/chartTheme'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { TransferWormhole } from '@/components/three/TransferWormhole'
 import type { PlanPath } from '@/lib/types'
@@ -219,41 +217,6 @@ export function PlanScreen() {
   const leader = p.leader!
   const current = p.paths?.find((pp) => pp.idx === activePath) ?? p.paths?.[0]
 
-  const series = (p.trajectory_series ?? []).map((s) => ({ name: s.name, data: s.points.map((pt) => [pt.x, pt.y]) }))
-  const xs = (p.trajectory_series ?? []).flatMap((s) => s.points.map((pt) => pt.x))
-  const gwMin = xs.length ? Math.floor(Math.min(...xs)) : 0
-  const gwMax = xs.length ? Math.ceil(Math.max(...xs)) : 1
-  const chartOptions = baseChart({
-    chart: { type: 'line' },
-    stroke: { width: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? 4 : 2)), curve: 'straight' },
-    colors: (p.trajectory_series ?? []).map((s) => (s.role === 'leading' ? CHART_COLORS.primary : CHART_COLORS.muted)),
-    // Gameweeks are integers. `tickAmount` alone let ApexCharts pick its own
-    // evenly-spaced numeric ticks, which rendered a real axis reading
-    // "4.0 / 5.4 / 6.8 / 8.2 / 9.6 / 11.0" - fractional gameweeks that do not
-    // exist. Force one tick per real gameweek in the plotted range and label
-    // them the way the rest of the app writes a gameweek.
-    xaxis: {
-      type: 'numeric' as const,
-      title: { text: 'Gameweek' },
-      min: gwMin,
-      max: gwMax,
-      tickAmount: Math.max(1, gwMax - gwMin),
-      labels: gwAxisLabels,
-    },
-    // The chart plots each path's cumulative-points DELTA vs the leading
-    // path (see `plan_payload.py::_trajectory_series`), not raw absolute
-    // totals - near-tied paths used to render as indistinguishable
-    // overlapping lines on a 0-500pt scale. The leader is therefore always
-    // a flat zero line; a dashed reference annotation makes that explicit
-    // rather than leaving a bare 0 line unexplained.
-    yaxis: { title: { text: 'Pts vs leading path' }, labels: intAxisLabels },
-    annotations: { yaxis: [{ y: 0, borderColor: 'var(--divider)', strokeDashArray: 4 }] },
-    tooltip: {
-      x: { formatter: (v: number) => `GW${Math.round(v)}` },
-      y: { formatter: (v: number) => (v === 0 ? 'Leading path' : `${v > 0 ? '+' : ''}${v.toFixed(1)} pts vs leader`) },
-    },
-  })
-
   return (
     <div className="data-in pb-16">
       <Masthead edition="Strategy Desk" title={`${p.horizon_gw}-gameweek plan`} />
@@ -309,41 +272,28 @@ export function PlanScreen() {
         </div>
       )}
 
-      {/* CUMULATIVE EDGE - the real chart, with the real per-horizon totals as
-          direct annotations underneath rather than a separate bordered row -
-          whitespace-only separation from the panel band above */}
-      {series.length > 0 && (
+      {/* HORIZON TOTALS - real per-horizon path totals for the selected path.
+          Was a line chart plotting cumulative points; dropped 2026-09-12
+          (direct user report: near-tied paths made it an unreadable
+          overlapping mess) in favor of just the real numbers it was
+          annotating anyway. */}
+      {current?.horizon_breakdown && (
         <div className="mt-12 px-10">
-          <div className="mb-3 flex flex-wrap items-baseline gap-4">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative edge</span>
-            {/* Direct labels instead of a legend - the chart draws the real
-                leading path against the real rolling baseline, and with
-                `legend: false` there was previously nothing at all telling
-                the reader which line was which. */}
-            {(p.trajectory_series ?? []).map((s) => (
-              <span key={s.name} className="flex items-center gap-1.5 text-[11px] text-text-muted">
-                <span className={`h-0.5 w-4 ${s.role === 'leading' ? 'bg-pitch-green' : 'bg-divider'}`} />
-                {s.name}
-              </span>
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Horizon totals</div>
+          <div className="flex flex-wrap gap-10 border-t-2 border-divider pt-4">
+            {Object.entries(current.horizon_breakdown).map(([h, entry]) => (
+              <div key={h}>
+                <div className="tabular font-display text-2xl font-bold text-text">{entry.path_total.toFixed(1)}</div>
+                <div className="text-[11px] uppercase tracking-wide text-text-faint">at {h} gameweeks</div>
+                {entry.delta_vs_roll !== null && (
+                  <div className="tabular text-xs text-pitch-green">
+                    {entry.delta_vs_roll >= 0 ? '+' : ''}
+                    {entry.delta_vs_roll.toFixed(1)} vs roll
+                  </div>
+                )}
+              </div>
             ))}
           </div>
-          <Chart options={chartOptions} series={series} type="line" height={300} />
-          {current?.horizon_breakdown && (
-            <div className="mt-2 flex gap-10 border-t-2 border-divider pt-4">
-              {Object.entries(current.horizon_breakdown).map(([h, entry]) => (
-                <div key={h}>
-                  <div className="tabular text-lg font-bold text-text">{entry.path_total.toFixed(1)}</div>
-                  <div className="text-[11px] uppercase tracking-wide text-text-faint">at {h} gameweeks</div>
-                  {entry.delta_vs_roll !== null && (
-                    <div className="tabular text-xs text-pitch-green">
-                      {entry.delta_vs_roll >= 0 ? '+' : ''}
-                      {entry.delta_vs_roll.toFixed(1)} vs roll
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

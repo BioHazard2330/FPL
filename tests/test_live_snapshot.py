@@ -38,6 +38,30 @@ def test_build_live_snapshot_reads_the_latest_live_rank_decision(db_conn):
     assert snap["rank"]["is_current"] is True  # event=2 matches the live/reference event
 
 
+def test_build_live_snapshot_carries_real_livefpl_rank_change_fields(db_conn):
+    """Real gap found 2026-09-12 (direct user comparison against
+    livefpl.net) - the LiveFPL connector already fetches old_rank/rank_gain/
+    change_pct/safety_score/template_pct/chip_played every refresh, but the
+    live snapshot dropped every one of them before this fix."""
+    _seed_event(db_conn)
+    log_decision(
+        db_conn, "live_rank", summary="LiveFPL: rank ~123,456",
+        detail={
+            "source": "livefpl", "estimated_rank": 123456, "precision": "exact", "event": 2,
+            "old_rank": 1589046, "rank_gain": 808515, "change_pct": 50.88,
+            "safety_score": 15.0, "template_pct": 80.0, "chip_played": None, "gw_rank": 45211,
+        },
+        confidence="high",
+    )
+    snap = build_live_snapshot(db_conn, live_payload=None)
+    assert snap["rank"]["old_rank"] == 1589046
+    assert snap["rank"]["rank_gain"] == 808515
+    assert snap["rank"]["change_pct"] == 50.88
+    assert snap["rank"]["safety_score"] == 15.0
+    assert snap["rank"]["template_pct"] == 80.0
+    assert snap["rank"]["gw_rank"] == 45211
+
+
 def test_build_live_snapshot_flags_a_stale_rank_as_not_current(db_conn):
     _seed_event(db_conn, event_id=2)
     _seed_event(db_conn, event_id=1, is_next=0)

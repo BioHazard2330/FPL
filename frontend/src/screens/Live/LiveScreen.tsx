@@ -103,10 +103,12 @@ export function LiveScreen() {
   const events = p.match_events ?? []
   const changes = p.recent_changes ?? []
   const rank = p.rank
+  const points = p.points
+  const livePointsById = new Map((points?.by_player ?? []).map((x) => [x.player_id, x]))
   const squad = p.squad ?? []
   const starting = squad.filter((s) => s.slot === 'starting')
   const bench = squad.filter((s) => s.slot === 'bench')
-  const squadXp = starting.reduce((sum, s) => sum + (s.xp ?? 0), 0)
+  const rankArrowUp = rank?.rank_gain !== null && rank?.rank_gain !== undefined ? rank.rank_gain > 0 : null
   const charts = p.charts
   const rec = p.recommendation
   const pointsChanges = p.points_changes
@@ -129,6 +131,73 @@ export function LiveScreen() {
         right={<span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>}
       />
 
+      {/* THE BOTTOM LINE - real gap found 2026-09-12 (direct user report:
+          "cant even see where my live points is", plus a direct comparison
+          against livefpl.net's own live-rank page). The actual live
+          gameweek points total and the LiveFPL rank-change fields
+          (old_rank/rank_gain/change_pct/safety_score/template_pct) were
+          already computed server-side every real refresh - this project's
+          own connector fetches them - but nothing on this screen ever
+          rendered them. This is the one number the whole screen exists
+          for; it now leads, at hero scale, before any operational status. */}
+      {points && (
+        <div className="border-b-2 border-divider bg-panel px-10 py-8">
+          <div className="flex flex-wrap items-end gap-10">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Gameweek points</div>
+              <div className="tabular font-display text-7xl font-bold leading-none text-text">{points.points.toFixed(0)}</div>
+            </div>
+            {rank?.estimated_rank != null && (
+              <div className="border-l-2 border-divider pl-10">
+                <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">
+                  Live rank{rank.precision ? ` · ${rank.precision}` : ''}
+                </div>
+                <div className={`tabular font-display text-3xl font-bold ${rank.is_current ? 'text-text' : 'text-text-faint'}`}>
+                  ~{rank.estimated_rank.toLocaleString()}
+                  {!rank.is_current && <span className="ml-2 text-xs font-normal text-text-faint">not current</span>}
+                </div>
+                {rankArrowUp !== null && rank.rank_gain !== null && (
+                  <div className={`mt-0.5 flex items-center gap-1.5 text-sm font-bold ${rankArrowUp ? 'text-pitch-green' : 'text-alert-red'}`}>
+                    <span aria-hidden="true">{rankArrowUp ? '▲' : '▼'}</span>
+                    {Math.abs(rank.rank_gain).toLocaleString()}
+                    {rank.change_pct !== null && <span className="text-text-faint">({rank.change_pct >= 0 ? '+' : ''}{rank.change_pct.toFixed(1)}%)</span>}
+                  </div>
+                )}
+              </div>
+            )}
+            {rank?.safety_score != null && (
+              <div className="border-l-2 border-divider pl-10">
+                <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Safety score</div>
+                <div className="tabular font-display text-3xl font-bold text-text">{rank.safety_score.toFixed(0)}</div>
+                <div className="mt-0.5 text-[10px] text-text-faint">pts above the next rank band</div>
+              </div>
+            )}
+            {rank?.template_pct != null && (
+              <div className="border-l-2 border-divider pl-10">
+                <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Template rating</div>
+                <div className="tabular font-display text-3xl font-bold text-text">{rank.template_pct.toFixed(0)}%</div>
+                <div className="mt-0.5 text-[10px] text-text-faint">match with the top-10k template</div>
+              </div>
+            )}
+            {points.captain_name && (
+              <div className="border-l-2 border-divider pl-10">
+                <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain</div>
+                <div className="tabular font-display text-3xl font-bold text-broadcast-gold">
+                  {points.captain_points ?? 0}
+                  <span className="ml-2 font-sans text-base font-semibold text-text">{points.captain_name}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-[11px] text-text-faint">
+            <span>{points.played} played</span>
+            <span>{points.live} live</span>
+            <span>{points.yet_to_play} yet to play</span>
+            <span>{points.bench} on the bench</span>
+          </div>
+        </div>
+      )}
+
       {/* CONSOLE STRIP - the real control-room readout: is anything live,
           where do I stand, is the standing decision still valid, and have
           finished-GW points been revised under me. One band, rule-separated
@@ -149,15 +218,6 @@ export function LiveScreen() {
             {squadMatches > 0 && <span className="ml-2 text-sm font-semibold text-broadcast-gold">{squadMatches} with my players</span>}
           </div>
         </ConsoleCell>
-
-        {rank?.estimated_rank !== null && rank?.estimated_rank !== undefined && (
-          <ConsoleCell label={`Estimated rank${rank.precision ? ` · ${rank.precision}` : ''}`}>
-            <div className={`tabular font-display text-lg font-bold ${rank.is_current ? 'text-pitch-green' : 'text-text-faint'}`}>
-              ~{rank.estimated_rank.toLocaleString()}
-              {!rank.is_current && <span className="ml-2 text-xs font-normal text-text-faint">not current</span>}
-            </div>
-          </ConsoleCell>
-        )}
 
         {rec?.status && (
           <ConsoleCell label="Standing decision">
@@ -213,41 +273,61 @@ export function LiveScreen() {
           <div className="bg-void px-10 py-8">
             <div className="mb-4 flex flex-wrap items-baseline gap-3">
               <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Live squad impact</span>
-              <span className="tabular font-display text-2xl font-bold text-pitch-green">{squadXp.toFixed(1)} xP</span>
-              <span className="text-[11px] text-text-faint">starting XI, live-projected</span>
+              <span className="text-[11px] text-text-faint">actual points once a player has minutes, xP before kickoff</span>
             </div>
             <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
               <div>
                 <div className="pb-1 text-[10px] font-bold uppercase tracking-wide text-text-faint">Starting XI</div>
                 <div className="divide-y divide-divider">
-                  {starting.map((s) => (
-                    <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
-                      {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">C</span>}
-                      {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[9px] font-bold text-text">V</span>}
-                      <Link to={`/player/${s.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">
-                        {s.web_name}
-                      </Link>
-                      <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
-                      {s.classification && s.classification !== 'FIT' && (
-                        <span className={`shrink-0 text-[9px] font-bold uppercase ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
-                          {s.classification}
-                        </span>
-                      )}
-                      <span className="tabular ml-auto shrink-0 font-semibold text-pitch-green">{s.xp !== null ? s.xp.toFixed(1) : '—'}</span>
-                    </div>
-                  ))}
+                  {starting.map((s) => {
+                    const live = livePointsById.get(s.player_id)
+                    const hasActual = live !== undefined && live.play_state !== 'yet_to_play'
+                    const actual = hasActual ? live.points * live.multiplier : null
+                    return (
+                      <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
+                        {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">C</span>}
+                        {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[9px] font-bold text-text">V</span>}
+                        <Link to={`/player/${s.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">
+                          {s.web_name}
+                        </Link>
+                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
+                        {s.classification && s.classification !== 'FIT' && (
+                          <span className={`shrink-0 text-[9px] font-bold uppercase ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
+                            {s.classification}
+                          </span>
+                        )}
+                        {hasActual ? (
+                          <span className="tabular ml-auto shrink-0 font-display font-bold text-text">
+                            {actual}
+                            {live.play_state === 'live' && <span className="ml-1 size-1.5 shrink-0 rounded-full bg-alert-red align-middle" />}
+                          </span>
+                        ) : (
+                          <span className="tabular ml-auto shrink-0 font-semibold text-text-faint">{s.xp !== null ? `${s.xp.toFixed(1)} xP` : '—'}</span>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
               <div className="mt-6 md:mt-0">
                 <div className="pb-1 text-[10px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
                 <div className="divide-y divide-divider opacity-70">
-                  {bench.map((s) => (
-                    <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
-                      <span className="truncate font-bold text-text">{s.web_name}</span>
-                      <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
-                      <span className="tabular ml-auto shrink-0 font-semibold text-text-muted">{s.xp !== null ? s.xp.toFixed(1) : '—'}</span>
-                    </div>
-                  ))}
+                  {bench.map((s) => {
+                    const live = livePointsById.get(s.player_id)
+                    const hasActual = live !== undefined && live.play_state !== 'yet_to_play'
+                    const actual = hasActual ? live.points * live.multiplier : null
+                    return (
+                      <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
+                        <span className="truncate font-bold text-text">{s.web_name}</span>
+                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
+                        {hasActual ? (
+                          <span className="tabular ml-auto shrink-0 font-semibold text-text">{actual}</span>
+                        ) : (
+                          <span className="tabular ml-auto shrink-0 font-semibold text-text-muted">{s.xp !== null ? `${s.xp.toFixed(1)} xP` : '—'}</span>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             </div>

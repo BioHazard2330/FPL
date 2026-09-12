@@ -124,6 +124,27 @@ def _sensitivity_rows(conn) -> list[dict]:
     return rows[:5]
 
 
+def _matches_the_real_played_chip(path: dict, reference_event: int | None, played_chip: str | None) -> bool:
+    """A path's own first step is what it recommends doing AT the anchor
+    gameweek - but once the user has actually played a chip on the real FPL
+    site for that gameweek, that decision is no longer open. A beam-search
+    path built without knowing that (its `used_chip_names` constraint is
+    season-level - "not burned yet" - not "already committed this specific
+    gameweek") can still propose a DIFFERENT action at the anchor event,
+    which depicts a reality that already didn't happen. `steps` skips a
+    gameweek entirely when the real optimal action there is a pure roll, so
+    "no step at the anchor event" also counts as a mismatch whenever a chip
+    was really played."""
+    if played_chip is None or reference_event is None:
+        return True
+    steps = path.get("steps") or []
+    anchor_step = next((s for s in steps if s.get("event") == reference_event), None)
+    if anchor_step is None:
+        return False
+    chip = anchor_step.get("chip_played")
+    return chip is not None and chip.lower() == played_chip.lower()
+
+
 def build_plan_payload(ctx: DashboardContext) -> dict:
     sd = ctx.sd
     if ctx.locked is None:
@@ -134,6 +155,20 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
 
     paths = sd["paths"]
+    # Real correctness fix (2026-09-12, direct user report: the strategy
+    # grid showed alternative paths proposing WILDCARD/BENCH BOOST at GW4 as
+    # if that were still an open decision, when the user had already played
+    # Free Hit for real that gameweek - those paths depict a reality that
+    # can no longer happen). Never applied when nothing was actually played
+    # (`ctx.played_chip_this_event is None`), and falls back to the
+    # unfiltered list if every path would otherwise be discarded (the beam
+    # search genuinely found nothing consistent with reality - a real,
+    # rare gap worth surfacing as-is rather than returning an empty plan).
+    reality_consistent = [
+        p for p in paths if _matches_the_real_played_chip(p, ctx.reference_event, ctx.played_chip_this_event)
+    ]
+    if reality_consistent:
+        paths = reality_consistent
     horizon_gw = sd.get("horizon_gw")
     primary_indices, family_of = primary_path_indices(paths)
     leader = paths[0]
