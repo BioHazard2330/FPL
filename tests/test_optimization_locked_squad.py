@@ -10,28 +10,31 @@ _BENCH_4 = [2, 14, 23, 33]
 _FULL_15 = _STARTING_11 + _BENCH_4
 
 
-def _seed_real_picks(conn, event=1, entry_id=7378572, captain_id=30, vice_id=20):
+def _seed_real_picks(conn, event=1, entry_id=7378572, captain_id=30, vice_id=20,
+                      active_chip=None, bank_tenths=15, squad_ids=None):
     set_my_team_entry_id(conn, entry_id)
     conn.execute(
-        "INSERT INTO my_team_entry (entry_id, manager_name, region_name, favourite_team_id, "
+        "INSERT OR IGNORE INTO my_team_entry (entry_id, manager_name, region_name, favourite_team_id, "
         "joined_time, started_event, retrieved_at) VALUES (?,?,?,?,?,?,?)",
         (entry_id, "Test Manager", "Testland", 1, "t0", 1, "t0"),
     )
     conn.execute(
         "INSERT INTO my_team_gw_summary (entry_id, event, points, total_points, overall_rank, "
         "bank_tenths, team_value_tenths, event_transfers, event_transfers_cost, points_on_bench, retrieved_at) "
-        "VALUES (?,?,0,0,NULL,15,1000,0,0,0,'t0')",
-        (entry_id, event),
+        "VALUES (?,?,0,0,NULL,?,1000,0,0,0,'t0')",
+        (entry_id, event, bank_tenths),
     )
+    starting = squad_ids[:11] if squad_ids else _STARTING_11
+    bench = squad_ids[11:] if squad_ids else _BENCH_4
     rows = []
-    for slot, pid in enumerate(_STARTING_11, start=1):
+    for slot, pid in enumerate(starting, start=1):
         rows.append((entry_id, event, pid, slot, 2 if pid == captain_id else (1 if pid == vice_id else 1),
-                     1 if pid == captain_id else 0, 1 if pid == vice_id else 0))
-    for slot, pid in enumerate(_BENCH_4, start=12):
-        rows.append((entry_id, event, pid, slot, 0, 0, 0))
+                     1 if pid == captain_id else 0, 1 if pid == vice_id else 0, active_chip))
+    for slot, pid in enumerate(bench, start=12):
+        rows.append((entry_id, event, pid, slot, 0, 0, 0, active_chip))
     conn.executemany(
         "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
-        "is_vice_captain, active_chip, retrieved_at) VALUES (?,?,?,?,?,?,?,NULL,'t0')",
+        "is_vice_captain, active_chip, retrieved_at) VALUES (?,?,?,?,?,?,?,?,'t0')",
         rows,
     )
     conn.commit()
@@ -256,3 +259,59 @@ def test_an_unconstrained_locked_decision_is_not_treated_as_a_lock(db_conn, monk
     )
 
     assert get_locked_squad(db_conn) is None
+
+
+# Same 24-player test pool `_seed` already provides - two distinct-but-
+# position-legal 15-squads (differ by exactly 2 real players: 32<->34 FWD,
+# 2<->3 GKP) rather than a fully disjoint pair, which this small synthetic
+# pool can't cover (only 3 GKP/8 DEF/8 MID/5 FWD total exist).
+_GW3_SQUAD = [1, 10, 11, 12, 13, 20, 21, 22, 30, 31, 34, 3, 14, 23, 33]
+_FREEHIT_SQUAD = _STARTING_11 + _BENCH_4
+
+
+def test_resolve_planning_squad_reverts_a_currently_active_freehit(db_conn):
+    """Real production bug (2026-09-12, direct user question: "does the
+    system know my team reverts to my gw3 team after a freehit" - it did
+    not). `get_locked_squad` correctly shows the temporary Free Hit XI for
+    the gameweek it's played (unaffected by this fix) - but a plan looking
+    past that gameweek must build from the real permanent squad instead."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, event=3, squad_ids=_GW3_SQUAD, bank_tenths=10, active_chip=None)
+    _seed_real_picks(db_conn, event=4, squad_ids=_FREEHIT_SQUAD, bank_tenths=999, active_chip="freehit")
+
+    locked = get_locked_squad(db_conn)
+    assert locked.event == 4
+    assert locked.squad_ids == frozenset(_FREEHIT_SQUAD)  # unchanged - this IS the real GW4 XI
+
+    from fpl_agent.optimization.locked_squad import resolve_planning_squad
+
+    squad_ids, bank_tenths = resolve_planning_squad(db_conn, locked)
+    assert squad_ids == frozenset(_GW3_SQUAD)
+    assert bank_tenths == 10
+
+
+def test_resolve_planning_squad_is_a_no_op_without_an_active_freehit(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, event=4, bank_tenths=15)
+
+    locked = get_locked_squad(db_conn)
+    from fpl_agent.optimization.locked_squad import resolve_planning_squad
+
+    squad_ids, bank_tenths = resolve_planning_squad(db_conn, locked)
+    assert squad_ids == locked.squad_ids
+    assert bank_tenths == locked.bank_tenths == 15
+
+
+def test_resolve_planning_squad_falls_back_honestly_with_no_prior_real_squad(db_conn):
+    """A Free Hit played in the very first gameweek this project ever
+    tracked has no real prior squad to revert to - must degrade to the
+    unchanged values, never guess or crash."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _seed_real_picks(db_conn, event=1, squad_ids=_FREEHIT_SQUAD, active_chip="freehit")
+
+    locked = get_locked_squad(db_conn)
+    from fpl_agent.optimization.locked_squad import resolve_planning_squad
+
+    squad_ids, bank_tenths = resolve_planning_squad(db_conn, locked)
+    assert squad_ids == locked.squad_ids
+    assert bank_tenths == locked.bank_tenths

@@ -282,3 +282,65 @@ def is_locked(conn: sqlite3.Connection) -> bool:
     in-season management) - the one real signal the dashboard/CLI need to
     decide which mode they're in."""
     return get_locked_squad(conn) is not None
+
+
+def resolve_planning_squad(conn: sqlite3.Connection, locked: LockedSquadState) -> tuple[frozenset[int], int | None]:
+    """Real gap found 2026-09-12 (direct user question: "does the system
+    know my team reverts to my gw3 team after a freehit" - it did not).
+    Free Hit is a real one-gameweek rental (FPL's own rule): the gameweek
+    it's played, `get_locked_squad`'s real synced picks correctly show the
+    temporary Free Hit XI - that IS what the user is genuinely fielding
+    that week, and every display surface (My Team/Command) must keep
+    showing exactly that, unchanged. But a multi-GW STRATEGIC PLAN looks
+    PAST the current gameweek, and the squad it should build from is the
+    real PERMANENT one the user reverts to the moment the Free Hit
+    gameweek ends - never the temporary rental itself. Confirmed live: the
+    strategic-plan run computed right after a real GW4 Free Hit was still
+    handing the beam search the Free Hit XI as if it were the permanent
+    squad, silently invalidating every GW5+ step in the resulting plan.
+
+    Returns `(locked.squad_ids, locked.bank_tenths)` unchanged unless the
+    locked event's own `active_chip` is genuinely `'freehit'`, in which
+    case it looks back to the most recent real synced event whose
+    `active_chip` was NOT `'freehit'` and returns THAT event's real picks/
+    bank instead - a deterministic fact of the real FPL rules (Free Hit
+    doesn't touch your permanent squad or bank at all), never a guess.
+    Falls back to the unchanged values if no such prior event was ever
+    synced (a real, honest "can't determine this yet" case, e.g. a Free
+    Hit played in the very first gameweek this project ever tracked)."""
+    if locked.source != "synced_real":
+        return locked.squad_ids, locked.bank_tenths
+
+    from fpl_agent.ingestion.my_team import get_active_chip_for_event, get_my_team_entry_id
+
+    entry_id = get_my_team_entry_id(conn)
+    if entry_id is None:
+        return locked.squad_ids, locked.bank_tenths
+
+    chip = get_active_chip_for_event(conn, entry_id, locked.event)
+    if chip != "freehit":
+        return locked.squad_ids, locked.bank_tenths
+
+    prior_row = conn.execute(
+        "SELECT event FROM my_team_picks WHERE entry_id=? AND event<? "
+        "AND (active_chip IS NULL OR active_chip != 'freehit') "
+        "GROUP BY event ORDER BY event DESC LIMIT 1",
+        (entry_id, locked.event),
+    ).fetchone()
+    if prior_row is None:
+        return locked.squad_ids, locked.bank_tenths
+
+    prior_event = prior_row["event"]
+    pick_rows = conn.execute(
+        "SELECT player_id FROM my_team_picks WHERE entry_id=? AND event=?",
+        (entry_id, prior_event),
+    ).fetchall()
+    real_squad_ids = frozenset(r["player_id"] for r in pick_rows)
+
+    summary = conn.execute(
+        "SELECT bank_tenths FROM my_team_gw_summary WHERE entry_id=? AND event=?",
+        (entry_id, prior_event),
+    ).fetchone()
+    real_bank_tenths = summary["bank_tenths"] if summary is not None else locked.bank_tenths
+
+    return real_squad_ids, real_bank_tenths

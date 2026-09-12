@@ -3711,8 +3711,17 @@ def strategic_plan_cmd(
             if locked is None:
                 click.echo("no real locked squad found - pass --squad and --bank explicitly", err=True)
                 raise SystemExit(1)
-            squad_ids = sorted(locked.squad_ids)
-            bank_tenths = locked.bank_tenths if locked.bank_tenths is not None else 0
+            from fpl_agent.optimization.locked_squad import resolve_planning_squad
+
+            # Free Hit reversion (2026-09-12, direct user question: "does
+            # the system know my team reverts to my gw3 team after a
+            # freehit" - it did not). `locked.squad_ids` is correctly the
+            # temporary Free Hit XI while that gameweek is still being
+            # played - a plan looking PAST it must build from the real
+            # permanent squad it reverts to instead.
+            planning_squad_ids, planning_bank_tenths = resolve_planning_squad(conn, locked)
+            squad_ids = sorted(planning_squad_ids)
+            bank_tenths = planning_bank_tenths if planning_bank_tenths is not None else 0
             if free_transfers is None:
                 # Real FT state (2026-08-27, Part 3) - replayed from official
                 # FPL history (models/free_transfers.py) rather than assumed.

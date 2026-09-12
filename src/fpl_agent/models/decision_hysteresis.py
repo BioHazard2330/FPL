@@ -37,6 +37,16 @@ _MIN_CONFIDENCE_FOR_IMMEDIATE_FLIP = "MEDIUM"  # same real bar decision_analysis
 _HISTORY_SCAN = 10  # generous - real production strategic_plan cadence rarely logs more than a handful of decisions between two genuinely different stable recommendations
 
 
+def _anchor_event(decision) -> int | None:
+    """The real gameweek this decision's own leading path treats as the
+    first still-open decision point - `paths[0].steps[0].event`. `None`
+    (never guessed) when a decision genuinely has no paths/steps yet."""
+    try:
+        return decision.detail["paths"][0]["steps"][0]["event"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def stable_current_recommendation(conn: sqlite3.Connection, scan_limit: int = 30):
     """Returns the real, already-logged `Decision` row that should be
     treated as the CURRENT stable recommendation - either the latest real
@@ -60,6 +70,29 @@ def stable_current_recommendation(conn: sqlite3.Connection, scan_limit: int = 30
         return latest  # the first real decision ever logged - trivially stable, nothing to compare against
 
     latest_rec = latest.detail["current_recommendation"]
+
+    # Real gap found 2026-09-12 (direct user report: the Plan screen kept
+    # showing "PLAY FREE HIT" as the stable recommendation for GW4 even
+    # after the GW4 deadline passed and Free Hit had genuinely been played
+    # for real - the newer decision correctly starting fresh at GW5 never
+    # cleared the EV-advantage/persistence bar below, because that bar
+    # compares two decisions' LABELS as if they were competing answers to
+    # the SAME question. "PLAY FREEHIT" (GW4) vs "PLAY WILDCARD" (GW5)
+    # aren't competing at all - GW4's decision point is simply closed. This
+    # module's own docstring is explicit that its scope is model NOISE for
+    # a still-open decision (a beam search re-run flipping ROLL vs TRANSFER
+    # for the SAME upcoming gameweek by a fraction of a point) - it was
+    # never meant to gate a real, discrete, irreversible advance to a new
+    # gameweek, and comparing across that boundary produced exactly the
+    # wrong answer. Skip the whole hysteresis bar (immediately trust
+    # `latest`) whenever its own anchor event has genuinely moved past the
+    # second-most-recent decision's - within the SAME anchor gameweek, the
+    # bar below still applies unchanged.
+    if len(recent) > 1:
+        latest_anchor = _anchor_event(latest)
+        previous_anchor = _anchor_event(recent[1])
+        if latest_anchor is not None and previous_anchor is not None and latest_anchor > previous_anchor:
+            return latest
 
     # Real persistence count - how many of the most-recent real decisions
     # (starting from latest, walking backward) already agree with it.
