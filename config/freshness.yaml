@@ -11,3 +11,4 @@ injuries_deadline_day: 30
 team_news_normal: 360
 team_news_deadline_day: 15
 solio: 240  # Solio Analytics states a ~4h model-refresh cadence itself
+cross_competition_fixtures: 360  # real cup/UCL/international fixture data changes slowly (a team's own next fixture list rarely shifts within a day) - 6h keeps this a good, free-tier-respecting citizen of FotMob's own public endpoint

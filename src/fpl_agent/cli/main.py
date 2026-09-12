@@ -405,6 +405,70 @@ def solio_sync_cmd(force: bool):
     click.echo(f"teams            {result['teams_total']}")
 
 
+@cli.command("sync-cross-competition")
+@click.option("--force", is_flag=True, help="bypass the ~6h cadence gate and fetch now")
+def sync_cross_competition_cmd(force: bool):
+    """Fetch every real PL team's real non-PL fixtures (Champions League/
+    EFL Cup/FA Cup/internationals/friendlies) from FotMob's own public
+    `teams` endpoint (2026-09-12, direct user report: "champions league,
+    efl cup, fa cup... pl teams play there too and they can rotate or
+    injuries can happen" - confirmed this project tracked zero non-PL
+    matches before this, since discovery was keyed entirely off FPL's own
+    PL-only fixtures table). Respects the real ~6h cadence (`config/
+    freshness.yaml`'s `cross_competition_fixtures` key) unless --force.
+    Already wired into `fpl run-scheduled`. A team with no real fotmob_id
+    known yet (no PL match synced for it this season) is skipped honestly,
+    not guessed at - see `ingestion/fotmob_source.py::sync_match`, which
+    persists that crosswalk as a free byproduct of every real PL sync."""
+    from fpl_agent.ingestion.cross_competition_fixtures import sync_all_teams_other_competition_fixtures
+
+    conn = get_connection()
+    try:
+        result = sync_all_teams_other_competition_fixtures(conn, force=force)
+    finally:
+        conn.close()
+    if result.get("skipped"):
+        click.echo(f"skipped: {result['reason']}")
+        return
+    click.echo(f"teams synced         {result['synced']}")
+    click.echo(f"teams failed         {result['failed']}")
+    click.echo(f"teams with no fotmob_id yet  {result['no_fotmob_id']}")
+
+
+@cli.command("team-fixtures")
+@click.argument("team_id", type=int)
+@click.option("--upcoming-only", is_flag=True, help="hide already-finished real fixtures")
+def team_fixtures_cmd(team_id: int, upcoming_only: bool):
+    """Print a real team's own tracked non-PL fixtures (Champions League/
+    EFL Cup/FA Cup/internationals/friendlies) - `fpl sync-cross-competition`
+    populates this. Read-only, does not fetch."""
+    conn = get_connection()
+    try:
+        team = conn.execute("SELECT id, name, fotmob_id FROM teams WHERE id=?", (team_id,)).fetchone()
+        if team is None:
+            click.echo(f"no team with id={team_id}", err=True)
+            raise SystemExit(1)
+        click.echo(f"{team['name']} (team_id={team['id']}, fotmob_id={team['fotmob_id']})")
+        clause = "AND finished=0" if upcoming_only else ""
+        rows = conn.execute(
+            f"SELECT competition, opponent_name, is_home, kickoff_utc, finished, home_score, away_score "
+            f"FROM team_other_competition_fixtures WHERE team_id=? {clause} ORDER BY kickoff_utc",
+            (team_id,),
+        ).fetchall()
+        if not rows:
+            click.echo("  (no real non-PL fixtures tracked yet - run `fpl sync-cross-competition`)")
+        for r in rows:
+            venue = "vs" if r["is_home"] else "at" if r["is_home"] is not None else "v"
+            status = "FT" if r["finished"] else "upcoming"
+            # `home_score`/`away_score` are real FotMob fields that read 0
+            # even before kickoff (a real placeholder, not yet a score) -
+            # only ever display them once the match has genuinely finished.
+            score = f" {r['home_score']}-{r['away_score']}" if r["finished"] and r["home_score"] is not None else ""
+            click.echo(f"  [{r['competition']}] {venue} {r['opponent_name']}  {r['kickoff_utc']}  {status}{score}")
+    finally:
+        conn.close()
+
+
 @cli.command("model-benchmark")
 @click.option("--top", default=10, type=int, help="how many top divergences to show")
 @click.option("--min-classification", default="MATERIAL_DIVERGENCE",
@@ -1617,6 +1681,26 @@ def run_scheduled():
             logger.warning("run-scheduled solio sync failed: %s", solio_result["error"])
     except Exception:
         logger.exception("run-scheduled solio sync failed - not fatal to the sync itself")
+
+    # Real cross-competition fixture tracking (2026-09-12, direct user
+    # report: "this automation shit needs to happen always... champions
+    # league, efl cup, fa cup... pl teams play there too and they can
+    # rotate or injuries can happen"). Every match this project tracked
+    # before this was Premier League only - self-throttled to a real ~6h
+    # cadence (config/freshness.yaml's own cross_competition_fixtures key)
+    # via the same should_sync/app_meta gate pattern solio_source.py
+    # already established, so this is a real no-op most ticks.
+    try:
+        from fpl_agent.ingestion.cross_competition_fixtures import sync_all_teams_other_competition_fixtures
+
+        cc_result = sync_all_teams_other_competition_fixtures(conn)
+        if not cc_result.get("skipped"):
+            logger.info(
+                "run-scheduled cross-competition fixtures sync: %d team(s) synced, %d failed, %d with no real fotmob_id yet",
+                cc_result["synced"], cc_result["failed"], cc_result["no_fotmob_id"],
+            )
+    except Exception:
+        logger.exception("run-scheduled cross-competition fixtures sync failed - not fatal to the sync itself")
 
     # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
     # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new

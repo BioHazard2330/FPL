@@ -556,6 +556,17 @@ def sync_match(
         (general.get("homeTeam") or {}).get("id"): home_fpl_team_id,
         (general.get("awayTeam") or {}).get("id"): away_fpl_team_id,
     }
+    # Real, free byproduct of the same real payload this function already
+    # fetches for every match - persists the crosswalk `ingestion/cross_
+    # competition_fixtures.py` needs to look up each team's own FotMob id
+    # (real gap found 2026-09-12: this project never tracked a non-PL match
+    # because discovery is keyed off FPL's own fixtures table, which can
+    # only ever carry Premier League fixtures). Zero new network cost - it
+    # accumulates naturally as `sync_match` keeps running for real PL
+    # fixtures, which it already does every real matchday.
+    for fotmob_tid, fpl_tid in fotmob_team_id_to_fpl.items():
+        if fotmob_tid is not None and fpl_tid is not None:
+            conn.execute("UPDATE teams SET fotmob_id=? WHERE id=? AND fotmob_id IS NULL", (fotmob_tid, fpl_tid))
     for insight in parse_insights(payload):
         insight_team_id = fotmob_team_id_to_fpl.get(insight.team_fotmob_id) if insight.team_fotmob_id is not None else None
         insight_player_id = _resolve_player(str(insight.player_fotmob_id)) if insight.player_fotmob_id is not None else None
