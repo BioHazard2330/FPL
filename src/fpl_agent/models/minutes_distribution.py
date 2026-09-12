@@ -46,7 +46,8 @@ end to end.
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.models.expected_minutes import expected_minutes
+from fpl_agent.models.availability import classify
+from fpl_agent.models.expected_minutes import _AVAILABILITY_DAMPING, expected_minutes
 from fpl_agent.models.player_regression import PRIOR_STRENGTH_MATCHES
 
 _MIN_MATCHES_FOR_EMPIRICAL = 4
@@ -333,6 +334,50 @@ class MinutesBucketProbabilities:
     source: str  # "empirical" or "fallback_prior"
 
 
+def _apply_live_availability_damping(
+    conn: sqlite3.Connection, player_id: int, zero: float, partial: float, full: float,
+) -> tuple[float, float, float]:
+    """Real, live-only correction (2026-09-13, direct user complaint: a
+    wildcard squad started a real concussion doubt). The "empirical" branch
+    above is built purely from past match MINUTES - structurally blind to a
+    player's own CURRENT official status/chance-of-playing (Tier 1, this
+    project's own most authoritative signal - see CLAUDE.md's data-source
+    precedence rule), since a player with >=4 recent matches never falls
+    through to expected_minutes()'s own availability-aware fallback path at
+    all. Confirmed live: a real player 4-for-4 on 60+ minute appearances,
+    with a fresh official "Concussion - 50% chance of playing" note for the
+    next match, still showed an 82.6% full-match probability before this
+    fix - the exact "why is this obviously-doubtful player starting"
+    failure the empirical path's own real-data confidence was never meant
+    to paper over. Reuses the SAME `_AVAILABILITY_DAMPING` scale
+    `expected_minutes()` already applies on its own fallback path - shrinks
+    partial/full proportionally, moving the removed mass to zero, never a
+    fabricated new distribution shape.
+
+    Gated to as_of_date is None by the caller (live only) - a walk-forward
+    backtest replay must never let today's real status leak into a
+    historical estimate, the same leakage boundary expected_minutes()'s own
+    live-only overrides already draw."""
+    player = conn.execute("SELECT status FROM players WHERE id=?", (player_id,)).fetchone()
+    if player is None:
+        return zero, partial, full
+    snapshot = conn.execute(
+        "SELECT chance_of_playing_this_round, chance_of_playing_next_round "
+        "FROM player_stats_snapshot WHERE player_id=? ORDER BY retrieved_at DESC LIMIT 1",
+        (player_id,),
+    ).fetchone()
+    chance_this = snapshot["chance_of_playing_this_round"] if snapshot else None
+    chance_next = snapshot["chance_of_playing_next_round"] if snapshot else None
+    classification = classify(player["status"], chance_this, chance_next)
+    damping = _AVAILABILITY_DAMPING[classification]
+    if damping >= 1.0:
+        return zero, partial, full
+    damped_partial = partial * damping
+    damped_full = full * damping
+    damped_zero = max(0.0, 1.0 - damped_partial - damped_full)
+    return damped_zero, damped_partial, damped_full
+
+
 def minutes_bucket_probabilities(
     conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None
 ) -> MinutesBucketProbabilities:
@@ -398,6 +443,8 @@ def minutes_bucket_probabilities(
         zero = (n * raw_zero + k * prior_zero) / (n + k)
         partial = (n * raw_partial + k * prior_partial) / (n + k)
         full = (n * raw_full + k * prior_full) / (n + k)
+        if as_of_date is None:
+            zero, partial, full = _apply_live_availability_damping(conn, player_id, zero, partial, full)
         return MinutesBucketProbabilities(zero, partial, full, "empirical")
 
     em = expected_minutes(conn, player_id)

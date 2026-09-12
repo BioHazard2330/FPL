@@ -67,6 +67,51 @@ def test_minutes_buckets_falls_back_with_too_few_matches(db_conn):
     assert abs((probs.p_zero + probs.p_partial + probs.p_full) - 1.0) < 1e-6
 
 
+def test_empirical_bucket_is_damped_by_a_real_live_availability_doubt(db_conn):
+    """Real fix (2026-09-13, direct user complaint: a wildcard squad
+    started a real concussion doubt with a 4-for-4 60+-minute record). The
+    empirical branch is built purely from past minutes - a fresh, real,
+    official next-round doubt must still discount it, the same way
+    expected_minutes()'s own fallback path already discounts a thinner
+    sample. Compares against the SAME real match history with no doubt
+    seeded, to isolate the doubt's own effect."""
+    _seed(db_conn, [90, 90, 90, 90, 90, 0, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    assert baseline.source == "empirical"
+
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, chance_of_playing_this_round, "
+        "chance_of_playing_next_round, minutes, retrieved_at, stats_hash) VALUES (1, 100, 50, 90, 't1', 'h1')"
+    )
+    db_conn.execute("UPDATE players SET status='d' WHERE id=1")
+    db_conn.commit()
+
+    doubtful = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+
+    assert doubtful.source == "empirical"
+    assert doubtful.p_full < baseline.p_full
+    assert doubtful.p_zero > baseline.p_zero
+    assert abs((doubtful.p_zero + doubtful.p_partial + doubtful.p_full) - 1.0) < 1e-9
+
+
+def test_empirical_bucket_is_not_damped_during_a_historical_backtest_replay(db_conn):
+    """The live-availability correction must never leak into a walk-forward
+    backtest - as_of_date not None means this IS a historical replay, and
+    today's real status has no meaning for a match played in the past."""
+    _seed(db_conn, [90, 90, 90, 90, 90, 0, 90])
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, chance_of_playing_this_round, "
+        "chance_of_playing_next_round, minutes, retrieved_at, stats_hash) VALUES (1, 100, 50, 90, 't1', 'h1')"
+    )
+    db_conn.execute("UPDATE players SET status='d' WHERE id=1")
+    db_conn.commit()
+
+    live = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    replay = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25", as_of_date="2025-01-01")
+
+    assert live.p_full < replay.p_full
+
+
 def test_expected_appearance_points_weights_buckets_correctly():
     from fpl_agent.models.minutes_distribution import MinutesBucketProbabilities
     probs = MinutesBucketProbabilities(p_zero=0.1, p_partial=0.2, p_full=0.7, source="empirical")

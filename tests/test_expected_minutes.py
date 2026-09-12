@@ -240,6 +240,7 @@ def test_injury_damps_expected_minutes_to_zero(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "i"
     bootstrap["elements"][0]["chance_of_playing_this_round"] = 0
+    bootstrap["elements"][0]["chance_of_playing_next_round"] = 0
     _seed(db_conn, bootstrap, "t0")
     _insert_season_history(db_conn, player_id=1, minutes=3420)
 
@@ -247,6 +248,25 @@ def test_injury_damps_expected_minutes_to_zero(db_conn):
 
     assert result.classification == "CONFIRMED UNAVAILABLE"
     assert result.expected_minutes == 0.0
+
+
+def test_next_round_doubt_is_not_masked_by_a_cleared_current_round(db_conn):
+    """Real fix (2026-09-13, direct user complaint: a wildcard squad
+    started a real concussion doubt). A player cleared for the CURRENT
+    (already-live/locked) round but genuinely doubtful for the NEXT one -
+    the actual round every real forward-looking decision in this project
+    cares about - must be classified off that real next-round doubt, not
+    off a now-irrelevant current-round clearance."""
+    bootstrap = make_bootstrap()
+    bootstrap["elements"][0]["status"] = "d"
+    bootstrap["elements"][0]["chance_of_playing_this_round"] = 100
+    bootstrap["elements"][0]["chance_of_playing_next_round"] = 50
+    _seed(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.classification == "LIKELY UNAVAILABLE"
 
 
 def test_fresh_last_season_prior_is_not_treated_as_stale(db_conn):

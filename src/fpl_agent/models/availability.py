@@ -14,11 +14,30 @@ _SEVERITY_ORDER = {
 
 
 def classify(status: str, chance_this: int | None, chance_next: int | None) -> str:
-    """Section 45 classification, derived purely from official FPL fields."""
+    """Section 45 classification, derived purely from official FPL fields.
+
+    Real fix (2026-09-13, direct user complaint about a wildcard squad
+    starting a real concussion doubt): every real caller of this function
+    (expected_minutes/expected_points, squad building, transfers,
+    captaincy, strategic planning) is making a decision about an UPCOMING
+    gameweek, never about a round that has already locked - so
+    `chance_of_playing_next_round` (FPL's own field for "how confident for
+    the coming match") is the one that actually matters, not
+    `chance_of_playing_this_round` (which reflects whatever round most
+    recently locked, and can legitimately still read 100 - "fine for the
+    match already underway" - while a real, fresh, separately-reported
+    knock/return-to-play doubt for the NEXT match sits in `chance_next`
+    instead). Confirmed live: a real player with a "Concussion - 50% chance
+    of playing" news note had chance_this=100 (cleared for the already-live
+    current gameweek) and chance_next=50 (the real doubt for the gameweek
+    a wildcard squad is actually being built for) - the old `this`-first
+    priority read him as fully fit and started him. `next` is now preferred
+    whenever it exists; `this` remains the honest fallback for the (equally
+    real) case where FPL hasn't published a next-round estimate yet."""
     if status in _CONFIRMED_OUT_STATUSES:
         return "CONFIRMED UNAVAILABLE"
 
-    chance = chance_this if chance_this is not None else chance_next
+    chance = chance_next if chance_next is not None else chance_this
 
     if status == "i":
         if chance is None or chance == 0:

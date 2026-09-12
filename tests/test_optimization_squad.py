@@ -308,6 +308,49 @@ def test_must_include_ids_overrides_the_low_start_percent_exclusion(db_conn, mon
     assert 20 in {c.player_id for c in result.squad}
 
 
+def test_official_doubtful_status_excludes_a_player_outright(db_conn, monkeypatch):
+    """Real fix (2026-09-13, direct user complaint: a wildcard squad
+    started a real official concussion doubt). Tier 1 - this project's own
+    most authoritative signal (models.availability.classify) - must exclude
+    outright, the same "simple as is" bar the other two signals here
+    already enforce, not just a softer point-suppression."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    baseline = squad_mod.optimise_squad(db_conn, n_gw=1)
+    assert 20 in {c.player_id for c in baseline.squad}  # confirms it's normally a real pick
+
+    db_conn.execute("UPDATE players SET status='d' WHERE id=20")
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, chance_of_playing_this_round, "
+        "chance_of_playing_next_round, minutes, retrieved_at, stats_hash) VALUES (20, 100, 25, 90, 't0', 'h0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1)
+
+    assert result.status == "Optimal"
+    assert 20 not in {c.player_id for c in result.squad}
+
+
+def test_must_include_ids_overrides_the_official_doubtful_exclusion(db_conn, monkeypatch):
+    """Same real override precedent as the low-start-percent exclusion
+    above - a caller's own explicit must_include_ids still wins."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+    db_conn.execute("UPDATE players SET status='d' WHERE id=20")
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, chance_of_playing_this_round, "
+        "chance_of_playing_next_round, minutes, retrieved_at, stats_hash) VALUES (20, 100, 25, 90, 't0', 'h0')"
+    )
+    db_conn.commit()
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={20})
+
+    assert result.status == "Optimal"
+    assert 20 in {c.player_id for c in result.squad}
+
+
 def test_rotation_risk_keyword_excludes_a_player_with_no_percent_data(db_conn, monkeypatch):
     """When the newer percentage source hasn't covered a player, the
     existing rotation-risk keyword heuristic (models/team_news_risk.py)

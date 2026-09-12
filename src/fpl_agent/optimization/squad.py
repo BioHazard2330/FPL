@@ -12,9 +12,14 @@ from dataclasses import dataclass, field
 import pulp
 
 from fpl_agent.ingestion.lineup_probability_source import get_start_percent
+from fpl_agent.models.availability import classify
 from fpl_agent.models.expected_points import ExpectedPoints, expected_points, expected_points_window
 from fpl_agent.models.rules import current_season, get_rule
 from fpl_agent.models.team_news_risk import rotation_risk_snippet
+
+# A real official classification worse than these two never belongs in a
+# from-scratch squad - see _low_start_confidence_ids's own docstring.
+_ACCEPTABLE_AVAILABILITY_CLASSIFICATIONS = {"FIT", "FIT BUT MONITORED"}
 
 # Real, hard user directive (2026-08-21): "I dont want people in my squad
 # that wont even start or has very rare chance to start. simple as is."
@@ -154,7 +159,18 @@ def _low_start_confidence_ids(conn: sqlite3.Connection, candidate_ids: list[int]
     simple as is." When two real sources disagree, exclude rather than
     trust the more optimistic one. A player covered by NEITHER source is
     still not excluded - absence of evidence isn't evidence of a real risk,
-    same honesty posture the rest of this project's heuristics use."""
+    same honesty posture the rest of this project's heuristics use.
+
+    Real third gate added 2026-09-13 (direct user complaint: a wildcard
+    squad started a real official concussion doubt, "LIKELY UNAVAILABLE"
+    per models/availability.py::classify - Tier 1, the single most
+    authoritative signal this project has). `minutes_bucket_probabilities`
+    now discounts this player's own points for it (see that module's own
+    live-availability fix), but a point-suppression alone is a probability,
+    not a guarantee, against the user's own explicit "simple as is" bar -
+    an official DOUBTFUL/LIKELY UNAVAILABLE/CONFIRMED UNAVAILABLE
+    classification excludes outright, the same defense-in-depth posture
+    the other two real signals here already get."""
     excluded = set()
     for pid in candidate_ids:
         percent = get_start_percent(conn, pid)
@@ -162,6 +178,21 @@ def _low_start_confidence_ids(conn: sqlite3.Connection, candidate_ids: list[int]
             excluded.add(pid)
             continue
         if rotation_risk_snippet(conn, pid) is not None:
+            excluded.add(pid)
+            continue
+        player = conn.execute(
+            "SELECT status FROM players WHERE id=?", (pid,)
+        ).fetchone()
+        if player is None:
+            continue
+        snapshot = conn.execute(
+            "SELECT chance_of_playing_this_round, chance_of_playing_next_round "
+            "FROM player_stats_snapshot WHERE player_id=? ORDER BY retrieved_at DESC LIMIT 1",
+            (pid,),
+        ).fetchone()
+        chance_this = snapshot["chance_of_playing_this_round"] if snapshot else None
+        chance_next = snapshot["chance_of_playing_next_round"] if snapshot else None
+        if classify(player["status"], chance_this, chance_next) not in _ACCEPTABLE_AVAILABILITY_CLASSIFICATIONS:
             excluded.add(pid)
     return excluded
 
