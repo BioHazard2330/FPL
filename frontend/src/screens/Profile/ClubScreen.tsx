@@ -16,6 +16,13 @@ const RESULT_FILL: Record<string, string> = {
   L: 'bg-alert-red text-alert-red-ink',
 }
 
+// SeasonDnaHelix's own spiral advances 2*pi/7 radians per real match - below
+// this many points it hasn't completed enough of a turn to read as a real
+// coil (confirmed live 2026-09-12: 3 points looked like two dots and a
+// line, not a spiral). A plain W/D/L strip stands in until there's enough
+// real season for the shape to mean something.
+const MIN_SPIRAL_MATCHES = 6
+
 function shortDate(iso: string | null) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -168,9 +175,33 @@ export function ClubScreen() {
             <div className="bg-void px-10 py-7">
               <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Season shape</div>
               <div className="mb-3 text-[11px] text-text-faint">real results this season, oldest at the base</div>
-              <div className="h-64 w-full">
-                <SeasonDnaHelix matches={chronological.map((r) => ({ result: r.result, opponent_short: r.opponent_short }))} />
-              </div>
+              {chronological.length >= MIN_SPIRAL_MATCHES ? (
+                <div className="h-64 w-full">
+                  <SeasonDnaHelix matches={chronological.map((r) => ({ result: r.result, opponent_short: r.opponent_short }))} />
+                </div>
+              ) : (
+                // Real early-season honesty, not a decorative placeholder:
+                // the spiral needs enough real points to actually curve -
+                // at 1-2 matches it's just two dots and a line, which reads
+                // as broken rather than as a season shape. The plain strip
+                // reuses the exact real W/D/L colours the page's own form
+                // line already establishes, so nothing new is invented.
+                <div className="flex h-64 w-full flex-col items-center justify-center gap-3">
+                  <div className="flex gap-1.5">
+                    {chronological.map((r, i) => (
+                      <span
+                        key={i}
+                        className={`flex size-8 items-center justify-center text-sm font-bold ${RESULT_FILL[r.result]}`}
+                      >
+                        {r.result}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="max-w-xs text-center text-[11px] text-text-faint">
+                    the 3D season spiral needs a few more real matches before it reads as a real shape
+                  </p>
+                </div>
+              )}
             </div>
           )}
           {xgMatches.length > 0 && (
