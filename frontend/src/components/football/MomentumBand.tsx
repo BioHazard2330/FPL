@@ -48,7 +48,7 @@ export function MomentumBand({ points, markers = [], maxMinuteOverride, isLive =
   if (points.length < 2) return null
   const maxMinute = maxMinuteOverride ?? Math.max(...points.map((p) => p.minute), 1)
   const W = 100
-  const H = 60
+  const H = 140
   const mid = H / 2
   const xy = points.map((p) => [
     (p.minute / maxMinute) * W,
@@ -65,33 +65,38 @@ export function MomentumBand({ points, markers = [], maxMinuteOverride, isLive =
         <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Momentum</span>
         <span className="text-[9px] uppercase tracking-wide text-text-faint">to {maxMinute}&prime;</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-[60px] w-full" role="img" aria-label="Match momentum: home pressure above the line, away below, with real goal/card markers">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-[150px] w-full" role="img" aria-label="Match momentum: home pressure above the line, away below, with real goal/card markers">
         <polygon points={homeArea} fill="var(--pitch-green)" opacity="0.9" />
         <polygon points={awayArea} fill="var(--broadcast-blue)" opacity="0.9" />
-        <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--void)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+        {/* `--void` (near-black) was the original bug here - it matches the
+            panel background almost exactly, so the zero baseline and HT
+            divider were both effectively invisible, leaving the shape read
+            as noise with no reference line. `--divider` is this app's own
+            real, visible rule color. */}
+        <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--divider)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         {htX !== null && (
-          <line x1={htX} y1="0" x2={htX} y2={H} stroke="var(--void)" strokeWidth="0.4" strokeDasharray="1.5,1.5" vectorEffect="non-scaling-stroke" opacity="0.6" />
+          <line x1={htX} y1="0" x2={htX} y2={H} stroke="var(--divider)" strokeWidth="0.8" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
         )}
         {isLive && lastPoint && (
           <>
-            <line x1={lastPoint[0]} y1="0" x2={lastPoint[0]} y2={H} stroke="var(--text)" strokeWidth="0.5" strokeDasharray="1,1" vectorEffect="non-scaling-stroke" />
-            <circle cx={lastPoint[0]} cy={lastPoint[1]} r="1.8" fill="var(--text)" />
+            <line x1={lastPoint[0]} y1="0" x2={lastPoint[0]} y2={H} stroke="var(--text)" strokeWidth="0.8" strokeDasharray="1.5,1.5" vectorEffect="non-scaling-stroke" />
+            <circle cx={lastPoint[0]} cy={lastPoint[1]} r="2.2" fill="var(--text)" />
           </>
         )}
         {markers.map((m, i) => {
           const x = Math.max(0, Math.min(W, (m.minute / maxMinute) * W))
-          const y = m.isHome ? mid * 0.22 : mid * 1.78
+          const y = m.isHome ? mid * 0.18 : mid * 1.82
           return (
             <g key={i}>
-              <line x1={x} y1="0" x2={x} y2={H} stroke={MARKER_COLOR[m.kind]} strokeWidth="0.5" opacity="0.55" vectorEffect="non-scaling-stroke" />
-              <circle cx={x} cy={y} r={MARKER_RADIUS[m.kind]} fill="var(--void)" stroke={MARKER_COLOR[m.kind]} strokeWidth="0.8">
+              <line x1={x} y1="0" x2={x} y2={H} stroke={MARKER_COLOR[m.kind]} strokeWidth="0.6" opacity="0.5" vectorEffect="non-scaling-stroke" />
+              <circle cx={x} cy={y} r={MARKER_RADIUS[m.kind] + 0.6} fill={MARKER_COLOR[m.kind]} stroke="var(--void)" strokeWidth="0.8">
                 <title>{m.kind} {m.minute}&apos;</title>
               </circle>
             </g>
           )
         })}
       </svg>
-      <div className="mt-1 flex justify-between text-[8px] font-semibold uppercase tracking-wide text-text-faint">
+      <div className="mt-1.5 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-text-faint">
         <span>0&prime;</span>
         {htX !== null && <span>HT</span>}
         <span>{isLive ? `${points[points.length - 1].minute}′` : 'FT'}</span>
