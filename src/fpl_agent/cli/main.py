@@ -1334,6 +1334,40 @@ def season_backtest_cmd(season: str):
         click.echo(f"  {i:>2}  {decision_pts:>6}  {static_pts:>6}")
 
 
+@cli.command("team-strength-backtest")
+@click.option("--season", required=True, help="e.g. 2025-26 - a real completed (or in-progress) season with match_results_history rows")
+@click.option("--half-life-days", default=365.0, type=float, help="candidate half_life_days to test - defaults to the live team_strength_dc.py value")
+@click.option("--ridge-lambda", default=None, type=float, help="candidate ridge_lambda to test - defaults to the live _RIDGE_LAMBDA value")
+def team_strength_backtest_cmd(season: str, half_life_days: float, ridge_lambda: float | None):
+    """Real walk-forward MAE of team_strength_dc.py's Dixon-Coles fit
+    against real historical match goals - lets a candidate half_life_days/
+    ridge_lambda be checked against real seasons before ever changing the
+    live default. Built 2026-09-12 to test a direct user hypothesis (team
+    ratings react too slowly to a real in-season form collapse) - running
+    it against 2022-23 through 2025-26 found the OPPOSITE: shortening
+    half_life_days from 365 measurably worsened real accuracy at every
+    step down, in every season tested. See CLAUDE.md's known-blockers entry
+    for the full finding; this command is what produced it and is the tool
+    to rerun if a future candidate value is ever proposed again."""
+    from fpl_agent.backtesting.team_strength_backtest import score_team_strength
+    from fpl_agent.models.team_strength_dc import _RIDGE_LAMBDA
+
+    conn = get_connection()
+    try:
+        result = score_team_strength(
+            conn, season, half_life_days=half_life_days, ridge_lambda=ridge_lambda if ridge_lambda is not None else _RIDGE_LAMBDA,
+        )
+    finally:
+        conn.close()
+
+    click.echo(f"season             {result.season}")
+    click.echo(f"half_life_days     {result.half_life_days}")
+    click.echo(f"ridge_lambda       {result.ridge_lambda}")
+    click.echo(f"rounds evaluated   {result.rounds_evaluated}")
+    click.echo(f"goals scored       {result.goals_scored}")
+    click.echo(f"goals MAE          {result.goals_mae}")
+
+
 @cli.command("calibration-report")
 @click.option("--season", default=None, help="defaults to the live season")
 @click.option("--min-samples", default=3, type=int, help="omit a cohort with fewer real rows than this")

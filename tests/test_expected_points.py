@@ -91,6 +91,113 @@ def test_expected_points_exposes_real_outcome_probabilities(db_conn):
     assert op.prob_blank + op.prob_2plus <= 1.0 + 1e-9
 
 
+def _seed_second_player(conn, pid, team_id):
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+        "VALUES (?,?,?,?,1,'a',0,'t0')",
+        (pid, pid, f"P{pid}", team_id),
+    )
+    conn.commit()
+
+
+def test_confirmed_benched_immediately_discounts_the_single_match_projection(db_conn):
+    """Real fix (2026-09-12, direct user complaint: bought Foden in, Maresca
+    benched him, model never reacted - the qualitative layer's PERSISTENT_
+    TREND bar needs 2+ real occurrences before a ROLE/MINUTES signal moves
+    anything, and expected_minutes()/expected_points() had no per-fixture
+    concept of a real confirmed teamsheet at all). A real, official
+    (non-predicted) confirmed lineup that leaves this player out of the
+    fixture being projected must discount THAT match's own projection
+    immediately - no repeat occurrence required."""
+    from test_lineup_state import _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+    _seed_second_player(db_conn, 2, team_id=1)  # same team as player 1
+
+    baseline = expected_points(db_conn, 1)
+
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)  # player 2 starts, player 1 is left out
+
+    benched = expected_points(db_conn, 1)
+
+    assert benched.median < baseline.median * 0.5
+    assert benched.floor <= baseline.floor
+
+
+def test_a_merely_predicted_lineup_does_not_trigger_the_bench_override(db_conn):
+    """A real FotMob "predicted" (third-party guess) lineup is deliberately
+    NOT trusted as a confirmed benching - same distinction lineup_state.py's
+    own module docstring establishes."""
+    from test_lineup_state import _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+    _seed_second_player(db_conn, 2, team_id=1)
+
+    baseline = expected_points(db_conn, 1)
+
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="predicted")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)
+
+    still_predicted = expected_points(db_conn, 1)
+
+    assert still_predicted.median == baseline.median
+
+
+def test_confirmed_benched_far_in_the_future_is_not_overridden(db_conn):
+    """Real official teamsheets don't exist until close to kickoff - a
+    fixture weeks out can never really be CONFIRMED_BENCHED, so this must
+    stay a pure performance guard (no query at all) rather than a fabricated
+    real signal. Simulates a stale/impossible confirmed-lineup row against a
+    far-future fixture and asserts the projection is unaffected."""
+    from test_lineup_state import _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2, date="2099-01-01")
+    _seed_second_player(db_conn, 2, team_id=1)
+
+    baseline = expected_points(db_conn, 1)
+
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)
+
+    unaffected = expected_points(db_conn, 1)
+
+    assert unaffected.median == baseline.median
+
+
+def test_expected_points_window_applies_the_bench_override_to_the_matching_fixture(db_conn):
+    """The multi-GW window path (optimization/transfers.py's whole beam
+    search reads this, never single-match expected_points()) must see the
+    same real, immediate discount for whichever of its fixtures actually has
+    a real confirmed teamsheet."""
+    from fpl_agent.models.expected_points import expected_points_window
+    from test_lineup_state import _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+    _seed_second_player(db_conn, 2, team_id=1)
+
+    baseline = expected_points_window(db_conn, 1, n_gw=1)
+
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)
+
+    benched = expected_points_window(db_conn, 1, n_gw=1)
+
+    assert benched.total_median < baseline.total_median * 0.5
+
+
 def test_expected_points_zero_for_confirmed_unavailable(db_conn):
     bootstrap = make_bootstrap()
     bootstrap["elements"][0]["status"] = "u"

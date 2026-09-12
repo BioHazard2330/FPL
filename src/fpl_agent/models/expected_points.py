@@ -68,6 +68,7 @@ Three interface notes, all deliberate:
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -84,6 +85,7 @@ from fpl_agent.models.defensive_contribution import defcon_points_probability, e
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.minutes_distribution import (
+    MinutesBucketProbabilities,
     expected_appearance_points,
     minutes_bucket_probabilities,
 )
@@ -114,6 +116,73 @@ _MIN_MATCHES_TO_FIT_DC = 10
 # preseason-calibration-design.md), not fit to real data. A team with heavy
 # squad churn still has real fixture context worth more than zero signal.
 _CHURN_SHRINK_CAP = 0.4
+
+# Real, disclosed, uncalibrated single-match override (2026-09-12, direct
+# user complaint: bought Foden in, Maresca benched him, "this type of
+# intelligence, gamble... the human side of fpl" was completely absent).
+# Root cause: expected_minutes()/expected_points() have no per-fixture
+# concept of a real CONFIRMED_BENCHED teamsheet at all, and the qualitative
+# ROLE/MINUTES adjustment elsewhere in this file only fires on a real 2+
+# occurrence PERSISTENT_TREND - so a single, genuinely high-confidence,
+# NON-predicted confirmed lineup (models/lineup_state.py - a real official
+# teamsheet, never a FotMob "predicted" guess) moved nothing until a second
+# benching happened. There's no principled reason to wait: a real confirmed
+# teamsheet for THIS match is stronger, more current evidence than a
+# season-long average about the one match it actually covers.
+# Discount-only by construction (see _confirmed_bench_probs below - an
+# elementwise min against the player's own empirical distribution, so a
+# player who was already this pessimistic is genuinely unaffected) and
+# bounded to a small non-zero substitute-cameo possibility rather than a
+# hard zero (a benched player can still be brought on). Not backtest-
+# calibrated - no historical CONFIRMED_BENCHED-vs-actual-minutes dataset
+# exists yet to fit against - a documented approximation, same honesty
+# posture as _NEW_SIGNING_MINUTES_DISCOUNT in models/expected_minutes.py.
+_CONFIRMED_BENCHED_FULL_CAP = 0.03
+_CONFIRMED_BENCHED_PARTIAL_CAP = 0.12
+# Real official teamsheets don't exist until close to kickoff (lineup_
+# state.py's own docstring) - querying resolve_lineup_state for a fixture
+# days/weeks out can never return CONFIRMED_BENCHED, only a real, wasted
+# DB round-trip repeated per player per fixture across the strategic-plan
+# beam search's own large candidate pool. Skipping the check outside this
+# window is a pure performance guard, not a behavior change.
+_CONFIRMED_LINEUP_LOOKAHEAD_HOURS = 48
+
+
+def _confirmed_bench_probs(
+    conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities,
+) -> MinutesBucketProbabilities:
+    """Returns `probs` unchanged unless a real, non-predicted confirmed
+    lineup (lineup_state.py) says this player is CONFIRMED_BENCHED for this
+    fixture's own event specifically - never fires for a merely predicted
+    lineup, and never raises a fraction the player's own empirical read
+    already had lower. See the module-level comment above this function for
+    the full real-world case this closes."""
+    event = fixture_row["event"] if fixture_row is not None else None
+    if event is None:
+        return probs
+    kickoff = fixture_row["kickoff_time"] if "kickoff_time" in fixture_row.keys() else None
+    if kickoff:
+        try:
+            kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+            hours_away = (kickoff_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+            if hours_away > _CONFIRMED_LINEUP_LOOKAHEAD_HOURS:
+                return probs
+        except ValueError:
+            pass
+
+    from fpl_agent.models.lineup_state import resolve_lineup_state
+
+    try:
+        lineup = resolve_lineup_state(conn, player_id, event)
+    except Exception:
+        return probs
+    if lineup.state != "CONFIRMED_BENCHED":
+        return probs
+    full = min(probs.p_full, _CONFIRMED_BENCHED_FULL_CAP)
+    partial = min(probs.p_partial, _CONFIRMED_BENCHED_PARTIAL_CAP)
+    zero = max(0.0, 1.0 - full - partial)
+    return MinutesBucketProbabilities(zero, partial, full, "confirmed_benched_override")
+
 
 # Keyed by (id(conn), as_of_date); the connection itself is stored alongside the
 # model so its id() can't be recycled into a false cache hit after it's closed.
@@ -957,12 +1026,16 @@ def _sampled_floor_ceiling(
     (home, away) before sampling and back to (team, opponent) after, exactly
     like scenario_engine.py's own `_draw_fixture_for_team` does, rather than
     naively feeding team/opponent goals in as if they were home/away. Takes
-    (fixture_row, (team_goals, opp_goals)) pairs - the caller's own already-
-    computed goals_pairs, reused rather than calling _fixture_goals_for again
-    (each call can trigger a real Dixon-Coles refit on a cache miss, and this
-    function is called once per player per squad build - a second redundant
-    call site here was a real, measured perf regression, caught before
-    shipping this)."""
+    (fixture_row, (team_goals, opp_goals), fixture_rates) triples - the
+    caller's own already-computed goals_pairs, reused rather than calling
+    _fixture_goals_for again (each call can trigger a real Dixon-Coles refit
+    on a cache miss, and this function is called once per player per squad
+    build - a second redundant call site here was a real, measured perf
+    regression, caught before shipping this). `fixture_rates` carries THAT
+    fixture's own possibly-overridden `minutes_probs` (see
+    _confirmed_bench_probs) so a confirmed-benched fixture's sampled trials
+    stay consistent with the median computed for it, rather than sampling
+    from the player's un-overridden season-average distribution."""
     if not fixtures_with_goals:
         floor = round(median * 0.5, 2)
         ceiling = round(median * 1.8 + _CEILING_GOAL_UPSIDE * effective_minutes_fraction * ceiling_matches, 2)
@@ -974,7 +1047,7 @@ def _sampled_floor_ceiling(
 
     rng = np.random.default_rng()
     total = np.zeros(_FLOOR_CEILING_TRIALS)
-    for f, (team_goals, opp_goals) in fixtures_with_goals:
+    for f, (team_goals, opp_goals), f_rates in fixtures_with_goals:
         is_home = f["team_h"] == rates["team_id"]
         lam, mu = (team_goals, opp_goals) if is_home else (opp_goals, team_goals)
 
@@ -983,7 +1056,7 @@ def _sampled_floor_ceiling(
 
         home_goals, away_goals = sample_fixture_scorelines(rng, lam, mu, rho, _FLOOR_CEILING_TRIALS)
         trial_team_goals, trial_opp_goals = (home_goals, away_goals) if is_home else (away_goals, home_goals)
-        total = total + sample_player_trial_points(rng, rates, conceded_rate, trial_team_goals, trial_opp_goals)
+        total = total + sample_player_trial_points(rng, f_rates, conceded_rate, trial_team_goals, trial_opp_goals)
 
     floor = round(float(np.percentile(total, _FLOOR_PERCENTILE)), 2)
     ceiling = round(float(np.percentile(total, _CEILING_PERCENTILE)), 2)
@@ -1080,6 +1153,15 @@ def expected_points(
     else:
         goals_pairs = [(_LEAGUE_AVERAGE_GOALS, _LEAGUE_AVERAGE_GOALS)]
 
+    # Per-fixture rates, overridden only when THAT SPECIFIC fixture's own
+    # event has a real confirmed-benched teamsheet - see
+    # _confirmed_bench_probs's own docstring. Falls back to the shared
+    # `rates` for the blank-gameweek case (no real fixture to check).
+    fixture_rates = [
+        {**rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, f, probs)}
+        for f in fixtures
+    ] or [rates]
+
     if from_event is not None and len(goals_pairs) > 1:
         # from_event always targets exactly one specific gameweek in every real
         # caller (captaincy.py/chips.py's per-candidate-GW evaluation, always
@@ -1095,14 +1177,20 @@ def expected_points(
         # gameweek league-average fallback) always falls through to the
         # average branch below, which is identical to summing for one item -
         # zero behavior change for every non-double-gameweek caller.
-        breakdowns = [_match_components(conn, rates, tg, og) for tg, og in goals_pairs]
+        breakdowns = [
+            _match_components(conn, fixture_rates[i], tg, og) for i, (tg, og) in enumerate(goals_pairs)
+        ]
         combined = _sum_breakdowns(breakdowns)
         median = combined.total
         ceiling_matches = len(goals_pairs)
     else:
         team_goals = sum(g[0] for g in goals_pairs) / len(goals_pairs)
         opp_goals = sum(g[1] for g in goals_pairs) / len(goals_pairs)
-        combined = _match_components(conn, rates, team_goals, opp_goals)
+        # A rare averaged multi-fixture window (from_event=None, n_gw>1) only
+        # ever has a real teamsheet for its NEAREST fixture this early - using
+        # fixture_rates[0] here is exact for the overwhelmingly common
+        # single-fixture case and a safe approximation for that rarer one.
+        combined = _match_components(conn, fixture_rates[0], team_goals, opp_goals)
         median = combined.total
         ceiling_matches = 1
 
@@ -1113,7 +1201,7 @@ def expected_points(
     # which _sampled_floor_ceiling already handles). strict=True would turn
     # that legitimate blank-GW case into a crash.
     floor, ceiling, outcome_probs = _sampled_floor_ceiling(
-        conn, rates, list(zip(fixtures, goals_pairs)), median, effective_minutes_fraction, ceiling_matches,  # noqa: B905
+        conn, rates, list(zip(fixtures, goals_pairs, fixture_rates)), median, effective_minutes_fraction, ceiling_matches,  # noqa: B905
     )
 
     # Real, bounded, evidence-gated qualitative signal (2026-08-26, P0 item 3;
@@ -1185,7 +1273,7 @@ def expected_points_window(
     rates = _player_match_rates(conn, player_id)
     start = from_event if from_event is not None else _reference_event(conn)
     fixtures = conn.execute(
-        "SELECT id, team_h, team_a, kickoff_time FROM fixtures "
+        "SELECT id, team_h, team_a, kickoff_time, event FROM fixtures "
         "WHERE (team_h=? OR team_a=?) AND event >= ? AND event < ? ORDER BY event",
         (rates["team_id"], rates["team_id"], start, start + n_gw),
     ).fetchall()
@@ -1193,8 +1281,13 @@ def expected_points_window(
     breakdowns = []
     for i, fixture in enumerate(fixtures):
         team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
+        # Only the nearest fixture(s) in a multi-GW window could plausibly
+        # have a real confirmed teamsheet yet - see _confirmed_bench_probs.
+        fixture_rates = {
+            **rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, fixture, rates["minutes_probs"]),
+        }
         breakdowns.append(_match_components(
-            conn, rates, team_goals, opp_goals, damping=_ROTATION_DAMPING_PER_EXTRA_MATCH ** i
+            conn, fixture_rates, team_goals, opp_goals, damping=_ROTATION_DAMPING_PER_EXTRA_MATCH ** i
         ))
     combined = _sum_breakdowns(breakdowns) if breakdowns else ComponentBreakdown(0, 0, 0, 0, 0, 0, 0, 0)
     total = combined.total
