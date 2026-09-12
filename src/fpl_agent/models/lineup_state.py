@@ -4,12 +4,22 @@ starting, confirmed benched, or unavailable" for a given gameweek, replacing the
 dashboard's previous predicted-lineup-only badge with a real PREDICTED vs
 CONFIRMED distinction.
 
-Real, live-confirmed fact this session: FotMob publishes a genuine confirmed
-starting lineup BEFORE kickoff - `player_match_state` gets populated (~11 rows per
-team) while `match_intelligence.status` is still `PRE_MATCH` (verified live against
-real GW1 fixtures still hours from kickoff). So "player_match_state has any rows
-for this player's own match" is a real, reliable "lineup confirmed" signal, not
-just a post-match boxscore artifact.
+Real, live-confirmed fact (revised 2026-09-12 - the earlier version of this
+claim was wrong and shipped a real bug): `player_match_state` gets populated
+BEFORE kickoff, sometimes hours before, but that alone is NOT a "lineup
+confirmed" signal - FotMob's own `content.lineup.lineupType` field
+(`match_intelligence.lineup_type`) distinguishes a real "predicted" lineup
+(source "enetpulse", a third-party guess, populated as soon as FotMob has
+one - confirmed live against every real GW4 PRE_MATCH fixture, still ~90
+minutes from kickoff) from "standard" (the lineup that was actually used,
+confirmed live against six real already-played matches). The bug this
+fixes: every squad player was showing CONFIRMED_STARTING/CONFIRMED_BENCHED
+well before any real official teamsheet exists, because the code only
+ever checked "does player_match_state have rows for this match", never
+which kind of lineup those rows came from. Real official teamsheets don't
+drop until close to kickoff (well-known football convention, not
+independently re-derived here) - a "predicted" lineup_type now falls
+through to the real predicted-lineup fallback below instead.
 
 Priority, most decisive first: official unavailability (Tier 1, `players.status`)
 beats a confirmed lineup beats a mere prediction beats no signal at all - a player
@@ -62,11 +72,14 @@ def _confirmed_lineup_states(conn: sqlite3.Connection, player_ids: list[int], ev
         return {}
     placeholders = ",".join("?" * len(player_ids))
     # Each player's own real fixture for this event, then whether that match's
-    # lineup has been confirmed (player_match_state populated) and whether this
-    # player is among the confirmed rows.
+    # lineup has been confirmed (player_match_state populated with a real
+    # NON-predicted lineup_type) and whether this player is among the
+    # confirmed rows. `mi.lineup_type` is read alongside the row count -
+    # see this module's own docstring for why the row count alone was
+    # wrong.
     rows = conn.execute(
         f"""
-        SELECT p.id AS player_id, mi.id AS match_id,
+        SELECT p.id AS player_id, mi.id AS match_id, mi.lineup_type,
                (SELECT COUNT(*) FROM player_match_state pms WHERE pms.match_id = mi.id) AS lineup_rows,
                EXISTS(
                    SELECT 1 FROM player_match_state pms
@@ -83,6 +96,8 @@ def _confirmed_lineup_states(conn: sqlite3.Connection, player_ids: list[int], ev
     for r in rows:
         if r["lineup_rows"] == 0:
             continue  # not confirmed yet - leave for the predicted-lineup fallback
+        if r["lineup_type"] == "predicted":
+            continue  # a real FotMob PREDICTED lineup, not a real confirmed one - leave for the predicted-lineup fallback
         if r["is_starting"]:
             out[r["player_id"]] = LineupState(
                 r["player_id"], _STATE_CONFIRMED_STARTING, "in the confirmed starting lineup", "confirmed_lineup"

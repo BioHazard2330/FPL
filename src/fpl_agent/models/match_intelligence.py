@@ -37,6 +37,18 @@ class Match:
     home_score: int | None
     away_score: int | None
     live_minute: str | None  # FotMob's own real display string ("17'", "HT", "45+2'") - stored raw, never parsed into a number that could silently misrepresent added time
+    # Real, explicit FotMob field (`content.lineup.lineupType`) - confirmed
+    # live 2026-09-12: every currently-PRE_MATCH fixture returns
+    # "predicted" (real source "enetpulse", a third-party lineup-prediction
+    # service, NOT the club's own announced XI) while every already-PLAYED
+    # match checked returns "standard" (the real lineup that was actually
+    # used). `player_match_state` gets populated from EITHER lineup type -
+    # its own row count alone was wrongly treated elsewhere as "the real
+    # lineup is confirmed" even while this field said "predicted", a real
+    # bug (a predicted XI showing as "Confirmed" on screen well before an
+    # official teamsheet exists). `None` when FotMob's own payload omits
+    # the field entirely - never assumed either way.
+    lineup_type: str | None
 
 
 @dataclass(frozen=True)
@@ -250,6 +262,7 @@ def parse_match(payload: dict) -> Match:
     # like "45+2'" has no single honest numeric form).
     raw_minute = ((header_status or {}).get("liveTime") or {}).get("short")
     live_minute = raw_minute.replace("‎", "") if raw_minute else None
+    lineup_type = ((payload.get("content") or {}).get("lineup") or {}).get("lineupType")
 
     return Match(
         fotmob_match_id=str(general.get("matchId")),
@@ -261,6 +274,7 @@ def parse_match(payload: dict) -> Match:
         home_score=home_score,
         away_score=away_score,
         live_minute=live_minute,
+        lineup_type=lineup_type,
     )
 
 

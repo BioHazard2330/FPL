@@ -297,16 +297,29 @@ def detect_lineup_confirmations(
 ) -> int:
     """Real "your lineup just got confirmed" alert (2026-08-22, automation-
     lifecycle pass, item 1) - fires once per (player, match) the first time
-    `player_match_state` genuinely goes from empty to populated for that
-    match (a real lineup-confirmation transition, not a repeat poll of an
-    already-confirmed one). Only for `tracked_squad_ids` - see this module's
-    own top-of-section note on why every push here is squad-scoped.
-    Idempotency uses `old_value` (the match_id as text) rather than a bare
-    entity_id-only check, since one player can have this fire for different
-    real matches across different gameweeks - `entity_id=player_id` alone
-    isn't a unique key across the season the way a fixture_id already is for
-    `detect_upcoming_kickoffs`."""
+    `player_match_state` genuinely goes from empty to populated with a real
+    NON-predicted lineup for that match (a real lineup-confirmation
+    transition, not a repeat poll of an already-confirmed one). Only for
+    `tracked_squad_ids` - see this module's own top-of-section note on why
+    every push here is squad-scoped. Idempotency uses `old_value` (the
+    match_id as text) rather than a bare entity_id-only check, since one
+    player can have this fire for different real matches across different
+    gameweeks - `entity_id=player_id` alone isn't a unique key across the
+    season the way a fixture_id already is for `detect_upcoming_kickoffs`.
+
+    Real bug fixed 2026-09-12: this used to fire (and alert - Windows toast
+    included) on ANY `player_match_state` row, which FotMob populates for a
+    real "predicted" lineup (a third-party guess, `content.lineup.
+    lineupType`) hours before an official teamsheet exists, same root cause
+    as `lineup_state.py`'s own real bug - see that module's docstring for
+    the live-confirmed field values. Skips entirely (returns 0, fires
+    nothing) while this match's own `lineup_type` is `"predicted"` - the
+    real alert now only fires once FotMob's own data says the lineup
+    actually is the one that will be used."""
     if not tracked_squad_ids:
+        return 0
+    lineup_type_row = conn.execute("SELECT lineup_type FROM match_intelligence WHERE id=?", (match_id,)).fetchone()
+    if lineup_type_row is not None and lineup_type_row["lineup_type"] == "predicted":
         return 0
     placeholders = ",".join("?" * len(tracked_squad_ids))
     rows = conn.execute(

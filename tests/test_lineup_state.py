@@ -40,11 +40,11 @@ def _seed_fixture(conn, fid, event, team_h, team_a):
     conn.commit()
 
 
-def _seed_match_intelligence(conn, match_id, fpl_fixture_id, home_team_id, away_team_id, status="PRE_MATCH"):
+def _seed_match_intelligence(conn, match_id, fpl_fixture_id, home_team_id, away_team_id, status="PRE_MATCH", lineup_type=None):
     conn.execute(
         "INSERT INTO match_intelligence (id, fotmob_match_id, fpl_fixture_id, home_team_id, away_team_id, "
-        "status, retrieved_at) VALUES (?,?,?,?,?,?,'t0')",
-        (match_id, str(match_id), fpl_fixture_id, home_team_id, away_team_id, status),
+        "status, retrieved_at, lineup_type) VALUES (?,?,?,?,?,?,'t0',?)",
+        (match_id, str(match_id), fpl_fixture_id, home_team_id, away_team_id, status, lineup_type),
     )
     conn.commit()
 
@@ -90,6 +90,36 @@ def test_confirmed_benched_when_lineup_published_but_player_not_in_it(db_conn):
 
     state = resolve_lineup_state(db_conn, 2, event=1)
     assert state.state == "CONFIRMED_BENCHED"
+
+
+def test_a_real_fotmob_predicted_lineup_is_not_reported_as_confirmed(db_conn):
+    """Real bug fixed 2026-09-12: `player_match_state` gets populated for a
+    real FotMob "predicted" lineup (third-party guess, source enetpulse)
+    hours before an official teamsheet exists - this must fall through to
+    the real predicted-lineup source below, never CONFIRMED_STARTING."""
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_player(db_conn, 2, 2)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, lineup_type="predicted")
+    _seed_confirmed_starter(db_conn, 1, 1, 1)
+
+    state = resolve_lineup_state(db_conn, 1, event=1)
+    assert state.state != "CONFIRMED_STARTING"
+    assert state.source != "confirmed_lineup"
+
+
+def test_a_real_fotmob_standard_lineup_is_reported_as_confirmed(db_conn):
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_player(db_conn, 2, 2)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, 1, 1, 1)
+
+    state = resolve_lineup_state(db_conn, 1, event=1)
+    assert state.state == "CONFIRMED_STARTING"
+    assert state.source == "confirmed_lineup"
 
 
 def test_predicted_start_fallback_before_confirmation(db_conn):

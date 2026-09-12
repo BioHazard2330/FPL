@@ -404,11 +404,11 @@ def test_kickoff_reminder_does_not_fire_outside_the_window_or_for_other_teams(db
 
 # --- Real "lineup just confirmed" detection (2026-08-22, automation-lifecycle pass) ---
 
-def _seed_match_intelligence(conn, match_id, fpl_fixture_id, home_team_id, away_team_id, status="PRE_MATCH"):
+def _seed_match_intelligence(conn, match_id, fpl_fixture_id, home_team_id, away_team_id, status="PRE_MATCH", lineup_type=None):
     conn.execute(
         "INSERT INTO match_intelligence (id, fotmob_match_id, fpl_fixture_id, home_team_id, away_team_id, "
-        "status, retrieved_at) VALUES (?,?,?,?,?,?,'t0')",
-        (match_id, str(match_id), fpl_fixture_id, home_team_id, away_team_id, status),
+        "status, retrieved_at, lineup_type) VALUES (?,?,?,?,?,?,'t0',?)",
+        (match_id, str(match_id), fpl_fixture_id, home_team_id, away_team_id, status, lineup_type),
     )
     conn.commit()
 
@@ -446,6 +446,34 @@ def test_lineup_confirmed_fires_once_for_a_confirmed_starter(db_conn):
     fired_again = detect_lineup_confirmations(db_conn, {1}, match_id=1, now="t2")
     db_conn.commit()
     assert fired_again == 0
+
+
+def test_lineup_confirmed_does_not_fire_for_a_real_predicted_lineup(db_conn):
+    """Real bug fixed 2026-09-12: FotMob populates `player_match_state` for
+    a real "predicted" lineup (`lineup_type`) hours before an official
+    teamsheet exists - this must not fire the real "confirmed" alert (nor,
+    once fixed later this session, show CONFIRMED_STARTING on screen)."""
+    bootstrap = make_bootstrap()
+    _seed_two_teams(db_conn, bootstrap, "t0")
+    _insert_fixture_row(db_conn, 1, 1, 2, "2026-08-22T14:00:00Z")
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="predicted")
+    db_conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, source, "
+        "retrieved_at, confidence) VALUES (1, 1, '1', 1, 1, 'fotmob', 't0', 'medium')"
+    )
+    db_conn.commit()
+
+    fired = detect_lineup_confirmations(db_conn, {1}, match_id=1, now="t1")
+    assert fired == 0
+    assert not [e for e in _events(db_conn) if e["event_type"] == "lineup_confirmed"]
+
+    # Once the real lineup_type flips to "standard" (a genuine confirmation),
+    # the same real player_match_state rows now correctly fire the alert.
+    db_conn.execute("UPDATE match_intelligence SET lineup_type='standard' WHERE id=1")
+    db_conn.commit()
+    fired_now = detect_lineup_confirmations(db_conn, {1}, match_id=1, now="t2")
+    db_conn.commit()
+    assert fired_now == 1
 
 
 def test_lineup_confirmed_is_high_severity_when_benched(db_conn):

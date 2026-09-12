@@ -322,16 +322,18 @@ def sync_match(
     conn.execute(
         "INSERT INTO match_intelligence "
         "(fotmob_match_id, fpl_fixture_id, competition, kickoff_utc, home_team_id, away_team_id, "
-        "status, home_score, away_score, source, retrieved_at, confidence, raw_source_reference, live_minute) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "status, home_score, away_score, source, retrieved_at, confidence, raw_source_reference, live_minute, "
+        "lineup_type) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(fotmob_match_id) DO UPDATE SET "
         "fpl_fixture_id=excluded.fpl_fixture_id, competition=excluded.competition, kickoff_utc=excluded.kickoff_utc, "
         "home_team_id=excluded.home_team_id, away_team_id=excluded.away_team_id, status=excluded.status, "
         "home_score=excluded.home_score, away_score=excluded.away_score, retrieved_at=excluded.retrieved_at, "
-        "raw_source_reference=excluded.raw_source_reference, live_minute=excluded.live_minute",
+        "raw_source_reference=excluded.raw_source_reference, live_minute=excluded.live_minute, "
+        "lineup_type=excluded.lineup_type",
         (match.fotmob_match_id, fpl_fixture_id, match.competition, match.kickoff_utc,
          home_fpl_team_id, away_fpl_team_id, match.status, match.home_score, match.away_score,
-         _SOURCE_NAME, now, "high", str(raw_path), match.live_minute),
+         _SOURCE_NAME, now, "high", str(raw_path), match.live_minute, match.lineup_type),
     )
     match_id = conn.execute(
         "SELECT id FROM match_intelligence WHERE fotmob_match_id=?", (fotmob_match_id,)

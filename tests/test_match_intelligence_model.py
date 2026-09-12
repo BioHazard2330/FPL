@@ -64,6 +64,29 @@ def test_parse_match_reads_real_confirmed_fields():
     assert m.status == PRE_MATCH
     assert m.home_score == 0
     assert m.away_score == 0
+    # No `lineupType` in this trimmed fixture - a real honest gap, never
+    # guessed as "predicted" or "standard".
+    assert m.lineup_type is None
+
+
+def test_parse_match_reads_real_lineup_type_predicted():
+    """Confirmed live 2026-09-12 against every real GW4 PRE_MATCH fixture:
+    FotMob's own `content.lineup.lineupType` is "predicted" (source
+    "enetpulse", a third-party guess) hours before a real official
+    teamsheet exists - this is the field `lineup_state.py` must check
+    before ever reporting CONFIRMED_STARTING/CONFIRMED_BENCHED."""
+    payload = {**_PAYLOAD, "content": {**_PAYLOAD["content"], "lineup": {**_PAYLOAD["content"]["lineup"], "lineupType": "predicted"}}}
+    m = parse_match(payload)
+    assert m.lineup_type == "predicted"
+
+
+def test_parse_match_reads_real_lineup_type_standard():
+    """Confirmed live 2026-09-12 against six real already-played matches:
+    a match's own `lineupType` reads "standard" once the real lineup that
+    was actually used is known."""
+    payload = {**_PAYLOAD, "content": {**_PAYLOAD["content"], "lineup": {**_PAYLOAD["content"]["lineup"], "lineupType": "standard"}}}
+    m = parse_match(payload)
+    assert m.lineup_type == "standard"
 
 
 def test_derive_status_pre_match_live_halftime_full_time():
