@@ -707,12 +707,53 @@ def _charts_block(conn: sqlite3.Connection) -> dict | None:
     rank = _rank_series(conn, entry_id)
     cum_points = _cumulative_points_series(conn, entry_id)
     captain = _captain_contribution_series(conn, entry_id)
-    if not rank.events and not cum_points.events and not captain.events:
+    intragame = _intragame_points_block(conn)
+    if not rank.events and not cum_points.events and not captain.events and intragame is None:
         return None
     return {
         "rank": {"events": rank.events, "values": rank.values},
         "cumulative_points": {"events": cum_points.events, "values": cum_points.values},
         "captain_contribution": {"events": captain.events, "values": captain.values},
+        "intragame": intragame,
+    }
+
+
+_INTRAGAME_SAMPLE_LIMIT = 200  # generous - at the real ~60s-throttled cadence this covers well over 3h of one live GW
+
+
+def _intragame_points_block(conn: sqlite3.Connection) -> dict | None:
+    """Real gap found 2026-09-12 (direct user report: "amazing graphs...
+    barely there" - a SECOND real instance of the same 2026-09-08 finding
+    this module's own docstring above already records). `_maybe_log_
+    intragame_points_sample` has logged a real points/captain_points/rank
+    sample roughly every real minute of live play since 2026-08-28 - real,
+    already-computed, already-stored data - but nothing ever read it back
+    for the React app; the old dashboard's own `render_intragame_rank_
+    chart` only ever covered rank, and only in `dashboard.html`. `None`
+    when the current gameweek has no real samples yet (pre-kickoff, or no
+    team synced) - never a fabricated flat line."""
+    from fpl_agent.database.decisions import list_decisions_of_type
+
+    event = live_or_reference_event(conn)
+    if event is None:
+        return None
+    rows = list_decisions_of_type(conn, "live_points_sample", limit=_INTRAGAME_SAMPLE_LIMIT)
+    # Sort by real row id, not `created_at` - two samples logged in the
+    # same wall-clock second (or millisecond, in a test) would otherwise
+    # tie and fall back to whatever order the query happened to return,
+    # silently plotting the series out of order.
+    samples = sorted(
+        ((r.id, r.created_at, r.detail) for r in rows if r.detail.get("event") == event),
+        key=lambda s: s[0],
+    )
+    samples = [(created_at, detail) for _id, created_at, detail in samples]
+    if not samples:
+        return None
+    return {
+        "timestamps": [ts for ts, _ in samples],
+        "points": [d.get("points") for _, d in samples],
+        "captain_points": [d.get("captain_points") for _, d in samples],
+        "rank": [d.get("rank") for _, d in samples],
     }
 
 

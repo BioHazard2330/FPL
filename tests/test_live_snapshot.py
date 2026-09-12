@@ -459,6 +459,43 @@ def test_build_live_snapshot_logs_a_throttled_intragame_points_sample(db_conn, m
     assert rows_after["c"] == 1
 
 
+def test_charts_block_surfaces_real_intragame_points_samples(db_conn, monkeypatch):
+    """Real gap found 2026-09-12 (direct user report: "amazing graphs...
+    barely there" - a real, already-logged intragame points/rank time
+    series existed since 2026-08-28 but was never read back for the React
+    app's own `charts` block, only for the old dashboard.html's rank-only
+    chart)."""
+    import fpl_agent.monitoring.live_snapshot as ls_mod
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.ingestion.my_team import set_my_team_entry_id
+
+    _seed_event(db_conn)
+    set_my_team_entry_id(db_conn, 7378572)
+    log_decision(
+        db_conn, "live_points_sample", summary="t",
+        detail={"event": 2, "points": 15.0, "captain_points": 2, "rank": 1302979},
+    )
+    log_decision(
+        db_conn, "live_points_sample", summary="t",
+        detail={"event": 2, "points": 42.0, "captain_points": 10, "rank": 774725},
+    )
+    # A different gameweek's real sample must never bleed into this one's chart.
+    log_decision(
+        db_conn, "live_points_sample", summary="t",
+        detail={"event": 1, "points": 99.0, "captain_points": 20, "rank": 1000},
+    )
+    monkeypatch.setattr(ls_mod, "get_locked_squad", lambda conn: None)
+
+    snap = ls_mod.build_live_snapshot(db_conn, live_payload=None)
+
+    intragame = snap["charts"]["intragame"]
+    assert intragame is not None
+    assert intragame["points"] == [15.0, 42.0]
+    assert intragame["captain_points"] == [2, 10]
+    assert intragame["rank"] == [1302979, 774725]
+    assert len(intragame["timestamps"]) == 2
+
+
 def test_source_freshness_block_flags_degraded_sources(db_conn):
     conn = db_conn
     conn.execute(

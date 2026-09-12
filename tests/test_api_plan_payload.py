@@ -161,3 +161,46 @@ def test_steps_json_carries_real_transfer_player_identity(db_conn):
     assert out_missing[0]["player_in"] is None
     json.dumps(out)
     json.dumps(out_missing)
+
+
+def test_steps_json_surfaces_a_wildcard_squad_rebuild_as_a_real_in_out_diff(db_conn):
+    """Real regression (2026-09-12, direct user report: "it says wildcard
+    but doesn't even show the fucking wildcard" - a chip step's own
+    player_out_id/player_in_id are always null (it's not a single-pair
+    swap), so the frontend had nothing to show for it. Diffing the real
+    `resulting_squad_ids` against the squad going into the step surfaces
+    exactly which real players came in and out."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    team_codes = {r["id"]: r["code"] for r in db_conn.execute("SELECT id, code FROM teams").fetchall()}
+    identity = _player_identity_map(db_conn, {10, 11, 20, 30}, team_codes)
+
+    starting_squad_ids = {10, 11, 20}
+    steps = [{
+        "event": 5, "action": "PLAY WILDCARD", "chip_played": "wildcard", "uses_hit": False,
+        "gw_ev": 60.0, "player_out_id": None, "player_in_id": None,
+        "resulting_squad_ids": [11, 20, 30],  # 10 out, 30 in - 11/20 unchanged
+    }]
+
+    out = _steps_json(steps, identity, starting_squad_ids)
+
+    assert [p["name"] for p in out[0]["players_out"]] == ["P10"]
+    assert [p["name"] for p in out[0]["players_in"]] == ["P30"]
+
+
+def test_steps_json_shows_no_diff_for_a_step_that_does_not_change_the_squad(db_conn):
+    """Bench boost/triple captain don't change the squad - the same
+    resulting_squad_ids field is present but identical to the incoming
+    squad, so there's honestly nothing to show, never a fabricated diff."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    identity = _player_identity_map(db_conn, {10, 11}, {})
+    starting_squad_ids = {10, 11}
+    steps = [{
+        "event": 5, "action": "PLAY BENCH BOOST", "chip_played": "bboost", "uses_hit": False,
+        "gw_ev": 70.0, "player_out_id": None, "player_in_id": None,
+        "resulting_squad_ids": [10, 11],
+    }]
+
+    out = _steps_json(steps, identity, starting_squad_ids)
+
+    assert out[0]["players_in"] == []
+    assert out[0]["players_out"] == []

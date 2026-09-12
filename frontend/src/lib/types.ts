@@ -155,6 +155,12 @@ export interface PlanStep {
   player_in_id: number | null
   player_out: PlanTransferPlayer | null
   player_in: PlanTransferPlayer | null
+  /** Real squad diff for a chip step (wildcard's full rebuild, mainly) -
+   * this step's real resulting squad vs the squad going into it. Empty for
+   * a step that doesn't change the squad (bench boost/triple captain) or
+   * a plain single transfer (already shown via player_out/player_in). */
+  players_in: PlanTransferPlayer[]
+  players_out: PlanTransferPlayer[]
   is_locked: boolean
 }
 
@@ -561,10 +567,21 @@ export interface LiveChartSeries {
   values: number[]
 }
 
+export interface IntragameSeries {
+  timestamps: string[]
+  points: number[]
+  captain_points: number[]
+  rank: (number | null)[]
+}
+
 export interface LiveCharts {
   rank: LiveChartSeries
   cumulative_points: LiveChartSeries
   captain_contribution: LiveChartSeries
+  /** Real sub-gameweek points/rank samples, roughly one per real minute of
+   * live play (`live_snapshot.py::_maybe_log_intragame_points_sample`) -
+   * `null` before the current gameweek has any real samples yet. */
+  intragame: IntragameSeries | null
 }
 
 /** Real per-team in-match state, exactly the columns `team_match_state`

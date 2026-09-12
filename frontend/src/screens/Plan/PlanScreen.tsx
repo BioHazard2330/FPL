@@ -110,10 +110,19 @@ function StepRail({ path }: { path: PlanPath }) {
         // a plain transfer/roll leg is routine (blue accent) - spec's
         // "important points should have different visual weight."
         const isChip = s.chip_played !== null
+        // Real gap found 2026-09-12 (direct user report: "it says wildcard
+        // but doesn't even show the fucking wildcard") - a chip step never
+        // has a single player_out/player_in pair (it's not a 1-for-1 swap),
+        // so with only the shirt-flip below there was nothing to show but
+        // the bare chip name. `players_in`/`players_out` (a real diff of
+        // this step's resulting squad against the one going into it) is
+        // non-empty exactly for a genuine rebuild (wildcard) and empty for
+        // a step that doesn't touch the squad (bench boost/triple captain).
+        const hasSquadRebuild = !s.player_out && !s.player_in && (s.players_in.length > 0 || s.players_out.length > 0)
         return (
           <div key={i} className="flex items-stretch">
             <div
-              className={`flex min-w-[150px] flex-col gap-1 px-5 py-4 ${
+              className={`flex flex-col gap-1 px-5 py-4 ${hasSquadRebuild ? 'min-w-[260px]' : 'min-w-[150px]'} ${
                 s.is_locked
                   ? 'border-t-2 border-white/40 bg-pitch-green text-pitch-green-ink'
                   : isChip
@@ -147,6 +156,40 @@ function StepRail({ path }: { path: PlanPath }) {
                   <span className="truncate text-xs opacity-70">
                     {s.player_out.name} <span aria-hidden="true">&rarr;</span> {s.player_in.name}
                   </span>
+                </div>
+              )}
+              {hasSquadRebuild && (
+                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                  <div className="min-w-0">
+                    <div className="mb-0.5 text-[9px] font-bold uppercase tracking-wide opacity-60">
+                      Out ({s.players_out.length})
+                    </div>
+                    <div className="space-y-0.5">
+                      {s.players_out.map((p, pi) => (
+                        <div key={pi} className="flex items-center gap-1 opacity-75">
+                          {p.team_code !== null && (
+                            <img src={shirtUrl(p.team_code, p.position === 'GKP', 44) ?? undefined} className="h-4 w-4 shrink-0 object-contain" alt="" />
+                          )}
+                          <span className="truncate">{p.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="mb-0.5 text-[9px] font-bold uppercase tracking-wide opacity-60">
+                      In ({s.players_in.length})
+                    </div>
+                    <div className="space-y-0.5">
+                      {s.players_in.map((p, pi) => (
+                        <div key={pi} className="flex items-center gap-1 font-semibold">
+                          {p.team_code !== null && (
+                            <img src={shirtUrl(p.team_code, p.position === 'GKP', 44) ?? undefined} className="h-4 w-4 shrink-0 object-contain" alt="" />
+                          )}
+                          <span className="truncate">{p.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
               {s.gw_ev !== null && (

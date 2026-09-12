@@ -91,10 +91,29 @@ def _player_identity_map(conn, player_ids: set[int], team_codes: dict[int, int])
     }
 
 
-def _steps_json(steps: list[dict], identity: dict[int, dict]) -> list[dict]:
+def _steps_json(steps: list[dict], identity: dict[int, dict], starting_squad_ids: set[int] = frozenset()) -> list[dict]:
     out = []
+    prev_squad = set(starting_squad_ids)
     for j, s in enumerate(steps):
         out_id, in_id = s.get("player_out_id"), s.get("player_in_id")
+        # Real chip-rebuild squad diff (2026-09-12, direct user report: a
+        # wildcard/chip step only ever had `player_out_id`/`player_in_id`
+        # (always null for a chip - it's not a single-pair swap), so the
+        # frontend had nothing but a bare chip name to show. Diffing this
+        # step's real `resulting_squad_ids` against the squad going INTO it
+        # surfaces the actual players in/out - real for a wildcard's full
+        # rebuild, empty (nothing to show) for a step that doesn't change
+        # the squad (bench boost/triple captain), same real field either way.
+        players_in: list[dict] = []
+        players_out: list[dict] = []
+        resulting = s.get("resulting_squad_ids")
+        if resulting is not None:
+            resulting_set = set(resulting)
+            in_ids = sorted(resulting_set - prev_squad)
+            out_ids = sorted(prev_squad - resulting_set)
+            players_in = [identity[pid] for pid in in_ids if pid in identity]
+            players_out = [identity[pid] for pid in out_ids if pid in identity]
+            prev_squad = resulting_set
         out.append({
             "event": s["event"],
             "action": s.get("action", "ROLL"),
@@ -105,6 +124,8 @@ def _steps_json(steps: list[dict], identity: dict[int, dict]) -> list[dict]:
             "player_in_id": in_id,
             "player_out": identity.get(out_id) if out_id is not None else None,
             "player_in": identity.get(in_id) if in_id is not None else None,
+            "players_in": players_in,
+            "players_out": players_out,
             "is_locked": j == 0,
         })
     return out
@@ -183,13 +204,33 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
     conn = get_connection()
     try:
         leader_conf = path_confidence(conn, leader)
+        # Real starting squad for the whole plan - the same squad every
+        # path's own step 0 is a delta against (Free Hit reversion already
+        # applied upstream in `build_strategic_plan`'s own input, see
+        # `optimization/locked_squad.py::resolve_planning_squad`).
+        starting_squad_ids = set(sd.get("squad_ids") or [])
         needed_ids: set[int] = set()
         for i in primary_indices:
+            prev_squad = starting_squad_ids
             for s in paths[i - 1].get("steps") or []:
                 for key in ("player_out_id", "player_in_id"):
                     pid = s.get(key)
                     if pid is not None:
                         needed_ids.add(pid)
+                # Real gap found 2026-09-12 (direct user report: "it says
+                # wildcard but doesn't even show the wildcard" - a chip step
+                # rebuilds many players at once, never just one pair, so the
+                # single player_out_id/player_in_id fields above are always
+                # null for it). `resulting_squad_ids` is the real full 15-
+                # man squad this step leaves the path in - diffing it
+                # against the squad going INTO this step surfaces exactly
+                # which real players came in/out, for a chip step or any
+                # other step alike.
+                resulting = s.get("resulting_squad_ids")
+                if resulting is not None:
+                    resulting_set = set(resulting)
+                    needed_ids |= (resulting_set - prev_squad) | (prev_squad - resulting_set)
+                    prev_squad = resulting_set
         identity = _player_identity_map(conn, needed_ids, ctx.team_codes)
 
         path_rows = []
@@ -207,7 +248,7 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
                 "is_leading": i == 1,
                 "sibling_count": len(siblings),
                 "sibling_scores": [paths[s - 1].get("path_total") for s in siblings],
-                "steps": _steps_json(p.get("steps") or [], identity),
+                "steps": _steps_json(p.get("steps") or [], identity, starting_squad_ids),
                 "final_free_transfers": p.get("final_free_transfers"),
                 "final_bank_m": round((p.get("final_bank_tenths") or 0) / 10, 1),
                 "horizon_breakdown": p.get("horizon_breakdown"),

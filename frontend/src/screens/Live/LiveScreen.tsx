@@ -198,6 +198,64 @@ export function LiveScreen() {
         </div>
       )}
 
+      {/* LIVE PROGRESSION - real gap found 2026-09-12 (direct user report:
+          "amazing graphs... barely there" - a real sub-gameweek points/rank
+          sample has been logged roughly every real minute of live play
+          since 2026-08-28, but nothing ever plotted it in this app; the old
+          dashboard.html only ever charted rank, never points, and never in
+          the React app at all). Redraws with every 10s poll as new real
+          samples land - genuinely live, not a static snapshot. */}
+      {charts?.intragame && charts.intragame.timestamps.length > 1 && (
+        <div className="grid grid-cols-1 gap-px border-b-2 border-divider bg-divider lg:grid-cols-2">
+          <div className="bg-void px-10 py-8">
+            <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+              Live points progression &mdash; GW{p.event}
+            </div>
+            <Chart
+              type="area"
+              height={220}
+              options={baseChart({
+                chart: { type: 'area' },
+                fill: flatAreaFill(),
+                colors: [CHART_COLORS.primary],
+                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+                yaxis: { labels: intAxisLabels },
+                tooltip: { x: { format: 'HH:mm' } },
+              })}
+              series={[{
+                name: 'Points',
+                data: charts.intragame.timestamps.map((t, i) => [new Date(t).getTime(), charts!.intragame!.points[i]]),
+              }]}
+            />
+          </div>
+          <div className="bg-void px-10 py-8">
+            <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+              Live rank progression &mdash; GW{p.event}
+            </div>
+            <Chart
+              type="area"
+              height={220}
+              options={baseChart({
+                chart: { type: 'area' },
+                fill: flatAreaFill(),
+                colors: [CHART_COLORS.secondary],
+                // Reversed: a lower overall rank is better, so an unreversed
+                // axis would draw a real climb up the leaderboard as a fall.
+                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+                yaxis: { reversed: true, labels: rankAxisLabels },
+                tooltip: { x: { format: 'HH:mm' } },
+              })}
+              series={[{
+                name: 'Rank',
+                data: charts.intragame.timestamps
+                  .map((t, i) => [new Date(t).getTime(), charts!.intragame!.rank[i]] as [number, number | null])
+                  .filter((pt): pt is [number, number] => pt[1] !== null),
+              }]}
+            />
+          </div>
+        </div>
+      )}
+
       {/* CONSOLE STRIP - the real control-room readout: is anything live,
           where do I stand, is the standing decision still valid, and have
           finished-GW points been revised under me. One band, rule-separated
