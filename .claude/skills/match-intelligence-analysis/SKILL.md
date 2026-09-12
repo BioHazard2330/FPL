@@ -23,11 +23,58 @@ it, stop - that's fabrication, not analysis.
 ## Process
 
 1. `.venv/Scripts/fpl.exe match-report <fotmob_match_id>` - read the real,
-   current structured state, including its `status` field. Analyze at the
+   current structured state, including its `status` field, its `SHOTS`
+   section (real per-shot minute/type/situation/location/outcome) and its
+   `EVENTS` section (real goal/card/substitution timeline). Analyze at the
    phase the match is actually in — never assume from wall-clock time.
    - `PRE_MATCH`/`LIVE`/`HALFTIME`: thin evidence is expected. Say so
      plainly, analyze only what's genuinely there, and keep everything
      explicitly provisional (see step 5).
+
+### Shot & event detail is mandatory, not optional (2026-09-12, closes a real gap)
+
+Direct user finding: production analysis was reading "1 goal, 2 shots, 0.72
+xG" and writing an `inferred` field that just paraphrased the same three
+numbers in words ("converted the match's single highest individual xG
+shot") - restating OBSERVED as INFERRED, not analysis. That happened
+because `match-report` didn't print shot-level detail at the time, so
+`PLAYER STATES`' bare per-player aggregates were the only evidence on
+screen. It now does (`SHOTS`/`EVENTS` sections) - use them. A real
+`inferred` claim should be answerable from something in THOSE sections
+that ISN'T already restated in `observed`:
+
+- **Situation clustering**: do a team's/player's shots cluster in one
+  `situation` (SetPiece/FromCorner/FreeKick/FastBreak/RegularPlay)? 3 of a
+  team's first 4 shots all `SetPiece` inside the six-yard channel is a real,
+  citable pattern - "converted a shot" is not.
+- **Quality vs outcome mismatch**: a goal from a low `xg` shot (real
+  finishing over-performance, or an error/deflection worth flagging as
+  low-repeatability) vs a goal from a high `xg` shot (a genuinely created
+  chance, more likely to recur) are different findings - `qual-v1`'s own
+  example wrote "well above own recent baseline" for BOTH cases without
+  distinguishing them.
+- **Timing relative to game state/half**: a goal in the first 5 minutes of
+  a half (kickoff momentum), right after a substitution, or in stoppage
+  time under a chasing scoreline all mean something different for whether
+  the underlying pattern repeats - `EVENTS`' minute column plus `period`
+  tells you this for free.
+- **Substitution reason**: `EVENTS`' real sub timing + which position came
+  off tells you rotation (a 60' like-for-like swap with the game settled)
+  vs a tactical change (two attacking subs at once while chasing a goal)
+  vs an injury withdrawal (early, unplanned-looking minute) - never guess
+  which without a real signal (scoreline at that minute, or a following
+  formation/role change also in evidence), but don't skip the question.
+- **Set-piece specialists**: a player with 2+ shots from `FromCorner`/
+  `FreeKick`/`SetPiece` situations across the match is a real, citable
+  set-piece role signal (delivery or attacking a specific ball), distinct
+  from open-play threat.
+
+If, after actually reading `SHOTS`/`EVENTS`, a match genuinely has nothing
+beyond the aggregate (e.g. a 0-0 with 3 total speculative shots) - say that
+plainly ("no real tactical pattern beyond low shot volume") rather than
+inventing texture that isn't there. Thin evidence still gets an honest
+"thin" verdict; it just has to be an HONEST verdict about the ACTUAL
+shot/event detail, not one written without ever having looked at it.
    - `FULL_TIME`: the real, complete picture for this match. This is the
      only phase allowed to update `player_qualitative_state`/
      `team_qualitative_state` — `fpl match-analyze` enforces this itself
@@ -90,6 +137,34 @@ TACTICAL_CHANGE, SUBSTITUTION_PATTERN, TEAM_PATTERN. `player_states`/
 `team_states` are only meaningful (and only actually written) on a
 `full_time` run — include them at other phases only if you want them
 ignored, or simply omit them.
+
+## Worked example: weak vs strong (real production data, 2026-09-12)
+
+This is a REAL row this skill actually wrote for Arsenal 2-1 Chelsea
+(match_id 20922, Kai Havertz, GW3) before the shot/event fix above existed -
+kept here as the concrete failure mode to never repeat:
+
+**Weak (what was actually stored):**
+```
+observed:  "1 goal, 3 shots, 0.27 xG, played 82 minutes, 3 key passes, 0.29 xA"
+inferred:  "goal threat and creation both present in the same match"
+```
+`inferred` adds zero information over `observed` - it's the same four
+numbers renamed "goal threat" and "creation." This is the exact pattern to
+never repeat.
+
+**Strong (same real player, same match, using `SHOTS`/`EVENTS`):**
+```
+observed:  "1 goal, 3 shots, 0.27 xG, played 82 minutes, 3 key passes, 0.29 xA"
+inferred:  "goal (min 25, LeftFoot, RegularPlay, xg=0.02) scored well below
+            its own chance quality - a finishing outcome, not a repeatable
+            chance-creation pattern; his other 2 shots (min 15 Header 0.15xg
+            saved, min 20 LeftFoot 0.10xg FastBreak saved) came from open
+            play, not set pieces"
+```
+Same OBSERVED line, same evidence table - the difference is entirely
+whether you actually opened `SHOTS` and used the real `minute`/`shot_type`/
+`situation`/`xg` sitting right there instead of stopping at the aggregate.
 
 ## Language discipline (2026-09-03, closes a real gap)
 

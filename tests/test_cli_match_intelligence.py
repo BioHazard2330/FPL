@@ -119,6 +119,63 @@ def test_match_report_cmd_prints_real_persisted_state(db_conn):
     assert "USER OBSERVATIONS (0)" in result.output
 
 
+def test_match_report_cmd_prints_shots_and_events(db_conn):
+    """Real gap found 2026-09-12 (direct user report: qualitative match
+    analysis "is fucking weak" - traced to `match-report` never printing
+    the shot-level situation/type/location or the real goal/card/sub
+    timeline, so the skill reading this output had nothing but aggregate
+    goals/shots/xg to work from and produced box-score paraphrase instead
+    of real tactical reads)."""
+    from fpl_agent.ingestion.sync import _upsert_many
+    from fpl_agent.normalization.fpl_core import normalize_element_types, normalize_players, normalize_teams
+    from test_sync import make_bootstrap
+
+    bootstrap = make_bootstrap()
+    bootstrap["teams"].append({
+        "id": 2, "code": 7, "name": "Coventry City", "short_name": "COV",
+        "strength_overall_home": 2, "strength_overall_away": 2,
+        "strength_attack_home": 0, "strength_attack_away": 0,
+        "strength_defence_home": 0, "strength_defence_away": 0, "pulse_id": 2,
+    })
+    _upsert_many(db_conn, "teams", normalize_teams(bootstrap), "t0")
+    _upsert_many(db_conn, "element_types", normalize_element_types(bootstrap), "t0")
+    _upsert_many(db_conn, "players", normalize_players(bootstrap), "t0")
+    db_conn.commit()
+
+    now = "2026-08-21T15:00:00+00:00"
+    db_conn.execute(
+        "INSERT INTO match_intelligence "
+        "(fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, status, "
+        "home_score, away_score, source, retrieved_at, confidence) "
+        "VALUES ('5795363','Premier League','2026-08-21T19:00:00.000Z',1,2,'FULL_TIME',1,0,'fotmob',?,'high')",
+        (now,),
+    )
+    db_conn.commit()
+    match_id = db_conn.execute("SELECT id FROM match_intelligence").fetchone()["id"]
+    db_conn.execute(
+        "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, player_id, fotmob_player_id, player_name, "
+        "minute, x, y, xg, is_on_target, outcome, shot_type, situation, period, source, retrieved_at) "
+        "VALUES (?, 's1', 1, NULL, '1', 'Test Player', 25, 101.5, 39.7, 0.61, 1, 'Goal', 'LeftFoot', 'FastBreak', "
+        "'SecondHalf', 'fotmob', ?)",
+        (match_id, now),
+    )
+    db_conn.execute(
+        "INSERT INTO match_events (match_id, source, source_event_id, minute, event_type, team_id, player_id, description, retrieved_at) "
+        "VALUES (?, 'fotmob', 'fact-1', 25, 'Goal', 1, NULL, 'Goal - Test Player (assist by Someone)', ?)",
+        (match_id, now),
+    )
+    db_conn.commit()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["match-report", "5795363"])
+
+    assert result.exit_code == 0, result.output
+    assert "SHOTS (1)" in result.output
+    assert "FastBreak" in result.output and "LeftFoot" in result.output
+    assert "EVENTS (1)" in result.output
+    assert "Goal - Test Player" in result.output
+
+
 def test_match_report_cmd_prints_qualitative_analysis_and_user_observations(tmp_path, db_conn):
     import json
 

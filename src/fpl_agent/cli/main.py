@@ -603,6 +603,34 @@ def match_report_cmd(fotmob_match_id: str):
         click.echo(f"  {resolved:<18} fotmob_id={p['fotmob_player_id']:<10} team_id={p['team_id']} "
                    f"started={bool(p['started'])} goals={p['goals']} shots={p['shots']} xg={p['xg']}")
 
+    # Real gap found 2026-09-12 (direct user report: "qualitative analysis
+    # after matches is fucking weak" - traced to this command never having
+    # printed the one thing that makes a match reading genuinely tactical
+    # rather than a box-score paraphrase: WHERE/HOW/WHEN each shot happened.
+    # `match_shots.situation`/`shot_type`/`x`/`y`/`period` and `match_events`'
+    # real goal/card/substitution timeline were both already synced by
+    # `sync-match` and sitting unused in the DB - this is the fix, not a new
+    # source. See `.claude/skills/match-intelligence-analysis/SKILL.md`'s own
+    # "Shot & event detail" section, which now requires reading this.
+    shots = conn.execute(
+        "SELECT * FROM match_shots WHERE match_id=? ORDER BY minute", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nSHOTS ({len(shots)}) - minute, team, player, type, situation, (x,y), xg, outcome")
+    for s in shots:
+        loc = f"({s['x']:.0f},{s['y']:.0f})" if s["x"] is not None and s["y"] is not None else "(?,?)"
+        click.echo(
+            f"  {s['minute']:>3}' team={s['team_id']} {s['player_name']:<22} {s['shot_type'] or '?':<9} "
+            f"{s['situation'] or '?':<11} {loc:<9} xg={s['xg']:.2f} {s['outcome']}"
+        )
+
+    events = conn.execute(
+        "SELECT * FROM match_events WHERE match_id=? AND event_type IN "
+        "('Goal','Card','Substitution','VAR') ORDER BY minute", (match["id"],)
+    ).fetchall()
+    click.echo(f"\nEVENTS ({len(events)}) - real goal/card/substitution/VAR timeline")
+    for e in events:
+        click.echo(f"  {e['minute']:>3}' team={e['team_id']} [{e['event_type']}] {e['description']}")
+
     observations = conn.execute("SELECT * FROM match_observations WHERE match_id=?", (match["id"],)).fetchall()
     click.echo(f"\nOBSERVATIONS ({len(observations)})")
     for o in observations:
