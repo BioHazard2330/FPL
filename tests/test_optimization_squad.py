@@ -209,20 +209,20 @@ def test_must_start_ids_forces_a_player_into_the_starting_xi(db_conn, monkeypatc
 
 def test_must_include_ids_forces_a_specific_player_into_the_squad(db_conn, monkeypatch):
     """Real, disclosed override of pure EV-per-cost optimisation (2026-08-20:
-    "I want Haaland AND Fernandes regardless of cost-efficiency") - player 17
-    is the weakest DEF candidate (xp=2.0, lowest in the pool) and would never
+    "I want Haaland AND Fernandes regardless of cost-efficiency") - player 34
+    is the weakest FWD candidate (xp=2.5, lowest in the pool) and would never
     be picked by a normal solve; forcing it in must still produce a legal,
     optimal-subject-to-the-constraint squad."""
     _seed(db_conn, budget_tenths=950, club_limit=4)
     _patch_expected_points(monkeypatch)
 
     baseline = squad_mod.optimise_squad(db_conn, n_gw=1)
-    assert 17 not in {c.player_id for c in baseline.squad}  # confirms it's a real, non-trivial constraint
+    assert 34 not in {c.player_id for c in baseline.squad}  # confirms it's a real, non-trivial constraint
 
-    forced = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={17})
+    forced = squad_mod.optimise_squad(db_conn, n_gw=1, must_include_ids={34})
 
     assert forced.status == "Optimal"
-    assert 17 in {c.player_id for c in forced.squad}
+    assert 34 in {c.player_id for c in forced.squad}
     assert len(forced.squad) == 15
 
 
@@ -371,6 +371,40 @@ def test_higher_bench_weight_produces_a_stronger_bench(db_conn, monkeypatch):
     high_bench_xp = sum(c.xp for c in high_xi.bench)
 
     assert high_bench_xp > low_bench_xp
+
+
+def test_bench_gkp_weight_is_lower_than_general_bench_weight():
+    """Real gap found 2026-09-12 (direct user report of a wildcard squad
+    carrying a real GBP4.6m bench keeper when a real GBP4.0m starting-
+    caliber alternative existed) - a bench GKP's real path to minutes is
+    narrower than an outfield bench player's (only the starting keeper
+    missing the match entirely, no partial-match auto-sub path), so it must
+    never be weighted as generously as the general bench term."""
+    assert squad_mod._BENCH_GKP_WEIGHT < squad_mod._BENCH_WEIGHT
+
+
+def test_explicit_bench_weight_override_applies_uniformly_including_gkp(db_conn, monkeypatch):
+    """The real, standing user preference behind `bench_weight` ("cant have
+    3 players on my bench as bench fodder") must raise bench GKP value too
+    when the caller explicitly asks for a stronger bench overall - the
+    GKP-specific discount only applies to the untouched DEFAULT, never
+    silently undercutting an explicit override."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    default = squad_mod.optimise_squad(db_conn, n_gw=1)
+    overridden = squad_mod.optimise_squad(db_conn, n_gw=1, bench_weight=0.9)
+    assert default.status == "Optimal" and overridden.status == "Optimal"
+
+    default_xi = squad_mod.pick_starting_xi(db_conn, default.squad)
+    overridden_xi = squad_mod.pick_starting_xi(db_conn, overridden.squad)
+    default_bench_gkp_xp = sum(c.xp for c in default_xi.bench if c.position == "GKP")
+    overridden_bench_gkp_xp = sum(c.xp for c in overridden_xi.bench if c.position == "GKP")
+
+    # An explicit high bench_weight must be able to justify a real,
+    # higher-xp bench GKP - the default's own GKP-specific discount must
+    # not still be silently suppressing it.
+    assert overridden_bench_gkp_xp >= default_bench_gkp_xp
 
 
 # --- validate_starting_xi (2026-08-21, locked-squad product architecture) -

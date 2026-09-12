@@ -43,6 +43,20 @@ _MIN_START_PERCENT_FOR_SQUAD = 70
 # just nowhere near a starter's.
 _BENCH_WEIGHT = 0.1
 
+# Real gap found 2026-09-12 (direct user report: a wildcard squad carried a
+# real GBP4.6m bench keeper when a real GBP4.0m starting-caliber keeper
+# (Forster, Steele, Lecomte, Phillips - all status='a') was available for
+# less). A bench GKP's real path to minutes is even narrower than an
+# outfield bench player's: the ONLY way he scores is the starting keeper
+# missing the match entirely (no partial-match auto-sub path exists for a
+# goalkeeper the way it does for an outfield starter who's subbed off at
+# half-time) - genuinely rarer than a generic outfield bench slot, so the
+# same _BENCH_WEIGHT overvalued him relative to his real chance of playing,
+# letting the optimiser justify spending above the real budget floor for a
+# player who should be pure cost-minimisation. Same disclosed-heuristic
+# posture as _BENCH_WEIGHT (not fit to real autosub-rate data).
+_BENCH_GKP_WEIGHT = 0.03
+
 
 @dataclass(frozen=True)
 class PlayerCandidate:
@@ -253,10 +267,16 @@ def optimise_squad(
     s = {c.player_id: pulp.LpVariable(f"s_{c.player_id}", cat="Binary") for c in pool}
     cap = {c.player_id: pulp.LpVariable(f"cap_{c.player_id}", cat="Binary") for c in pool}
 
+    # A bench GKP's own bench-contribution term uses `_BENCH_GKP_WEIGHT`
+    # (lower - see its own docstring), never the general `weight` an
+    # outfield bench player's term still uses.
+    def _bench_weight_for(c: "PlayerCandidate") -> float:
+        return _BENCH_GKP_WEIGHT if c.position == "GKP" and bench_weight is None else weight
+
     prob += (
         pulp.lpSum(c.xp * s[c.player_id] for c in pool)
         + pulp.lpSum(c.xp * cap[c.player_id] for c in pool)
-        + weight * pulp.lpSum(c.xp * (x[c.player_id] - s[c.player_id]) for c in pool)
+        + pulp.lpSum(_bench_weight_for(c) * c.xp * (x[c.player_id] - s[c.player_id]) for c in pool)
     )
     prob += pulp.lpSum(cap[c.player_id] for c in pool) == 1
     prob += pulp.lpSum(s[c.player_id] for c in pool) == 11
