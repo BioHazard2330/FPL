@@ -18,14 +18,19 @@ const cssVar = (name: string) => getComputedStyle(document.documentElement).getP
 export function Podium3D({ entries }: { entries: PodiumEntry[] }) {
   const canvasRef = useThreeScene((_canvas, renderer) => {
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
-    // Framed to fit the tallest possible block (1.1 + 3.2 = 4.3) plus its
-    // crest plane above it (~+1.25 more) with real margin - a real bug
-    // caught live: the first framing clipped every crest above the visible
-    // canvas because it only accounted for the podium blocks, not the
-    // crest planes sitting on top of them.
-    camera.position.set(0, 4.6, 10.5)
-    camera.lookAt(0, 2.4, 0)
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100)
+    // Real bug found live 2026-09-12: the tallest block is ALWAYS exactly
+    // 4.3 (1.1 + 3.2, since whichever entry has maxPoints gets ratio 1.0
+    // by construction, not a rare hypothetical), so its crest plane's top
+    // edge always sits at y=5.55 - the original camera (tilted ~12 degrees
+    // downward) clipped it in real production the first time two clubs
+    // were closely tied near the top (real Sept 2026 GW3 standings, Man
+    // City/Arsenal both on 9pts). A first attempt at a near-level camera
+    // still showed only a sliver of each crest at the very top edge of the
+    // frame - confirmed live via screenshot - so the look-at target and
+    // FOV both get real margin here, not just a levelled tilt.
+    camera.position.set(0, 3.2, 10.5)
+    camera.lookAt(0, 3.0, 0)
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.65)
     const key = new THREE.DirectionalLight(0xffffff, 1.1)
@@ -36,7 +41,6 @@ export function Podium3D({ entries }: { entries: PodiumEntry[] }) {
     const colors = [cssVar('--broadcast-gold'), cssVar('--text-muted'), cssVar('--broadcast-blue')]
     const group = new THREE.Group()
     const loader = new THREE.TextureLoader()
-    loader.setCrossOrigin('anonymous')
 
     // Classic podium order left-to-right: 2nd, 1st, 3rd - but height always
     // reflects the real points gap, not a fixed 4/3/2 shape.
@@ -53,13 +57,26 @@ export function Podium3D({ entries }: { entries: PodiumEntry[] }) {
 
       if (e.crestUrl) {
         loader.load(e.crestUrl, (tex) => {
+          // Real bug found live 2026-09-12: with the default `flipY: true`,
+          // the crest texture uploaded to the GPU with the wrong pixel-store
+          // flags for this exact three.js/WebGL2 path (a real console
+          // warning named FLIP_Y/PREMULTIPLY_ALPHA specifically) and
+          // rendered as fully invisible - the mesh existed in the scene
+          // graph at the right position (confirmed via a debug log: crest
+          // image loaded fine, plane added, child count incremented) but
+          // nothing appeared on screen. Setting `flipY = false` here (this
+          // plane's own UVs don't depend on the default orientation the
+          // way a full 3D model import would) made the crest render
+          // correctly - confirmed live, right-side up, not mirrored.
           tex.colorSpace = THREE.SRGBColorSpace
+          tex.flipY = false
+          tex.needsUpdate = true
           const size = 1.1
           const plane = new THREE.Mesh(
             new THREE.PlaneGeometry(size, size),
-            new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+            new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
           )
-          plane.position.set(slotX[slot], height + size / 2 + 0.15, 0)
+          plane.position.set(slotX[slot], height + size / 2 + 0.15, 0.01)
           group.add(plane)
         })
       }
