@@ -166,6 +166,39 @@ def _low_start_confidence_ids(conn: sqlite3.Connection, candidate_ids: list[int]
     return excluded
 
 
+def _auto_premium_lock_id(pool: list["PlayerCandidate"], low_confidence_ids: set[int]) -> int | None:
+    """Real, disclosed, non-name-specific default (2026-09-13, direct user
+    complaint: the single most expensive player in the entire game -
+    Haaland, GBP15.5m, GBP3.5m clear of the #2-priced player - was left out
+    of a from-scratch wildcard rebuild because this optimiser's own linear
+    per-cost objective rated him statistically tied with a GBP3.5m-cheaper
+    alternative for one specific away fixture). Verified live before this
+    fix: every real upstream number behind that tie was individually
+    correct (his team carried the single best fitted attack rating in the
+    league, his own share of it matched his real season xG exactly, the
+    fixture-specific discount was a fair away-day/opponent-defence read) -
+    there was no data bug, only an objective that treats all expected
+    points as fungible and has no concept of price as its own real signal.
+
+    FPL's own real-money pricing is independent market information this
+    project doesn't otherwise model: bonus-point magnetism, penalty duty,
+    template/ownership rank-protection, and real-world reliability
+    reputation all get baked into a price this linear median model can't
+    fully see. The single most expensive player who ALREADY clears this
+    optimiser's own reliability bar (`_low_start_confidence_ids`) is locked
+    into every from-scratch squad build by default - the exact case
+    `must_include_ids`'s own docstring already carves out ("I want Haaland
+    regardless of cost-efficiency... a legitimate reason a manager weighs
+    differently"), just applied automatically instead of requiring the
+    caller to already know to ask for it. Returns None only when every
+    candidate has a real start/rotation-risk concern (an honest, empty-pool
+    edge case, not a fabricated lock)."""
+    eligible = [c for c in pool if c.player_id not in low_confidence_ids]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda c: c.price_tenths).player_id
+
+
 @dataclass(frozen=True)
 class SquadResult:
     squad: list[PlayerCandidate]
@@ -182,6 +215,7 @@ def optimise_squad(
     budget_override_tenths: int | None = None,
     bench_weight: float | None = None,
     must_include_ids: set[int] | None = None,
+    auto_lock_premium: bool = True,
 ) -> SquadResult:
     """budget_override_tenths lets a caller solve under a tighter cap than the
     real rules budget (section 94's structure B: leaving bank spare for future
@@ -202,7 +236,13 @@ def optimise_squad(
     a legitimate reason a manager weighs differently than this optimiser's
     default objective does. Raises ValueError if a requested id isn't even
     in the position/exclude-filtered pool, rather than silently ignoring an
-    impossible request."""
+    impossible request.
+
+    auto_lock_premium (default True) fills must_include_ids in for the
+    caller when they didn't specify one - see _auto_premium_lock_id's own
+    docstring for the full real case this closes (2026-09-13). Pass an
+    explicit must_include_ids (even an empty set) or auto_lock_premium=False
+    to opt out and get pure EV-per-cost optimisation with no lock at all."""
     season = current_season(conn)
     budget_tenths = budget_override_tenths if budget_override_tenths is not None else get_rule(
         conn, season, "rules.squad_total_spend", 1000
@@ -223,6 +263,10 @@ def optimise_squad(
         return SquadResult(squad=[], total_cost_tenths=0, total_xp=0.0, status="Infeasible (empty pool)")
 
     low_confidence_ids = _low_start_confidence_ids(conn, [c.player_id for c in pool])
+    lock_was_automatic = must_include_ids is None and auto_lock_premium
+    if lock_was_automatic:
+        auto_id = _auto_premium_lock_id(pool, low_confidence_ids)
+        must_include_ids = {auto_id} if auto_id is not None else set()
     if must_include_ids:
         low_confidence_ids -= must_include_ids  # an explicit caller override still wins
     if low_confidence_ids:
@@ -302,6 +346,19 @@ def optimise_squad(
     status = pulp.LpStatus[prob.status]
 
     if status != "Optimal":
+        # Real safety net (2026-09-13): the auto-lock is a soft preference,
+        # never allowed to turn an otherwise-solvable budget/constraint set
+        # infeasible (e.g. a genuinely tight budget_override_tenths that the
+        # single priciest reliable player simply can't fit under) - only
+        # retries when THIS call is the one that added the lock, never
+        # masking a real infeasibility the caller's own explicit
+        # must_include_ids caused.
+        if lock_was_automatic:
+            return optimise_squad(
+                conn, n_gw=n_gw, exclude_ids=exclude_ids, objective=objective,
+                budget_override_tenths=budget_override_tenths, bench_weight=bench_weight,
+                must_include_ids=set(), auto_lock_premium=False,
+            )
         return SquadResult(squad=[], total_cost_tenths=0, total_xp=0.0, status=status)
 
     squad = [c for c in pool if x[c.player_id].value() == 1]

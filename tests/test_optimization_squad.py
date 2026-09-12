@@ -226,6 +226,46 @@ def test_must_include_ids_forces_a_specific_player_into_the_squad(db_conn, monke
     assert len(forced.squad) == 15
 
 
+def test_auto_lock_premium_forces_the_single_priciest_reliable_player_in(db_conn, monkeypatch):
+    """Real fix (2026-09-13, direct user complaint: FPL's own single most
+    expensive player in the whole game - GBP3.5m clear of #2 - was excluded
+    from a from-scratch wildcard build purely because his own median xp
+    happened to be statistically tied with a much cheaper alternative for
+    one specific fixture). Every real upstream number behind that tie
+    checked out - no data bug, just a linear per-cost objective with no
+    concept of price as its own real signal (bonus magnetism, penalty duty,
+    template/ownership protection, real-world reliability). The single
+    priciest reliable candidate is now locked in by default, even when a
+    cheaper alternative has equal or higher xp. Player 34 (weakest FWD,
+    xp=2.5) would never be picked on pure EV/cost - bumping his own price
+    to the single highest in the pool must still force him in."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+    db_conn.execute("UPDATE player_price_history SET value_tenths=200 WHERE player_id=34")
+    db_conn.commit()
+
+    locked = squad_mod.optimise_squad(db_conn, n_gw=1)
+    assert locked.status == "Optimal"
+    assert 34 in {c.player_id for c in locked.squad}
+
+    unlocked = squad_mod.optimise_squad(db_conn, n_gw=1, auto_lock_premium=False)
+    assert unlocked.status == "Optimal"
+    assert 34 not in {c.player_id for c in unlocked.squad}
+
+
+def test_auto_lock_premium_never_turns_a_solvable_budget_infeasible(db_conn, monkeypatch):
+    """The auto-lock is a soft preference, not allowed to make an otherwise-
+    solvable budget_override_tenths infeasible - falls back to an unlocked
+    solve rather than reporting a real budget cap as impossible to meet."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _patch_expected_points(monkeypatch)
+
+    result = squad_mod.optimise_squad(db_conn, n_gw=1, budget_override_tenths=700)
+
+    assert result.status == "Optimal"
+    assert result.total_cost_tenths <= 700
+
+
 def test_low_start_percent_player_is_never_selected(db_conn, monkeypatch):
     """Real, hard user directive (2026-08-21): "I dont want people in my
     squad that wont even start or has very rare chance to start." Player 20
