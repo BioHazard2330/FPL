@@ -757,6 +757,14 @@ export interface LivePoints {
   by_player: LivePointsByPlayer[]
 }
 
+export interface LiveThreat {
+  player_id: number
+  web_name: string
+  position: string
+  ownership_percent: number
+  points: number
+}
+
 export interface LiveSnapshot {
   version?: number
   generated_at: string
@@ -776,6 +784,10 @@ export interface LiveSnapshot {
   }
   rank: LiveRank | null
   points: LivePoints | null
+  /** Real top-owned players you do NOT own, ranked by their real live
+   * points off the same live payload - empty before any match this event
+   * has kicked off, never fabricated. */
+  threats: LiveThreat[]
   squad: LiveSquadPlayer[]
   active_matches: LiveMatch[]
   bonus_defcon: BonusDefconRow[]

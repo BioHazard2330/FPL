@@ -1,7 +1,7 @@
 import json
 
 from fpl_agent.database.decisions import log_decision
-from fpl_agent.monitoring.live_snapshot import build_live_snapshot, write_live_snapshot
+from fpl_agent.monitoring.live_snapshot import _threats_block, build_live_snapshot, write_live_snapshot
 from fpl_agent.optimization.locked_squad import LockedSquadState
 from fpl_agent.optimization.squad import PlayerCandidate, StartingXI
 
@@ -307,6 +307,52 @@ def test_squad_block_carries_real_ownership_percent(db_conn, monkeypatch):
     snap = build_live_snapshot(db_conn, live_payload=None)
     squad = {row["player_id"]: row for row in snap["squad"]}
     assert squad[1]["ownership_percent"] == 45.5
+
+
+def test_threats_block_ranks_real_non_squad_template_players_by_live_points(db_conn):
+    """Real "Threats" panel (2026-09-12, direct user ask to match
+    livefpl.net's own framing) - the template's top-owned players you do
+    NOT own, ranked by their real live points off the SAME already-fetched
+    live payload (FPL's own event-live endpoint covers every player)."""
+    _seed_player(db_conn, 1, web_name="Haaland", team_id=1)  # heavily owned, not in my squad
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (1, 65.0, '2026-09-12T00:00:00Z', NULL)"
+    )
+    _seed_player(db_conn, 2, web_name="Salah", team_id=1)  # heavily owned, IN my squad - never a "threat" to itself
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (2, 60.0, '2026-09-12T00:00:00Z', NULL)"
+    )
+    db_conn.commit()
+    live_payload = {"elements": [
+        {"id": 1, "stats": {"total_points": 12, "minutes": 90}},
+        {"id": 2, "stats": {"total_points": 8, "minutes": 90}},
+    ]}
+
+    rows = _threats_block(db_conn, live_payload, squad_ids=frozenset({2}))
+    assert len(rows) == 1
+    assert rows[0]["player_id"] == 1
+    assert rows[0]["points"] == 12
+    assert rows[0]["ownership_percent"] == 65.0
+
+
+def test_threats_block_excludes_a_template_player_whose_match_has_not_kicked_off(db_conn):
+    """A template player not yet playing still has a real stats row (every
+    player does) - just zeros. That's noise, not a real threat."""
+    _seed_player(db_conn, 1, web_name="Haaland", team_id=1)
+    db_conn.execute(
+        "INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) "
+        "VALUES (1, 65.0, '2026-09-12T00:00:00Z', NULL)"
+    )
+    db_conn.commit()
+    live_payload = {"elements": [{"id": 1, "stats": {"total_points": 0, "minutes": 0}}]}
+
+    assert _threats_block(db_conn, live_payload, squad_ids=frozenset()) == []
+
+
+def test_threats_block_empty_without_a_live_payload(db_conn):
+    assert _threats_block(db_conn, None, squad_ids=frozenset()) == []
 
 
 def test_squad_block_empty_without_a_locked_squad(db_conn, monkeypatch):

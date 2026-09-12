@@ -146,6 +146,45 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
     return out
 
 
+_THREATS_LIMIT = 6
+
+
+def _threats_block(conn: sqlite3.Connection, live_payload: dict | None, squad_ids: frozenset[int]) -> list[dict]:
+    """Real "Threats" panel (2026-09-12, direct user ask to match
+    livefpl.net's own framing) - the template's top-owned players you do
+    NOT own who are hauling real live points right now, i.e. actively
+    working against your relative rank. `get_template` already gives the
+    real top-owned players per position (sampled EO when a sample exists,
+    real raw `selected_by_percent` otherwise - never fabricated); the same
+    already-fetched `live_payload` (FPL's own `event/<id>/live` endpoint,
+    which covers every player in the game, not just your squad) already
+    has every one of their real live scores - no new network call, no new
+    source. Empty (never fabricated zeros) when no match has kicked off
+    yet this event, same gating as every other real live-only block."""
+    if live_payload is None:
+        return []
+    from fpl_agent.models.template import get_template
+
+    stats_by_id = {e["id"]: e.get("stats", {}) for e in live_payload.get("elements", []) if "id" in e}
+    rows = []
+    for tp in get_template(conn):
+        if tp.player_id in squad_ids:
+            continue
+        stats = stats_by_id.get(tp.player_id)
+        # A template player whose own match hasn't kicked off yet also has
+        # a real stats row (every player does) - just all zeros. Real
+        # signal here means real minutes on the pitch, not "template and
+        # not yet playing" noise that would otherwise dominate the panel.
+        if stats is None or not stats.get("minutes"):
+            continue
+        rows.append({
+            "player_id": tp.player_id, "web_name": tp.web_name, "position": tp.position,
+            "ownership_percent": tp.ownership_percent, "points": stats.get("total_points", 0),
+        })
+    rows.sort(key=lambda r: r["points"], reverse=True)
+    return rows[:_THREATS_LIMIT]
+
+
 def _match_events_block(live_bonus_rows: list) -> list[dict]:
     """Real current-state events for squad players who have actually
     played - goals/assists/red cards straight off the already-computed
@@ -579,6 +618,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "gw": gw_block,
         "rank": rank_block,
         "points": points_block,
+        "threats": _threats_block(conn, live_payload, squad_ids),
         "squad": _squad_block(conn, locked),
         "active_matches": _active_matches_block(conn, squad_ids),
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),

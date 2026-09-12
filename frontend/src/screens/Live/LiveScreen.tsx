@@ -363,6 +363,31 @@ export function LiveScreen() {
         </div>
       )}
 
+      {/* THREATS - real gap found 2026-09-12 (direct user ask to match
+          livefpl.net's own framing): the template's top-owned players you
+          do NOT own, ranked by their real live points right now - the
+          players actively working against your relative rank, straight
+          off the same live payload your own squad's points already come
+          from (no new source, no new network call). */}
+      {p.threats.length > 0 && (
+        <div className="border-t-2 border-divider bg-void px-10 py-8">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Threats</div>
+          <p className="mb-3 text-[11px] text-text-faint">Template picks you don't own, hauling right now.</p>
+          <div className="flex flex-wrap gap-x-10 gap-y-3">
+            {p.threats.map((t) => (
+              <div key={t.player_id} className="flex items-baseline gap-2">
+                <span className="tabular font-display text-2xl font-bold text-alert-red">{t.points}</span>
+                <Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-alert-red">
+                  {t.web_name}
+                </Link>
+                <span className="bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{t.position}</span>
+                <span className="text-[10px] text-text-faint">{t.ownership_percent.toFixed(1)}% owned</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* SQUAD RETURNS + CHANGE WIRE - cumulative real returns (not a
           minute-stamped feed: the backend sends counts, and this screen
           used to print a column of dashes by rendering fields that do not
