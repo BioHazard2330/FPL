@@ -1688,14 +1688,17 @@ def _fixture_projections_html(conn: sqlite3.Connection, squad_ids: set[int]) -> 
 
 def _player_odds_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     """Player Odds - real anytime-goalscorer odds (dashboard-overhaul pass,
-    2026-08-22, direct user request). Reads `player_odds_live`
-    (`ingestion.player_odds_source.sync_player_odds`, now wired into
-    `run_scheduled` with its own real per-fixture freshness throttle).
-    `implied_probability_raw` is exactly that - the bookmaker's own
-    overround is NOT removed (see that module's own docstring for why a
-    goalscorer market can't be devigged the same simple way a 2/3-outcome
-    match-result market is) - labeled honestly, never presented as a
-    calibrated probability."""
+    2026-08-22, direct user request). Reads `player_odds_live`, real but
+    currently unpopulated: the-odds-api.com-specific sync that used to feed
+    this table was removed 2026-09-13 (that vendor's real free tier was 500
+    credits/MONTH, not per day, with no throttle at this call site - see
+    `ingestion/api_football_odds_source.py`'s module docstring) and no free
+    player-prop replacement was found, so this renders the honest empty
+    state below rather than stale/fabricated rows. `implied_probability_raw`
+    is the bookmaker's own vigged price; `implied_probability_devigged`
+    (`models/odds_devig.py::devig_two_outcome_prop`) is the real, proper
+    two-outcome devig against that player's own "No" price when one exists -
+    never presented as calibrated beyond that."""
     if not squad_ids:
         return "<div class='empty-state'>No squad to show goalscorer odds for yet.</div>"
     rows = conn.execute(

@@ -1,8 +1,39 @@
 from fpl_agent.ingestion.market_identity import (
     get_or_create_market_team,
+    match_fixture_by_teams_and_kickoff,
     normalize_common_team_name,
     resolve_player_id,
 )
+from fpl_agent.ingestion.sync import _upsert_many
+from fpl_agent.normalization.fpl_core import (
+    normalize_element_types,
+    normalize_events,
+    normalize_players,
+    normalize_teams,
+)
+
+from test_sync import make_bootstrap
+
+
+def _seed_two_teams_and_fixture(conn, fixture_id=1, kickoff="2026-08-22T14:00:00Z", finished=0):
+    bootstrap = make_bootstrap()
+    bootstrap["teams"][0].update({"id": 1, "name": "Arsenal", "short_name": "ARS"})
+    bootstrap["teams"].append({
+        "id": 2, "code": 4, "name": "Chelsea", "short_name": "CHE",
+        "strength_overall_home": 3, "strength_overall_away": 3,
+        "strength_attack_home": 0, "strength_attack_away": 0,
+        "strength_defence_home": 0, "strength_defence_away": 0, "pulse_id": 2,
+    })
+    _upsert_many(conn, "teams", normalize_teams(bootstrap), "t0")
+    _upsert_many(conn, "element_types", normalize_element_types(bootstrap), "t0")
+    _upsert_many(conn, "events", normalize_events(bootstrap), "t0")
+    _upsert_many(conn, "players", normalize_players(bootstrap), "t0")
+    conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (?, ?, 1, ?, 1, 2, ?, 0, '2026-08-20T00:00:00Z')",
+        (fixture_id, 1000 + fixture_id, kickoff, finished),
+    )
+    conn.commit()
 
 
 def test_normalize_common_team_name_translates_known_variants():
@@ -164,3 +195,75 @@ def test_resolve_player_id_fuzzy_fallback_is_scoped_to_the_given_team(db_conn):
     _seed_team(db_conn, team_id=2, name="Chelsea", short="CHE")
 
     assert resolve_player_id(db_conn, "understat", "Bruno Fernandes", team_id=2) is None
+
+
+def test_match_fixture_by_teams_and_kickoff_finds_the_right_unplayed_fixture(db_conn):
+    _seed_two_teams_and_fixture(db_conn)
+    fixture_id = match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Arsenal", "Chelsea", "2026-08-22T14:00:00Z")
+    assert fixture_id == 1
+
+
+def test_match_fixture_by_teams_and_kickoff_returns_none_for_unresolvable_team(db_conn):
+    _seed_two_teams_and_fixture(db_conn)
+    assert match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Arsenal", "Some Nonexistent FC", "2026-08-22T14:00:00Z") is None
+
+
+def test_match_fixture_by_teams_and_kickoff_resolves_full_club_names(db_conn):
+    # Real-world shape this guards against: an external source returning full/
+    # formal club names ("Manchester United", "Tottenham Hotspur") while FPL's
+    # own teams.name is the short display form ("Man Utd", "Spurs").
+    bootstrap = make_bootstrap()
+    bootstrap["teams"][0].update({"id": 1, "name": "Man Utd", "short_name": "MUN"})
+    bootstrap["teams"].append({
+        "id": 2, "code": 4, "name": "Spurs", "short_name": "TOT",
+        "strength_overall_home": 3, "strength_overall_away": 3,
+        "strength_attack_home": 0, "strength_attack_away": 0,
+        "strength_defence_home": 0, "strength_defence_away": 0, "pulse_id": 2,
+    })
+    _upsert_many(db_conn, "teams", normalize_teams(bootstrap), "t0")
+    _upsert_many(db_conn, "element_types", normalize_element_types(bootstrap), "t0")
+    _upsert_many(db_conn, "events", normalize_events(bootstrap), "t0")
+    _upsert_many(db_conn, "players", normalize_players(bootstrap), "t0")
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1001, 1, '2026-08-22T14:00:00Z', 1, 2, 0, 0, '2026-08-20T00:00:00Z')"
+    )
+    db_conn.commit()
+
+    fixture_id = match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Manchester United", "Tottenham Hotspur", "2026-08-22T14:00:00Z")
+    assert fixture_id == 1
+
+
+def test_match_fixture_by_teams_and_kickoff_disambiguates_double_fixture_by_closest_kickoff(db_conn):
+    _seed_two_teams_and_fixture(db_conn, fixture_id=1, kickoff="2026-08-22T14:00:00Z")
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (2, 1002, 1, '2026-09-15T14:00:00Z', 1, 2, 0, 0, '2026-08-20T00:00:00Z')"
+    )
+    db_conn.commit()
+    fixture_id = match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Arsenal", "Chelsea", "2026-08-22T15:00:00Z")
+    assert fixture_id == 1  # closer to this kickoff than the Sept fixture
+
+
+def test_match_fixture_by_teams_and_kickoff_ignores_candidate_with_null_kickoff_time(db_conn):
+    # Rearranged/postponed fixtures have kickoff_time IS NULL in FPL's data - a real,
+    # reachable case. Disambiguation must skip it, not crash on None.replace("Z", ...).
+    _seed_two_teams_and_fixture(db_conn, fixture_id=1, kickoff="2026-08-22T14:00:00Z")
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (2, 1002, 1, NULL, 1, 2, 0, 0, '2026-08-20T00:00:00Z')"
+    )
+    db_conn.commit()
+    fixture_id = match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Arsenal", "Chelsea", "2026-08-22T15:00:00Z")
+    assert fixture_id == 1  # the only candidate with a comparable kickoff time
+
+
+def test_match_fixture_by_teams_and_kickoff_returns_none_when_all_candidates_have_null_kickoff(db_conn):
+    _seed_two_teams_and_fixture(db_conn, fixture_id=1, kickoff=None)
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (2, 1002, 1, NULL, 1, 2, 0, 0, '2026-08-20T00:00:00Z')"
+    )
+    db_conn.commit()
+    # Can't disambiguate - a legitimate "unmatched" outcome, not a crash.
+    assert match_fixture_by_teams_and_kickoff(db_conn, "api_football", "Arsenal", "Chelsea", "2026-08-22T15:00:00Z") is None

@@ -132,11 +132,17 @@ def _build_chip_strategy_block(conn, squad_ids: set[int]) -> list[dict]:
 
 def _player_odds_block(conn, squad_ids: set[int]) -> list[dict]:
     """Real anytime-goalscorer odds for squad players, straight off
-    `player_odds_live` (`ingestion/player_odds_source.py::sync_player_odds`,
-    already wired into `run_scheduled` with its own per-fixture freshness
-    throttle) - the same real rows `legacy.py::_player_odds_html` renders
-    for the old dashboard, reshaped as JSON so the React ADVANCED screen no
-    longer has to send the reader back there.
+    `player_odds_live`. The-odds-api.com-specific sync that used to populate
+    this table (`ingestion/player_odds_source.py`) was removed 2026-09-13
+    (real root-cause: that vendor's free tier was 500 credits/MONTH, not
+    per day, and its own sync had no throttle - see
+    `ingestion/api_football_odds_source.py`'s module docstring) with no free
+    player-prop replacement found, so this table is real but currently
+    unpopulated - this block naturally renders empty rather than stale/
+    fabricated data until a real source exists again. The same real rows
+    `legacy.py::_player_odds_html` renders for the old dashboard, reshaped
+    as JSON so the React ADVANCED screen no longer has to send the reader
+    back there.
 
     `implied_probability_raw` is exactly that: the bookmaker's own overround
     is NOT removed (a goalscorer market cannot be devigged the same simple

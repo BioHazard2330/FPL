@@ -92,7 +92,7 @@ def _upsert_match_and_odds(conn, season: str, parsed: dict) -> bool:
     # silently created disconnected duplicate market_teams rows for both,
     # never linked to the fpl_team_id the live prediction path resolves
     # through - Dixon-Coles then had zero fitted history for either club, see
-    # CLAUDE.md. odds_live_source.py/understat_source.py already normalize
+    # CLAUDE.md. The odds connectors/understat_source.py already normalize
     # before resolving; this was the one connector that didn't.
     home_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["home_team_name"]))
     away_id = get_or_create_market_team(conn, "football_data", normalize_common_team_name(parsed["away_team_name"]))

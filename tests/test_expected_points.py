@@ -515,6 +515,100 @@ def test_assists_now_respond_to_fixture_difficulty_via_team_goals(db_conn):
     assert weak_fixture.assists == pytest.approx(0.8 * 0.7 * 0.3 * 3.0)
 
 
+def test_market_blended_share_falls_back_without_a_fixture_row(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+
+    assert _market_blended_share(db_conn, 1, None, team_goals=2.0, model_share_per90=0.3) == 0.3
+
+
+def test_market_blended_share_falls_back_when_team_goals_is_not_positive(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+
+    assert _market_blended_share(db_conn, 1, {"id": 1}, team_goals=0.0, model_share_per90=0.3) == 0.3
+
+
+def test_market_blended_share_falls_back_without_a_real_odds_row(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+
+    assert _market_blended_share(db_conn, 1, {"id": 999}, team_goals=2.0, model_share_per90=0.3) == 0.3
+
+
+def _seed_player_odds_row(conn, fixture_id, player_id, implied_raw, implied_devigged):
+    conn.execute(
+        "INSERT INTO player_odds_live (fixture_id, player_id, player_name_raw, source, bookmaker, "
+        "anytime_scorer_price, anytime_no_scorer_price, implied_probability_raw, implied_probability_devigged, "
+        "retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (fixture_id, player_id, "Test Player", "test", "bm", 2.0, 1.5, implied_raw, implied_devigged, "t0"),
+    )
+    conn.commit()
+
+
+def test_market_blended_share_blends_using_the_real_devigged_probability(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+    import math
+
+    _seed_two_team_world(db_conn)  # real fixture id=1 to satisfy the FK
+    _seed_player_odds_row(db_conn, fixture_id=1, player_id=1, implied_raw=0.5, implied_devigged=0.4)
+
+    result = _market_blended_share(db_conn, 1, {"id": 1}, team_goals=2.0, model_share_per90=0.3)
+
+    market_expected_goals = -math.log(1.0 - 0.4)
+    market_share = min(market_expected_goals / 2.0, 1.0)
+    assert result == pytest.approx(0.5 * 0.3 + 0.5 * market_share)
+    assert result != 0.3  # proves the market side actually moved the answer
+
+
+def test_market_blended_share_falls_back_to_the_raw_probability_without_a_devig(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+    import math
+
+    _seed_two_team_world(db_conn)
+    _seed_player_odds_row(db_conn, fixture_id=1, player_id=1, implied_raw=0.5, implied_devigged=None)
+
+    result = _market_blended_share(db_conn, 1, {"id": 1}, team_goals=2.0, model_share_per90=0.3)
+
+    market_expected_goals = -math.log(1.0 - 0.5)
+    market_share = min(market_expected_goals / 2.0, 1.0)
+    assert result == pytest.approx(0.5 * 0.3 + 0.5 * market_share)
+
+
+def test_market_blended_share_falls_back_on_an_out_of_range_probability(db_conn):
+    from fpl_agent.models.expected_points import _market_blended_share
+
+    _seed_two_team_world(db_conn)
+    # A raw probability of 1.0 (edge of the real, honest devig scale) is
+    # deliberately rejected by the `0.0 < probability < 1.0` guard rather
+    # than trusted as a real market-implied certainty.
+    _seed_player_odds_row(db_conn, fixture_id=1, player_id=1, implied_raw=1.0, implied_devigged=None)
+
+    assert _market_blended_share(db_conn, 1, {"id": 1}, team_goals=2.0, model_share_per90=0.3) == 0.3
+
+
+def test_expected_points_uses_the_market_blended_share_when_a_real_odds_row_exists(db_conn):
+    """Proves the wiring in expected_points() itself, not just the pure
+    function - a real player_odds_live row for this exact fixture/player
+    must actually move the final median, not just be present unused."""
+    season, arsenal, _ = _seed_two_team_world(db_conn)
+    baseline = expected_points(db_conn, 1)
+
+    _seed_player_odds_row(db_conn, fixture_id=1, player_id=1, implied_raw=0.5, implied_devigged=0.4)
+
+    blended = expected_points(db_conn, 1)
+    assert blended.median != baseline.median
+
+
+def test_expected_points_window_uses_the_market_blended_share_when_a_real_odds_row_exists(db_conn):
+    from fpl_agent.models.expected_points import expected_points_window
+
+    _seed_two_team_world(db_conn)
+    baseline = expected_points_window(db_conn, 1, n_gw=1)
+
+    _seed_player_odds_row(db_conn, fixture_id=1, player_id=1, implied_raw=0.5, implied_devigged=0.4)
+
+    blended = expected_points_window(db_conn, 1, n_gw=1)
+    assert blended.total_median != baseline.total_median
+
+
 def test_cards_falls_back_to_prior_season_understat_data(db_conn):
     """Real gap this closes: player_season_history (season_shrunk_rate's
     source) carries no cards field at all - confirmed against the schema -

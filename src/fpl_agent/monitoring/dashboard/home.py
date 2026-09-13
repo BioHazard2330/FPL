@@ -159,8 +159,8 @@ _NEWS_SOURCE_NAMES = {"bbc_sport_rss", "bbc_sport_football_all_rss", "sky_sports
 # isn't a DATA freshness problem for this strip.
 _SOURCE_IMPACT = {
     "fpl_api_bootstrap": "Player prices/stats", "fpl_api_fixtures": "Fixtures",
-    "fpl_api_my_team": "Squad sync", "livefpl": "Rank", "odds_api": "Match odds",
-    "odds_api_player_props": "Player odds", "understat": "xG/xA data",
+    "fpl_api_my_team": "Squad sync", "livefpl": "Rank", "api_football": "Match odds",
+    "understat": "xG/xA data",
     "understat_cross_league": "Cross-league xG data", "fotmob": "Live match data",
     "football_data": "Fixture results", "fpl_elite_panel": "Elite-manager panel",
     "fpl_live_rank_sample": "Rank sampling",
@@ -187,7 +187,7 @@ _SOURCE_CRITICALITY = {
     "fpl_api_bootstrap": "critical", "fpl_api_fixtures": "critical", "fpl_api_my_team": "critical",
     "understat": "degraded", "understat_cross_league": "degraded", "fotmob": "degraded",
     "fantasyfootballscout_team_news": "degraded",
-    "livefpl": "non_critical", "odds_api": "non_critical", "odds_api_player_props": "non_critical",
+    "livefpl": "non_critical", "api_football": "non_critical",
     "football_data": "non_critical", "fpl_elite_panel": "non_critical", "fpl_live_rank_sample": "non_critical",
     "fantasyfootballpundit_start_percent": "non_critical",
 }

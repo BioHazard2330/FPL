@@ -198,6 +198,53 @@ def resolve_player_id(conn: sqlite3.Connection, source: str, source_name: str, t
     return matched_id
 
 
+def match_fixture_by_teams_and_kickoff(
+    conn: sqlite3.Connection, source: str, home_team_name: str, away_team_name: str, commence_time: str,
+) -> int | None:
+    """Real team-name(s) + a real commence/kickoff timestamp -> this
+    project's own `fixtures.id`, for any external odds-style source that
+    identifies a match by team names rather than a shared fixture id.
+    Generalized 2026-09-13 from `odds_live_source.py`'s own (now-removed)
+    `match_fixture` - identical logic, just parameterized on `source` so a
+    second odds connector (`api_football_odds_source.py`) doesn't have to
+    duplicate it, matching this module's own stated "crosswalks go through
+    market_identity.py's shared normalizer" convention."""
+    home_market_id = get_or_create_market_team(conn, source, normalize_common_team_name(home_team_name))
+    away_market_id = get_or_create_market_team(conn, source, normalize_common_team_name(away_team_name))
+
+    home_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (home_market_id,)).fetchone()
+    away_row = conn.execute("SELECT fpl_team_id FROM market_teams WHERE id=?", (away_market_id,)).fetchone()
+    if home_row is None or away_row is None or home_row["fpl_team_id"] is None or away_row["fpl_team_id"] is None:
+        return None
+
+    candidates = conn.execute(
+        "SELECT id, kickoff_time FROM fixtures WHERE team_h=? AND team_a=? AND finished=0",
+        (home_row["fpl_team_id"], away_row["fpl_team_id"]),
+    ).fetchall()
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]["id"]
+
+    # Rearranged/postponed fixtures have kickoff_time IS NULL - can't be compared to
+    # commence_time, so they're excluded from disambiguation rather than crashing on
+    # None.replace(). Zero comparable candidates left is a legitimate "can't
+    # disambiguate" outcome (counted as unmatched by the caller), not a crash.
+    dated_candidates = [row for row in candidates if row["kickoff_time"] is not None]
+    if not dated_candidates:
+        return None
+
+    from datetime import datetime
+
+    target = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+
+    def _delta(row):
+        kt = datetime.fromisoformat(row["kickoff_time"].replace("Z", "+00:00"))
+        return abs((kt - target).total_seconds())
+
+    return min(dated_candidates, key=_delta)["id"]
+
+
 def resolve_player_id_with_method(
     conn: sqlite3.Connection, source: str, source_name: str, team_id: int | None = None,
 ) -> tuple[int, str] | None:

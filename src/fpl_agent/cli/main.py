@@ -70,8 +70,7 @@ from fpl_agent.ingestion.qualitative_analysis import (
 from fpl_agent.ingestion.analysis_queue import list_pending_jobs, mark_job_done_for_match_phase
 from fpl_agent.models.match_discovery import discover_and_register_matches
 from fpl_agent.optimization.post_gw_pipeline import maybe_run_post_gw_pipeline
-from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
-from fpl_agent.ingestion.player_odds_source import PlayerOddsFetchError, sync_player_odds
+from fpl_agent.ingestion.api_football_odds_source import ApiFootballOddsFetchError, sync_api_football_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
 from fpl_agent.ingestion.understat_source import backfill_understat
 from fpl_agent.logging_setup import setup_logging
@@ -340,41 +339,28 @@ def sync_news_cmd(limit: int | None):
 
 
 @cli.command("sync-live-odds")
-def sync_live_odds_cmd():
-    """Fetch live pre-match odds for upcoming fixtures (the-odds-api.com, free
-    tier, requires ODDS_API_KEY - see .env.example) and match them to FPL
-    fixtures. Separate from `fpl sync`, opt-in."""
+@click.option("--force", is_flag=True, help="bypass the real app_meta freshness gate and sync now")
+def sync_live_odds_cmd(force: bool):
+    """Fetch live pre-match odds for upcoming EPL fixtures (api-football.com,
+    free tier, requires API_FOOTBALL_KEY - see .env.example) and match them to
+    FPL fixtures. Real global cadence gate (`config/freshness.yaml`'s
+    `api_football_odds` key) - already wired into `fpl run-scheduled`
+    automatically; this command is for manual/debug use, or `--force` to
+    bypass the gate."""
     conn = get_connection()
     try:
-        result = sync_live_odds(conn)
-    except OddsLiveFetchError as e:
+        result = sync_api_football_odds(conn, force=force)
+    except ApiFootballOddsFetchError as e:
         click.echo(f"sync-live-odds failed: {e}", err=True)
         raise SystemExit(1) from e
     finally:
         conn.close()
-    click.echo(f"fetched          {result['fetched']}")
+    if result["skipped"]:
+        click.echo(f"skipped          {result['reason']}")
+        return
+    click.echo(f"dates queried    {result['dates_queried']}")
     click.echo(f"matched          {result['matched']}")
     click.echo(f"unmatched        {result['unmatched']}")
-    click.echo(f"failed           {result['failed']}")
-
-
-@cli.command("sync-player-odds")
-def sync_player_odds_cmd():
-    """Fetch real per-player anytime-goalscorer odds for the tracked squad's own
-    teams' upcoming fixtures (the-odds-api.com, free tier, requires ODDS_API_KEY).
-    Real, per-fixture throttled (4h freshness gate) - already wired into `fpl
-    run-scheduled` automatically; this command is for manual/debug use."""
-    conn = get_connection()
-    tracked_squad_ids = resolve_tracked_squad_ids(conn)
-    try:
-        result = sync_player_odds(conn, tracked_squad_ids)
-    except PlayerOddsFetchError as e:
-        click.echo(f"sync-player-odds failed: {e}", err=True)
-        raise SystemExit(1) from e
-    finally:
-        conn.close()
-    click.echo(f"fetched (fresh)  {result['fetched']}")
-    click.echo(f"skipped (fresh)  {result['skipped']}")
     click.echo(f"failed           {result['failed']}")
 
 
@@ -1662,41 +1648,28 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled kickoff reminder detection failed - not fatal to the sync itself")
 
-    # Live pre-match odds (dashboard-overhaul pass, 2026-08-22) - was a
-    # standalone/manual-only command (`fpl sync-live-odds`) despite feeding
-    # the real Team Odds panel; wired in here so that panel updates itself
-    # automatically, same "no manual command required" bar every other
-    # source in this project already meets. One bulk call covers every
-    # upcoming fixture (2 real credits per CLAUDE.md's own documented cost)
-    # - cheap enough for the regular ~30min cadence, unlike the per-event
-    # player-odds sync below. Non-fatal (no key configured, or a real
-    # network failure, must never abort the sync).
+    # Live pre-match odds (dashboard-overhaul pass, 2026-08-22; re-platformed
+    # 2026-09-13 from the-odds-api.com to api-football.com after the former's
+    # real free tier - 500 CREDITS PER MONTH, not per day - was blown through
+    # in days by this exact call site having no throttle at all; see
+    # `ingestion/api_football_odds_source.py`'s own module docstring for the
+    # full account). `sync_api_football_odds` gates itself internally (a real
+    # `app_meta`-backed cadence check, `config/freshness.yaml`'s
+    # `api_football_odds` key), so it's safe to call on every tick - most
+    # ticks are a real no-op. Non-fatal (no key configured, or a real network
+    # failure, must never abort the sync). The real anytime-goalscorer
+    # PLAYER-PROP sync that used to run here has no replacement free source
+    # (disclosed gap, see the module docstring) and was removed rather than
+    # left pointed at a dead vendor.
     try:
-        odds_result = sync_live_odds(conn)
-        logger.info(
-            "run-scheduled live-odds sync: %d matched, %d unmatched, %d failed",
-            odds_result["matched"], odds_result["unmatched"], odds_result["failed"],
-        )
-    except Exception:
-        logger.exception("run-scheduled live-odds sync failed - not fatal to the sync itself")
-
-    # Real per-event anytime-goalscorer odds (dashboard-overhaul pass,
-    # 2026-08-22) - unlike the bulk match-odds call above, this needs one
-    # real network request PER FIXTURE (live-verified: 1 credit/event) -
-    # syncing every ~30min tick for even a handful of squad-relevant
-    # fixtures would burn a free-tier 500-credit/month budget in about a
-    # day. `sync_player_odds` throttles itself internally (a real
-    # retrieved_at freshness gate per fixture, checked before any network
-    # call), so it's safe to call every tick - most ticks it's a real no-op.
-    try:
-        player_odds_result = sync_player_odds(conn, tracked_squad_ids)
-        if player_odds_result["fetched"]:
+        odds_result = sync_api_football_odds(conn)
+        if not odds_result["skipped"]:
             logger.info(
-                "run-scheduled player-odds sync: %d fetched, %d skipped (fresh), %d failed",
-                player_odds_result["fetched"], player_odds_result["skipped"], player_odds_result["failed"],
+                "run-scheduled live-odds sync: %d matched, %d unmatched, %d failed",
+                odds_result["matched"], odds_result["unmatched"], odds_result["failed"],
             )
     except Exception:
-        logger.exception("run-scheduled player-odds sync failed - not fatal to the sync itself")
+        logger.exception("run-scheduled live-odds sync failed - not fatal to the sync itself")
 
     # Solio Analytics independent-model benchmark (2026-08-27, external-
     # model-comparison pass) - self-throttled to Solio's own ~4h cadence via

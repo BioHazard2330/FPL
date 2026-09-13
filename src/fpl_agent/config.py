@@ -34,8 +34,14 @@ def load_dotenv() -> None:
             os.environ[key] = value
 
 
-def get_odds_api_key() -> str | None:
-    return os.environ.get("ODDS_API_KEY")
+def get_api_football_key() -> str | None:
+    """Real free api-football.com/api-sports.io key (100 requests/day, no
+    cost) - replaces the removed `ODDS_API_KEY`/the-odds-api.com integration
+    2026-09-13 (that vendor's real free tier turned out to be 500 credits
+    PER MONTH, not per day, and the old connector never throttled itself at
+    all - see `ingestion/api_football_odds_source.py`'s own module
+    docstring for the full account)."""
+    return os.environ.get("API_FOOTBALL_KEY")
 
 
 def get_telegram_config() -> tuple[str, str] | None:

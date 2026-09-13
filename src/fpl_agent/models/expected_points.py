@@ -74,6 +74,7 @@ Three interface notes, all deliberate:
   core_expected_points()'s own docstring - it states the boundary exactly.
 """
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -192,6 +193,70 @@ def _confirmed_bench_probs(
     partial = min(probs.p_partial, _CONFIRMED_BENCHED_PARTIAL_CAP)
     zero = max(0.0, 1.0 - full - partial)
     return MinutesBucketProbabilities(zero, partial, full, "confirmed_benched_override")
+
+
+# Real, disclosed weight (2026-09-13, "make the optimizer smarter" research
+# pass) on the model's own player_share_per90; (1 - weight) on the real
+# devigged anytime-goalscorer market probability for that SAME specific
+# fixture, when one exists. Mirrors models/blend.py::DEFAULT_BLEND_WEIGHT's
+# own real reasoning ("the market reacts to team news faster than a goals-
+# history model can") at player level instead of team level, and its own
+# disclosed status: a real, sensible default, not yet backtest-tuned (no
+# multi-season archive of real anytime-scorer odds exists to tune it
+# against - the-odds-api.com-based ingestion started 2026-08-22; that
+# connector was removed 2026-09-13 with no free player-prop replacement
+# found (see ingestion/api_football_odds_source.py's own docstring), so
+# this table is real but currently unpopulated - this blend degrades to the
+# unchanged model share, exactly as designed, until a real source exists).
+_PLAYER_ODDS_BLEND_WEIGHT = 0.5
+
+
+def _market_blended_share(
+    conn: sqlite3.Connection, player_id: int, fixture_row, team_goals: float, model_share_per90: float,
+) -> float:
+    """Real per-fixture blend of the model's own player_share_per90 (this
+    player's share of their team's own projected goals) with a real,
+    devigged anytime-goalscorer market probability for THIS SPECIFIC
+    player+fixture - the market reacts to real-time team news/role/form
+    information (an explicit new-signing debut, a rumoured rest, a
+    confirmed penalty-taker change) far faster than a season-cumulative
+    historical share can. Falls back to the model's own share, completely
+    UNCHANGED, whenever no real odds row exists for this exact player and
+    fixture (the common case right now - no free anytime-goalscorer source
+    exists after the-odds-api.com was removed 2026-09-13, see CLAUDE.md's
+    known-blockers entry - this function stays ready for whatever real
+    source eventually populates `player_odds_live` again).
+
+    Converts the real devigged P(scores 1+) into an implied expected-goals
+    figure via the same real Poisson inversion `models/blend.py::
+    market_implied_total_goals` already uses at team level (P(X>=1) =
+    1 - exp(-lambda) => lambda = -ln(1-p)), divides by this fixture's own
+    team_goals to recover an implied SHARE (dimensionally consistent with
+    `model_share_per90`), then blends via `_PLAYER_ODDS_BLEND_WEIGHT`.
+    `implied_probability_devigged` is preferred when available (a real,
+    proper per-player Yes/No devig - see
+    `models/odds_devig.py::devig_two_outcome_prop`); falls back to the raw
+    vigged `implied_probability_raw` only when no real "No" price was ever
+    returned for this player - honestly less reliable, but still real
+    market signal rather than nothing."""
+    fixture_id = fixture_row["id"] if fixture_row is not None else None
+    if fixture_id is None or team_goals <= 0:
+        return model_share_per90
+    row = conn.execute(
+        "SELECT implied_probability_devigged, implied_probability_raw FROM player_odds_live "
+        "WHERE fixture_id=? AND player_id=? ORDER BY retrieved_at DESC LIMIT 1",
+        (fixture_id, player_id),
+    ).fetchone()
+    if row is None:
+        return model_share_per90
+    probability = row["implied_probability_devigged"]
+    if probability is None:
+        probability = row["implied_probability_raw"]
+    if probability is None or not (0.0 < probability < 1.0):
+        return model_share_per90
+    market_expected_goals = -math.log(1.0 - probability)
+    market_share = min(market_expected_goals / team_goals, 1.0)
+    return _PLAYER_ODDS_BLEND_WEIGHT * model_share_per90 + (1 - _PLAYER_ODDS_BLEND_WEIGHT) * market_share
 
 
 # Keyed by (id(conn), as_of_date); the connection itself is stored alongside the
@@ -1240,11 +1305,17 @@ def expected_points(
 
     # Per-fixture rates, overridden only when THAT SPECIFIC fixture's own
     # event has a real confirmed-benched teamsheet - see
-    # _confirmed_bench_probs's own docstring. Falls back to the shared
-    # `rates` for the blank-gameweek case (no real fixture to check).
+    # _confirmed_bench_probs's own docstring - and/or a real devigged
+    # anytime-goalscorer market probability exists for THAT SPECIFIC
+    # player+fixture - see _market_blended_share's own docstring. Falls
+    # back to the shared `rates` for the blank-gameweek case (no real
+    # fixture to check).
     fixture_rates = [
-        {**rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, f, probs)}
-        for f in fixtures
+        {
+            **rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, f, probs),
+            "player_share_per90": _market_blended_share(conn, player_id, f, goals_pairs[i][0], rates["player_share_per90"]),
+        }
+        for i, f in enumerate(fixtures)
     ] or [rates]
 
     if from_event is not None and len(goals_pairs) > 1:
@@ -1367,9 +1438,11 @@ def expected_points_window(
     for i, fixture in enumerate(fixtures):
         team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
         # Only the nearest fixture(s) in a multi-GW window could plausibly
-        # have a real confirmed teamsheet yet - see _confirmed_bench_probs.
+        # have a real confirmed teamsheet, or real anytime-scorer odds,
+        # yet - see _confirmed_bench_probs/_market_blended_share.
         fixture_rates = {
             **rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, fixture, rates["minutes_probs"]),
+            "player_share_per90": _market_blended_share(conn, player_id, fixture, team_goals, rates["player_share_per90"]),
         }
         breakdowns.append(_match_components(
             conn, fixture_rates, team_goals, opp_goals, damping=_ROTATION_DAMPING_PER_EXTRA_MATCH ** i

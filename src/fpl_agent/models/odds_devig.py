@@ -37,3 +37,20 @@ def devig_totals_odds(over_odds: float, under_odds: float) -> GoalsTotalProbabil
     raw_over, raw_under = 1 / over_odds, 1 / under_odds
     overround = raw_over + raw_under
     return GoalsTotalProbabilities(raw_over / overround, raw_under / overround)
+
+
+def devig_two_outcome_prop(yes_odds: float, no_odds: float | None) -> tuple[float, float | None]:
+    """Real per-player two-outcome devig (e.g. a real anytime-goalscorer
+    Yes/No price pair) - identical proportional-overround math to
+    `devig_totals_odds` above (one player's own Yes/No is a genuine
+    complementary pair, same shape as an Over/Under line), reused rather
+    than duplicated when this was folded in from the-odds-api.com-specific
+    `player_odds_source.py` (removed 2026-09-13 along with that dead
+    vendor). Honestly returns `(raw, None)` when no real complementary
+    price exists to devig against, rather than fabricating a devig from one
+    side alone - the one real difference from `devig_totals_odds`, which
+    requires both sides."""
+    raw = round(1 / yes_odds, 4)
+    if not no_odds:
+        return raw, None
+    return raw, round(devig_totals_odds(yes_odds, no_odds).over, 4)
