@@ -22,7 +22,11 @@ def render_injuries_html(conn, limit: int = 20) -> str:
     for a in availabilities:
         info = lookup.get(a.player_id)
         badge_html = _crest_html(info["team_code"], a.team, css_class="injury-badge") if info else ""
-        chance = a.chance_of_playing_this_round
+        # Real fix (2026-09-13) - same next-round-first priority classify()
+        # itself now uses (models/availability.py), so this never shows a
+        # stale, already-cleared this-round percentage next to a real
+        # LIKELY UNAVAILABLE/DOUBTFUL classification derived from next.
+        chance = a.chance_of_playing_next_round if a.chance_of_playing_next_round is not None else a.chance_of_playing_this_round
         chance_bit = f"{chance}% chance of playing" if chance is not None else _esc(a.classification)
         sev_cls = _SEVERITY_CLASS.get(a.classification, "monitor")
         updated = f"Updated {_esc(_relative_time(a.news_added))}" if a.news_added else ""

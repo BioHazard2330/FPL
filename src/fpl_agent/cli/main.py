@@ -3158,7 +3158,11 @@ def injuries():
         click.echo("no availability concerns")
         return
     for p in players:
-        chance = p.chance_of_playing_this_round
+        # Real fix (2026-09-13) - same next-round-first priority classify()
+        # itself now uses, so the displayed percentage never contradicts
+        # the classification text next to it (e.g. "LIKELY UNAVAILABLE"
+        # next to a stale, already-cleared this-round 100%).
+        chance = p.chance_of_playing_next_round if p.chance_of_playing_next_round is not None else p.chance_of_playing_this_round
         chance_str = f"{chance}%" if chance is not None else "?"
         click.echo(f"{p.web_name:<20} {p.team:<4} {p.classification:<22} chance={chance_str:<5} {p.news or ''}")
 
