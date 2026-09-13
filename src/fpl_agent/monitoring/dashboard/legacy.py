@@ -1690,10 +1690,10 @@ def _player_odds_html(conn: sqlite3.Connection, squad_ids: set[int]) -> str:
     """Player Odds - real anytime-goalscorer odds (dashboard-overhaul pass,
     2026-08-22, direct user request). Reads `player_odds_live`, real but
     currently unpopulated: the-odds-api.com-specific sync that used to feed
-    this table was removed 2026-09-13 (that vendor's real free tier was 500
-    credits/MONTH, not per day, with no throttle at this call site - see
-    `ingestion/api_football_odds_source.py`'s module docstring) and no free
-    player-prop replacement was found, so this renders the honest empty
+    this table was removed 2026-09-13 with no free player-prop replacement
+    found after real research (see `ingestion/odds_live_source.py`'s module
+    docstring for the team-level odds vendor history, and CLAUDE.md's
+    known-blockers entry), so this renders the honest empty
     state below rather than stale/fabricated rows. `implied_probability_raw`
     is the bookmaker's own vigged price; `implied_probability_devigged`
     (`models/odds_devig.py::devig_two_outcome_prop`) is the real, proper

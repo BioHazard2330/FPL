@@ -34,13 +34,20 @@ def load_dotenv() -> None:
             os.environ[key] = value
 
 
+def get_odds_api_key() -> str | None:
+    return os.environ.get("ODDS_API_KEY")
+
+
 def get_api_football_key() -> str | None:
-    """Real free api-football.com/api-sports.io key (100 requests/day, no
-    cost) - replaces the removed `ODDS_API_KEY`/the-odds-api.com integration
-    2026-09-13 (that vendor's real free tier turned out to be 500 credits
-    PER MONTH, not per day, and the old connector never throttled itself at
-    all - see `ingestion/api_football_odds_source.py`'s own module
-    docstring for the full account)."""
+    """Real free api-football.com key - NOT wired into any live sync
+    (2026-09-13: their free plan hard-restricts ALL data, not just odds, to
+    seasons 2022-2024 - confirmed live, useless for this project's real
+    current-season need - see `ingestion/odds_live_source.py`'s own module
+    docstring for the full account of that dead end). Kept here, unused, as
+    a real, disclosed possible future data point: those 2022-2024 seasons
+    ARE real historical odds this project's own backtesting modules
+    (`backtesting/season_backtest.py`, `team_strength_backtest.py`) could
+    someday use - not built, since nothing in this project needs it yet."""
     return os.environ.get("API_FOOTBALL_KEY")
 
 

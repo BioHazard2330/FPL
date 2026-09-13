@@ -175,7 +175,7 @@ def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_sna
         },
         "source_freshness": [
             {"source": "bbc_sport_rss", "last_success": "2026-08-28T11:00:00+00:00", "degraded": False},
-            {"source": "api_football", "last_success": "2026-08-27T00:00:00+00:00", "degraded": True},
+            {"source": "odds_api", "last_success": "2026-08-27T00:00:00+00:00", "degraded": True},
         ],
     }
     result = home.render_hero(
@@ -192,13 +192,13 @@ def test_render_hero_system_live_strip_uses_real_server_rendered_values_when_sna
     assert "computed" in result
     # Real readable, severity-classified "Data health" summary (2026-08-29
     # forensic redesign) - never a raw connector-name dump, and never one
-    # flat "N issues" count regardless of severity. api_football is real,
+    # flat "N issues" count regardless of severity. odds_api is real,
     # documented comparison-layer-only data (CLAUDE.md's own "never
     # overrides the primary recommendation" rule) - classified non_critical,
     # not CRITICAL.
     assert "Data health &middot; DEGRADED (non-critical)" in result
     assert "Match odds" in result
-    assert "(api_football)" in result
+    assert "(odds_api)" in result
     assert "no current FPL decision is affected" in result
 
 

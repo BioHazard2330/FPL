@@ -205,8 +205,9 @@ def _confirmed_bench_probs(
 # multi-season archive of real anytime-scorer odds exists to tune it
 # against - the-odds-api.com-based ingestion started 2026-08-22; that
 # connector was removed 2026-09-13 with no free player-prop replacement
-# found (see ingestion/api_football_odds_source.py's own docstring), so
-# this table is real but currently unpopulated - this blend degrades to the
+# found (see ingestion/odds_live_source.py's own docstring for the team-
+# level odds vendor history), so this table is real but currently
+# unpopulated - this blend degrades to the
 # unchanged model share, exactly as designed, until a real source exists).
 _PLAYER_ODDS_BLEND_WEIGHT = 0.5
 
