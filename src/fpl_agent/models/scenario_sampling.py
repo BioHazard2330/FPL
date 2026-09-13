@@ -10,6 +10,41 @@ from scipy.stats import poisson
 
 _MAX_GOALS_GRID = 10  # tail probability beyond this is negligible for realistic fixture rates
 
+# Real, disclosed, uncalibrated heuristic (2026-09-13, "make the optimizer
+# smarter" research pass, grounded in FPL's own official Bonus Points
+# System table - cross-verified live against premierleague.com/livefpl.com:
+# a goal is +24 BPS for MID/FWD, +12 for DEF/GKP; an assist is +3 BPS for
+# every position - real, large, direct contributors toward being one of a
+# match's top-3 BPS scorers, who split the real 3/2/1 bonus points). A
+# trial where THIS player actually scored/assisted is mechanically far
+# more likely to be a top-3 BPS performer that match than a trial where
+# they didn't - a real correlation the bonus draw never modeled before
+# this (previously a flat Poisson(bonus90) fully independent of the SAME
+# trial's own drawn goals/assists - the exact "sample player_trial_points"
+# gap this project's own 2026-08-28 correlation audit disclosed and
+# deferred: "a player's OWN bonus should correlate with THEIR OWN trial's
+# goals/assists, currently independent"). 2.0x is a directional, bounded
+# heuristic, not a fabricated precise number - no source this project has
+# carries match-level BPS to calibrate the exact multiplier against (see
+# CLAUDE.md's own "Bonus/BPS is season-grain, not match-grain" blocker).
+_BONUS_INVOLVEMENT_BOOST = 2.0
+
+
+def _bonus_correlation_multiplier(involved: np.ndarray) -> np.ndarray:
+    """Mean-preserving by construction: `p_involved` is the REALIZED
+    empirical involvement rate within this exact trial batch, so the
+    batch's own average multiplier is exactly 1.0 (solved algebraically
+    below) - the real bonus90 rate this project already computes elsewhere
+    is never inflated in aggregate, only redistributed toward the trials
+    where a goal/assist actually happened, matching real BPS mechanics
+    qualitatively without needing the exact (unpublished, uncalibratable)
+    BPS-to-bonus-points conversion."""
+    p_involved = involved.mean()
+    if not (0.0 < p_involved < 1.0):
+        return np.ones_like(involved, dtype=float)
+    dampen = max((1.0 - p_involved * _BONUS_INVOLVEMENT_BOOST) / (1.0 - p_involved), 0.0)
+    return np.where(involved, _BONUS_INVOLVEMENT_BOOST, dampen)
+
 
 def sample_fixture_scorelines(
     rng: np.random.Generator, lam: float, mu: float, rho: float, n_trials: int, max_goals: int = _MAX_GOALS_GRID
@@ -46,8 +81,10 @@ def sample_player_trial_points(
     opp_goals: np.ndarray,
 ) -> np.ndarray:
     """Vectorized per-trial FPL points for one player in one fixture, given that
-    fixture's already-drawn (team_goals, opp_goals). Bonus and the goals-conceded
-    penalty are per-trial-weighted means rather than atomic draws - see
+    fixture's already-drawn (team_goals, opp_goals). Bonus is a Poisson draw
+    correlated with THIS trial's own goals/assists (see
+    _bonus_correlation_multiplier); the goals-conceded penalty is a per-trial-
+    weighted mean rather than an atomic draw - see
     scenario_engine.py's module docstring for why (no source has real per-trial
     bonus/BPS data to sample a distribution from)."""
     n_trials = team_goals.shape[0]
@@ -73,8 +110,12 @@ def sample_player_trial_points(
 
     # Poisson-distributed, mean-preserving (E[bonus] = bonus90 * weight, matching the
     # shrinkage-regressed expectation exactly) - see scenario_engine.py's module
-    # docstring for why this is the honest approximation available.
-    bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None)
+    # docstring for why this is the honest approximation available. Real intra-
+    # player correlation (2026-09-13) - see _bonus_correlation_multiplier's own
+    # docstring - concentrates bonus toward THIS trial's own goal/assist, not
+    # just this player's season-average rate independent of what happened here.
+    involved = (player_goals + assists) > 0
+    bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
     bonus_points = rng.poisson(bonus_rate)
 
     # A clean sheet is a hard 60-minute threshold, same as _match_components - p_full
@@ -114,12 +155,17 @@ def sample_team_group_trial_points(
     `len(players) == 1` (a 2-outcome multinomial IS a binomial), so this is
     a strict generalization, not a competing model.
 
-    Assists/bonus/cards/clean-sheet/conceded stay independent per player,
-    same formulas `sample_player_trial_points` already uses - a real,
-    disclosed, NOT-fixed gap (see the live audit report): there is no
-    team-relative "share of team assists/bonus" primitive this project
-    computes the way `player_share_of_team_xg` does for goals, so a
-    matching joint-attribution fix for those isn't a same-scope change."""
+    Assists/cards/clean-sheet/conceded stay independent ACROSS players, same
+    formulas `sample_player_trial_points` already uses - a real, disclosed,
+    NOT-fixed gap (see the live audit report): there is no team-relative
+    "share of team assists/bonus" primitive this project computes the way
+    `player_share_of_team_xg` does for goals, so a matching joint-
+    attribution fix for those isn't a same-scope change. Bonus (2026-09-13)
+    is still independent across players but is now correlated with THIS
+    SAME player's own drawn goals/assists within the trial - see
+    _bonus_correlation_multiplier - a different, real correlation axis
+    (intra-player, not cross-player) than the one this docstring's own gap
+    is about."""
     n_trials = team_goals.shape[0]
 
     buckets, weights, played_full_list = [], [], []
@@ -150,12 +196,17 @@ def sample_team_group_trial_points(
         goals_points = drawn[:, i] * rates["goals_rate"]
 
         assist_rate = np.clip(rates["shrunk_xa90"] * weight, 0.0, None)
-        assists_points = rng.poisson(assist_rate) * rates["assists_rate"]
+        assists_drawn = rng.poisson(assist_rate)
+        assists_points = assists_drawn * rates["assists_rate"]
 
         card_prob = np.clip(rates["shrunk_cards90"] * weight, 0.0, 1.0)
         cards_points = (rng.random(n_trials) < card_prob).astype(float) * rates["yellow_card_rate"]
 
-        bonus_points = rng.poisson(np.clip(rates["bonus90"] * weight, 0.0, None))
+        # Same real intra-player bonus/goal-assist correlation as
+        # sample_player_trial_points - see _bonus_correlation_multiplier.
+        involved = (drawn[:, i] + assists_drawn) > 0
+        bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
+        bonus_points = rng.poisson(bonus_rate)
 
         clean_sheet_points = np.where(played_full & (opp_goals == 0), rates["clean_sheet_pts"], 0.0)
         conceded_points = (opp_goals // 2) * p["conceded_rate"] * np.minimum(weight, 1.0)

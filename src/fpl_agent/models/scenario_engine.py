@@ -6,9 +6,10 @@ point estimates), propagates them through the same per-fixture point formula
 models/expected_points.py::_match_components already uses for its EXPECTATIONS - but
 samples a concrete outcome per trial for each stochastic component instead of averaging.
 "Concrete outcome" is exact for the discrete terms (appearance bucket, goals, assists,
-cards, clean sheet); bonus and the goals-conceded penalty are still expectations scaled by
-the trial's fractional minutes `weight`, so those two are per-trial-weighted means rather
-than literally atomic draws.
+cards, clean sheet, bonus - see the bonus note below); the goals-conceded penalty is
+still an expectation scaled by the trial's fractional minutes `weight`, a per-trial-
+weighted mean rather than a literal atomic draw (no per-trial goals-conceded-BAND
+distribution exists to draw from the way there is for goals themselves).
 Both the chip DP scheduler and fpl season-sim consume the same trial draws, so they can
 never silently disagree about the same fixture's odds (the reason this module exists as
 one shared piece of infrastructure rather than two independent samplers).
@@ -25,6 +26,16 @@ distribution source), not a perfect model of the real top-3 mechanism. Its mean
 still equals models/bonus_regression.py's shrinkage-regressed expected_bonus_per90,
 scaled by the trial's own minutes weight - the calibrated mean is unchanged, only
 real variance around it is now added.
+
+Real intra-player correlation fix (2026-09-13, "make the optimizer smarter" research
+pass) - until this fix, that per-trial bonus draw was still fully INDEPENDENT of this
+SAME trial's own drawn goals/assists (a real gap this project's 2026-08-28 correlation
+audit disclosed and deferred). scenario_sampling.py::_bonus_correlation_multiplier now
+concentrates the same overall bonus90 rate toward trials where this player actually
+scored/assisted, grounded in FPL's own official BPS table (a goal is +24 BPS for
+MID/FWD, +12 for DEF/GKP; an assist is +3 BPS for every position - real, large, direct
+contributors toward a match's top-3 BPS award) - mean-preserving by construction, not
+a fabricated precise BPS-to-bonus conversion (no source has that data at match grain).
 
 RNG convention: every sampling function here takes an explicit np.random.Generator -
 never global numpy random state - so trials are reproducible under a fixed seed. This

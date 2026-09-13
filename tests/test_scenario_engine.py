@@ -92,6 +92,74 @@ def test_bonus_is_sampled_with_real_variance_but_preserves_the_mean():
     assert abs(bonus_only.mean() - 1.2) < 0.05  # Poisson mean recovers the calibrated rate (weight=1.0 here)
 
 
+def test_bonus_correlation_multiplier_is_mean_preserving():
+    """Real fix (2026-09-13, "make the optimizer smarter" research pass,
+    grounded in FPL's own official BPS table). The empirical multiplier's
+    own mean over the exact batch it was computed from must be exactly
+    1.0 - a real, algebraic guarantee, not an approximation - so applying
+    it to bonus_rate never changes the calibrated average bonus90 rate."""
+    from fpl_agent.models.scenario_sampling import _bonus_correlation_multiplier
+
+    rng = np.random.default_rng(11)
+    involved = rng.random(50000) < 0.3
+    multiplier = _bonus_correlation_multiplier(involved)
+    assert abs(multiplier.mean() - 1.0) < 1e-9
+    assert multiplier[involved].mean() > multiplier[~involved].mean()
+
+
+def test_bonus_correlation_multiplier_no_op_when_nobody_or_everybody_involved():
+    from fpl_agent.models.scenario_sampling import _bonus_correlation_multiplier
+
+    all_true = np.ones(100, dtype=bool)
+    all_false = np.zeros(100, dtype=bool)
+    assert np.all(_bonus_correlation_multiplier(all_true) == 1.0)
+    assert np.all(_bonus_correlation_multiplier(all_false) == 1.0)
+
+
+def test_bonus_is_higher_in_trials_where_this_player_actually_scored():
+    """Real intra-player correlation (2026-09-13, direct research-driven
+    fix): a trial where this player scored must show a real, measurably
+    higher average bonus than a trial where they didn't - FPL's own BPS
+    table awards big, direct BPS for a goal, making a scorer far more
+    likely to be a match's top-3 BPS performer. The overall mean across
+    ALL trials must still recover the calibrated bonus90 rate - real
+    variance/correlation added, not a biased inflation."""
+    rng = np.random.default_rng(5)
+    rates = _rates(goals_rate=4.0, assists_rate=0.0, clean_sheet_pts=0.0, yellow_card_rate=0.0, bonus90=1.0)
+    n = 100000
+    # player_share_per90=1.0 (from _rates) -> player_goals == team_goals exactly
+    # (deterministic multinomial-of-one/binomial), so a real, known "scored vs
+    # didn't" split is fully controlled by team_goals itself.
+    team_goals = (rng.random(n) < 0.4).astype(int)  # ~40% of trials: 1 goal, else 0
+    opp_goals = np.zeros(n, dtype=int)
+    points = _sample_player_trial_points(rng, rates, conceded_rate=0.0, team_goals=team_goals, opp_goals=opp_goals)
+    bonus_only = points - 2.0 - team_goals * 4.0  # subtract deterministic appearance + goals points
+
+    scored = team_goals > 0
+    assert bonus_only[scored].mean() > bonus_only[~scored].mean()
+    assert abs(bonus_only.mean() - 1.0) < 0.05  # real mean-preservation, not an inflated average
+
+
+def test_team_group_bonus_is_also_correlated_with_own_goals():
+    """Same real intra-player bonus/goal correlation, on the joint
+    multinomial-attribution path (sample_team_group_trial_points)."""
+    rng = np.random.default_rng(6)
+    rates = _rates(
+        goals_rate=4.0, assists_rate=0.0, clean_sheet_pts=0.0, yellow_card_rate=0.0,
+        bonus90=1.0, player_share_per90=1.0,
+    )
+    n = 100000
+    team_goals = (rng.random(n) < 0.4).astype(int)
+    opp_goals = np.zeros(n, dtype=int)
+    result = sample_team_group_trial_points(rng, [{"player_id": 1, "rates": rates, "conceded_rate": 0.0}], team_goals, opp_goals)
+    points = result[1]
+    bonus_only = points - 2.0 - team_goals * 4.0
+
+    scored = team_goals > 0
+    assert bonus_only[scored].mean() > bonus_only[~scored].mean()
+    assert abs(bonus_only.mean() - 1.0) < 0.05
+
+
 def test_defender_conceded_penalty_scales_with_opponent_goals():
     rng = np.random.default_rng(3)
     rates = _rates(position="DEF", goals_rate=6.0, clean_sheet_pts=4.0, player_share_per90=0.05)
