@@ -44,7 +44,8 @@ def _rates(**overrides):
     base = dict(
         position="FWD", goals_rate=4.0, assists_rate=3.0, clean_sheet_pts=0.0,
         shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=-1.0,
-        player_share_per90=1.0, bonus90=0.0,
+        player_share_per90=1.0, assist_share_per90=0.0, assisted_goal_rate=0.686,
+        bonus90=0.0,
         minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
     )
     base.update(overrides)
@@ -219,13 +220,15 @@ def test_sample_season_scenarios_shares_one_scoreline_per_fixture(db_conn, monke
             return dict(
                 position="FWD", goals_rate=4.0, assists_rate=3.0, clean_sheet_pts=0.0,
                 shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=-1.0,
-                player_share_per90=1.0, bonus90=0.0, rules_season="2026-27",
+                player_share_per90=1.0, assist_share_per90=0.0, assisted_goal_rate=0.686,
+                bonus90=0.0, rules_season="2026-27",
                 minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
             )
         return dict(
             position="DEF", goals_rate=6.0, assists_rate=3.0, clean_sheet_pts=4.0,
             shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=-1.0,
-            player_share_per90=0.0, bonus90=0.0, rules_season="2026-27",
+            player_share_per90=0.0, assist_share_per90=0.0, assisted_goal_rate=0.686,
+            bonus90=0.0, rules_season="2026-27",
             minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
         )
 
@@ -301,6 +304,59 @@ def test_team_group_goal_shares_recover_the_real_mean():
     assert abs(p2_mean_goals - 0.3 * 3) < 0.05
 
 
+# --- Real correlation fix (2026-09-13, "make the optimizer smarter" pass):
+# an assist cannot exist without a goal - a single player's own drawn
+# assists, and a whole team group's COMBINED drawn assists, must never
+# exceed that same trial's own drawn team_goals. Closes the 2026-08-28-
+# disclosed "independent assist draws violate the real team-goals ceiling
+# in ~7% of trials" correlation gap.
+
+def test_single_player_assists_never_exceed_this_trials_own_team_goals():
+    rng = np.random.default_rng(13)
+    rates = _rates(goals_rate=0.0, assists_rate=3.0, assist_share_per90=1.0, assisted_goal_rate=0.9, bonus90=0.0)
+    n = 50000
+    team_goals = rng.poisson(0.3, size=n)  # frequent low counts, including plenty of 0s
+    opp_goals = np.zeros(n, dtype=int)
+    points = _sample_player_trial_points(rng, rates, conceded_rate=0.0, team_goals=team_goals, opp_goals=opp_goals)
+    assists = np.round((points - 2.0) / 3.0).astype(int)  # goals_rate=0.0, bonus90=0.0 -> isolates assists
+    assert np.all(assists <= team_goals)
+
+
+def test_team_group_combined_assists_never_exceed_the_real_team_total():
+    rng = np.random.default_rng(14)
+    n_trials = 5000
+    players = [
+        {"player_id": 1, "rates": _rates(goals_rate=0.0, assists_rate=3.0, assist_share_per90=0.6,
+                                          assisted_goal_rate=0.9, bonus90=0.0), "conceded_rate": 0.0},
+        {"player_id": 2, "rates": _rates(goals_rate=0.0, assists_rate=3.0, assist_share_per90=0.5,
+                                          assisted_goal_rate=0.9, bonus90=0.0), "conceded_rate": 0.0},
+    ]
+    team_goals = np.random.default_rng(2).poisson(2.0, size=n_trials)
+    opp_goals = np.zeros(n_trials, dtype=int)
+
+    result = sample_team_group_trial_points(rng, players, team_goals, opp_goals)
+    p1_assists = np.round((result[1] - 2.0) / 3.0).astype(int)
+    p2_assists = np.round((result[2] - 2.0) / 3.0).astype(int)
+
+    assert np.all(p1_assists + p2_assists <= team_goals)
+
+
+def test_assists_recover_the_real_calibrated_mean():
+    """Mean-preservation check: the new binomial-of-binomial mechanism must
+    still recover team_goals * assisted_goal_rate * assist_share_per90 *
+    assists_rate in expectation - real variance/correlation added, never a
+    biased inflation or deflation of the calibrated rate."""
+    rng = np.random.default_rng(15)
+    rates = _rates(goals_rate=0.0, assists_rate=3.0, assist_share_per90=0.4, assisted_goal_rate=0.7, bonus90=0.0)
+    n = 100000
+    team_goals = np.full(n, 2, dtype=int)
+    opp_goals = np.zeros(n, dtype=int)
+    points = _sample_player_trial_points(rng, rates, conceded_rate=0.0, team_goals=team_goals, opp_goals=opp_goals)
+    assists_points_mean = (points - 2.0).mean()
+    expected_mean = 2 * 0.7 * 0.4 * 3.0  # team_goals * assisted_goal_rate * assist_share_per90 * assists_rate
+    assert abs(assists_points_mean - expected_mean) < 0.05
+
+
 def test_sample_season_scenarios_jointly_attributes_goals_for_same_team_squad_members(db_conn, monkeypatch):
     """Integration-level regression: two squad players on the SAME team in
     the SAME fixture must never have their combined drawn goals exceed that
@@ -318,7 +374,8 @@ def test_sample_season_scenarios_jointly_attributes_goals_for_same_team_squad_me
         return dict(
             position="FWD", goals_rate=4.0, assists_rate=0.0, clean_sheet_pts=0.0,
             shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=0.0,
-            player_share_per90=share, bonus90=0.0, rules_season="2026-27",
+            player_share_per90=share, assist_share_per90=0.0, assisted_goal_rate=0.686,
+            bonus90=0.0, rules_season="2026-27",
             minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
         )
 

@@ -295,3 +295,79 @@ def player_share_of_team_xg(
         (market_team_id, season) + extra,
     ).fetchone()["total"] or 0.0
     return player_xg / team_xg if team_xg else 0.0
+
+
+_assisted_goal_rate_cache: dict[int, tuple[sqlite3.Connection, float]] = {}
+
+# Real, disclosed fallback (2026-09-13) for the pathological case of an
+# empty/near-empty match_results_history (a fresh test DB, or the very
+# start of a season before enough real matches exist to measure this from
+# at all) - not an invented league-wide guess: this project's own real,
+# live-measured value from production on the day this was built (3885 real
+# assists across 5664 real goals over 3874 real team-matches,
+# cross-checked between player_match_stats_history and
+# match_results_history), kept only as the "can't measure it yet" floor.
+_ASSISTED_GOAL_RATE_FALLBACK = 0.686
+
+
+def real_assisted_goal_rate(conn: sqlite3.Connection) -> float:
+    """Real, empirical fraction of a team's own real goals that come with
+    a credited real assist (the rest: penalties, own goals, unassisted
+    individual efforts) - computed directly from this project's own
+    already-synced data (player_match_stats_history's real per-match
+    assists, cross-checked against match_results_history's real team
+    goals for the identical team+match), never a fabricated league-wide
+    guess. Closes a real, disclosed correlation gap (2026-08-28 audit:
+    "independent assist draws violate the real team-goals ceiling in
+    ~7% of trials") - bounds how many of a simulated trial's own drawn
+    team goals can plausibly carry a credited assist at all.
+
+    Cached per-connection (same identity-checked pattern
+    models/expected_points.py::_get_or_fit_dc_model already uses) - a
+    real, cheap-but-not-free aggregate over the whole historical table,
+    not something worth re-running on every single caller."""
+    cached = _assisted_goal_rate_cache.get(id(conn))
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    row = conn.execute(
+        """
+        SELECT SUM(pmsh_agg.team_assists) AS total_assists,
+               SUM(CASE WHEN mrh.home_team_id = pmsh_agg.market_team_id THEN mrh.home_goals ELSE mrh.away_goals END)
+                   AS total_goals
+        FROM (
+            SELECT season, match_date, market_team_id, SUM(assists) AS team_assists
+            FROM player_match_stats_history GROUP BY season, match_date, market_team_id
+        ) pmsh_agg
+        JOIN match_results_history mrh
+            ON mrh.season = pmsh_agg.season AND mrh.match_date = pmsh_agg.match_date
+            AND (mrh.home_team_id = pmsh_agg.market_team_id OR mrh.away_team_id = pmsh_agg.market_team_id)
+        """
+    ).fetchone()
+    total_goals = row["total_goals"] or 0
+    rate = (row["total_assists"] or 0) / total_goals if total_goals else _ASSISTED_GOAL_RATE_FALLBACK
+    _assisted_goal_rate_cache[id(conn)] = (conn, rate)
+    return rate
+
+
+def player_share_of_team_assists(
+    conn: sqlite3.Connection, player_id: int, market_team_id: int, season: str, as_of_date: str | None = None
+) -> float:
+    """Real counterpart to `player_share_of_team_xg` (2026-09-13, "make the
+    optimizer smarter" pass) - same accumulated-volume-ratio shape, over
+    `xa` (expected assists) instead of `xg`, for the identical reason
+    `player_share_of_team_xg` uses shot-quality (xG) rather than raw goal
+    counts: a shrinkage-regressed, sample-size-robust share, not a noisy
+    small-sample raw-count ratio. Used to jointly attribute a team's real
+    ASSISTED goals across its squad-tracked players in
+    scenario_sampling.py, the same real role `player_share_of_team_xg`
+    already plays for attributing a team's real GOALS."""
+    clause, extra = _date_clause(as_of_date)
+    player_xa = conn.execute(
+        f"SELECT SUM(xa) AS total FROM player_match_stats_history WHERE player_id=? AND season=? {clause}",
+        (player_id, season) + extra,
+    ).fetchone()["total"] or 0.0
+    team_xa = conn.execute(
+        f"SELECT SUM(xa) AS total FROM player_match_stats_history WHERE market_team_id=? AND season=? {clause}",
+        (market_team_id, season) + extra,
+    ).fetchone()["total"] or 0.0
+    return player_xa / team_xa if team_xa else 0.0

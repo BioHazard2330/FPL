@@ -475,7 +475,8 @@ def test_higher_defcon_rate_scores_more_points_for_an_otherwise_identical_player
     base_rates = dict(
         position="DEF", goals_rate=6.0, assists_rate=3.0, clean_sheet_pts=4.0,
         shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=-1.0,
-        player_share_per90=0.0, bonus90=0.0, defcon_pts_rule=2,
+        player_share_per90=0.0, assist_share_per90=0.0, assisted_goal_rate=0.686,
+        bonus90=0.0, defcon_pts_rule=2,
         rules_season="2026-27",
         minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
     )
@@ -484,6 +485,34 @@ def test_higher_defcon_rate_scores_more_points_for_an_otherwise_identical_player
 
     assert high.total > low.total
     assert high.defcon > low.defcon
+
+
+def test_assists_now_respond_to_fixture_difficulty_via_team_goals(db_conn):
+    """Real fix (2026-09-13, "make the optimizer smarter" pass) - assists
+    used to be a flat personal xA rate, blind to whether this fixture's
+    own team is projected to score more or fewer goals than usual (a real,
+    disclosed asymmetry vs goals, which always responded to team_goals).
+    An otherwise-identical player facing a fixture with more team_goals
+    projected must now show a real, higher assists component - the same
+    fixture-awareness goals already had."""
+    from fpl_agent.models.expected_points import _match_components
+    from types import SimpleNamespace
+
+    base_rates = dict(
+        position="MID", goals_rate=0.0, assists_rate=3.0, clean_sheet_pts=0.0,
+        shrunk_xa90=0.0, shrunk_cards90=0.0, yellow_card_rate=0.0,
+        player_share_per90=0.0, assist_share_per90=0.3, assisted_goal_rate=0.7,
+        bonus90=0.0, defcon_actions90=0.0, defcon_pts_rule=0,
+        rules_season="2026-27",
+        minutes_probs=SimpleNamespace(p_zero=0.0, p_partial=0.0, p_full=1.0),
+    )
+    weak_fixture = _match_components(db_conn, base_rates, team_goals=0.8, opp_goals=1.5)
+    strong_fixture = _match_components(db_conn, base_rates, team_goals=2.5, opp_goals=0.5)
+
+    assert strong_fixture.assists > weak_fixture.assists
+    # Real, exact formula check: team_goals * assisted_goal_rate * assist_share_per90 * assists_rate
+    assert strong_fixture.assists == pytest.approx(2.5 * 0.7 * 0.3 * 3.0)
+    assert weak_fixture.assists == pytest.approx(0.8 * 0.7 * 0.3 * 3.0)
 
 
 def test_cards_falls_back_to_prior_season_understat_data(db_conn):
@@ -1201,6 +1230,31 @@ def test_hierarchical_share_prior_none_with_no_prior_season_data(db_conn):
     db_conn.commit()
 
     assert _hierarchical_share_prior(db_conn, 1, arsenal, season, as_of_date=None) is None
+
+
+def test_hierarchical_share_prior_generalizes_to_assists_via_share_fn(db_conn):
+    """Real fix (2026-09-13, "make the optimizer smarter" pass) -
+    `_hierarchical_share_prior` is now generalized via `share_fn` so the
+    assists-correlation fix reuses the exact same real team-transfer guard
+    rather than a duplicated copy. Same real prior-season-share-when-team-
+    unchanged scenario as the goals test above, but against
+    `player_share_of_team_assists`."""
+    from fpl_agent.models.expected_points import _hierarchical_share_prior
+    from fpl_agent.models.player_regression import player_share_of_team_assists
+
+    season, arsenal, _ = _seed_two_team_world(db_conn, with_player_stats=False)
+    _insert_match_stat(db_conn, season, "cur1", 1, arsenal, "2026-08-15")
+
+    prior = "2025-26"
+    _insert_match_stat(db_conn, prior, "p0", 1, arsenal, "2025-09-10")
+    db_conn.commit()
+
+    prior_share = _hierarchical_share_prior(
+        db_conn, 1, arsenal, season, as_of_date=None, share_fn=player_share_of_team_assists,
+    )
+
+    assert prior_share is not None
+    assert prior_share > 0
 
 
 def test_expected_points_haaland_shaped_case_recovers_a_realistic_rate(db_conn):

@@ -19,6 +19,14 @@ heuristics component by component:
   recover a per-90-equivalent share before this fixture's minutes fraction is
   applied - otherwise minutes would be discounted twice, which under-projects
   rotation-risk players by exactly their historical minutes fraction.
+  Assists (2026-09-13, "make the optimizer smarter" pass) now get the
+  IDENTICAL real treatment - player_share_of_team_assists (an xA-based
+  share, the assists counterpart to player_share_of_team_xg) times the
+  SAME fixture-level team-goals estimate times real_assisted_goal_rate
+  (the empirical fraction of a team's real goals that carry a credited
+  assist at all - penalties/own-goals/solo efforts don't) - closing a
+  real, disclosed asymmetry where assists previously used a flat personal
+  xA rate blind to fixture difficulty, unlike goals.
 - Clean-sheet and goals-conceded-band probabilities: read directly off the
   blended Poisson distribution, not a linear heuristic on fixture difficulty.
 - Bonus: shrinkage-regressed per-90 rate (models/bonus_regression.py), same
@@ -93,8 +101,10 @@ from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
 from fpl_agent.models.player_regression import (
     PRIOR_STRENGTH_MATCHES,
     live_season_shrunk_rate,
+    player_share_of_team_assists,
     player_share_of_team_xg,
     player_shrunk_rates,
+    real_assisted_goal_rate,
     season_shrunk_rate,
 )
 from fpl_agent.models.promoted_team_calibration import augment_model_with_promoted_teams
@@ -568,6 +578,7 @@ def _hierarchical_prior_rates(
 def _hierarchical_share_prior(
     conn: sqlite3.Connection, player_id: int, current_team_market_id: int, season: str, as_of_date: str | None,
     rate_derived_fallback: float | None = None,
+    share_fn=player_share_of_team_xg,
 ) -> float | None:
     """Real second half of the same modeling-flaw fix `_hierarchical_prior_rates`
     closes for goals/xa rates - `player_share_of_team_xg` (this player's
@@ -600,7 +611,15 @@ def _hierarchical_share_prior(
     already uses), this becomes the fallback prior for exactly that case:
     a team-relative signal doesn't transfer, but the player's own PERSONAL
     scoring rate (from `_hierarchical_prior_rates`, real and club-agnostic)
-    still does. `None` only when genuinely nothing at all is available."""
+    still does. `None` only when genuinely nothing at all is available.
+
+    `share_fn` (2026-09-13) generalizes this from goals-only to any real
+    accumulated-share primitive with the identical signature - added so
+    the assists-correlation fix (see `player_share_of_team_assists`) can
+    reuse this exact same real, carefully-reasoned team-transfer guard
+    and fallback logic rather than duplicating it. Defaults to the
+    original goals share fn, so the one pre-existing call site is
+    unaffected."""
     before_season = prior_season(season) if season else None
     if before_season:
         clause, extra = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
@@ -615,7 +634,7 @@ def _hierarchical_share_prior(
                 (player_id, before_season) + extra,
             ).fetchone()["m"] or 0
             if minutes > 0:
-                return player_share_of_team_xg(conn, player_id, current_team_market_id, before_season, as_of_date=None)
+                return share_fn(conn, player_id, current_team_market_id, before_season, as_of_date=None)
 
     return rate_derived_fallback
 
@@ -668,6 +687,12 @@ def _player_match_rates(
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
+    # Real, empirical fraction of a team's own goals that carry a credited
+    # assist at all (2026-09-13, "make the optimizer smarter" pass) - see
+    # real_assisted_goal_rate's own docstring. Computed once here (cached
+    # per-connection inside that function) and reused below for both the
+    # assist-share fallback and the Monte Carlo joint-attribution wiring.
+    assisted_goal_rate = real_assisted_goal_rate(conn)
 
     if shrunk["goals"].matches_played > 0:
         # Understat match-level data exists for this player+season - primary path.
@@ -711,6 +736,44 @@ def _player_match_rates(
         if share_prior is not None:
             share_per90 = min(
                 (current_matches * share_per90 + PRIOR_STRENGTH_MATCHES * share_prior)
+                / (current_matches + PRIOR_STRENGTH_MATCHES),
+                1.0,
+            )
+
+        # Real counterpart to the goals-share block above (2026-09-13, "make
+        # the optimizer smarter" pass) - identical real hierarchical-share
+        # treatment (accumulated current-season share, blended with a real
+        # last-season-at-the-same-club prior via `_hierarchical_share_prior`,
+        # itself generalized via `share_fn` rather than duplicated), over
+        # `player_share_of_team_assists` instead of goals. Closes a real,
+        # disclosed asymmetry: assists previously had NO team/fixture-
+        # relative share at all (models/expected_points.py's own
+        # `_match_components` used a flat personal xA rate, blind to
+        # whether this fixture's own team is scoring more or fewer goals
+        # than usual) - `assist_share_per90` now lets assists respond to
+        # fixture difficulty the same real way goals already do, and gives
+        # scenario_sampling.py a real per-player weight to jointly attribute
+        # a trial's own ASSISTED goals across the squad-tracked group,
+        # capped by that trial's own team_goals (see
+        # `real_assisted_goal_rate`) - closing the real, disclosed
+        # "independent assist draws violate the real team-goals ceiling in
+        # ~7% of trials" correlation gap from the 2026-08-28 audit.
+        assist_share = player_share_of_team_assists(conn, player_id, team_market_id, season, as_of_date)
+        assist_share_per90 = min(assist_share / minutes_fraction, 1.0) if minutes_fraction > 0 else 0.0
+        if current_matches < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
+            rate_derived_assist_share_fallback = (
+                min(shrunk_xa90 / (_LEAGUE_AVERAGE_GOALS * assisted_goal_rate), 1.0) if assisted_goal_rate else 0.0
+            )
+            assist_share_prior = _hierarchical_share_prior(
+                conn, player_id, team_market_id, season, as_of_date,
+                rate_derived_fallback=rate_derived_assist_share_fallback,
+                share_fn=player_share_of_team_assists,
+            )
+        else:
+            assist_share_prior = None
+        if assist_share_prior is not None:
+            assist_share_per90 = min(
+                (current_matches * assist_share_per90 + PRIOR_STRENGTH_MATCHES * assist_share_prior)
                 / (current_matches + PRIOR_STRENGTH_MATCHES),
                 1.0,
             )
@@ -817,6 +880,14 @@ def _player_match_rates(
         # still lets the existing team_goals * share_per90 formula respond to
         # fixture difficulty via team_goals, just with a coarser baseline.
         share_per90 = min(shrunk_goals90 / _LEAGUE_AVERAGE_GOALS, 1.0)
+        # Real counterpart for assists (2026-09-13) - same coarse, documented
+        # simplification as the goals line above, using the real, empirical
+        # assisted-goal rate to convert "league-average team goals" into an
+        # implied "league-average team assists" denominator, rather than a
+        # second, independently-invented constant.
+        assist_share_per90 = (
+            min(shrunk_xa90 / (_LEAGUE_AVERAGE_GOALS * assisted_goal_rate), 1.0) if assisted_goal_rate else 0.0
+        )
 
     bonus90 = expected_bonus_per90(conn, player_id).shrunk_per90
 
@@ -838,6 +909,7 @@ def _player_match_rates(
         "shrunk_xa90": shrunk_xa90, "shrunk_cards90": shrunk["cards"].shrunk_per90,
         "yellow_card_rate": yellow_card_rate,
         "player_share": player_share, "player_share_per90": share_per90,
+        "assist_share_per90": assist_share_per90, "assisted_goal_rate": assisted_goal_rate,
         "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs,
         "defcon_actions90": defcon_actions90, "defcon_pts_rule": defcon_pts_rule,
@@ -902,7 +974,20 @@ def _match_components(
     appearance = expected_appearance_points(probs) * damping
     # player_share_per90 (not the accumulated player_share) - see module docstring.
     goals = team_goals * rates["player_share_per90"] * effective_minutes_fraction * rates["goals_rate"]
-    assists = rates["shrunk_xa90"] * rates["assists_rate"] * effective_minutes_fraction
+    # Real fix (2026-09-13, "make the optimizer smarter" pass) - assists used
+    # to be a flat personal xA rate, blind to whether THIS fixture's team is
+    # actually scoring more or fewer goals than a typical one (a real,
+    # disclosed asymmetry vs goals, which always did respond to team_goals).
+    # Mirrors the goals formula exactly: only `assisted_goal_rate` of a
+    # team's real goals carry a credited assist at all (see
+    # real_assisted_goal_rate), and `assist_share_per90` is this player's
+    # own real share of those, the assists counterpart to
+    # `player_share_per90` (see `_player_match_rates`'s own docstring for
+    # both).
+    assists = (
+        team_goals * rates["assisted_goal_rate"] * rates["assist_share_per90"]
+        * effective_minutes_fraction * rates["assists_rate"]
+    )
     bonus = rates["bonus90"] * effective_minutes_fraction
     cards = rates["shrunk_cards90"] * rates["yellow_card_rate"] * effective_minutes_fraction
 

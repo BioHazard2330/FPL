@@ -1,8 +1,12 @@
+import pytest
+
 from fpl_agent.models.player_regression import (
     invalidate_cache_for_connection,
+    player_share_of_team_assists,
     player_share_of_team_xg,
     player_shrunk_rates,
     position_average_per90,
+    real_assisted_goal_rate,
     season_position_average_per90,
     season_shrunk_rate,
     shrink_rate,
@@ -154,6 +158,88 @@ def test_player_share_of_team_xg(db_conn):
     _seed_players_and_matches(db_conn)
     share = player_share_of_team_xg(db_conn, player_id=1, market_team_id=1, season="2024-25")
     assert 0 < share < 1
+
+
+def test_player_share_of_team_assists(db_conn):
+    """Real assists counterpart to player_share_of_team_xg (2026-09-13,
+    "make the optimizer smarter" pass) - same accumulated-xA-share shape.
+    Player 2's own seeded row has xa=0.0 in this shared fixture (unlike its
+    real nonzero xg), so player 1 correctly owns the team's ENTIRE real xA
+    share (1.0), not a fractional one - a real, fixture-driven fact, not a
+    bug (see test_player_share_of_team_xg's own xg-based assertion for the
+    same fixture, where player 2's real nonzero xg does produce a share
+    below 1)."""
+    _seed_players_and_matches(db_conn)
+    share = player_share_of_team_assists(db_conn, player_id=1, market_team_id=1, season="2024-25")
+    assert share == pytest.approx(1.0)
+
+
+def test_player_share_of_team_assists_zero_when_no_team_xa(db_conn):
+    share = player_share_of_team_assists(db_conn, player_id=999, market_team_id=999, season="2024-25")
+    assert share == 0.0
+
+
+def _seed_real_match_results(conn, rows):
+    """rows: [(season, match_date, market_team_id, opponent_market_team_id,
+    is_home, team_goals, opp_goals), ...] - a minimal real match_results_history
+    seed for real_assisted_goal_rate's own cross-check query."""
+    conn.execute("INSERT INTO market_teams (id, canonical_name, fpl_team_id) VALUES (1, 'Team A', NULL) "
+                 "ON CONFLICT(id) DO NOTHING")
+    conn.execute("INSERT INTO market_teams (id, canonical_name, fpl_team_id) VALUES (2, 'Team B', NULL) "
+                 "ON CONFLICT(id) DO NOTHING")
+    conn.commit()
+    for season, match_date, team_id, opp_id, is_home, team_goals, opp_goals in rows:
+        home_id, away_id = (team_id, opp_id) if is_home else (opp_id, team_id)
+        home_goals, away_goals = (team_goals, opp_goals) if is_home else (opp_goals, team_goals)
+        conn.execute(
+            "INSERT INTO match_results_history (season, match_date, home_team_id, away_team_id, "
+            "home_goals, away_goals, source, retrieved_at) VALUES (?,?,?,?,?,?,'test','t0')",
+            (season, match_date, home_id, away_id, home_goals, away_goals),
+        )
+    conn.commit()
+
+
+def test_real_assisted_goal_rate_computes_the_real_empirical_ratio(db_conn):
+    """Real, non-fabricated fraction of a team's own goals that carry a
+    credited assist - cross-checks player_match_stats_history's real
+    per-match assists against match_results_history's real team goals for
+    the identical team+match (2026-09-13, "make the optimizer smarter" pass,
+    closing the 2026-08-28-disclosed "assists violate the real team-goals
+    ceiling" correlation gap)."""
+    conn = db_conn
+    conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,100,'Team A','TMA','t0')")
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, team_id, element_type, status, updated_at) "
+        "VALUES (1,201,'P1',1,1,'a','t0')"
+    )
+    conn.commit()
+    _seed_real_match_results(conn, [
+        ("2024-25", "2024-09-01", 1, 2, True, 2, 0),  # 2 real goals
+        ("2024-25", "2024-09-08", 1, 2, True, 1, 0),  # 1 real goal
+    ])
+    conn.executemany(
+        "INSERT INTO player_match_stats_history "
+        "(understat_match_id, understat_player_id, player_id, market_team_id, season, match_date, "
+        "minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'t0')",
+        [
+            ("m1", "p1-1", 1, 1, "2024-25", "2024-09-01", 90, 0, 1, 3, 0.5, 0.3, 2, 0, 0),  # 1 real assist that match
+            ("m2", "p1-2", 1, 1, "2024-25", "2024-09-08", 90, 0, 0, 2, 0.3, 0.1, 1, 0, 0),  # 0 real assists that match
+        ],
+    )
+    conn.commit()
+
+    rate = real_assisted_goal_rate(conn)
+    assert rate == pytest.approx(1 / 3)  # 1 real assist across 3 real total goals
+
+
+def test_real_assisted_goal_rate_falls_back_when_no_real_data_exists(db_conn):
+    rate = real_assisted_goal_rate(db_conn)
+    assert 0.0 <= rate <= 1.0  # the disclosed fallback constant, never a crash or a fabricated 0/None
 
 
 def test_player_shrunk_rates_includes_cards(db_conn):

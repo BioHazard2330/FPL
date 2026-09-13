@@ -100,8 +100,18 @@ def sample_player_trial_points(
     player_goals = rng.binomial(team_goals, goal_prob)
     goals_points = player_goals * rates["goals_rate"]
 
-    assist_rate = np.clip(rates["shrunk_xa90"] * weight, 0.0, None)
-    assists = rng.poisson(assist_rate)
+    # Real joint attribution (2026-09-13, "make the optimizer smarter" pass)
+    # - mirrors _match_components' own fixture-aware assists formula exactly
+    # (team_goals * assisted_goal_rate * assist_share_per90 * weight *
+    # assists_rate, in expectation) and bounds THIS trial's own assist count
+    # by that SAME trial's own drawn team_goals - an assist cannot exist
+    # without a goal. Closes the real, disclosed "independent assist draws
+    # violate the real team-goals ceiling in ~7% of trials" correlation gap
+    # (2026-08-28 audit) the same real way the 2026-08-28 goals fix closed
+    # the analogous goals-double-counting gap.
+    assisted_goals = rng.binomial(team_goals, rates["assisted_goal_rate"])
+    assist_prob = np.clip(rates["assist_share_per90"] * weight, 0.0, 1.0)
+    assists = rng.binomial(assisted_goals, assist_prob)
     assists_points = assists * rates["assists_rate"]
 
     card_prob = np.clip(rates["shrunk_cards90"] * weight, 0.0, 1.0)
@@ -155,17 +165,24 @@ def sample_team_group_trial_points(
     `len(players) == 1` (a 2-outcome multinomial IS a binomial), so this is
     a strict generalization, not a competing model.
 
-    Assists/cards/clean-sheet/conceded stay independent ACROSS players, same
-    formulas `sample_player_trial_points` already uses - a real, disclosed,
-    NOT-fixed gap (see the live audit report): there is no team-relative
-    "share of team assists/bonus" primitive this project computes the way
-    `player_share_of_team_xg` does for goals, so a matching joint-
-    attribution fix for those isn't a same-scope change. Bonus (2026-09-13)
-    is still independent across players but is now correlated with THIS
-    SAME player's own drawn goals/assists within the trial - see
+    Cards/clean-sheet/conceded stay independent ACROSS players, same formulas
+    `sample_player_trial_points` already uses - there is no real team-
+    relative share primitive for those (a card or a clean sheet isn't a
+    single shared team resource the way goals/assists are), so a matching
+    joint-attribution fix for them isn't a same-scope change. Bonus
+    (2026-09-13) is still independent across players but is now correlated
+    with THIS SAME player's own drawn goals/assists within the trial - see
     _bonus_correlation_multiplier - a different, real correlation axis
-    (intra-player, not cross-player) than the one this docstring's own gap
-    is about."""
+    (intra-player, not cross-player) than the goals/assists one this
+    docstring is about.
+
+    Assists (2026-09-13, "make the optimizer smarter" pass) now get the
+    SAME real joint multinomial-attribution treatment as goals - closing
+    the real, disclosed "independent assist draws violate the real team-
+    goals ceiling in ~7% of trials" correlation gap (2026-08-28 audit).
+    `player_share_of_team_assists`/`real_assisted_goal_rate` (see
+    models/player_regression.py) are the assists counterpart to
+    `player_share_of_team_xg` this docstring used to say didn't exist."""
     n_trials = team_goals.shape[0]
 
     buckets, weights, played_full_list = [], [], []
@@ -187,6 +204,25 @@ def sample_team_group_trial_points(
 
     drawn = rng.multinomial(team_goals, pvals)  # shape (n_trials, n_players + 1)
 
+    # Real joint assist attribution (2026-09-13) - `assisted_goals` is a real
+    # TEAM-level fact (how many of this trial's own team_goals carried a
+    # credited assist at all), drawn ONCE and shared across the whole group,
+    # mirroring `team_goals` itself - drawing it per-player independently
+    # would let the group's own summed assists exceed the team's real
+    # assisted-goal count, the exact bug this fix closes. `assisted_goal_rate`
+    # is a real global constant (models/player_regression.py::
+    # real_assisted_goal_rate), identical on every player's own `rates` dict,
+    # so any player's copy is the real, shared value.
+    assisted_goal_rate = players[0]["rates"]["assisted_goal_rate"]
+    assisted_goals = rng.binomial(team_goals, assisted_goal_rate)
+    assist_probs = np.stack(
+        [np.clip(p["rates"]["assist_share_per90"] * w, 0.0, 1.0) for p, w in zip(players, weights, strict=True)], axis=1
+    )
+    assist_residual = np.clip(1.0 - assist_probs.sum(axis=1, keepdims=True), 0.0, None)
+    assist_pvals = np.concatenate([assist_probs, assist_residual], axis=1)
+    assist_pvals = assist_pvals / assist_pvals.sum(axis=1, keepdims=True)
+    assists_drawn_matrix = rng.multinomial(assisted_goals, assist_pvals)  # shape (n_trials, n_players + 1)
+
     result = {}
     for i, p in enumerate(players):
         rates = p["rates"]
@@ -195,8 +231,7 @@ def sample_team_group_trial_points(
         appearance = np.where(buckets[i] == 0, 0.0, np.where(buckets[i] == 1, 1.0, 2.0))
         goals_points = drawn[:, i] * rates["goals_rate"]
 
-        assist_rate = np.clip(rates["shrunk_xa90"] * weight, 0.0, None)
-        assists_drawn = rng.poisson(assist_rate)
+        assists_drawn = assists_drawn_matrix[:, i]
         assists_points = assists_drawn * rates["assists_rate"]
 
         card_prob = np.clip(rates["shrunk_cards90"] * weight, 0.0, 1.0)
