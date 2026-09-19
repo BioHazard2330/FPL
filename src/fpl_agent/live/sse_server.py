@@ -264,7 +264,16 @@ def make_handler(broadcaster: Broadcaster, data_dir: Path, conn_factory=None) ->
             params = {k: v[0] for k, v in parse_qs(query).items() if v}
             conn = conn_factory()
             try:
-                ctx = get_cached_dashboard_context(conn)
+                # A builder that sets `needs_context = False` gets a light
+                # stand-in carrying only the locked squad's ids, and never
+                # waits on the ~60-130s full context build. The Atlas is the
+                # first: 1,100 shots joined in 20ms, previously queued behind
+                # a rebuild it did not read.
+                if getattr(builder, "needs_context", True):
+                    ctx = get_cached_dashboard_context(conn)
+                else:
+                    from fpl_agent.monitoring.dashboard.context import light_context
+                    ctx = light_context(conn)
                 if "params" in inspect.signature(builder).parameters:
                     payload = builder(ctx, params=params)
                 else:

@@ -159,3 +159,7 @@ def build_atlas_payload(ctx: DashboardContext) -> dict:
         }
     finally:
         conn.close()
+
+
+# Opt out of the full dashboard context - see `live/sse_server.py`.
+build_atlas_payload.needs_context = False  # type: ignore[attr-defined]

@@ -214,3 +214,7 @@ def build_receipts_payload(ctx: DashboardContext) -> dict:
         }
     finally:
         conn.close()
+
+
+# Reads its own tables only - never waits on the full dashboard context.
+build_receipts_payload.needs_context = False  # type: ignore[attr-defined]

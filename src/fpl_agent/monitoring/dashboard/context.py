@@ -579,6 +579,7 @@ _CACHE_LOCK = threading.Lock()
 _cached_context: DashboardContext | None = None
 _cached_at: float = 0.0
 _cached_fingerprint: tuple | None = None
+_stale_since_inputs_moved: bool = False
 
 
 def _state_fingerprint(conn: sqlite3.Connection) -> tuple | None:
@@ -648,6 +649,26 @@ def _any_match_live(conn_factory) -> bool:
         return False
     finally:
         conn.close()
+
+
+class LightContext:
+    """The minimum a payload builder that opted out of the full context can
+    still rely on: the locked squad's ids, read straight from the latest
+    synced picks. Cheap enough to build per request."""
+    def __init__(self, squad_ids: set[int]):
+        self.squad_ids = squad_ids
+
+
+def light_context(conn: sqlite3.Connection) -> LightContext:
+    try:
+        row = conn.execute("SELECT MAX(event) FROM my_team_picks").fetchone()
+        event = row[0] if row else None
+        if event is None:
+            return LightContext(set())
+        ids = {r[0] for r in conn.execute("SELECT player_id FROM my_team_picks WHERE event=?", (event,))}
+        return LightContext(ids)
+    except Exception:
+        return LightContext(set())
 
 
 def maybe_fetch_live_payload(conn: sqlite3.Connection) -> dict | None:
@@ -731,7 +752,7 @@ def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = 
     `is_stale`/`RECOMPUTING` signal inside the payload itself already tells
     a client when the underlying decision is stale, independent of this
     cache's own freshness)."""
-    global _cached_context, _cached_at, _cached_fingerprint
+    global _cached_context, _cached_at, _cached_fingerprint, _stale_since_inputs_moved
     now = time.monotonic()
     fingerprint = _state_fingerprint(conn)
     with _CACHE_LOCK:
@@ -746,6 +767,19 @@ def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = 
             and fingerprint != _cached_fingerprint
         )
         if fresh_enough and not inputs_moved:
+            return _cached_context
+        if _cached_context is not None and inputs_moved and fresh_enough:
+            # The inputs moved but a recent context exists. Serving it now
+            # and letting `run_context_refresh_loop` rebuild in the
+            # background is the right trade: a rebuild here runs 60-130s
+            # INSIDE this lock, and every /api/* request for every screen
+            # queues behind it - measured live as 30s+ of skeleton on the
+            # Atlas, a screen that does not even read the context. Marking
+            # the fingerprint as seen stops every subsequent request from
+            # re-deciding to rebuild; the loop's next tick (45s during a
+            # live match, 480s otherwise) does the real refresh.
+            _cached_fingerprint = fingerprint
+            _stale_since_inputs_moved = True
             return _cached_context
         _cached_context = build_dashboard_context(conn, live_payload=maybe_fetch_live_payload(conn))
         _cached_at = time.monotonic()
@@ -766,11 +800,21 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
     loop or the server - the next tick retries, and the stale-but-still-
     served cached context is a real, honest degrade (the payload's own
     `freshness`/`is_stale` field already discloses this to the client)."""
-    global _cached_context, _cached_at, _cached_fingerprint
+    global _cached_context, _cached_at, _cached_fingerprint, _stale_since_inputs_moved
     next_wait = _LIVE_REFRESH_INTERVAL_SECONDS if _any_match_live(conn_factory) else interval
     while not stop_event.is_set():
-        if stop_event.wait(next_wait):
+        # A request that saw the inputs move served the old context rather
+        # than block; it is this loop's job to catch up promptly, not on
+        # the ordinary interval. Poll the flag every few seconds.
+        waited = 0.0
+        while waited < next_wait and not stop_event.is_set():
+            if _stale_since_inputs_moved:
+                break
+            stop_event.wait(min(5.0, next_wait - waited))
+            waited += 5.0
+        if stop_event.is_set():
             break
+        _stale_since_inputs_moved = False
         conn = conn_factory()
         try:
             fingerprint = _state_fingerprint(conn)
