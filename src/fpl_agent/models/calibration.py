@@ -173,21 +173,74 @@ def segmented_accuracy(
     return sorted(results, key=lambda c: c.cohort)
 
 
+def _event_live_stats(event: int) -> dict[int, dict]:
+    """Per-event points and minutes for every player, from FPL's own live
+    endpoint for that gameweek. Unlike `player_stats_snapshot.minutes`, the
+    `minutes` here is scoped to this one event, which is the whole reason
+    this exists - see `record_outcomes_for_finished_event`.
+
+    Returns an empty mapping on any failure rather than raising: a missed
+    outcome recording is recoverable on the next pipeline run, whereas
+    aborting the post-GW pipeline over a transient network error is not a
+    trade this function gets to make on the caller's behalf.
+    """
+    from fpl_agent.ingestion.fpl_api import FPLApiAdapter
+
+    try:
+        payload = FPLApiAdapter().fetch_event_live(event).data
+    except Exception:
+        return {}
+    out: dict[int, dict] = {}
+    for element in payload.get("elements", []) or []:
+        pid = element.get("id")
+        stats = element.get("stats") or {}
+        if pid is None:
+            continue
+        out[int(pid)] = {
+            "total_points": stats.get("total_points"),
+            "minutes": stats.get("minutes"),
+        }
+    return out
+
+
 def record_outcomes_for_finished_event(conn: sqlite3.Connection, event: int, squad_ids: list[int]) -> int:
-    """Real actual outcome, once the gameweek has finished. `player_stats_snapshot`
-    is a live, single-row-per-player table (overwritten every sync) - its
-    `event_points`/`minutes` only correctly reflect THIS event until the next
-    gameweek's own matches start generating points, so this must be called
-    promptly once a gameweek finishes (wired into the post-GW pipeline,
-    which already runs at exactly that moment) rather than assumed always
-    reconstructable later. Creates a prediction-less row when none exists
-    (the honest GW1 state - this table didn't exist before its deadline) so
-    the real outcome is still captured rather than silently dropped."""
+    """Real actual outcome, once the gameweek has finished.
+
+    **`player_stats_snapshot.minutes` is NOT per-event** (found 2026-09-19).
+    This function's own docstring used to claim `event_points`/`minutes`
+    both "only correctly reflect THIS event"; that is true of `event_points`
+    and false of `minutes`, which is FPL's season-cumulative total. The
+    damage was measurable: 41 of 60 recorded rows carried an
+    `actual_minutes` above 90 - impossible for a single gameweek - topping
+    out at 360, against a league-wide snapshot maximum of 3420 (a full
+    season). Every minutes-model error computed against this column was
+    therefore garbage, silently, while the points side was fine.
+
+    The fix is FPL's own per-event live endpoint, whose `stats.minutes` and
+    `stats.total_points` are genuinely scoped to that one event. One request
+    covers every player, so this costs a single call per finished gameweek.
+    `player_stats_snapshot.event_points` remains the fallback for points
+    only - never for minutes, which is recorded as NULL rather than a number
+    known to be wrong.
+
+    Still must be called promptly once a gameweek finishes (wired into the
+    post-GW pipeline, which runs at exactly that moment): the fallback path
+    reads the same live snapshot table that the next gameweek overwrites.
+    Creates a prediction-less row when none exists (the honest GW1 state -
+    this table didn't exist before its deadline) so the real outcome is
+    still captured rather than silently dropped."""
     if not squad_ids:
         return 0
     season = current_season(conn)
     now = datetime.now(timezone.utc).isoformat()
     written = 0
+    # Fetched lazily and at most once: a squad whose players have no
+    # snapshot rows records nothing, and must not pay for (or depend on) a
+    # network call to discover that. Keeping this out of the no-op path also
+    # keeps it out of every unit test that exercises the pipeline against a
+    # fixture database.
+    live_stats: dict[int, dict] | None = None
+
     for player_id in squad_ids:
         snapshot = conn.execute(
             "SELECT event_points, minutes FROM player_stats_snapshot WHERE player_id=? "
@@ -196,6 +249,19 @@ def record_outcomes_for_finished_event(conn: sqlite3.Connection, event: int, squ
         ).fetchone()
         if snapshot is None:
             continue
+        if live_stats is None:
+            live_stats = _event_live_stats(event)
+        live = live_stats.get(player_id)
+
+        if live is not None and live.get("minutes") is not None:
+            actual_points = live["total_points"]
+            actual_minutes = live["minutes"]
+        else:
+            # Points from the snapshot are genuinely per-event; minutes are
+            # not, and a wrong number is worse than a missing one here -
+            # every consumer of this column is measuring model error.
+            actual_points = snapshot["event_points"]
+            actual_minutes = None
 
         qual = conn.execute(
             "SELECT direction, signal, reason FROM player_fpl_implications "
@@ -220,7 +286,7 @@ def record_outcomes_for_finished_event(conn: sqlite3.Connection, event: int, squ
                 (player_id, event, season, now,
                  qual["direction"] if qual else None, qual["signal"] if qual else None, qual["reason"] if qual else None,
                  user["sentiment"] if user else None, user["note"] if user else None,
-                 snapshot["event_points"], snapshot["minutes"], now),
+                 actual_points, actual_minutes, now),
             )
         else:
             conn.execute(
@@ -228,7 +294,7 @@ def record_outcomes_for_finished_event(conn: sqlite3.Connection, event: int, squ
                 "user_sentiment=?, user_note=?, actual_points=?, actual_minutes=?, outcome_recorded_at=? WHERE id=?",
                 (qual["direction"] if qual else None, qual["signal"] if qual else None, qual["reason"] if qual else None,
                  user["sentiment"] if user else None, user["note"] if user else None,
-                 snapshot["event_points"], snapshot["minutes"], now, existing["id"]),
+                 actual_points, actual_minutes, now, existing["id"]),
             )
         written += 1
     if written:

@@ -58,6 +58,10 @@ def test_record_outcomes_creates_a_prediction_less_row_when_none_exists(db_conn,
     )
     db_conn.commit()
 
+    # The live endpoint is the source of truth for per-event minutes now.
+    monkeypatch.setattr(calibration_mod, "_event_live_stats",
+                        lambda event: {1: {"total_points": 6, "minutes": 75}})
+
     n = calibration_mod.record_outcomes_for_finished_event(db_conn, event=1, squad_ids=[1])
     assert n == 1
     row = db_conn.execute("SELECT actual_points, actual_minutes, predicted_median FROM prediction_outcomes WHERE player_id=1").fetchone()
@@ -78,6 +82,9 @@ def test_record_outcomes_fills_in_an_existing_prediction_row(db_conn, monkeypatc
         "VALUES (1, 't0', 9, 90, 'h1')"
     )
     db_conn.commit()
+
+    monkeypatch.setattr(calibration_mod, "_event_live_stats",
+                        lambda event: {1: {"total_points": 9, "minutes": 90}})
 
     n = calibration_mod.record_outcomes_for_finished_event(db_conn, event=1, squad_ids=[1])
     assert n == 1
@@ -225,3 +232,71 @@ def test_segmented_accuracy_separates_cold_start_from_established(db_conn):
 
     assert results["cohort:new_transfer_cold_start"].mae == 4.0
     assert results["cohort:established"].mae == 0.0
+
+
+def test_actual_minutes_comes_from_the_event_live_endpoint_not_the_snapshot(db_conn, monkeypatch):
+    """`player_stats_snapshot.minutes` is FPL's SEASON-CUMULATIVE total, not
+    this event's. Recording it as a per-gameweek outcome silently poisoned
+    every minutes-model error computed against it - 41 of 60 stored rows
+    carried an impossible value above 90, topping out at 360.
+
+    The snapshot here deliberately carries a cumulative-looking 326 while
+    the live endpoint reports the real 78 for that gameweek. The live value
+    must win.
+    """
+    _seed_players(db_conn, [1])
+    monkeypatch.setattr(calibration_mod, "current_season", lambda conn: "2026-27")
+    monkeypatch.setattr(calibration_mod, "_event_live_stats",
+                        lambda event: {1: {"total_points": 7, "minutes": 78}})
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, retrieved_at, event_points, minutes, stats_hash) "
+        "VALUES (1, 't0', 7, 326, 'h1')"
+    )
+    db_conn.commit()
+
+    calibration_mod.record_outcomes_for_finished_event(db_conn, event=4, squad_ids=[1])
+    row = db_conn.execute(
+        "SELECT actual_points, actual_minutes FROM prediction_outcomes WHERE player_id=1 AND event=4"
+    ).fetchone()
+    assert row["actual_minutes"] == 78, "must take per-event minutes from the live endpoint"
+    assert row["actual_minutes"] <= 90, "a single gameweek cannot exceed 90 minutes"
+    assert row["actual_points"] == 7
+
+
+def test_minutes_recorded_null_rather_than_wrong_when_live_is_unavailable(db_conn, monkeypatch):
+    """If the live endpoint cannot be reached, points still come from the
+    snapshot (genuinely per-event) but minutes are left NULL. A wrong number
+    is worse than a missing one here: every consumer of this column is
+    measuring model error, and a cumulative value reads as a catastrophic
+    miss rather than as absent data."""
+    _seed_players(db_conn, [1])
+    monkeypatch.setattr(calibration_mod, "current_season", lambda conn: "2026-27")
+    monkeypatch.setattr(calibration_mod, "_event_live_stats", lambda event: {})
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, retrieved_at, event_points, minutes, stats_hash) "
+        "VALUES (1, 't0', 5, 326, 'h1')"
+    )
+    db_conn.commit()
+
+    calibration_mod.record_outcomes_for_finished_event(db_conn, event=4, squad_ids=[1])
+    row = db_conn.execute(
+        "SELECT actual_points, actual_minutes FROM prediction_outcomes WHERE player_id=1 AND event=4"
+    ).fetchone()
+    assert row["actual_points"] == 5
+    assert row["actual_minutes"] is None
+
+
+def test_no_network_call_when_the_squad_has_no_snapshot_rows(db_conn, monkeypatch):
+    """A squad with nothing to record must not reach for the network to
+    discover that - the fetch is lazy and happens only once a player
+    genuinely has an outcome to write."""
+    _seed_players(db_conn, [1])
+    monkeypatch.setattr(calibration_mod, "current_season", lambda conn: "2026-27")
+
+    called = []
+    monkeypatch.setattr(calibration_mod, "_event_live_stats",
+                        lambda event: called.append(event) or {})
+
+    n = calibration_mod.record_outcomes_for_finished_event(db_conn, event=4, squad_ids=[1])
+    assert n == 0
+    assert called == [], "fetched the live endpoint despite having nothing to record"

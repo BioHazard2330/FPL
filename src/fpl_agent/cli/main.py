@@ -3739,7 +3739,8 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
 @click.option("--pool-per-position", default=20, type=int, help="transfer candidates per position on top of the current squad (default 20 - raising this strictly widens the search but costs solve time)")
 @click.option("--time-limit", default=180, type=int, help="CBC wall-clock ceiling in seconds (default 180)")
 @click.option("--compare/--no-compare", default=False, help="also run the production beam search over the same horizon and report the gap (real extra cost - the beam is the slower of the two)")
-def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare: bool):
+@click.option("--chips/--no-chips", "model_chips", default=True, help="model wildcard/bench boost/triple captain inside the MILP (default on). Free hit is never modelled - see the module docstring.")
+def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare: bool, model_chips: bool):
     """Solve the multi-GW transfer problem exactly, as one MILP.
 
     The counterpart to `strategic-plan`'s beam search - same per-player
@@ -3752,6 +3753,7 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
     Chips are not modelled here (see milp_planner's module docstring) - chip
     timing stays with `strategic-plan`/`chips.py`.
     """
+    from fpl_agent.ingestion.my_team import get_my_team_entry_id, get_used_chips
     from fpl_agent.optimization.locked_squad import get_locked_squad
     from fpl_agent.optimization.milp_planner import plan_transfers_milp
     from fpl_agent.optimization.squad import _BENCH_WEIGHT
@@ -3768,10 +3770,17 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
 
         click.echo(f"MILP plan  GW{start_event}..GW{start_event + horizon - 1}  "
                    f"ft={locked.free_transfers}  bank=£{bank_tenths / 10:.1f}m")
+        # Chips already spent this season must not be offered again. An
+        # unknown entry id means we genuinely do not know what has been
+        # used, so nothing is excluded and the plan is labelled by
+        # `chips_modelled` for what it actually considered.
+        entry_id = get_my_team_entry_id(conn)
+        used = set(get_used_chips(conn, entry_id) or []) if entry_id is not None else set()
         res = plan_transfers_milp(
             conn, ids, locked.free_transfers, bank_tenths, start_event=start_event,
             horizon_gw=horizon, pool_per_position=pool_per_position,
             bench_weight=_BENCH_WEIGHT, time_limit_seconds=time_limit,
+            model_chips=model_chips, used_chip_names=frozenset(used),
         )
         if res.sequence is None:
             click.echo(f"no plan: {res.status}", err=True)
@@ -3782,13 +3791,17 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
         click.echo(f"  total_net_ev={res.sequence.total_net_ev}  "
                    f"final_ft={res.sequence.final_free_transfers}  "
                    f"final_bank=£{res.sequence.final_bank_tenths / 10:.1f}m")
-        click.echo("  chips: not modelled (see `strategic-plan` for chip timing)")
+        if res.chips_modelled:
+            click.echo(f"  chips modelled: {', '.join(res.chips_modelled)}  (free hit never modelled)")
+        else:
+            click.echo("  chips: not modelled - transfer-only plan")
         for st in res.sequence.steps:
+            chip_tag = f"  [{st.chip_played.upper()}]" if st.chip_played else ""
             if st.player_in_id is None:
-                click.echo(f"    GW{st.event}: ROLL")
+                click.echo(f"    GW{st.event}: ROLL{chip_tag}")
             else:
                 hit = "  (HIT)" if st.uses_hit else ""
-                click.echo(f"    GW{st.event}: {st.player_out_name} -> {st.player_in_name}{hit}")
+                click.echo(f"    GW{st.event}: {st.player_out_name} -> {st.player_in_name}{hit}{chip_tag}")
 
         if compare:
             from fpl_agent.optimization.transfers import search_transfer_sequences

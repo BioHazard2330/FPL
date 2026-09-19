@@ -61,13 +61,15 @@ continuity, never negative.
 
 ## What is NOT modelled, deliberately
 
-- **Chips.** Wildcard and free hit change transfer accounting structurally
-  and bench boost/triple captain are products of two binaries; each is
-  linearisable, but every one of them is a place to introduce a subtle,
-  silent modelling bug. v1 plans the transfer problem only. Chip timing
-  stays with `optimization/chips.py`'s DP and the beam's own joint chip
-  branching. `used_chip_names` is accepted and ignored, so a caller cannot
-  accidentally believe chips were considered.
+- **Free hit.** Wildcard, bench boost and triple captain ARE modelled (see
+  the chip block in `plan_transfers_milp`). Free hit is not, and it is not
+  merely a harder objective term: the squad reverts the following gameweek,
+  so squad continuity stops being a single chain and needs a parallel set of
+  variables for the one-week team plus a restore constraint. Modelling it as
+  "a wildcard that does not persist" would silently let the solver keep a
+  free-hit squad forever. `MilpPlanResult.chips_modelled` reports exactly
+  which chips a given solve considered, so a caller can never assume more
+  than was actually done.
 - **Selling-price rules.** FPL sells a player at purchase price plus half
   the rounded-down profit. This project stores no purchase price anywhere
   (checked: no `purchase_price`/`selling_price` column exists in any
@@ -138,7 +140,10 @@ class MilpPlanResult:
     horizon: int
     pool_size: int
     solve_seconds: float
-    chips_modelled: bool = False
+    # Which chips this solve actually considered. An empty tuple means the
+    # plan is transfer-only - never present it as chip-aware. Free hit is
+    # never in here; see the chip block in plan_transfers_milp for why.
+    chips_modelled: tuple[str, ...] = ()
 
 
 def _position_of(c: PlayerCandidate) -> str:
@@ -178,6 +183,7 @@ def plan_transfers_milp(
     bench_weight: float | None = None,
     time_limit_seconds: int = _DEFAULT_TIME_LIMIT_SECONDS,
     used_chip_names: frozenset[str] = frozenset(),
+    model_chips: bool = True,
     xp_cache: dict | None = None,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
@@ -190,8 +196,6 @@ def plan_transfers_milp(
     the same reason the rest of the decision layer doesn't
     (`models/free_transfers.py` is the single source of truth).
     """
-    if used_chip_names:
-        _logger.debug("milp planner: chips are not modelled in v1; ignoring %s", sorted(used_chip_names))
     if len(squad_ids) != 15:
         return MilpPlanResult(None, f"Infeasible (squad has {len(squad_ids)} players, expected 15)",
                               False, None, horizon_gw, 0, 0.0)
@@ -258,6 +262,55 @@ def plan_transfers_milp(
     hits = {t: pulp.LpVariable(f"hits_{t}", lowBound=0, cat="Integer") for t in events}
     bank = {t: pulp.LpVariable(f"bank_{t}", lowBound=0, cat="Continuous") for t in events}
 
+    # --- chips -----------------------------------------------------------
+    # Modelled: wildcard (waives this gameweek's hit cost entirely), bench
+    # boost (the bench scores at full weight instead of its discount), and
+    # triple captain (the captain counts a third time). Each is at most one
+    # binary per gameweek, at most one use across the horizon, and at most
+    # one chip in any single gameweek.
+    #
+    # FREE HIT IS NOT MODELLED. It is not a harder objective term - it is a
+    # different problem: the squad reverts the following gameweek, so squad
+    # continuity stops being a chain and needs a parallel set of variables
+    # for the one-week team plus a restore constraint. Bolting it on as
+    # "wildcard that does not persist" would silently let the solver keep a
+    # free-hit squad forever, which is the kind of quiet modelling lie this
+    # module's docstring exists to prevent. `chips_modelled` reports which
+    # chips were actually considered rather than a bare True.
+    chip_kinds = [c for c in ("wildcard", "bboost", "3xc") if c not in used_chip_names] if model_chips else []
+    chip = {
+        (k, t): pulp.LpVariable(f"chip_{k}_{t}", cat="Binary")
+        for k in chip_kinds for t in events
+    }
+    # Triple-captain contribution: tcap[p,t] == cap[p,t] AND chip[3xc,t].
+    # Standard AND linearisation - the >= leg is what stops the solver
+    # claiming the bonus without actually playing the chip.
+    tcap = {
+        (p, t): pulp.LpVariable(f"tcap_{p}_{t}", cat="Binary")
+        for p in ids for t in events
+    } if "3xc" in chip_kinds else {}
+    # Bench-boost contribution: bbp[p,t] == (p benched at t) AND chip[bboost,t].
+    bbp = {
+        (p, t): pulp.LpVariable(f"bbp_{p}_{t}", cat="Binary")
+        for p in ids for t in events
+    } if "bboost" in chip_kinds else {}
+
+    for k in chip_kinds:
+        prob += pulp.lpSum(chip[(k, t)] for t in events) <= 1
+    for t in events:
+        if chip_kinds:
+            prob += pulp.lpSum(chip[(k, t)] for k in chip_kinds) <= 1
+        if "3xc" in chip_kinds:
+            for p in ids:
+                prob += tcap[(p, t)] <= cap[(p, t)]
+                prob += tcap[(p, t)] <= chip[("3xc", t)]
+                prob += tcap[(p, t)] >= cap[(p, t)] + chip[("3xc", t)] - 1
+        if "bboost" in chip_kinds:
+            for p in ids:
+                prob += bbp[(p, t)] <= x[(p, t)] - s[(p, t)]
+                prob += bbp[(p, t)] <= chip[("bboost", t)]
+                prob += bbp[(p, t)] >= (x[(p, t)] - s[(p, t)]) + chip[("bboost", t)] - 1
+
     # --- objective -------------------------------------------------------
     # Starter at full xp, captain counted a second time (so a captained
     # starter scores 2x), bench at squad.py's own weights. Minus real hit
@@ -269,6 +322,18 @@ def plan_transfers_milp(
             _bench_weight_for(pos[p], bench_weight) * xp[(p, t)] * (x[(p, t)] - s[(p, t)])
             for p in ids for t in events
         )
+        # Triple captain: the captain already counts twice above, so this
+        # adds the third helping only in the gameweek the chip is played.
+        # Empty when the chip is unavailable or chips are off entirely -
+        # `tcap`/`bbp` are not populated then, so the terms must not be
+        # indexed at all rather than summed over an empty dict.
+        + (pulp.lpSum(xp[(p, t)] * tcap[(p, t)] for p in ids for t in events) if tcap else 0)
+        # Bench boost: the bench is already counted at its discount above,
+        # so this tops it up to full value rather than double counting it.
+        + (pulp.lpSum(
+            (1.0 - _bench_weight_for(pos[p], bench_weight)) * xp[(p, t)] * bbp[(p, t)]
+            for p in ids for t in events
+        ) if bbp else 0)
         - HIT_COST * pulp.lpSum(hits[t] for t in events)
     )
 
@@ -310,7 +375,14 @@ def plan_transfers_milp(
         # binding value rather than left slack.
         prob += fuse[t] <= transfers_t
         prob += fuse[t] <= ft[t]
-        prob += hits[t] >= transfers_t - fuse[t]
+        # Wildcard waives the hit entirely for its gameweek. big_m only has
+        # to dominate the largest transfer count a legal squad can make in
+        # one week (15 - a full rebuild), so it is tight rather than the
+        # arbitrary huge constant that makes a MILP relax badly.
+        if "wildcard" in chip_kinds:
+            prob += hits[t] >= transfers_t - fuse[t] - 15 * chip[("wildcard", t)]
+        else:
+            prob += hits[t] >= transfers_t - fuse[t]
 
         if i == 0:
             prob += ft[t] == min(free_transfers, ft_cap)
@@ -322,6 +394,17 @@ def plan_transfers_milp(
             # whichever bound binds, which is exactly the real rule.
             prob += ft[t] <= ft_cap
             prob += ft[t] <= ft[prev_t] - fuse[prev_t] + 1
+            # A wildcard BURNS whatever free transfers were banked: FPL
+            # gives you exactly one the following gameweek, regardless of
+            # how many you had saved. Without this the rollover above is
+            # unconstrained during a wildcard week - the solver has no
+            # reason to spend `fuse` when hits are already waived, so it
+            # banks the lot and walks into the next gameweek with a full
+            # allowance it never earned. Confirmed live before this fix: a
+            # GW6 wildcard making 10 transfers still reported ft=5 at GW7,
+            # inflating the whole chips-on plan.
+            if "wildcard" in chip_kinds:
+                prob += ft[t] <= 1 + (ft_cap - 1) * (1 - chip[("wildcard", prev_t)])
 
         spend = pulp.lpSum(price[p] * tin[(p, t)] for p in ids)
         raised = pulp.lpSum(price[p] * tout[(p, t)] for p in ids)
@@ -329,26 +412,46 @@ def plan_transfers_milp(
         prob += bank[t] == prev_bank + raised - spend
 
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit_seconds)
+    solve_started = time.monotonic()
     prob.solve(solver)
     status = pulp.LpStatus[prob.status]
     solve_seconds = time.monotonic() - started
+    cbc_seconds = time.monotonic() - solve_started
 
-    if status not in ("Optimal",) or prob.objective is None:
+    # CBC reports LpStatus "Optimal" even when it stopped on the time limit
+    # and returned only its best incumbent (confirmed live 2026-09-19: a
+    # 240s-limited chips solve ran 247s, reported "Optimal", and returned a
+    # HIGHER objective than the same model with an ADDITIONAL constraint -
+    # impossible for a true optimum, since a tighter feasible set cannot
+    # raise a maximum). Trusting that status would publish a heuristic
+    # answer under an exactness claim, which is the one thing this module
+    # must never do. Treat a solve that ran to the limit as unproven.
+    hit_time_limit = cbc_seconds >= time_limit_seconds * 0.98
+    proven_optimal = status == "Optimal" and not hit_time_limit
+    if status == "Optimal" and hit_time_limit:
+        status = "Optimal (unproven - stopped at time limit)"
+        _logger.info(
+            "milp planner: CBC stopped at the %ss limit; reporting its incumbent as NOT proven optimal",
+            time_limit_seconds,
+        )
+
+    if not status.startswith("Optimal") or prob.objective is None:
         return MilpPlanResult(None, status, False, None, horizon_gw, len(pool), solve_seconds)
 
     objective_value = float(pulp.value(prob.objective))
     sequence = _sequence_from_solution(
         conn, ids, events, x, s, cap, tin, tout, hits, bank, ft, xp, pos, by_id, owned, bench_weight,
+        chip=chip, chip_kinds=chip_kinds, tcap=tcap, bbp=bbp,
     )
     return MilpPlanResult(
         sequence=sequence,
         status=status,
-        proven_optimal=True,
+        proven_optimal=proven_optimal,
         objective_value=round(objective_value, 2),
         horizon=horizon_gw,
         pool_size=len(pool),
         solve_seconds=round(solve_seconds, 2),
-        chips_modelled=False,
+        chips_modelled=tuple(chip_kinds),
     )
 
 
@@ -362,6 +465,7 @@ def _name_of(conn: sqlite3.Connection, player_id: int, by_id: dict) -> str:
 
 def _sequence_from_solution(
     conn, ids, events, x, s, cap, tin, tout, hits, bank, ft, xp, pos, by_id, owned, bench_weight,
+    chip=None, chip_kinds=(), tcap=None, bbp=None,
 ) -> TransferSequence:
     """Rebuild the solver's answer as a `TransferSequence`.
 
@@ -379,12 +483,25 @@ def _sequence_from_solution(
     total_ev = 0.0
     total_hits = 0.0
     squad_prev = set(owned)
+    chips_played: list[str] = []
 
     for t in events:
         squad_t = {p for p in ids if on(x[(p, t)])}
+        chip_here = next(
+            (k for k in chip_kinds if chip is not None and on(chip[(k, t)])), None
+        )
+        if chip_here is not None:
+            chips_played.append(chip_here)
+        bb_here = chip_here == "bboost"
+        tc_here = chip_here == "3xc"
         gw_ev = sum(
-            xp[(p, t)] * (1.0 if on(s[(p, t)]) else _bench_weight_for(pos[p], bench_weight))
-            + (xp[(p, t)] if on(cap[(p, t)]) else 0.0)
+            xp[(p, t)] * (
+                1.0 if on(s[(p, t)])
+                # Bench boost pays the bench in full for this gameweek only.
+                else (1.0 if bb_here else _bench_weight_for(pos[p], bench_weight))
+            )
+            # Captain counts twice normally, three times under triple captain.
+            + (xp[(p, t)] * (2.0 if tc_here else 1.0) if on(cap[(p, t)]) else 0.0)
             for p in squad_t
         )
         gw_hits = float(pulp.value(hits[t]) or 0.0)
@@ -399,6 +516,7 @@ def _sequence_from_solution(
             steps.append(TransferSequenceStep(
                 event=t, player_out_id=None, player_out_name=None,
                 player_in_id=None, player_in_name=None, uses_hit=False,
+                chip_played=chip_here,
                 resulting_squad_ids=tuple(sorted(squad_t)), gw_ev=round(net_gw_ev, 2),
             ))
         else:
@@ -409,6 +527,7 @@ def _sequence_from_solution(
                     player_out_id=p_out, player_out_name=_name_of(conn, p_out, by_id),
                     player_in_id=p_in, player_in_name=_name_of(conn, p_in, by_id),
                     uses_hit=gw_hits > 0,
+                    chip_played=chip_here if idx == 0 else None,
                     resulting_squad_ids=tuple(sorted(squad_t)),
                     # Attribute the gameweek's whole net contribution to its
                     # first step so sum(step.gw_ev) == total_net_ev holds.
@@ -424,5 +543,5 @@ def _sequence_from_solution(
         final_bank_tenths=int(round(float(pulp.value(bank[final_event]) or 0.0))),
         total_net_ev=round(total_ev - total_hits, 2),
         tiebreak_adjustment=0.0,  # the MILP takes no tie-break nudges at all
-        chips_used=(),
+        chips_used=tuple(chips_played),
     )

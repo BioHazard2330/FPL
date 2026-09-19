@@ -11,6 +11,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { CommandScreen } from '@/screens/Command/CommandScreen'
 import { MyTeamScreen } from '@/screens/MyTeam/MyTeamScreen'
 import { PlanScreen } from '@/screens/Plan/PlanScreen'
+import { ReceiptsScreen } from '@/screens/Receipts/ReceiptsScreen'
 import { FootballScreen } from '@/screens/Football/FootballScreen'
 import { ScoutScreen } from '@/screens/Scout/ScoutScreen'
 import { AdvancedScreen } from '@/screens/Advanced/AdvancedScreen'
@@ -29,6 +30,7 @@ function App() {
             <Route path="/" element={<CommandScreen />} />
             <Route path="/my-team" element={<MyTeamScreen />} />
             <Route path="/plan" element={<PlanScreen />} />
+            <Route path="/receipts" element={<ReceiptsScreen />} />
             <Route path="/matchweek" element={<MatchweekScreen />} />
             <Route path="/club/:id" element={<ClubScreen />} />
             <Route path="/player/:id" element={<PlayerScreen />} />

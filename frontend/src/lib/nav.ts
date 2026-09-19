@@ -1,4 +1,4 @@
-import { Activity, Crosshair, Goal, Radio, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Activity, Crosshair, Goal, Radio, Receipt, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -7,6 +7,7 @@ export const DESTINATIONS = [
   { to: '/matchweek', label: 'Matchweek', icon: Trophy },
   { to: '/football', label: 'Football', icon: Goal },
   { to: '/scout', label: 'Scout', icon: Search },
+  { to: '/receipts', label: 'Receipts', icon: Receipt },
   { to: '/advanced', label: 'Advanced', icon: Activity },
   { to: '/live', label: 'Live', icon: Radio },
 ] as const
@@ -18,7 +19,7 @@ export const DESTINATIONS = [
  * machine itself healthy right now (operations). Ordering within each
  * group is unchanged, so no existing muscle memory breaks. */
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
-  { label: 'Decision', routes: ['/', '/my-team', '/plan'] },
+  { label: 'Decision', routes: ['/', '/my-team', '/plan', '/receipts'] },
   { label: 'The football', routes: ['/matchweek', '/football'] },
   { label: 'Intelligence', routes: ['/scout'] },
   { label: 'Operations', routes: ['/live', '/advanced'] },

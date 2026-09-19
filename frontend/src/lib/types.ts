@@ -1201,3 +1201,50 @@ export interface MatchReportPayload {
   insights: MatchInsight[]
   review: MatchReview | null
 }
+
+/** THE RECEIPTS - the optimizer measured against YOUR real decisions.
+ *
+ *  `optimizer_points` is null for a gameweek where no recommendation was
+ *  logged, or where it proposed selling a player who was not in the squad.
+ *  Null is NOT zero and must never be rendered as a score. */
+export interface LedgerRow {
+  event: number
+  your_points: number
+  your_chip: string | null
+  your_chip_label: string | null
+  your_transfers: number
+  optimizer_points: number | null
+  optimizer_action: string | null
+  roll_points: number | null
+  delta_vs_you: number | null
+  followed: boolean | null
+  note: string | null
+  /** Its recommendation scored no more than doing nothing would have. */
+  worthless_vs_roll: boolean
+}
+
+export interface ReceiptsPayload {
+  has_record: boolean
+  reason?: string
+  headline?: {
+    your_total: number | null
+    your_total_all_events: number
+    optimizer_total: number | null
+    roll_total: number | null
+    delta: number | null
+    comparable_events: number
+    events: number
+    followed_count: number
+    recommendations_logged: number
+    optimizer_ahead: boolean
+  }
+  ledger?: LedgerRow[]
+  flags?: {
+    never_recommended_roll: boolean
+    missing_recommendations: number
+    followed_none: boolean
+  }
+  internal_consistency?: { kind: string; n: number; win_rate_pct: number; mean_advantage: number | null; thin: boolean }[]
+  method?: string
+  correction?: string
+}

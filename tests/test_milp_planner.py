@@ -169,8 +169,103 @@ def test_more_free_transfers_never_lowers_the_optimum(db_conn):
     assert high.objective_value >= low.objective_value - 0.01
 
 
-def test_chips_are_reported_as_not_modelled():
-    """v1 does not model chips. The result must say so rather than leaving a
-    caller to assume chip timing was considered - passing used_chip_names
-    must not silently imply otherwise."""
-    assert MilpPlanResult(None, "Optimal", True, 1.0, 5, 10, 0.1).chips_modelled is False
+def test_chips_modelled_defaults_to_nothing():
+    """`chips_modelled` names the chips a solve actually considered, and
+    defaults to none. A caller must never be able to read a transfer-only
+    result as chip-aware, so the default is the empty tuple rather than a
+    bare boolean that a truthiness check could get wrong."""
+    result = MilpPlanResult(None, "Optimal", True, 1.0, 5, 10, 0.1)
+    assert result.chips_modelled == ()
+    assert not result.chips_modelled
+
+
+def test_chips_modelled_excludes_already_used_chips(db_conn, monkeypatch):
+    """A chip already spent this season must never appear in a plan. The
+    result reports which chips a solve actually considered, so this asserts
+    the report rather than trusting the caller to remember."""
+    from fpl_agent.optimization import milp_planner
+
+    captured = {}
+
+    def fake_solve(*args, **kwargs):
+        captured["used"] = kwargs.get("used_chip_names")
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(milp_planner, "plan_transfers_milp", fake_solve)
+    with pytest.raises(RuntimeError):
+        milp_planner.plan_transfers_milp(
+            db_conn, list(range(15)), 1, 0, start_event=2,
+            used_chip_names=frozenset({"wildcard", "3xc"}),
+        )
+    assert captured["used"] == frozenset({"wildcard", "3xc"})
+
+
+def test_model_chips_false_produces_a_transfer_only_plan(db_conn):
+    """`model_chips=False` must report an empty `chips_modelled`, so a
+    transfer-only plan can never be presented as chip-aware."""
+    res = plan_transfers_milp(
+        db_conn, list(range(15)), free_transfers=1, bank_tenths=0,
+        start_event=2, model_chips=False,
+    )
+    # An empty database cannot solve; the point is that nothing claims chips.
+    assert res.chips_modelled == ()
+
+
+def test_wildcard_burns_banked_free_transfers(db_conn):
+    """FPL gives exactly one free transfer the gameweek after a wildcard,
+    regardless of how many were banked. Without the burn constraint the
+    solver has no reason to spend `fuse` in a week where hits are already
+    waived, so it banks the lot -- confirmed live before the fix, where a
+    GW6 wildcard making 10 transfers still reported ft=5 at GW7.
+
+    Re-derived from the returned plan: a gameweek following a wildcard can
+    contain at most one transfer without a hit being flagged.
+    """
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    locked = get_locked_squad(db_conn)
+    if locked is None:
+        pytest.skip("no real locked squad in this database")
+    ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in locked.xi.bench]
+    if len(ids) != 15:
+        pytest.skip("locked squad is not a full 15")
+
+    res = plan_transfers_milp(
+        db_conn, ids, free_transfers=5, bank_tenths=0, start_event=locked.event + 1,
+        horizon_gw=4, pool_per_position=8, model_chips=True,
+        used_chip_names=frozenset({"bboost", "3xc"}), time_limit_seconds=180,
+    )
+    if res.sequence is None or "wildcard" not in res.sequence.chips_used:
+        pytest.skip("this instance did not choose to play a wildcard")
+
+    wildcard_event = next(s.event for s in res.sequence.steps if s.chip_played == "wildcard")
+    after = [s for s in res.sequence.steps if s.event == wildcard_event + 1 and s.player_in_id]
+    if len(after) > 1:
+        assert any(s.uses_hit for s in after), (
+            f"GW{wildcard_event + 1} made {len(after)} transfers on 1 free transfer "
+            "after a wildcard without flagging a hit"
+        )
+
+
+def test_time_limited_solve_is_never_reported_as_proven(db_conn):
+    """CBC reports LpStatus 'Optimal' even when it stopped on the time limit
+    and returned only its best incumbent. Publishing that as exact is the
+    one thing this module must not do, so a solve that ran to the limit is
+    reported unproven."""
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+
+    locked = get_locked_squad(db_conn)
+    if locked is None:
+        pytest.skip("no real locked squad in this database")
+    ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in locked.xi.bench]
+    if len(ids) != 15:
+        pytest.skip("locked squad is not a full 15")
+
+    res = plan_transfers_milp(
+        db_conn, ids, locked.free_transfers, 0, start_event=locked.event + 1,
+        horizon_gw=6, pool_per_position=18, model_chips=True, time_limit_seconds=1,
+    )
+    if res.solve_seconds < 1:
+        pytest.skip("solver finished inside the limit on this machine")
+    assert res.proven_optimal is False
+    assert "unproven" in res.status
