@@ -94,8 +94,11 @@ denominator is now the same on both sides by construction.
 
 ## Open
 
-- Club file: the same two pitches (where they shoot, where they concede)
-  and a team xG race would complete the set — not built.
+- Club file gained its two pitches after this entry was first written
+  (WHERE THEY SHOOT / WHERE THEY CONCEDE, the conceded set drawn on the
+  same half from the opponent's end; Arsenal: 55 shots for at 7.0 xG,
+  42 faced at 3.2). A club-level xG race is not built — four matches per
+  club is too short a line to mean anything yet.
 - Crests on the quadrant overlap where four clubs sit near the average;
   hover dims the rest, but no de-overlap is attempted (a jitter would
   misplace real values).
