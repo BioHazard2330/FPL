@@ -37,11 +37,36 @@ project's real event vocabulary):
   a resulting injury) - never routed here directly, to avoid firing an
   expensive real beam search on every single in-play kick of the ball."""
 import logging
+import threading
+from contextlib import contextmanager
 
 from fpl_agent.events.bus import Event, EventBus
 from fpl_agent.events.types import EventType
 
 _logger = logging.getLogger("fpl_agent.materiality_engine")
+
+# Real deadlock fix (2026-09-19, direct user report: "nothings been synced").
+# The event bus is SYNCHRONOUS and in-process, so `_on_routed_event` runs
+# inside the emitting caller's own stack frame. `run_sync()` emits
+# PRICE_CHANGED/AVAILABILITY_CHANGED while it still holds its OWN write
+# transaction, and the gate below opens a SEPARATE connection and writes -
+# SQLite permits exactly one writer, so every such event blocked for the
+# full busy-timeout and then failed `database is locked`. After four days
+# offline the catch-up sync carried a 73-price-event backlog; at ~43s of
+# blocking each that is ~52 minutes of a sync deadlocking against events it
+# emitted itself (confirmed live: 30 minutes of CPU with the WAL frozen at
+# 8 KB and 150 identical lock errors).
+#
+# Suspending collapses that burst into ONE check run after the emitting
+# transaction is done. That is not a behavioural loss: the gate is a GLOBAL
+# question ("has anything material happened since the last plan?"), not a
+# per-event one, so 73 sequential identical checks were redundant work even
+# without the deadlock. Reactivity is unchanged everywhere that matters -
+# `live_match_poll_cmd`/`refresh_in_progress_matches` hold no long write
+# transaction and never suspend.
+_STATE_LOCK = threading.Lock()
+_suspend_depth = 0
+_pending = False
 
 _ROUTED_EVENT_TYPES = (
     EventType.AVAILABILITY_CHANGED,
@@ -52,7 +77,42 @@ _ROUTED_EVENT_TYPES = (
 )
 
 
-def _on_routed_event(event: Event) -> None:
+@contextmanager
+def suspended():
+    """Defer routed-event gate checks for the duration of a block that holds
+    its own write transaction (today: `run_sync()` inside `run_scheduled`).
+    Events arriving while suspended set a pending flag instead of running
+    the gate; on exit the gate runs exactly once if anything arrived.
+
+    Re-entrant by depth so a nested suspend can never resume early, and the
+    drain happens OUTSIDE the lock - the gate itself opens a connection and
+    can spawn a real subprocess, which must never run while holding a
+    module-level lock. A failed drain is logged, not raised: this wraps a
+    sync that must not abort because a follow-up optimisation check failed,
+    and `run_scheduled`'s own end-of-cycle check is still there to retry.
+    """
+    global _suspend_depth, _pending
+    with _STATE_LOCK:
+        _suspend_depth += 1
+    try:
+        yield
+    finally:
+        with _STATE_LOCK:
+            _suspend_depth -= 1
+            drain = _suspend_depth == 0 and _pending
+            if drain:
+                _pending = False
+        if drain:
+            try:
+                _run_gate("suspended-burst", "coalesced")
+            except Exception:
+                _logger.exception(
+                    "materiality engine: coalesced recompute check failed after a suspended burst - "
+                    "continuing, run_scheduled's own end-of-cycle check will retry"
+                )
+
+
+def _run_gate(event_label: str, entity_label: object) -> None:
     from fpl_agent.cli.main import _maybe_trigger_strategic_plan_recompute
     from fpl_agent.database.connection import get_connection
 
@@ -62,16 +122,26 @@ def _on_routed_event(event: Event) -> None:
         if reason is not None:
             _logger.info(
                 "materiality engine: %s (%s) triggered a real strategic-plan recompute - %s",
-                event.event_type.value, event.entity_id, reason,
+                event_label, entity_label, reason,
             )
+    finally:
+        conn.close()
+
+
+def _on_routed_event(event: Event) -> None:
+    global _pending
+    with _STATE_LOCK:
+        if _suspend_depth > 0:
+            _pending = True
+            return
+    try:
+        _run_gate(event.event_type.value, event.entity_id)
     except Exception:
         _logger.exception(
             "materiality engine: recompute check failed for a real %s event - continuing, "
             "the next real routed event (or the next run_scheduled tick) will retry",
             event.event_type.value,
         )
-    finally:
-        conn.close()
 
 
 def register(event_bus: EventBus) -> None:

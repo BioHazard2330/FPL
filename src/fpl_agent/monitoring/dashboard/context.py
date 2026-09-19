@@ -40,8 +40,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
+from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
 from fpl_agent.ingestion.my_team import get_active_chip_for_event, get_my_team_entry_id, get_used_chips
+from fpl_agent.ingestion.sync import update_source_health
 from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state
 from fpl_agent.models.lineup_state import squad_lineup_states
 from fpl_agent.models.live_rank import classify_precision
@@ -604,6 +606,45 @@ def _any_match_live(conn_factory) -> bool:
         conn.close()
 
 
+def maybe_fetch_live_payload(conn: sqlite3.Connection) -> dict | None:
+    """Only issues a network call when a fixture is genuinely in progress OR
+    has just finished (dashboard-state pass, 2026-08-21) - cheap and honest,
+    matches this project's live-bonus CLI command's own fetch pattern.
+    Returns None outside any relevant window (the common case, including
+    all of preseason) with zero network traffic. Dropped the `finished=0`
+    filter deliberately: the real "My Live Score" POST_MATCH state needs
+    this same payload to show final points immediately after full-time,
+    before official gameweek stats are computed - FPL's live endpoint keeps
+    serving the final per-player stats for a just-finished match. Uses
+    live_or_reference_event(), not _reference_event() directly - the latter
+    would report the FOLLOWING gameweek for the entire real GW1 match
+    window (is_next flips at the deadline, not at kickoff or full-time),
+    which would silently never detect the live fixture at all.
+
+    Lives here rather than in `cli/main.py` (where it was defined until
+    2026-09-19) because BOTH real context-building paths need it, not just
+    the CLI's own `fpl dashboard` regen - see `get_cached_dashboard_context`
+    below for the real bug that split caused.
+    """
+    from fpl_agent.models.fixtures import live_or_reference_event
+
+    event_num = live_or_reference_event(conn)
+    if event_num is None:
+        return None
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
+    ).fetchone()
+    if not row or not row["n"]:
+        return None
+    try:
+        payload = FPLApiAdapter().fetch_event_live(event_num).data
+    except SourceFetchError as e:
+        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        return None
+    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+    return payload
+
+
 def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = _DEFAULT_TTL_SECONDS) -> DashboardContext:
     """The real "compute once, serve many times" entry point for the JSON
     API layer (2026-09-08, Phase 8.2 Stage 2) - see this module's own
@@ -632,7 +673,7 @@ def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = 
     with _CACHE_LOCK:
         if _cached_context is not None and (now - _cached_at) < ttl_seconds:
             return _cached_context
-        _cached_context = build_dashboard_context(conn)
+        _cached_context = build_dashboard_context(conn, live_payload=maybe_fetch_live_payload(conn))
         _cached_at = time.monotonic()
         return _cached_context
 
@@ -657,7 +698,7 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
             break
         conn = conn_factory()
         try:
-            fresh = build_dashboard_context(conn)
+            fresh = build_dashboard_context(conn, live_payload=maybe_fetch_live_payload(conn))
             with _CACHE_LOCK:
                 _cached_context = fresh
                 _cached_at = time.monotonic()

@@ -86,6 +86,7 @@ from fpl_agent.models.live_rank import estimate_live_rank, estimate_squad_live_p
 from fpl_agent.models.scenario_engine import sample_season_scenarios
 from fpl_agent.monitoring.cleanup import run_cleanup
 from fpl_agent.monitoring.dashboard import generate_dashboard_html
+from fpl_agent.monitoring.dashboard.context import maybe_fetch_live_payload
 from fpl_agent.monitoring.doctor import run_checks
 from fpl_agent.monitoring.readiness import run_readiness_checks
 from fpl_agent.monitoring.source_status import get_source_health
@@ -1508,8 +1509,15 @@ def run_scheduled():
     tracked_squad_ids = resolve_tracked_squad_ids(scope_conn)
     scope_conn.close()
 
+    # Suspended for the duration of run_sync (2026-09-19): run_sync holds its
+    # own write transaction while synchronously emitting the very events this
+    # engine subscribes to, and the gate writes on a second connection - a
+    # real self-deadlock against SQLite's single-writer rule, see
+    # `materiality_engine.suspended`'s own docstring. The burst is coalesced
+    # into one check when the block exits, before the steps below run.
     try:
-        summary = run_sync(tracked_squad_ids=tracked_squad_ids)
+        with _materiality_engine.suspended():
+            summary = run_sync(tracked_squad_ids=tracked_squad_ids)
     except (SourceFetchError, ValidationError) as e:
         logger.error("run-scheduled sync failed: %s", e)
         click.echo(f"sync failed: {e}", err=True)
@@ -1669,8 +1677,15 @@ def run_scheduled():
                 "run-scheduled live-odds sync: %d matched, %d unmatched, %d failed",
                 odds_result["matched"], odds_result["unmatched"], odds_result["failed"],
             )
-    except Exception:
-        logger.exception("run-scheduled live-odds sync failed - not fatal to the sync itself")
+    except Exception as e:
+        # Deliberately NOT logger.exception (2026-09-19): the traceback embeds
+        # the chained requests.HTTPError, whose own __str__ carries the full
+        # request URL including `apiKey=<the live key>` in cleartext - the
+        # exact leak `odds_live_source.fetch_live_odds_payload` already takes
+        # care to avoid in the message it raises. Logging the traceback here
+        # re-introduced it into logs/fpl_agent.log on every failure. The
+        # OddsLiveFetchError message is already built from known-safe fields.
+        logger.error("run-scheduled live-odds sync failed - not fatal to the sync itself: %s", e)
 
     # Solio Analytics independent-model benchmark (2026-08-27, external-
     # model-comparison pass) - self-throttled to Solio's own ~4h cadence via
@@ -1857,7 +1872,7 @@ def run_scheduled():
     # remembered to run it by hand - confirmed live, the last real sample
     # was 4 days stale by the time this was checked. Auto-refreshes here,
     # but ONLY while a squad fixture is genuinely live-or-just-finished
-    # (the same cheap started=1 gate `_maybe_fetch_live_payload` already
+    # (the same cheap started=1 gate `maybe_fetch_live_payload` already
     # uses - zero network cost the rest of the time, which is most of a
     # season) AND at most once per _LIVE_RANK_MIN_REFRESH_MINUTES, so a
     # short scheduler interval can't turn this into the heaviest network
@@ -1915,37 +1930,6 @@ def _dashboard_path():
     # write to the real project data dir even when a test monkeypatches
     # DATA_DIR for isolation.
     return DATA_DIR / "dashboard.html"
-
-
-def _maybe_fetch_live_payload(conn) -> dict | None:
-    """Only issues a network call when a fixture is genuinely in progress OR
-    has just finished (dashboard-state pass, 2026-08-21) - cheap and honest,
-    matches this project's live-bonus CLI command's own fetch pattern.
-    Returns None outside any relevant window (the common case, including
-    all of preseason) with zero network traffic. Dropped the `finished=0`
-    filter deliberately: the real "My Live Score" POST_MATCH state needs
-    this same payload to show final points immediately after full-time,
-    before official gameweek stats are computed - FPL's live endpoint keeps
-    serving the final per-player stats for a just-finished match. Uses
-    live_or_reference_event(), not _reference_event() directly - the latter
-    would report the FOLLOWING gameweek for the entire real GW1 match
-    window (is_next flips at the deadline, not at kickoff or full-time),
-    which would silently never detect the live fixture at all."""
-    event_num = live_or_reference_event(conn)
-    if event_num is None:
-        return None
-    row = conn.execute(
-        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
-    ).fetchone()
-    if not row or not row["n"]:
-        return None
-    try:
-        payload = FPLApiAdapter().fetch_event_live(event_num).data
-    except SourceFetchError as e:
-        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
-        return None
-    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
-    return payload
 
 
 def _log_livefpl_rank_decision(conn, snapshot) -> int:
@@ -2300,7 +2284,7 @@ def _write_dashboard(
         # squad). generate_dashboard_html is now the single place that
         # decides "bare call -> check the lock" - this function just passes
         # whatever the caller gave it straight through, unchanged.
-        live_payload = _maybe_fetch_live_payload(conn)
+        live_payload = maybe_fetch_live_payload(conn)
         # Real torn-read fix (2026-08-29, "live command centre" pass, direct
         # spec requirement: "ONE DASHBOARD RENDER = ONE COHERENT STATE").
         # `generate_dashboard_html` is a genuinely pure function of DB state
@@ -3070,7 +3054,7 @@ def live_match_poll_cmd(interval: int, max_hours: float):
             try:
                 from fpl_agent.monitoring.live_snapshot import write_live_snapshot
 
-                live_payload = _maybe_fetch_live_payload(conn) if any_live else None
+                live_payload = maybe_fetch_live_payload(conn) if any_live else None
                 write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
             except Exception as e:
                 click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)

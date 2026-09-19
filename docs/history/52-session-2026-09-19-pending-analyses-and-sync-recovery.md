@@ -128,19 +128,99 @@ monthly 500-credit budget is spent — consistent with the pre-throttle burn
 documented 2026-09-13. The 6h `should_sync` gate is in place and the step is
 non-fatal, so this resolves itself on the next billing cycle. No code change.
 
+## Second pass — the screens were still stale, and why
+
+User follow-up: "everything is not synced yet. team matchweek command
+whatever, they arent upto date." Correct, and for a reason the first pass
+had not looked at.
+
+### Every `/api/*` payload was built with no live data at all
+
+`build_dashboard_context(conn, live_payload=...)` takes the FPL live-event
+payload as a parameter. `assemble.py` (the old Python-rendered
+`dashboard.html`) passes it. **Both API-layer callers did not** —
+`get_cached_dashboard_context` and `run_context_refresh_loop` each called
+`build_dashboard_context(conn)` bare, so `live_payload` was always `None`
+for the React app, which is the real default UI.
+
+Downstream of that single omission, `_compute_my_live_score` returns `None`
+on its first line, and so:
+
+- COMMAND `bar.actual_points` was `null` during a live gameweek
+- MY TEAM `actual_points_label` was `""`
+- `xp_summary_label` read `"projected xP"` instead of `"next-GW xP"`
+
+A regression dating from the 2026-09-08 Phase 8.2 Stage 2 API extraction:
+the old dashboard kept working, so nothing looked broken from the CLI side.
+
+Fixed by moving `_maybe_fetch_live_payload` out of `cli/main.py` into
+`monitoring/dashboard/context.py` as `maybe_fetch_live_payload` (both real
+context paths need it, not just the CLI) and passing it in both API callers.
+`cli/main.py` imports it rather than keeping a second copy. No new network
+cadence: the helper is self-gating and returns `None` with zero traffic
+unless a fixture for the live/reference event has `started=1`, and the
+context refreshes on its existing 480s / 45s-when-live interval.
+
+Verified live against GW5 in progress: helper returned 662 elements with 29
+scoring; `actual_points` went `null` → `4.0`, `actual_points_label` `""` →
+`"4 GW5 pts"`, `xp_summary_label` → `"next-GW xP"`.
+
+### The decision itself was three days old
+
+Separately, COMMAND served `computed_at: 2026-09-15T20:23`, `is_stale: true`,
+`recompute_status: RECOMPUTING`, `decision_id: 3133`. The recompute
+auto-triggered at 12:58 was genuinely working, not wedged — 97% of a core,
+unlike the earlier sync at 22% doing nothing — and completed at 13:07:57,
+writing decision 3136. After the live-server restart COMMAND reports
+`is_stale: false`, `age_relative: 15m ago`, `recompute_status: CURRENT`, and
+the UI replaced the stale "WILDCARD SQUAD 3-5-2" with the current
+"FODEN -> MBEUMO SQUAD 4-5-1".
+
+**The live-server had to be restarted for the code fix to apply** — it holds
+its imports in memory for the life of the process, the same trap recorded in
+session 34. Editing the file changes nothing until the process is recycled.
+
+### The deadlock, fixed
+
+`live/materiality_engine.py` gained a re-entrant `suspended()` context
+manager; `run_scheduled` wraps `run_sync()` in it. Routed events arriving
+while suspended set a pending flag instead of running the gate, and the gate
+runs exactly once on exit if anything arrived. This does not change what
+counts as material — the gate is a *global* question ("has anything material
+happened since the last plan?"), so 73 sequential identical checks were
+redundant work even setting the deadlock aside. Reactivity is unchanged in
+`live_match_poll_cmd`/`refresh_in_progress_matches`, which hold no long write
+transaction and never suspend. Verified directly: 73 events while suspended
+produce 0 checks during and exactly 1 coalesced check after; an empty suspend
+produces none; unsuspended behaviour is per-event as before; nested suspends
+do not resume early; and an exception inside the block still drains and
+restores depth.
+
+### The key leak was one level up from where it looked
+
+`odds_live_source.fetch_live_odds_payload` already redacts deliberately — it
+builds its message only from known-safe fields and documents never
+interpolating `str(exc)`. The leak was `cli/main.py`'s
+`logger.exception(...)` in the odds `except`, which writes the full chained
+traceback; the `OddsLiveFetchError` is raised `from exc`, so the original
+`requests.HTTPError` — whose `__str__` carries the URL including
+`apiKey=<live key>` — landed in the log anyway. Now `logger.error(..., e)`,
+no traceback. The already-exhausted key should still be rotated, since it
+sits in the existing log file.
+
+367 tests green across the materiality/run-scheduled/dashboard/context/api/
+live-snapshot/events suites.
+
 ## Open, not fixed this session
 
-- **The sync-vs-materiality-engine deadlock is unaddressed.** The wedge is
-  reproducible in principle on any large price-event backlog (a long offline
-  gap, a mass price update). Killing the process is a workaround, not a fix —
-  the recompute gate should not be able to re-enter a write while `run_sync`
-  holds its transaction.
 - **The spurious stale-lock refusal** against a dead PID. `_pid_is_alive`'s
   `OSError`/timeout path deliberately returns `True` ("never steal a lock we
   can't verify is free"), which is the right default but makes a transient
   `tasklist` failure look exactly like a live holder. Worth distinguishing.
-- **`ODDS_API_KEY` is written to `logs/fpl_agent.log` in cleartext**, inside
-  the failing request URL (`requests`' own `HTTPError` message embeds the
-  full URL including `apiKey=`). `logs/` is gitignored so nothing leaked to
-  the remote, but the key sits in a plaintext file on disk and in every error
-  of this shape. The URL should be redacted before logging.
+- **`ODDS_API_KEY` already sits in `logs/fpl_agent.log`** from before the
+  redaction fix. `logs/` is gitignored so nothing reached the remote, but the
+  key is on disk in cleartext and is worth rotating.
+- **`get_cached_dashboard_context` still cannot invalidate early** on a
+  material change (its own pre-existing disclosed follow-up). With live
+  fixtures the 45s refresh makes this mostly moot; outside one, a fresh
+  decision can wait up to the 600s TTL to appear.
