@@ -99,6 +99,38 @@ and a track-record strip under the verdict reading 238 yours / 222 its /
 - Free hit deliberately not modelled (the squad reverts; continuity needs a
   parallel variable set).
 
+## The visual work — two things that did not exist
+
+User: *"we talked about major visual improvements. i dont see any of that?
+big things not just quality of life shit."* Fair. The cross-check panel and
+the track strip are honest and small. These two are not small.
+
+**THE ATLAS** (`/atlas`, under THE FOOTBALL). 1,141 real shots across 41
+matches on one attacking half at real proportions — the SVG viewBox *is*
+the pitch in metres, so FotMob's coordinates land untransformed and the
+penalty area, six-yard box, spot and D are drawn at 16.5m, 5.5m, 11m and
+9.15m. Dot area is xG; filled only for a goal; your players gold against
+the league in blue; woodwork a red ring. Filter by squad, outcome,
+situation, club; click a shooter to isolate him; a zone layer shades mean
+chance quality by location with the shot count in each cell. Hover any dot.
+It already says things the app never did: your squad has **26 goals from
+18.7 xG** (+7.3, which the model cannot expect to hold), Igor Thiago has 10
+shots and 2.45 xG for none, João Pedro is +1.6 on 2.4.
+
+**MODEL vs REALITY** (on RECEIPTS). All 54 settled predictions as dots —
+what the model said before the deadline against what landed — with the
+diagonal and a ±1sd band of its own measured error, the same 3.89 the
+transfer bar is derived from. **2.79 off on average; lean +1.07, it
+undersells; its stated floor-to-ceiling range held 74.1% of the time.**
+
+Two things fixed on the way, both real: `--accent` is the raised *surface*
+token, not a colour, and the optimizer's numbers on RECEIPTS and the COMMAND
+strip had been coloured with it — dark grey. Now broadcast-blue. And
+`maybe_fetch_live_payload` was recording source health with a DB write
+inside the live-server's context build; during a live match that write hit
+`database is locked` and aborted the entire ~60s build, twice in the log.
+The note is best-effort now.
+
 ## Open
 
 - **The ledger has n=3.** Every number above is real and the direction is
