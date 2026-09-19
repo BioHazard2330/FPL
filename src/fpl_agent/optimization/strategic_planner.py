@@ -375,7 +375,7 @@ def synthesize_current_recommendation(
         from fpl_agent.optimization.authoritative_decision import select_authoritative_candidate
 
         authoritative, top, chosen_assessment, runner_up_assessment = select_authoritative_candidate(
-            conn, options, start_event, bank_tenths, ca,
+            conn, options, start_event, bank_tenths, ca, horizon_gw=horizon_gw,
         )
         authoritative_unavailable_reason = None
     except Exception as exc:

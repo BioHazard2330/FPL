@@ -35,6 +35,13 @@ def _tc(player_out_id, player_in_id, net_ev_3gw, player_out_name="OUT", player_i
 
 def _stub_common(monkeypatch, transfer_map, robustness_verdict=None, qualitative_verdict="MODEL_WINS"):
     monkeypatch.setattr(da_mod, "_reference_event", lambda conn: 1)
+    # The materiality bar is measured from recorded prediction error in
+    # production (models/materiality.py) and falls back to a conservative
+    # constant on an empty database. Every net_ev value in this file was
+    # written as a RATIO against a 1.0 bar (1.2 = narrow, 5.0 = comfortable),
+    # so the bar is pinned here explicitly - these tests exercise the
+    # verdict logic, not the bar's value, which has its own tests.
+    monkeypatch.setattr(da_mod, "_effective_threshold", lambda conn: (1.0, "pinned for test"))
     monkeypatch.setattr(
         transfers_mod, "_squad_gw_ev",
         lambda conn, squad_ids, event, cache: {1: 50.0, 2: 48.0, 3: 47.0, 4: 46.0, 5: 45.0}.get(event, 44.0),

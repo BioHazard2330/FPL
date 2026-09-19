@@ -147,3 +147,52 @@ class TestConditionalPlanSeparation:
         candidates = [_candidate("A", 475.0, "ROBUST", "PLAY WILDCARD (GW3)", path=path)]
         decision = build_authoritative_decision(candidates, _ca(), roll_baseline_ev=375.0)
         assert decision.critical_dependencies == ("GW7 Wieffer -> Van Hecke",)
+
+
+class TestRollUnderMeasuredNoise:
+    """ROLL as a real outcome (2026-09-19). Before this, doing nothing sat
+    off to the side as `roll_baseline_ev` and could never win the walk - a
+    transfer whose edge over it was inside the model's own error was
+    reported as "REVIEW: transfer" rather than as the roll it should be."""
+
+    def _transfer_candidate(self, total, strategic_class="FRAGILE"):
+        path = _path([_step(3, 1, "Owned", 2, "Target", squad=(2,))], total_net_ev=total)
+        return _candidate("Owned -> Target", total, strategic_class, immediate_action="Owned -> Target", path=path)
+
+    def test_transfer_inside_noise_resolves_to_roll(self):
+        chosen = self._transfer_candidate(total=52.5)  # +2.5 over roll
+        decision = build_authoritative_decision([chosen], _ca(), roll_baseline_ev=50.0, roll_threshold=4.76)
+
+        assert decision.action_type == "ROLL"
+        assert decision.immediate_action.startswith("ROLL")
+        assert "Owned -> Target" in decision.best_alternative, "the rejected transfer is still disclosed"
+        assert "not distinguishable from zero" in decision.decision_reason
+        assert decision.critical_dependencies == ()
+
+    def test_transfer_clearing_the_bar_is_kept(self):
+        chosen = self._transfer_candidate(total=60.0)  # +10 over roll
+        decision = build_authoritative_decision([chosen], _ca(), roll_baseline_ev=50.0, roll_threshold=4.76)
+        assert decision.action_type == "TRANSFER"
+        assert decision.immediate_action == "Owned -> Target: Owned -> Target"
+
+    def test_robust_class_overrides_the_noise_rule(self):
+        """A path that survived real Monte Carlo stress has earned its edge -
+        consistent with the existing haircut rule, ROBUST is never demoted."""
+        chosen = self._transfer_candidate(total=52.5, strategic_class="ROBUST")
+        decision = build_authoritative_decision([chosen], _ca(), roll_baseline_ev=50.0, roll_threshold=4.76)
+        assert decision.action_type == "TRANSFER"
+
+    def test_no_threshold_means_legacy_behaviour(self):
+        """When the bar cannot be measured, the old haircut rule alone
+        applies - the change must never turn a missing table into a
+        blanket refusal to transfer."""
+        chosen = self._transfer_candidate(total=52.5)
+        decision = build_authoritative_decision([chosen], _ca(), roll_baseline_ev=50.0, roll_threshold=None)
+        assert decision.action_type == "TRANSFER"
+        assert decision.decision_state == "REVIEW"
+
+    def test_a_real_roll_path_is_unaffected(self):
+        roll = _candidate("ROLL", 50.0, "UNRESOLVED", immediate_action="ROLL", path=_path([_step(3)], 50.0))
+        decision = build_authoritative_decision([roll], _ca(), roll_baseline_ev=50.0, roll_threshold=4.76)
+        assert decision.action_type == "ROLL"
+        assert decision.immediate_action == "ROLL: ROLL"

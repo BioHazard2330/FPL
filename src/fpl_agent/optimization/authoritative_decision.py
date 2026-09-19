@@ -162,6 +162,7 @@ def select_authoritative_candidate(
     locked_bank_tenths: int,
     ca,
     top_k: int = 6,
+    horizon_gw: int | None = None,
 ):
     """Real production wiring (2026-09-02, Phase 5E - "wire the authoritative
     decision into production"). This is the ONE place the Phase 5D forensic
@@ -222,9 +223,29 @@ def select_authoritative_candidate(
         raise RuntimeError("real authoritative selection unavailable - every candidate's own assessment failed")
     top_options = assessed_options
 
-    decision = build_authoritative_decision(candidates, ca, roll_baseline_ev)
+    # The measured materiality bar, scaled to THIS plan's horizon (error
+    # compounds across gameweeks). Falls back to None - the legacy haircut
+    # floor alone - if it cannot be measured, so a missing calibration table
+    # degrades to the old behaviour rather than to no decision.
+    roll_threshold = None
+    try:
+        from fpl_agent.models.materiality import transfer_materiality_bar
+
+        if horizon_gw is None and roll_option is not None and roll_option.best_continuation is not None:
+            horizon_gw = 1 + len({s.event for s in roll_option.best_continuation.steps})
+        roll_threshold = transfer_materiality_bar(conn, horizon_gw=horizon_gw or 3).threshold
+    except Exception:
+        roll_threshold = None
+
+    decision = build_authoritative_decision(candidates, ca, roll_baseline_ev, roll_threshold=roll_threshold)
     chosen_label = decision.immediate_action.split(": ", 1)[0]
-    chosen_index = next((i for i, c in enumerate(candidates) if c.label == chosen_label), 0)
+    chosen_index = next((i for i, c in enumerate(candidates) if c.label == chosen_label), None)
+    if chosen_index is None:
+        # The decision resolved to ROLL because the best transfer's edge over
+        # doing nothing was inside measured noise. Report the real roll
+        # option as the chosen one rather than pretending a transfer won.
+        roll_idx = next((i for i, o in enumerate(top_options) if o.kind == "roll"), None)
+        chosen_index = roll_idx if roll_idx is not None else 0
 
     alt_label = decision.best_alternative.split(": ", 1)[0] if decision.best_alternative else None
     runner_up_assessment = next((c for c in candidates if c.label == alt_label), None) if alt_label else None
@@ -234,6 +255,7 @@ def select_authoritative_candidate(
 
 def build_authoritative_decision(
     candidates: list[CandidateAssessment], ca, roll_baseline_ev: float,
+    roll_threshold: float | None = None,
 ) -> AuthoritativeDecision:
     """`candidates` must be pre-ranked by real `total_net_ev` (highest first)
     by the caller - this function does not re-sort or re-search. `ca` is a
@@ -266,6 +288,28 @@ def build_authoritative_decision(
         action_type = "HIT" if first_step.uses_hit else "TRANSFER"
     else:
         action_type = "ROLL"
+
+    # ROLL when the edge is inside measured noise (2026-09-19).
+    #
+    # Before this, ROLL was never a real outcome of this walk: doing nothing
+    # sat off to the side as `roll_baseline_ev`, and a transfer whose edge
+    # over it was within the model's own error was reported as
+    # "REVIEW: transfer X -> Y" rather than as the roll it should have been.
+    # Measured over the real 2026-27 ledger, the engine recommended a
+    # transfer in every gameweek it produced a recommendation and never once
+    # said roll; one of those transfers realised exactly 0 against doing
+    # nothing. A ROBUST class (survived real Monte Carlo stress) still
+    # overrides, consistent with the existing haircut rule above.
+    resolved_to_roll = False
+    if (
+        roll_threshold is not None
+        and action_type in ("TRANSFER", "HIT")
+        and chosen.strategic_class != "ROBUST"
+        and advantage_vs_roll < roll_threshold
+    ):
+        resolved_to_roll = True
+        action_type = "ROLL"
+        decision_state = "ACT"
 
     critical_dependencies = tuple(
         f"GW{s.event} {s.player_out_name} -> {s.player_in_name}"
@@ -301,6 +345,26 @@ def build_authoritative_decision(
            f"the same materiality floor" if runner_up else "")
         + "."
     )
+
+    if resolved_to_roll:
+        reason = (
+            f"ROLL. The best real transfer ({chosen.label}: {chosen.immediate_gw_action}) leads on paper by "
+            f"{advantage_vs_roll:.2f}pt over doing nothing across the horizon, but the measured error on a "
+            f"swap over this horizon means an edge under {roll_threshold:.2f}pt is not distinguishable from "
+            f"zero - so the honest recommendation is to keep the free transfer. Its strategic_class is "
+            f"{chosen.strategic_class}; a ROBUST class would have overridden this."
+        )
+        return AuthoritativeDecision(
+            decision_state=decision_state, action_type="ROLL",
+            immediate_action="ROLL: roll the free transfer",
+            best_alternative=f"{chosen.label}: {chosen.immediate_gw_action}",
+            nominal_ev_advantage=round(-advantage_vs_roll, 2),
+            robustness_class=chosen.strategic_class, path_credibility=chosen.credibility_label,
+            price_robustness=chosen.price_robust, optionality_effect=optionality_effect,
+            critical_dependencies=(), captain_decision=captain_decision,
+            future_conditional_plan=future_conditional_plan, decision_reason=reason,
+            optionality_delta=chosen.optionality_delta_vs_baseline,
+        )
 
     return AuthoritativeDecision(
         decision_state=decision_state, action_type=action_type,

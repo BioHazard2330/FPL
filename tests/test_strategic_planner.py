@@ -21,7 +21,7 @@ def _patch_authoritative(monkeypatch, decision_state="ACT", reason="fake authori
     Faithfully stands in for "authoritative selection picked the real
     highest-`path_total` option" - the exact real behavior for a fixture this
     small (no robustness/credibility signal to disagree with EV rank on)."""
-    def fake_select(conn, options, start_event, bank_tenths, ca, top_k=6):
+    def fake_select(conn, options, start_event, bank_tenths, ca, top_k=6, horizon_gw=None):
         return SimpleNamespace(decision_state=decision_state, decision_reason=reason), options[0], None, None
     monkeypatch.setattr(ad_mod, "select_authoritative_candidate", fake_select)
     monkeypatch.setattr(sp_mod, "_reference_event", lambda conn: 3)

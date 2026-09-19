@@ -31,7 +31,12 @@ from fpl_agent.optimization.transfers import TransferCandidate, best_transfer_fo
 
 _HORIZONS = (1, 3, 5)
 _MAX_HORIZON = 5
-_TRANSFER_DELTA_THRESHOLD = 1.0  # same real, disclosed bar decision_engine.py already uses - not redefined independently
+# Fallback only. The live bar is measured from this model's own recorded
+# error (`models/materiality.py`) - see `_effective_threshold` below. The
+# hardcoded 1.0 this used to be sat roughly an order of magnitude BELOW the
+# measured noise on a three-gameweek swap (~9.5pt), which is why every
+# gameweek cleared it and a transfer was recommended every single week.
+_TRANSFER_DELTA_THRESHOLD = 1.0
 _TOP_N_CANDIDATES = 5  # section 13 of the decision-quality audit: show top 5 real alternatives, not just 3
 
 # Real, decision-quality-audit constraint (2026-08-26, Tzolis case): a
@@ -54,6 +59,38 @@ _MIN_EVIDENCE_CONFIDENCE_FOR_ACTION = "MEDIUM"
 # Uncalibrated, same honesty posture as every other bar in this module.
 _DECISION_CONFIDENCE_COMFORTABLE_MARGIN = 3.0
 _DECISION_CONFIDENCE_NARROW_MARGIN = 1.5
+
+
+def _effective_threshold(conn) -> tuple[float, str]:
+    """The live materiality bar, measured from recorded prediction error.
+
+    Falls back to the old constant if the measurement is unavailable for any
+    reason - a decision layer that refuses to produce a verdict because a
+    calibration table is missing is worse than one using a stale bar.
+    """
+    try:
+        from fpl_agent.models.materiality import transfer_materiality_bar
+
+        bar = transfer_materiality_bar(conn, horizon_gw=3)
+        return bar.threshold, bar.explanation
+    except Exception:
+        return _TRANSFER_DELTA_THRESHOLD, "measured bar unavailable - using the legacy fallback"
+
+
+def _decision_value(candidate) -> float:
+    """The number a transfer verdict is actually made on.
+
+    Prefers the XI-aware squad delta over the raw `ev_in - ev_out`, because
+    the raw figure assumes every point the incoming player scores reaches
+    your total - false for any swap involving the bench, and the direct
+    cause of a real production failure where a bench-to-bench swap was
+    valued at +8.73 and realised exactly 0 against doing nothing.
+
+    Falls back to the raw value when the XI-aware rescoring did not run,
+    rather than treating None as zero.
+    """
+    value = getattr(candidate, "xi_aware_net_ev_3gw", None)
+    return value if value is not None else candidate.net_ev_3gw
 
 
 def _decision_confidence(evidence_confidence: str | None, robustness: str | None, margin_ratio: float | None) -> str:
@@ -271,7 +308,8 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         ))
 
     best = options[0] if options else None
-    threshold_cleared = best is not None and best.candidate.net_ev_3gw >= _TRANSFER_DELTA_THRESHOLD
+    effective_threshold, threshold_basis = _effective_threshold(conn)
+    threshold_cleared = best is not None and _decision_value(best.candidate) >= effective_threshold
 
     # Real evidence-confidence for the leading candidate - see
     # _MIN_EVIDENCE_CONFIDENCE_FOR_ACTION's own comment. Computed once here
@@ -331,7 +369,7 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
     # earlier pass). This phase's own explicit instruction supersedes that:
     # make it load-bearing for a real, narrow, disclosed WAIT case only -
     # never a blanket hold, never overriding a comfortable-margin TRANSFER.
-    margin_ratio = round(best.candidate.net_ev_3gw / _TRANSFER_DELTA_THRESHOLD, 2) if best is not None else None
+    margin_ratio = round(_decision_value(best.candidate) / effective_threshold, 2) if best is not None and effective_threshold else None
     out_voi = in_voi = None
     if best is not None:
         try:
@@ -372,7 +410,7 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
             which.append(f"{best.candidate.player_in_name} (IN)")
         reason = (
             f"{best.candidate.player_out_name} -> {best.candidate.player_in_name} clears the real "
-            f"{_TRANSFER_DELTA_THRESHOLD} xP bar only narrowly ({margin_ratio}x) and real additional evidence for "
+            f"{effective_threshold} xP bar only narrowly ({margin_ratio}x) and real additional evidence for "
             f"{' and '.join(which)} is genuinely likely before the deadline - worth waiting for it rather than "
             f"committing to a real hit/swap on a margin this thin"
         )
@@ -382,7 +420,8 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         decision_kind = "transfer"
         reason = (
             f"{best.candidate.player_out_name} -> {best.candidate.player_in_name} clears the real "
-            f"{_TRANSFER_DELTA_THRESHOLD} xP 3-GW materiality bar (+{best.candidate.net_ev_3gw}, hit-cost aware)"
+            f"{effective_threshold} xP 3-GW materiality bar (+{_decision_value(best.candidate)}, "
+            f"XI-aware and hit-cost aware) - {threshold_basis}"
         )
         chosen = best
         expected_advantage = best.candidate.net_ev_3gw
@@ -405,7 +444,8 @@ def analyze_transfer_decision(conn: sqlite3.Connection, locked: LockedSquadState
         decision_kind = "roll"
         reason = (
             f"best real candidate ({best.candidate.player_out_name} -> {best.candidate.player_in_name}, "
-            f"+{best.candidate.net_ev_3gw} over 3 GW) does not clear the real {_TRANSFER_DELTA_THRESHOLD} xP bar"
+            f"+{_decision_value(best.candidate)} over 3 GW, XI-aware) does not clear the real "
+            f"{effective_threshold} xP bar - {threshold_basis}"
         )
         chosen = None
         expected_advantage = best.candidate.net_ev_3gw

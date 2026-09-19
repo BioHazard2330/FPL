@@ -38,6 +38,25 @@ class TransferCandidate:
     net_ev_3gw: float
     net_ev_5gw: float
     uses_hit: bool
+    # XI-AWARE value of this swap: the change in the SQUAD's own starting-XI
+    # +captain+bench-weighted EV, not the raw difference between two players'
+    # projections (2026-09-19).
+    #
+    # `ev_*`/`net_ev_*` above are `ev_in - ev_out`, which silently assumes
+    # every point the incoming player scores reaches your total. For a swap
+    # involving the bench that is simply false, and it produced a real,
+    # repeated production failure: the engine recommended selling squad slot
+    # 15 - the deepest bench player, multiplier 0 - in BOTH GW3 and GW4,
+    # valuing GW3's swap at +9.24 when its realised value against doing
+    # nothing was exactly 0, because the incoming player sat on the bench
+    # too and contributed nothing either way.
+    #
+    # `_squad_gw_ev` (already XI-aware since 2026-09-02) is the correct
+    # valuation and is used to rescore the shortlist. None when the
+    # rescoring was not run - callers must fall back to net_ev rather than
+    # treating None as zero.
+    xi_aware_ev_3gw: float | None = None
+    xi_aware_net_ev_3gw: float | None = None
 
 
 def _player_name(conn: sqlite3.Connection, player_id: int) -> str:
@@ -155,7 +174,62 @@ def best_transfer_for_player(
 
     key = {1: "net_ev_1gw", 3: "net_ev_3gw", 5: "net_ev_5gw"}[n_gw]
     results.sort(key=lambda t: getattr(t, key), reverse=True)
-    return results[:top_n]
+    shortlist = results[:top_n]
+
+    # Rescore the shortlist XI-aware, then re-rank on that. The cheap raw
+    # delta above is kept as the SHORTLISTING pass - scoring every
+    # same-position candidate this way would mean an XI resolution per
+    # candidate, which is exactly the cost the cheap pass exists to avoid -
+    # but the ranking that actually reaches a recommendation is the correct
+    # one. A swap that only moves bench players collapses to ~0 here, which
+    # is the whole point.
+    if shortlist and from_event is not None:
+        rescored = [_with_xi_aware_value(conn, c, squad_ids, from_event, n_gw, cache) for c in shortlist]
+        rescored.sort(
+            key=lambda t: t.xi_aware_net_ev_3gw if t.xi_aware_net_ev_3gw is not None else getattr(t, key),
+            reverse=True,
+        )
+        return rescored
+    return shortlist
+
+
+def _with_xi_aware_value(
+    conn: sqlite3.Connection,
+    candidate: "TransferCandidate",
+    squad_ids: list[int],
+    from_event: int,
+    n_gw: int,
+    cache: dict[tuple, float] | None,
+) -> "TransferCandidate":
+    """Value one swap by what it does to the SQUAD, not to the two players.
+
+    Returns the candidate unchanged if anything goes wrong: a wrong number
+    here would silently re-introduce the bug this exists to fix, so the
+    honest failure is "no XI-aware value available" and a caller falling
+    back to the raw delta it already had.
+    """
+    from dataclasses import replace
+
+    try:
+        shared = cache if cache is not None else {}
+        before = tuple(sorted(squad_ids))
+        after = tuple(sorted(
+            [candidate.player_in_id if p == candidate.player_out_id else p for p in squad_ids]
+        ))
+        if len(set(after)) != len(set(before)):
+            return candidate
+        delta = 0.0
+        for offset in range(n_gw):
+            event = from_event + offset
+            delta += _squad_gw_ev(conn, after, event, shared) - _squad_gw_ev(conn, before, event, shared)
+        hit = HIT_COST if candidate.uses_hit else 0
+        return replace(
+            candidate,
+            xi_aware_ev_3gw=round(delta, 2),
+            xi_aware_net_ev_3gw=round(delta - hit, 2),
+        )
+    except Exception:
+        return candidate
 
 
 _PARETO_RETENTION_K = 3  # real, measured 2026-09-07 (Phase 7.4 Part 9) - see _pareto_frontier's own docstring
