@@ -276,3 +276,47 @@ def test_match_report_never_invents_a_lineup_or_stats_it_does_not_have(db_conn):
     assert out["match"]["is_squad_match"] is False
     assert out["insights"] == []
     assert out["review"] is None
+
+
+def test_player_profile_carries_shots_career_and_market(db_conn):
+    """The three sections the player file is built on: his shots this
+    season (Atlas frame, with the match_intelligence id the match page
+    routes on), the whole career oldest-first for the xG race, and the
+    sampled transfer counters for the market. Player 10 plays for team 1."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    pid = 10
+    db_conn.execute(
+        "INSERT INTO match_intelligence (fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, "
+        "status, home_score, away_score, source, retrieved_at) VALUES ('m1','PL','2026-08-22T11:30:00Z',1,2,"
+        "'FULL_TIME',2,0,'fotmob','2026-08-22T14:00:00Z')"
+    )
+    mid = db_conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id='m1'").fetchone()[0]
+    db_conn.execute(
+        "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, player_id, fotmob_player_id, player_name, "
+        "minute, x, y, xg, is_on_target, outcome, shot_type, situation, retrieved_at) VALUES "
+        "(?, 's1', 1, ?, 'f10', 'Ten', 12, 95.0, 34.0, 0.4, 1, 'Goal', 'RightFoot', 'RegularPlay', 't0')",
+        (mid, pid),
+    )
+    mt = db_conn.execute("INSERT INTO market_teams (canonical_name, fpl_team_id) VALUES ('Team1', 1)").lastrowid
+    for date, season, goals in (("2025-05-20", "2025-26", 0), ("2026-08-22", "2026-27", 1)):
+        db_conn.execute(
+            "INSERT INTO player_match_stats_history (understat_match_id, understat_player_id, player_id, market_team_id, "
+            "season, match_date, minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,90,?,0,3,0.6,0.1,1,0,0,'t0')",
+            (f"u{date}", "p10", pid, mt, season, date, goals),
+        )
+    db_conn.execute(
+        "INSERT INTO player_transfer_momentum_history (player_id, transfers_in_event, transfers_out_event, transfers_in, "
+        "transfers_out, valid_from, valid_until) VALUES (?, 100, 20, 100, 20, '2026-08-20T10:00:00Z', NULL)",
+        (pid,),
+    )
+    db_conn.commit()
+
+    out = build_player_profile(_Ctx(), {"id": str(pid)})
+    json.dumps(out)
+    assert out["shots"][0]["outcome"] == "Goal" and out["shots"][0]["match_id"] == mid
+    assert out["shots"][0]["is_home"] is True and out["shots"][0]["score"] == "2-0"
+    assert [c["season"] for c in out["career"]] == ["2025-26", "2026-27"]
+    assert out["momentum"][0]["in"] == 100 and out["momentum"][0]["out"] == 20
+    assert isinstance(out["ownership"], list) and isinstance(out["deadlines"], list)
+    assert build_player_profile.needs_context is False

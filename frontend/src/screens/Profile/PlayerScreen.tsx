@@ -4,9 +4,12 @@ import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
-import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
+import { CHART_COLORS, baseChart } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile, shirtUrl } from '@/lib/api'
 import { FlipCard } from '@/components/three/FlipCard'
+import { PlayerShots } from '@/components/football/PlayerShots'
+import { XgRace } from '@/components/football/XgRace'
+import { MarketPulse } from '@/components/football/MarketPulse'
 import { useFetch } from '@/lib/useFetch'
 import type { PlayerMatchRow } from '@/lib/types'
 
@@ -73,13 +76,6 @@ export function PlayerScreen() {
   const shirt = shirtUrl(pl.team_code, pl.position === 'GKP', 260)
   const crest = crestUrl(pl.team_code)
   const status = STATUS_LABEL[pl.status ?? 'a']
-  const thisSeason = p.match_log.filter((m) => m.season === p.match_log[0]?.season)
-
-  // Real per-match xG vs xA, most recent last so the chart reads left to
-  // right in time. Nothing is smoothed and nothing is interpolated for a
-  // match the feed never covered.
-  const chartRows = [...thisSeason].reverse()
-  const hasChart = chartRows.some((m) => m.xg !== null || m.xa !== null)
 
   const totals = p.season
 
@@ -168,6 +164,37 @@ export function PlayerScreen() {
         </div>
       )}
 
+      {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
+      <div className="border-b-2 border-divider px-10 py-8">
+        <div className="mb-4 flex flex-wrap items-baseline gap-3">
+          <span className="font-display text-2xl font-bold uppercase text-text">Where he shoots</span>
+          <span className="text-[11px] text-text-faint">every shot FotMob recorded for him this season · dot area is xG · filled only for a goal</span>
+        </div>
+        <PlayerShots playerId={pl.player_id} name={pl.name} teamShort={pl.team_short} shots={p.shots} mine={pl.is_mine} />
+      </div>
+
+      {/* THE RACE - cumulative goals against cumulative xG, every match on record. */}
+      {p.career.length > 1 && (
+        <div className="border-b-2 border-divider px-10 py-8">
+          <div className="mb-4 flex flex-wrap items-baseline gap-3">
+            <span className="font-display text-2xl font-bold uppercase text-text">The race</span>
+            <span className="text-[11px] text-text-faint">what his chances were worth against what he made of them, every match this database holds</span>
+          </div>
+          <XgRace career={p.career} thisSeason={p.match_log[0]?.season ?? null} />
+        </div>
+      )}
+
+      {/* THE MARKET - the crowd's read on him. */}
+      {(p.ownership.length > 1 || p.momentum.length > 1) && (
+        <div className="border-b-2 border-divider px-10 py-8">
+          <div className="mb-4 flex flex-wrap items-baseline gap-3">
+            <span className="font-display text-2xl font-bold uppercase text-text">The market</span>
+            <span className="text-[11px] text-text-faint">ownership as it moved, and the transfer counters each gameweek, as sampled</span>
+          </div>
+          <MarketPulse ownership={p.ownership} momentum={p.momentum} deadlines={p.deadlines} />
+        </div>
+      )}
+
       {/* THE MATCH LOG - the football. 57,200 real per-match rows have been in
           this database all season and the app had never rendered one of them;
           every rate it showed was a season aggregate. */}
@@ -235,35 +262,6 @@ export function PlayerScreen() {
           </div>
         )}
       </div>
-
-      {/* THREAT OVER TIME - the same rows as the log, read as a shape. */}
-      {hasChart && (
-        <div className="border-t-2 border-divider px-10 py-8">
-          <div className="mb-3 flex flex-wrap items-baseline gap-4">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Threat per match</span>
-            <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
-              <span className="h-2 w-3 bg-pitch-green" /> xG
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
-              <span className="h-2 w-3 bg-broadcast-gold" /> xA
-            </span>
-          </div>
-          <Chart
-            type="bar"
-            height={220}
-            options={baseChart({
-              chart: { type: 'bar', stacked: false },
-              colors: [CHART_COLORS.primary, CHART_COLORS.accent],
-              xaxis: { categories: chartRows.map((m) => shortDate(m.match_date)), labels: { style: { cssClass: 'tabular' } } },
-              yaxis: { labels: intAxisLabels },
-            })}
-            series={[
-              { name: 'xG', data: chartRows.map((m) => Number((m.xg ?? 0).toFixed(2))) },
-              { name: 'xA', data: chartRows.map((m) => Number((m.xa ?? 0).toFixed(2))) },
-            ]}
-          />
-        </div>
-      )}
 
       {/* PRICE - the FPL market's own read on this player over time. */}
       {p.price_history.length > 1 && (

@@ -1045,6 +1045,42 @@ export interface PlayerProfilePayload {
   /** Oldest first, so a chart reads left to right in time. */
   price_history: { price_m: number; valid_from: string | null }[]
   fixtures: FixtureEntry[]
+  /** Every shot FotMob recorded for him this season, Atlas frame (x toward 105). */
+  shots: PlayerShot[]
+  /** The whole per-match record, oldest first - the xG race is drawn from this. */
+  career: CareerMatch[]
+  /** Official selected_by_percent as it changed, oldest first. */
+  ownership: { t: string | null; pct: number | null }[]
+  /** Per-gameweek transfers in/out counters as sampled, thinned to hourly. */
+  momentum: { t: string | null; in: number | null; out: number | null }[]
+  deadlines: { event: number; t: string | null }[]
+}
+
+export interface PlayerShot {
+  minute: number | null
+  x: number
+  y: number
+  xg: number | null
+  outcome: string
+  situation: string | null
+  foot: string | null
+  match: string | null
+  match_id: number | null
+  kickoff: string | null
+  is_home: boolean
+  opponent_short: string | null
+  score: string | null
+}
+
+export interface CareerMatch {
+  season: string
+  match_date: string
+  minutes: number
+  goals: number
+  assists: number
+  xg: number
+  xa: number
+  shots: number
 }
 
 /** One played match from a club's own point of view. `xg`/`xga` are null for

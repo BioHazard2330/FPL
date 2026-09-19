@@ -199,6 +199,75 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             )
         ]
 
+        # HIS SHOTS - every shot FotMob recorded for him this season, in
+        # the same attacking-toward-x=105 frame the Atlas draws.
+        shots = [
+            {
+                "minute": r["minute"], "x": round(float(r["x"]), 2), "y": round(float(r["y"]), 2),
+                "xg": round(float(r["xg"]), 3) if r["xg"] is not None else None,
+                "outcome": r["outcome"], "situation": r["situation"], "foot": r["shot_type"],
+                "match": r["fotmob_match_id"], "match_id": r["match_id"], "kickoff": r["kickoff_utc"],
+                "is_home": r["home_team_id"] == p["team_id"],
+                "opponent_short": r["opp_short"],
+                "score": f"{r['home_score']}-{r['away_score']}" if r["home_score"] is not None else None,
+            }
+            for r in conn.execute(
+                "SELECT s.minute, s.x, s.y, s.xg, s.outcome, s.situation, s.shot_type, "
+                "       m.id AS match_id, m.fotmob_match_id, m.kickoff_utc, m.home_team_id, m.away_team_id, "
+                "       m.home_score, m.away_score, "
+                "       t.short_name AS opp_short "
+                "FROM match_shots s JOIN match_intelligence m ON m.id = s.match_id "
+                "LEFT JOIN teams t ON t.id = CASE WHEN m.home_team_id = ? THEN m.away_team_id ELSE m.home_team_id END "
+                "WHERE s.player_id = ? AND s.x IS NOT NULL AND s.y IS NOT NULL "
+                "ORDER BY m.kickoff_utc, s.minute",
+                (p["team_id"], player_id),
+            )
+        ]
+
+        # THE RACE - the whole per-match record, oldest first, so cumulative
+        # goals can be drawn against cumulative xG across seasons.
+        career = [
+            {
+                "season": r["season"], "match_date": r["match_date"], "minutes": r["minutes"],
+                "goals": r["goals"], "assists": r["assists"], "xg": r["xg"], "xa": r["xa"], "shots": r["shots"],
+            }
+            for r in conn.execute(
+                "SELECT season, match_date, minutes, goals, assists, xg, xa, shots "
+                "FROM player_match_stats_history WHERE player_id = ? ORDER BY match_date, id",
+                (player_id,),
+            )
+        ]
+
+        # THE MARKET - FPL's own crowd. Ownership is the official
+        # selected_by_percent as it changed; momentum is the per-gameweek
+        # transfers in/out counter as sampled every sync (15 min at the
+        # densest), thinned to one point per hour so a month is ~700 points.
+        ownership = [
+            {"t": r["valid_from"], "pct": r["selected_by_percent"]}
+            for r in conn.execute(
+                "SELECT valid_from, selected_by_percent FROM player_ownership_history "
+                "WHERE player_id = ? ORDER BY valid_from",
+                (player_id,),
+            )
+        ]
+        momentum: list[dict] = []
+        last_hour = None
+        for r in conn.execute(
+            "SELECT valid_from, transfers_in_event, transfers_out_event FROM player_transfer_momentum_history "
+            "WHERE player_id = ? ORDER BY valid_from",
+            (player_id,),
+        ):
+            hour = (r["valid_from"] or "")[:13]
+            if hour == last_hour:
+                momentum[-1] = {"t": r["valid_from"], "in": r["transfers_in_event"], "out": r["transfers_out_event"]}
+                continue
+            last_hour = hour
+            momentum.append({"t": r["valid_from"], "in": r["transfers_in_event"], "out": r["transfers_out_event"]})
+        deadlines = [
+            {"event": r["id"], "t": r["deadline_time"]}
+            for r in conn.execute("SELECT id, deadline_time FROM events WHERE deadline_time IS NOT NULL ORDER BY id")
+        ]
+
         return {
             "player": {
                 "player_id": p["id"], "name": p["web_name"],
@@ -213,6 +282,18 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "match_log": log,
             "price_history": list(reversed(prices)),
             "fixtures": fixture_context_by_team_code(conn, {p["team_id"]}, n_gw=8).get(str(p["team_code"]), []),
+            "shots": shots,
+            "career": career,
+            "ownership": ownership,
+            "momentum": momentum,
+            "deadlines": deadlines,
         }
     finally:
         conn.close()
+
+
+# Both profiles only read the locked squad's ids from the context, so they
+# opt out of the full DashboardContext - see `live/sse_server.py`. A player
+# page should open in milliseconds, not wait behind a 60s rebuild.
+build_player_profile.needs_context = False  # type: ignore[attr-defined]
+build_club_profile.needs_context = False  # type: ignore[attr-defined]
