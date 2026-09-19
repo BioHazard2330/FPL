@@ -127,3 +127,28 @@ def test_hysteresis_still_applies_within_the_same_anchor_gameweek(db_conn):
     result = stable_current_recommendation(db_conn)
 
     assert result.detail["current_recommendation"]["label"] == "ROLL"
+
+
+def test_roll_replaces_a_stable_transfer_immediately(db_conn):
+    """ROLL is the conservative answer - it changes nothing about the squad,
+    so there is no churn for hysteresis to guard against. And it could never
+    clear the EV-advantage flip anyway: the authoritative layer resolves to
+    ROLL precisely when the best transfer leads ON PAPER but by less than
+    measured noise, so ROLL's path_total is always the lower one. Observed
+    live 2026-09-19: a transfer the fresh analysis had just called
+    indistinguishable from nothing stayed on screen as the stable answer."""
+    _log_plan(db_conn, current_recommendation=_rec("Palmer -> Mbeumo", 105.0))
+    _log_plan(db_conn, current_recommendation=_rec("Palmer -> Mbeumo", 105.2))
+    _log_plan(db_conn, current_recommendation=_rec("ROLL", 102.0))  # lower total, single occurrence
+    result = stable_current_recommendation(db_conn)
+    assert result.detail["current_recommendation"]["label"] == "ROLL"
+
+
+def test_a_transfer_still_needs_the_bar_to_replace_a_stable_roll(db_conn):
+    """The asymmetry is deliberate and runs one way only: leaving a roll for
+    a marginal transfer is exactly the churn the bar was built to stop."""
+    _log_plan(db_conn, current_recommendation=_rec("ROLL", 100.0))
+    _log_plan(db_conn, current_recommendation=_rec("ROLL", 100.1))
+    _log_plan(db_conn, current_recommendation=_rec("Palmer -> Mbeumo", 102.0))  # +2, under the bar, once
+    result = stable_current_recommendation(db_conn)
+    assert result.detail["current_recommendation"]["label"] == "ROLL"

@@ -34,6 +34,9 @@ export interface CheckpointBlock {
   chosen: { name: string; totals: number[] }
   alt: { name: string; totals: number[] }
   edge: number[]
+  /** Measured materiality bar at the final horizon. An edge inside it is
+   *  not distinguishable from zero. Null when it could not be measured. */
+  noise_bar?: number | null
 }
 
 export interface EdgeBlock {

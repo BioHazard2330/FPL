@@ -240,15 +240,26 @@ def select_authoritative_candidate(
     decision = build_authoritative_decision(candidates, ca, roll_baseline_ev, roll_threshold=roll_threshold)
     chosen_label = decision.immediate_action.split(": ", 1)[0]
     chosen_index = next((i for i, c in enumerate(candidates) if c.label == chosen_label), None)
-    if chosen_index is None:
-        # The decision resolved to ROLL because the best transfer's edge over
-        # doing nothing was inside measured noise. Report the real roll
-        # option as the chosen one rather than pretending a transfer won.
-        roll_idx = next((i for i, o in enumerate(top_options) if o.kind == "roll"), None)
-        chosen_index = roll_idx if roll_idx is not None else 0
 
     alt_label = decision.best_alternative.split(": ", 1)[0] if decision.best_alternative else None
     runner_up_assessment = next((c for c in candidates if c.label == alt_label), None) if alt_label else None
+
+    if chosen_index is None and decision.action_type == "ROLL":
+        # The decision resolved to ROLL because the best transfer's edge over
+        # doing nothing was inside measured noise. The chosen OPTION must
+        # then be the real roll option from the FULL list - it is often not
+        # in the top-k by EV, which is exactly why it lost the walk - so the
+        # caller's label/action_kind read ROLL rather than a transfer that
+        # the decision text itself just rejected. The assessment returned
+        # alongside is the rejected transfer's, because a roll path has no
+        # transfer step to assess and that assessment is what the caller
+        # persists as "what was considered".
+        if roll_option is not None:
+            rejected = next((c for c in candidates if c.label == alt_label), candidates[0])
+            return decision, roll_option, rejected, runner_up_assessment
+        chosen_index = 0
+    elif chosen_index is None:
+        chosen_index = 0
 
     return decision, top_options[chosen_index], candidates[chosen_index], runner_up_assessment
 
@@ -300,16 +311,26 @@ def build_authoritative_decision(
     # said roll; one of those transfers realised exactly 0 against doing
     # nothing. A ROBUST class (survived real Monte Carlo stress) still
     # overrides, consistent with the existing haircut rule above.
+    # Judged against the STRONGEST transfer on offer, not the one the
+    # haircut walk happened to settle on: if any candidate clears the bar
+    # or has earned a ROBUST class, rolling is wrong, and the alternative
+    # disclosed alongside a ROLL must be the best case against it. Naming a
+    # weaker transfer would understate that case, which is its own kind of
+    # dishonesty. `candidates` is pre-ranked highest total_net_ev first.
     resolved_to_roll = False
+    strongest = candidates[0]
+    strongest_edge = strongest.total_net_ev - roll_baseline_ev
     if (
         roll_threshold is not None
         and action_type in ("TRANSFER", "HIT")
-        and chosen.strategic_class != "ROBUST"
-        and advantage_vs_roll < roll_threshold
+        and not any(c.strategic_class == "ROBUST" for c in candidates)
+        and strongest_edge < roll_threshold
     ):
         resolved_to_roll = True
         action_type = "ROLL"
         decision_state = "ACT"
+        chosen = strongest
+        advantage_vs_roll = strongest_edge
 
     critical_dependencies = tuple(
         f"GW{s.event} {s.player_out_name} -> {s.player_in_name}"

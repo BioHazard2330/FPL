@@ -94,6 +94,23 @@ def stable_current_recommendation(conn: sqlite3.Connection, scan_limit: int = 30
         if latest_anchor is not None and previous_anchor is not None and latest_anchor > previous_anchor:
             return latest
 
+    # ROLL is accepted immediately (2026-09-19). This bar exists to stop the
+    # displayed answer flip-flopping into CHURN on model noise - a beam re-run
+    # nudging a marginal transfer in or out. Rolling is the opposite of
+    # churn: it changes nothing about the squad, so there is nothing for
+    # hysteresis to protect against. Worse, ROLL could never clear the
+    # EV-advantage flip below at all, because the authoritative layer
+    # resolves to ROLL precisely when the best transfer leads ON PAPER but
+    # by less than measured noise - so ROLL's path_total is always the
+    # lower one. Without this, a transfer the fresh analysis had just
+    # called indistinguishable from nothing stayed on screen as the stable
+    # answer, and a noisy transfer could displace a ROLL immediately while
+    # a ROLL could only ever displace a transfer by waiting. The bar below
+    # still applies unchanged in the direction it was built for: a new
+    # TRANSFER replacing a stable ROLL.
+    if (latest_rec.get("action_kind") == "roll" or latest_rec.get("label") == "ROLL"):
+        return latest
+
     # Real persistence count - how many of the most-recent real decisions
     # (starting from latest, walking backward) already agree with it.
     consecutive = 0

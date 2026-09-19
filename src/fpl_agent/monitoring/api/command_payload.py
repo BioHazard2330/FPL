@@ -79,7 +79,10 @@ def _contribution_block(auth: dict | None, ca) -> list[dict]:
     return rows if len(rows) >= 2 else []
 
 
-def _checkpoint_block(paths: list[dict] | None, chosen_label: str | None, alt_label: str | None) -> dict | None:
+def _checkpoint_block(
+    paths: list[dict] | None, chosen_label: str | None, alt_label: str | None,
+    starting_action_options: list[dict] | None = None, horizon_gw=None,
+) -> dict | None:
     """Same real `horizon_breakdown` per path PLAN's own trajectory chart
     already computes (`build_diverse_paths`) - zero new search."""
     if not paths:
@@ -94,7 +97,43 @@ def _checkpoint_block(paths: list[dict] | None, chosen_label: str | None, alt_la
                 return p
         return None
 
-    chosen = _find(chosen_label) or (paths[0] if paths else None)
+    chosen = _find(chosen_label)
+    if chosen is None and chosen_label == "ROLL":
+        # A ROLL verdict has no beam path of its own - the beam's top paths
+        # all start with a transfer, which is exactly why rolling had to be
+        # imposed on it from the measured-noise rule. Without this branch
+        # the fallback compared two transfers, neither of which was the
+        # recommendation (observed live 2026-09-19: a ROLL hero over
+        # "Palmer -> Mbeumo 283.6 vs Gibbs-White -> Mbeumo 283.2").
+        #
+        # The baseline is ROLL-NOW - roll this gameweek, then keep planning
+        # - taken from the real ROLL starting-action option, NOT the
+        # never-transfer `delta_vs_roll` in the path breakdowns. Nobody
+        # rolls for the whole horizon, and the never-transfer line made
+        # rolling look ~25 points worse than the actual decision on the
+        # table (roll-now vs transfer-now: ~3 points, inside the band).
+        # One horizon only: starting-action options carry a single
+        # full-horizon total, not the per-checkpoint breakdown paths do.
+        options = starting_action_options or []
+        roll_opt = next((o for o in options if o.get("kind") == "roll"), None)
+        alt_opt = next((o for o in options if o.get("label") == alt_label), None)
+        if alt_opt is None:
+            alt_opt = next((o for o in options if o.get("kind") == "transfer"), None)
+        if roll_opt is None or alt_opt is None or horizon_gw is None:
+            return None
+        roll_total = round(float(roll_opt["path_total"]), 1)
+        alt_total = round(float(alt_opt["path_total"]), 1)
+        return {
+            "horizons": [int(horizon_gw)],
+            "chosen": {"name": "ROLL", "totals": [roll_total]},
+            "alt": {"name": alt_opt.get("label", "Alternative"), "totals": [alt_total]},
+            # Negative by construction: the rejected transfer leads on paper.
+            # It was rejected because the lead is inside measured noise, not
+            # because it was behind.
+            "edge": [round(roll_total - alt_total, 1)],
+            "noise_bar": _noise_bar_for(horizon_gw),
+        }
+    chosen = chosen or (paths[0] if paths else None)
     alt = _find(alt_label) or next((p for p in paths if p is not chosen), None)
     if chosen is None or alt is None:
         return None
@@ -113,7 +152,26 @@ def _checkpoint_block(paths: list[dict] | None, chosen_label: str | None, alt_la
             "totals": [round(alt_bd[h]["path_total"], 1) for h in horizons],
         },
         "edge": [round(chosen_bd[h]["path_total"] - alt_bd[h]["path_total"], 1) for h in horizons],
+        "noise_bar": _noise_bar_for(max(horizons)),
     }
+
+
+def _noise_bar_for(horizon_gw) -> float | None:
+    """The measured materiality bar at this horizon, so the graphic can say
+    whether an edge means anything. None when it cannot be measured - the
+    UI then shows the bare number, as it always did, rather than a
+    fabricated band."""
+    try:
+        from fpl_agent.database.connection import get_connection
+        from fpl_agent.models.materiality import transfer_materiality_bar
+
+        conn = get_connection()
+        try:
+            return transfer_materiality_bar(conn, horizon_gw=int(horizon_gw)).threshold
+        finally:
+            conn.close()
+    except Exception:
+        return None
 
 
 def _alternative_block(auth: dict | None, diag: dict | None) -> dict | None:
@@ -277,6 +335,8 @@ def build_command_payload(ctx: DashboardContext) -> dict:
         "checkpoint_table": _checkpoint_block(
             ctx.sd.get("paths") if ctx.sd else None, (current_rec or {}).get("label"),
             alt_label or None,
+            starting_action_options=(current_rec or {}).get("starting_action_options"),
+            horizon_gw=ctx.sd.get("horizon_gw") if ctx.sd else None,
         ) if auth else None,
         "contribution": _contribution_block(auth, ctx.ca),
         "trajectory": _trajectory_block(auth, ctx.ca, ctx.gw_label),

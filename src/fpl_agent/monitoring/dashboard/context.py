@@ -313,6 +313,19 @@ def build_dashboard_context(
             if steps and steps[0].get("action") == chosen_label:
                 chosen_path = p
                 break
+        rec_is_roll = (
+            chosen_label == "ROLL" or (current_rec or {}).get("action_kind") == "roll"
+        )
+        if chosen_path is None and rec_is_roll and locked is not None:
+            # A ROLL verdict's squad is the locked squad, untouched. The beam's
+            # top paths almost always start with a transfer, so no path
+            # matches "ROLL" and the old fallback to paths[0] rendered the
+            # squad AFTER a transfer the verdict had just rejected - a ROLL
+            # headline over "THE PALMER -> MBEUMO SQUAD" (observed live
+            # 2026-09-19). Synthesise the step from the real locked squad.
+            locked_ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in getattr(locked.xi, "bench", [])]
+            if len(locked_ids) == 15:
+                chosen_path = {"steps": [{"action": "ROLL", "resulting_squad_ids": locked_ids, "event": reference_event}]}
         if chosen_path is None and paths:
             chosen_path = paths[0]
         steps = (chosen_path or {}).get("steps") or []

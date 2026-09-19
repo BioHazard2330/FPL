@@ -5,6 +5,7 @@ import { DecisionHorizon } from '@/components/command/DecisionHorizon'
 import { EvidenceRail } from '@/components/command/EvidenceRail'
 import { PlayerGallery } from '@/components/command/PlayerGallery'
 import { StrategyRail } from '@/components/command/StrategyRail'
+import { TrackRecordStrip } from '@/components/command/TrackRecordStrip'
 import { fetchCommandPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
@@ -23,7 +24,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * every number here traces to the same `CommandPayload` fields the
  * previous version already rendered. */
 
-type SectionKey = 'decision' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence'
+type SectionKey = 'decision' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence'
 
 /** Two real orders, one per answerable question.
  *
@@ -34,8 +35,8 @@ type SectionKey = 'decision' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'e
  * LOCKED / LIVE - "what have I got?" Nothing can be changed, so the squad
  * leads, the captain (who is on the pitch right now) comes straight after,
  * and the decision drops to where it belongs: a record, read last. */
-const ACTIONABLE_ORDER: SectionKey[] = ['decision', 'squad', 'horizon', 'captain', 'strategy', 'evidence', 'confidence']
-const LOCKED_ORDER: SectionKey[] = ['squad', 'captain', 'evidence', 'decision', 'horizon', 'strategy', 'confidence']
+const ACTIONABLE_ORDER: SectionKey[] = ['decision', 'record', 'squad', 'horizon', 'captain', 'strategy', 'evidence', 'confidence']
+const LOCKED_ORDER: SectionKey[] = ['squad', 'captain', 'evidence', 'decision', 'record', 'horizon', 'strategy', 'confidence']
 
 function orderSections(nodes: Record<SectionKey, React.ReactNode>, actionable: boolean) {
   const order = actionable ? ACTIONABLE_ORDER : LOCKED_ORDER
@@ -126,6 +127,7 @@ export function CommandScreen() {
           checkpoint={p.checkpoint_table}
         />
       ),
+      record: <TrackRecordStrip />,
       squad: p.action_squad ? <PlayerGallery block={p.action_squad} fixtures={p.fixtures} /> : null,
       horizon:
         p.checkpoint_table && p.checkpoint_table.horizons.length > 0 ? (
