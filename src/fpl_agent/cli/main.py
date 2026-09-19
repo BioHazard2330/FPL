@@ -667,9 +667,10 @@ def match_report_cmd(fotmob_match_id: str):
     click.echo(f"\nSHOTS ({len(shots)}) - minute, team, player, type, situation, (x,y), xg, outcome")
     for s in shots:
         loc = f"({s['x']:.0f},{s['y']:.0f})" if s["x"] is not None and s["y"] is not None else "(?,?)"
+        xg = f"{s['xg']:.2f}" if s["xg"] is not None else "?"
         click.echo(
             f"  {s['minute']:>3}' team={s['team_id']} {s['player_name']:<22} {s['shot_type'] or '?':<9} "
-            f"{s['situation'] or '?':<11} {loc:<9} xg={s['xg']:.2f} {s['outcome']}"
+            f"{s['situation'] or '?':<11} {loc:<9} xg={xg} {s['outcome']}"
         )
 
     events = conn.execute(
