@@ -166,6 +166,28 @@ def _matches_the_real_played_chip(path: dict, reference_event: int | None, playe
     return chip is not None and chip.lower() == played_chip.lower()
 
 
+def _latest_planner_cross_check(conn) -> dict | None:
+    """The cross-check from the most recent strategic_plan decision that
+    carries one. Scans a few rows back rather than only the newest, because
+    a run invoked with `--no-current-action` still writes a perfectly valid
+    cross-check, and a superseded row's measurement is still a real
+    measurement of the same two planners."""
+    from fpl_agent.database.decisions import list_decisions_of_type
+
+    # No blanket try/except here on purpose. An earlier version swallowed
+    # every exception and returned None, which silently hid a real bug (this
+    # was being called after the caller had already closed `conn`) and
+    # presented it as the perfectly normal "no cross-check recorded yet"
+    # state. A genuinely absent field is represented by the loop simply not
+    # finding one; anything else is a fault and should surface.
+    for decision in list_decisions_of_type(conn, "strategic_plan", limit=5):
+        detail = decision.detail or {}
+        found = detail.get("planner_cross_check")
+        if found:
+            return found
+    return None
+
+
 def build_plan_payload(ctx: DashboardContext) -> dict:
     sd = ctx.sd
     if ctx.locked is None:
@@ -258,6 +280,7 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
                 ],
             })
         sensitivity = _sensitivity_rows(conn)
+        planner_cross_check = _latest_planner_cross_check(conn)
     finally:
         conn.close()
 
@@ -288,4 +311,21 @@ def build_plan_payload(ctx: DashboardContext) -> dict:
         "trajectory_series": trajectory_series,
         "paths": path_rows,
         "sensitivity": sensitivity,
+        # Planner cross-check (2026-09-19) - present only when a
+        # `fpl strategic-plan` run actually computed one. Never recomputed
+        # here: both planners together cost ~40s, which is fine inside a
+        # detached multi-minute plan run and not fine inside a dashboard
+        # regen. None is a normal state (an older plan predates this
+        # field), and the UI renders nothing rather than implying a zero gap.
+        #
+        # Deliberately read from the RAW latest plan, not from `sd`. `sd` is
+        # the hysteresis-stable decision (`stable_current_recommendation`),
+        # which by design can be an older row while a changed recommendation
+        # waits for a second confirming run. That rule exists to stop the
+        # RECOMMENDATION flip-flopping on noise - it has nothing to do with
+        # how good the search was, which is what this measures. Routing the
+        # cross-check through it would make a freshly measured gap silently
+        # vanish for a gameweek, which is exactly the kind of quietly-stale
+        # number this project treats as a bug.
+        "planner_cross_check": planner_cross_check,
     }

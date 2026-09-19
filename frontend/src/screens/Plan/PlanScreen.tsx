@@ -4,12 +4,88 @@ import { fetchPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { TransferWormhole } from '@/components/three/TransferWormhole'
-import type { PlanPath } from '@/lib/types'
+import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
   CLEAR_LEAD: 'text-pitch-green',
   LIKELY_BEST: 'text-broadcast-gold',
   NEAR_TIE: 'text-alert-red',
+}
+
+/** PLANNER CROSS-CHECK - the one thing a plan screen can honestly show that
+ * almost none do: how much the search itself might be wrong by.
+ *
+ * The plan above comes from a beam search, which is a heuristic with no
+ * optimality guarantee. The MILP solves the same transfer problem exactly.
+ * Running both over the same horizon, with chips excluded from each, makes
+ * the difference a measured quantity rather than an assumption.
+ *
+ * Deliberately reports the gap as the headline rather than the two totals:
+ * the absolute numbers are only meaningful against each other, and a reader
+ * comparing either of them to the chip-inclusive path total above would be
+ * comparing different questions. Renders nothing at all when the last plan
+ * predates this field - never a zero gap, which would read as "the
+ * heuristic is provably fine" when nothing was actually measured. */
+function PlannerCrossCheckPanel({ x }: { x: PlannerCrossCheck }) {
+  const max = Math.max(x.milp_total, x.beam_total, 1)
+  const gapPositive = x.gap > 0.01
+  const rows = [
+    { label: 'Beam search', sub: `width ${x.beam_width} - heuristic, no guarantee`, value: x.beam_total, tone: 'bg-divider' },
+    {
+      label: 'MILP optimum',
+      sub: x.milp_proven_optimal
+        ? `proven optimal - solved in ${x.milp_solve_seconds}s`
+        : `NOT proven (${x.milp_status}) - best found only`,
+      value: x.milp_total,
+      tone: x.milp_proven_optimal ? 'bg-pitch-green' : 'bg-broadcast-gold',
+    },
+  ]
+
+  return (
+    <div className="mt-12 border-t-2 border-divider bg-raised/40 px-10 py-8">
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-broadcast-gold">
+        Planner cross-check - what the search may be leaving behind
+      </div>
+      <div className="mb-6 text-xs text-text-faint">
+        Same {x.horizon_gw} gameweeks from GW{x.start_event}, chips excluded from both sides so the two are comparable.
+        Not comparable to the path totals above, which include chip value.
+      </div>
+
+      <div className="space-y-4">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-4">
+            <div className="w-44 shrink-0">
+              <div className="text-sm font-semibold text-text">{r.label}</div>
+              <div className="text-[10px] uppercase tracking-wide text-text-faint">{r.sub}</div>
+            </div>
+            <div className="h-3 flex-1 bg-panel">
+              <div className={`bar-draw h-full ${r.tone}`} style={{ width: `${(r.value / max) * 100}%` }} />
+            </div>
+            <div className="tabular w-20 text-right text-sm font-semibold text-text">{r.value.toFixed(1)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex items-baseline gap-3 border-t border-divider pt-4">
+        <div className={`tabular text-3xl font-bold ${gapPositive ? 'text-alert-red' : 'text-pitch-green'}`}>
+          {x.gap > 0 ? '+' : ''}{x.gap.toFixed(2)}
+        </div>
+        <div className="text-xs text-text-muted">
+          {gapPositive
+            ? `points the exact solver found that the beam did not, over ${x.horizon_gw} GW`
+            : 'the beam matched the exact optimum over this horizon'}
+        </div>
+      </div>
+
+      {x.gap < -0.01 && (
+        <div className="mt-3 border-l-2 border-alert-red pl-3 text-xs text-alert-red">
+          The beam scored higher than a provably optimal solver on what should be the same problem.
+          That is impossible if both are solving the same instance - most likely their candidate pools
+          differ. Treat both numbers as unverified until that is explained.
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** Real strategy-rail connector: a filled arrowhead, not a bare rule line -
@@ -366,6 +442,8 @@ export function PlanScreen() {
           </div>
         </div>
       )}
+
+      {p.planner_cross_check && <PlannerCrossCheckPanel x={p.planner_cross_check} />}
     </div>
   )
 }

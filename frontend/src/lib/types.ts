@@ -195,6 +195,26 @@ export interface PlanPayload {
   trajectory_series?: TrajectorySeries[]
   paths?: PlanPath[]
   sensitivity?: { label: string; pct: number }[]
+  planner_cross_check?: PlannerCrossCheck | null
+}
+
+/** Beam search (what PLAN shows) vs the exact MILP optimum over the same
+ *  horizon, chips excluded from both. `gap` is how many points the
+ *  heuristic left on the table. Absent on plans computed before this
+ *  existed, so every consumer must treat it as optional rather than
+ *  rendering a zero gap. */
+export interface PlannerCrossCheck {
+  horizon_gw: number
+  start_event: number
+  chips_excluded: boolean
+  milp_total: number
+  milp_proven_optimal: boolean
+  milp_status: string
+  milp_solve_seconds: number
+  milp_pool_size: number
+  beam_total: number
+  beam_width: number
+  gap: number
 }
 
 export interface FootballSignal {

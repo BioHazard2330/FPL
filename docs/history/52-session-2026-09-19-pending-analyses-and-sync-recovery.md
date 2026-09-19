@@ -312,6 +312,38 @@ Full research write-up, including the visual-direction proposals:
 
 453 tests green across the touched suites.
 
+### The planner cross-check, surfaced on PLAN
+
+The first of the research doc's visual proposals, built end to end.
+`strategic-plan` now also runs the MILP and a chips-disabled beam over the
+same horizon and persists the comparison (~40s inside a run that already
+takes minutes; the dashboard never recomputes it). PLAN renders it as two
+proportional bars plus the gap.
+
+Two things it deliberately does NOT do. It does not read through
+`stable_current_recommendation` - that hysteresis exists to stop the
+RECOMMENDATION flip-flopping on noise and has nothing to do with how good
+the search was, so routing a freshly measured gap through it would make the
+number silently vanish for a gameweek. And it does not compare against the
+chip-inclusive path totals shown above it on the same screen; the panel says
+so in its own subtitle, because those answer a different question.
+
+Two real bugs were found while verifying it, both mine:
+
+- The helper was called after the payload builder had already closed its
+  connection, and a blanket `except Exception: return None` swallowed the
+  error and rendered it as the perfectly normal "no cross-check recorded
+  yet" state. The catch is gone; a genuinely absent field is now represented
+  by simply not finding one.
+- The first run used `--no-current-action`, so the decision carried no
+  `current_recommendation` and was skipped by the selector entirely. Not a
+  code bug, but worth recording: a plan without a recommendation is invisible
+  to the dashboard.
+
+Live-verified in the browser at 1440px: "Beam search, width 5 - heuristic, no
+guarantee" 276.4 against "MILP optimum, proven optimal - solved in 6.88s"
+291.3, gap +14.87.
+
 ## Open, not fixed this session
 
 - **`ODDS_API_KEY` should be rotated.** The log is scrubbed and new failures

@@ -4053,6 +4053,67 @@ def strategic_plan_cmd(
         # project's own established "skipped, not discarded" posture) and
         # excluded from ever being read as "the current" plan
         # (`strategic_plan_decisions_with_recommendation`'s own filter).
+        # Planner cross-check (2026-09-19). The beam search this command runs
+        # is a heuristic with no optimality guarantee. The MILP in
+        # `optimization/milp_planner.py` solves the same transfer problem
+        # exactly, so running BOTH over the same horizon with chips excluded
+        # from each turns "how much is the heuristic leaving on the table"
+        # into a measured number instead of an assumption.
+        #
+        # Chips must be disabled on BOTH sides or the totals are not
+        # comparable - the MILP does not model chips at all, so a
+        # chip-inclusive beam total would flatter the beam for a reason that
+        # has nothing to do with search quality. Computed here rather than in
+        # the dashboard payload because this command already runs for
+        # minutes as a detached process, where ~40s more is noise; a
+        # dashboard regen is where it would actually hurt.
+        #
+        # Entirely non-fatal: a failed cross-check must never cost the user
+        # the real plan this command just spent minutes computing.
+        planner_cross_check = None
+        try:
+            from fpl_agent.optimization.milp_planner import plan_transfers_milp
+            from fpl_agent.optimization.squad import _BENCH_WEIGHT as _BW
+
+            if roll_start_event is not None and len(squad_ids) == 15:
+                _xhorizon = min(horizon, 5)
+                _no_chips = frozenset({"wildcard", "freehit", "bboost", "3xc"})
+                _milp = plan_transfers_milp(
+                    conn, list(squad_ids), free_transfers, bank_tenths,
+                    start_event=roll_start_event, horizon_gw=_xhorizon,
+                    pool_per_position=20, bench_weight=_BW, time_limit_seconds=120,
+                )
+                _beam_seqs = search_transfer_sequences(
+                    conn, list(squad_ids), free_transfers, bank_tenths,
+                    horizon_gw=_xhorizon, beam_width=beam_width,
+                    used_chip_names=_no_chips, start_event=roll_start_event,
+                )
+                _beam_best = max(_beam_seqs, key=lambda q: q.total_net_ev) if _beam_seqs else None
+                if _milp.sequence is not None and _beam_best is not None:
+                    planner_cross_check = {
+                        "horizon_gw": _xhorizon,
+                        "start_event": roll_start_event,
+                        "chips_excluded": True,
+                        "milp_total": _milp.sequence.total_net_ev,
+                        "milp_proven_optimal": _milp.proven_optimal,
+                        "milp_status": _milp.status,
+                        "milp_solve_seconds": _milp.solve_seconds,
+                        "milp_pool_size": _milp.pool_size,
+                        "beam_total": _beam_best.total_net_ev,
+                        "beam_width": beam_width,
+                        "gap": round(_milp.sequence.total_net_ev - _beam_best.total_net_ev, 2),
+                    }
+                    click.echo(
+                        f"planner cross-check ({_xhorizon}GW, chips excluded): "
+                        f"MILP {_milp.sequence.total_net_ev} "
+                        f"({'proven optimal' if _milp.proven_optimal else _milp.status}) vs "
+                        f"beam {_beam_best.total_net_ev} -> gap {planner_cross_check['gap']:+.2f} pts"
+                    )
+        except Exception:
+            logging.getLogger("fpl_agent.scheduler").exception(
+                "planner cross-check failed - not fatal, the real plan above is unaffected"
+            )
+
         existing_latest = latest_decision_of_type(conn, "strategic_plan")
         superseded = existing_latest is not None and existing_latest.created_at > computation_started_at
         if superseded:
@@ -4080,6 +4141,7 @@ def strategic_plan_cmd(
                 "horizon_gw": horizon, "note": plan.note, "immediate_vs_strategic_differ": plan.immediate_vs_strategic_differ,
                 "horizon_comparison": horizon_comparison_detail,
                 "roll_total": roll_total,
+                "planner_cross_check": planner_cross_check,
                 "best_path": _path_detail(best, roll_total=roll_total, leader_total=leader_total, second_best_total=second_best_total) if best is not None else None,
                 # Real "generate all of it" addition (2026-08-27): the FULL top-N
                 # paths, not just the winner - the dashboard's Strategic Plan
