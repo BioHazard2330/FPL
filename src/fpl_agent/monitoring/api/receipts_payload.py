@@ -46,6 +46,69 @@ _CHIP_LABEL = {
 }
 
 
+def _calibration_block(conn) -> dict | None:
+    """MODEL vs REALITY: every settled prediction against its outcome.
+
+    One dot per player-gameweek from `prediction_outcomes` - the projection
+    the model committed to BEFORE the deadline and the points that actually
+    landed. Nothing is recomputed; a dot is a frozen prediction and a real
+    result. The band is the same measured error `models/materiality.py`
+    derives the transfer bar from, drawn so a reader can see what "inside
+    the noise" looks like against real dots rather than take the number on
+    faith. Absent (None) until there are settled rows to draw.
+    """
+    import statistics
+
+    rows = conn.execute(
+        "SELECT po.player_id, p.web_name, po.event, po.predicted_median, po.predicted_floor, "
+        "       po.predicted_ceiling, po.predicted_confidence, po.actual_points, po.actual_minutes "
+        "FROM prediction_outcomes po JOIN players p ON p.id = po.player_id "
+        "WHERE po.predicted_median IS NOT NULL AND po.actual_points IS NOT NULL "
+        "ORDER BY po.event, po.player_id"
+    ).fetchall()
+    if not rows:
+        return None
+
+    points = [{
+        "player_id": r["player_id"], "player": r["web_name"], "event": r["event"],
+        "predicted": round(float(r["predicted_median"]), 2),
+        "floor": round(float(r["predicted_floor"]), 2) if r["predicted_floor"] is not None else None,
+        "ceiling": round(float(r["predicted_ceiling"]), 2) if r["predicted_ceiling"] is not None else None,
+        "confidence": r["predicted_confidence"],
+        "actual": float(r["actual_points"]),
+        "minutes": r["actual_minutes"],
+        # Inside the model's own floor..ceiling band, when it stated one.
+        "inside_band": (
+            r["predicted_floor"] is not None and r["predicted_ceiling"] is not None
+            and float(r["predicted_floor"]) <= float(r["actual_points"]) <= float(r["predicted_ceiling"])
+        ),
+    } for r in rows]
+
+    errors = [pt["actual"] - pt["predicted"] for pt in points]
+    mae = statistics.mean(abs(e) for e in errors)
+    bias = statistics.mean(errors)
+    stdev = statistics.pstdev(errors) if len(errors) > 1 else 0.0
+    banded = [pt for pt in points if pt["floor"] is not None and pt["ceiling"] is not None]
+    inside = sum(1 for pt in banded if pt["inside_band"])
+
+    return {
+        "n": len(points),
+        "mae": round(mae, 2),
+        "bias": round(bias, 2),
+        "error_stdev": round(stdev, 2),
+        "band_coverage_pct": round(inside / len(banded) * 100, 1) if banded else None,
+        "band_n": len(banded),
+        "points": points,
+        "note": (
+            "Each dot is one player in one gameweek: the median the model committed to before the "
+            "deadline against the points that landed. The diagonal is a perfect call. The shaded "
+            "band is one standard deviation of the model's own measured error - the same figure the "
+            "transfer bar is derived from. Coverage is how often the real result fell inside the "
+            "floor-to-ceiling range the model stated for that player."
+        ),
+    }
+
+
 def build_receipts_payload(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
 
@@ -108,8 +171,11 @@ def build_receipts_payload(ctx: DashboardContext) -> dict:
             r.optimizer_action not in (None, "ROLL") for r in rows if r.optimizer_action is not None
         )
 
+        calibration = _calibration_block(conn)
+
         return {
             "has_record": True,
+            "calibration": calibration,
             "headline": {
                 "your_total": totals.your_total,
                 "your_total_all_events": totals.your_total_all_events,

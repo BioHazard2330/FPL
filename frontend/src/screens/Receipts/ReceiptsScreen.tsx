@@ -2,6 +2,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { fetchReceiptsPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
+import { ModelVsReality } from '@/components/receipts/ModelVsReality'
 import type { LedgerRow, ReceiptsPayload } from '@/lib/types'
 
 /** THE RECEIPTS - the optimizer measured against what you actually did.
@@ -234,6 +235,17 @@ export function ReceiptsScreen() {
       <div className="px-10 py-4">
         {rows.map((r) => <GameweekCard key={r.event} row={r} scale={scale} />)}
       </div>
+
+      {/* MODEL vs REALITY - the projections under every recommendation,
+          scored against what happened. This is where the noise band the
+          transfer bar is built from comes from, drawn against real dots. */}
+      {data.calibration && data.calibration.n > 0 && (
+        <div className="border-t-2 border-divider px-10 py-8">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-broadcast-gold">Model vs reality</div>
+          <div className="mb-6 max-w-3xl text-xs text-text-muted">{data.calibration.note}</div>
+          <ModelVsReality block={data.calibration} />
+        </div>
+      )}
 
       {/* METHOD + the correction, on the same page as the numbers. */}
       <div className="border-t-2 border-divider bg-raised/40 px-10 py-8">

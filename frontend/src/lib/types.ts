@@ -1226,9 +1226,36 @@ export interface LedgerRow {
   worthless_vs_roll: boolean
 }
 
+/** MODEL vs REALITY - one frozen pre-deadline prediction per player per
+ *  gameweek, against the points that landed. Nothing recomputed. */
+export interface CalibrationPoint {
+  player_id: number
+  player: string
+  event: number
+  predicted: number
+  floor: number | null
+  ceiling: number | null
+  confidence: string | null
+  actual: number
+  minutes: number | null
+  inside_band: boolean
+}
+
+export interface CalibrationBlock {
+  n: number
+  mae: number
+  bias: number
+  error_stdev: number
+  band_coverage_pct: number | null
+  band_n: number
+  points: CalibrationPoint[]
+  note: string
+}
+
 export interface ReceiptsPayload {
   has_record: boolean
   reason?: string
+  calibration?: CalibrationBlock | null
   headline?: {
     your_total: number | null
     your_total_all_events: number
