@@ -320,3 +320,27 @@ def test_player_profile_carries_shots_career_and_market(db_conn):
     assert out["momentum"][0]["in"] == 100 and out["momentum"][0]["out"] == 20
     assert isinstance(out["ownership"], list) and isinstance(out["deadlines"], list)
     assert build_player_profile.needs_context is False
+
+
+def test_club_profile_splits_shots_by_who_took_them(db_conn):
+    """Shots in this club's matches: theirs on the left pitch, the
+    opponent's on the right, and `mine` only ever true on their own."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    db_conn.execute(
+        "INSERT INTO match_intelligence (fotmob_match_id, competition, kickoff_utc, home_team_id, away_team_id, "
+        "status, source, retrieved_at) VALUES ('m9','PL','2026-08-22T11:30:00Z',1,2,'FULL_TIME','fotmob','t0')"
+    )
+    mid = db_conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id='m9'").fetchone()[0]
+    for sid, team, pid, outcome in (("a", 1, 10, "Goal"), ("b", 2, 12, "Miss")):
+        db_conn.execute(
+            "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, player_id, fotmob_player_id, player_name, "
+            "minute, x, y, xg, is_on_target, outcome, shot_type, situation, retrieved_at) VALUES "
+            "(?, ?, ?, ?, ?, 'X', 10, 90.0, 30.0, 0.2, 1, ?, 'RightFoot', 'RegularPlay', 't0')",
+            (mid, sid, team, pid, f"f{pid}", outcome),
+        )
+    db_conn.commit()
+    out = build_club_profile(_Ctx(squad_ids={10, 12}), {"id": "1"})
+    assert [s["player_id"] for s in out["shots_for"]] == [10] and out["shots_for"][0]["mine"] is True
+    assert [s["player_id"] for s in out["shots_against"]] == [12] and out["shots_against"][0]["mine"] is False
+    other = build_club_profile(_Ctx(), {"id": "2"})
+    assert [s["player_id"] for s in other["shots_for"]] == [12] and [s["player_id"] for s in other["shots_against"]] == [10]

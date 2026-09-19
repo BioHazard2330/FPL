@@ -1127,6 +1127,9 @@ export interface ClubProfilePayload {
     is_mine: boolean
   }[]
   owned_count: number
+  /** Every shot this club took / faced this season, Atlas frame. */
+  shots_for: (AtlasShot & { match_id: number | null })[]
+  shots_against: (AtlasShot & { match_id: number | null })[]
 }
 
 

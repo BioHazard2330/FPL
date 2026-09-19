@@ -132,7 +132,37 @@ def build_club_profile(ctx: DashboardContext, params: dict | None = None) -> dic
             r["xga"] = xg["xga"] if xg else None
 
         squad_ids = set(ctx.squad_ids or set())
+
+        # WHERE THEY SHOOT / WHERE THEY CONCEDE - every shot FotMob recorded
+        # in this club's matches this season, split by who took it. Both
+        # sides are in the Atlas frame (attacking toward x=105), so the
+        # conceded set is drawn on the same half from the opponent's view.
+        shots_for: list[dict] = []
+        shots_against: list[dict] = []
+        for r in conn.execute(
+            "SELECT s.player_id, s.player_name, s.team_id, t.short_name AS team_short, t.code AS team_code, "
+            "       s.minute, s.x, s.y, s.xg, s.outcome, s.situation, s.shot_type, "
+            "       m.id AS match_id, m.fotmob_match_id, m.home_team_id, m.away_team_id "
+            "FROM match_shots s JOIN match_intelligence m ON m.id = s.match_id "
+            "LEFT JOIN teams t ON t.id = s.team_id "
+            "WHERE (m.home_team_id = ? OR m.away_team_id = ?) AND s.x IS NOT NULL AND s.y IS NOT NULL "
+            "ORDER BY m.kickoff_utc, s.minute",
+            (team_id, team_id),
+        ):
+            ours = r["team_id"] == team_id
+            (shots_for if ours else shots_against).append({
+                "player_id": r["player_id"], "player": r["player_name"],
+                "team_id": r["team_id"], "team": r["team_short"], "team_code": r["team_code"],
+                "minute": r["minute"], "x": round(float(r["x"]), 2), "y": round(float(r["y"]), 2),
+                "xg": round(float(r["xg"]), 3) if r["xg"] is not None else None,
+                "outcome": r["outcome"], "situation": r["situation"], "foot": r["shot_type"],
+                "match": r["fotmob_match_id"], "match_id": r["match_id"],
+                "mine": ours and r["player_id"] in squad_ids,
+            })
+
         return {
+            "shots_for": shots_for,
+            "shots_against": shots_against,
             "club": {
                 "team_id": team["id"], "code": team["code"], "name": team["name"], "short": team["short_name"],
                 "strength_home": team["strength_overall_home"], "strength_away": team["strength_overall_away"],

@@ -7,6 +7,7 @@ import { useFetch } from '@/lib/useFetch'
 import { SeasonDnaHelix } from '@/components/three/SeasonDnaHelix'
 import { XgMountainRange } from '@/components/three/XgMountainRange'
 import { TrophyShelf3D } from '@/components/three/TrophyShelf3D'
+import { ClubPitches } from '@/components/football/ClubPitches'
 import { HONOURS } from '@/lib/honours'
 import type { ClubResultRow } from '@/lib/types'
 
@@ -168,6 +169,11 @@ export function ClubScreen() {
           </div>
         </div>
       )}
+
+      {/* THE TWO PITCHES - where they shoot, where they concede. */}
+      <div className="border-b-2 border-divider">
+        <ClubPitches shotsFor={p.shots_for} shotsAgainst={p.shots_against} />
+      </div>
 
       {(chronological.length > 0 || xgMatches.length > 0) && (
         <div className="grid grid-cols-1 gap-px border-b-2 border-divider bg-divider lg:grid-cols-2">
