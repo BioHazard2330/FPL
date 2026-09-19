@@ -1374,3 +1374,40 @@ export interface AtlasPayload {
   zones: AtlasZone[]
   method: string
 }
+
+export interface TableRow {
+  position: number
+  team_id: number
+  code: number
+  name: string
+  short: string
+  played: number
+  won: number
+  drawn: number
+  lost: number
+  gf: number
+  ga: number
+  gd: number
+  points: number
+  xg: number
+  xga: number
+  xgd: number
+  xg_matches: number
+  xg_per_match: number | null
+  xga_per_match: number | null
+  /** Goals minus xG: positive = scoring more than the chances were worth. */
+  finishing: number | null
+  /** xG allowed minus goals conceded: positive = conceding less than allowed. */
+  keeping: number | null
+  form: ('W' | 'D' | 'L')[]
+  mine: boolean
+}
+
+export interface TablePayload {
+  has_table: boolean
+  matches: number
+  matches_with_xg: number
+  through_event: number | null
+  rows: TableRow[]
+  method: string
+}

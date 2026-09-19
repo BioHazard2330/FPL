@@ -13,6 +13,7 @@ import { MyTeamScreen } from '@/screens/MyTeam/MyTeamScreen'
 import { PlanScreen } from '@/screens/Plan/PlanScreen'
 import { ReceiptsScreen } from '@/screens/Receipts/ReceiptsScreen'
 import { AtlasScreen } from '@/screens/Atlas/AtlasScreen'
+import { TableScreen } from '@/screens/Table/TableScreen'
 import { FootballScreen } from '@/screens/Football/FootballScreen'
 import { ScoutScreen } from '@/screens/Scout/ScoutScreen'
 import { AdvancedScreen } from '@/screens/Advanced/AdvancedScreen'
@@ -38,6 +39,7 @@ function App() {
             <Route path="/match/:id" element={<MatchScreen />} />
             <Route path="/football" element={<FootballScreen />} />
             <Route path="/atlas" element={<AtlasScreen />} />
+            <Route path="/table" element={<TableScreen />} />
             <Route path="/scout" element={<ScoutScreen />} />
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />

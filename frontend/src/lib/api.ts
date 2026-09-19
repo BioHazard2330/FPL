@@ -9,7 +9,7 @@ import type {
   AtlasPayload,
   ReceiptsPayload,
   AdvancedPayload, ClubProfilePayload, CommandPayload, FootballPayload, LiveSnapshot, MatchweekPayload,
-  MatchReportPayload, MyTeamPayload, PlanPayload, PlayerProfilePayload, ScoutPayload,
+  MatchReportPayload, MyTeamPayload, PlanPayload, PlayerProfilePayload, ScoutPayload, TablePayload,
 } from './types'
 
 export class ApiError extends Error {
@@ -47,6 +47,10 @@ export function fetchReceiptsPayload(): Promise<ReceiptsPayload> {
 
 export function fetchAtlasPayload(): Promise<AtlasPayload> {
   return getJson<AtlasPayload>('/api/atlas')
+}
+
+export function fetchTablePayload(): Promise<TablePayload> {
+  return getJson<TablePayload>('/api/table')
 }
 
 export function fetchFootballPayload(): Promise<FootballPayload> {

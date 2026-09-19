@@ -1,4 +1,4 @@
-import { Activity, Crosshair, Goal, LocateFixed, Radio, Receipt, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Activity, Crosshair, Goal, ListOrdered, LocateFixed, Radio, Receipt, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -7,6 +7,7 @@ export const DESTINATIONS = [
   { to: '/matchweek', label: 'Matchweek', icon: Trophy },
   { to: '/football', label: 'Football', icon: Goal },
   { to: '/atlas', label: 'Atlas', icon: LocateFixed },
+  { to: '/table', label: 'Table', icon: ListOrdered },
   { to: '/scout', label: 'Scout', icon: Search },
   { to: '/receipts', label: 'Receipts', icon: Receipt },
   { to: '/advanced', label: 'Advanced', icon: Activity },
@@ -21,7 +22,7 @@ export const DESTINATIONS = [
  * group is unchanged, so no existing muscle memory breaks. */
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
   { label: 'Decision', routes: ['/', '/my-team', '/plan', '/receipts'] },
-  { label: 'The football', routes: ['/matchweek', '/football', '/atlas'] },
+  { label: 'The football', routes: ['/matchweek', '/football', '/atlas', '/table'] },
   { label: 'Intelligence', routes: ['/scout'] },
   { label: 'Operations', routes: ['/live', '/advanced'] },
 ]
