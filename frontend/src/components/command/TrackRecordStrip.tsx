@@ -37,10 +37,10 @@ export function TrackRecordStrip() {
           <span className="text-[10px] uppercase tracking-wide text-text-faint">yours</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="tabular text-2xl font-bold text-accent">{h.optimizer_total}</span>
+          <span className="tabular text-2xl font-bold text-broadcast-blue">{h.optimizer_total}</span>
           <span className="text-[10px] uppercase tracking-wide text-text-faint">its</span>
         </div>
-        <div className={`tabular text-2xl font-bold ${behind ? 'text-alert-red' : 'text-accent'}`}>
+        <div className={`tabular text-2xl font-bold ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
           {h.delta > 0 ? '+' : ''}{h.delta}
           <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-text-faint">
             over {h.comparable_events} GW

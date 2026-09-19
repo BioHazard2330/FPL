@@ -35,7 +35,7 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
     {
       label: 'Optimizer',
       value: row.optimizer_points === null || row.roll_points === null ? null : row.optimizer_points - row.roll_points,
-      tone: 'bg-accent',
+      tone: 'bg-broadcast-blue',
     },
   ]
   return (
@@ -94,7 +94,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
             : <span className="text-text-faint">it said nothing</span>}
         </div>
         {row.delta_vs_you !== null && (
-          <div className={`tabular ml-auto text-lg font-bold ${beat ? 'text-accent' : 'text-pitch-green'}`}>
+          <div className={`tabular ml-auto text-lg font-bold ${beat ? 'text-broadcast-blue' : 'text-pitch-green'}`}>
             {row.delta_vs_you > 0 ? '+' : ''}{row.delta_vs_you}
             <span className="ml-1 text-[10px] font-normal uppercase tracking-wide text-text-faint">
               {beat ? 'it would have gained' : 'you were ahead'}
@@ -184,7 +184,7 @@ export function ReceiptsScreen() {
             <div className="mt-2 text-[11px] uppercase tracking-wide text-text-faint">your squad</div>
           </div>
           <div>
-            <div className="tabular text-6xl font-bold leading-none text-accent">{h.optimizer_total ?? '—'}</div>
+            <div className="tabular text-6xl font-bold leading-none text-broadcast-blue">{h.optimizer_total ?? '—'}</div>
             <div className="mt-2 text-[11px] uppercase tracking-wide text-text-faint">its squad</div>
           </div>
           <div>
@@ -193,7 +193,7 @@ export function ReceiptsScreen() {
           </div>
           {h.delta !== null && (
             <div className="ml-auto text-right">
-              <div className={`tabular text-5xl font-bold leading-none ${behind ? 'text-alert-red' : 'text-accent'}`}>
+              <div className={`tabular text-5xl font-bold leading-none ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
                 {h.delta > 0 ? '+' : ''}{h.delta}
               </div>
               <div className="mt-2 max-w-[16rem] text-[11px] uppercase tracking-wide text-text-faint">

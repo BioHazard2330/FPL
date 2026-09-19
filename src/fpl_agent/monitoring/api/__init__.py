@@ -9,6 +9,7 @@ docs/FRONTEND_MIGRATION_PLAN.md for the full Python<->React boundary.
 `live/sse_server.py`) to its payload builder - added to as each screen is
 migrated (Stage 3 onward), never all at once."""
 from fpl_agent.monitoring.api.advanced_payload import build_advanced_payload
+from fpl_agent.monitoring.api.atlas_payload import build_atlas_payload
 from fpl_agent.monitoring.api.command_payload import build_command_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
 from fpl_agent.monitoring.api.match_payload import build_match_report
@@ -28,6 +29,7 @@ API_BUILDERS = {
     "scout": build_scout_payload,
     "advanced": build_advanced_payload,
     "receipts": build_receipts_payload,
+    "atlas": build_atlas_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a
     # builder that declares it, and turns a LookupError into a real 404.
     "club": build_club_profile,

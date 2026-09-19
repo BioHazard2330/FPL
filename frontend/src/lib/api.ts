@@ -6,6 +6,7 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
+  AtlasPayload,
   ReceiptsPayload,
   AdvancedPayload, ClubProfilePayload, CommandPayload, FootballPayload, LiveSnapshot, MatchweekPayload,
   MatchReportPayload, MyTeamPayload, PlanPayload, PlayerProfilePayload, ScoutPayload,
@@ -42,6 +43,10 @@ export function fetchPlanPayload(): Promise<PlanPayload> {
 
 export function fetchReceiptsPayload(): Promise<ReceiptsPayload> {
   return getJson<ReceiptsPayload>('/api/receipts')
+}
+
+export function fetchAtlasPayload(): Promise<AtlasPayload> {
+  return getJson<AtlasPayload>('/api/atlas')
 }
 
 export function fetchFootballPayload(): Promise<FootballPayload> {

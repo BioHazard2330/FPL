@@ -1251,3 +1251,63 @@ export interface ReceiptsPayload {
   method?: string
   correction?: string
 }
+
+/** THE ATLAS - every real shot this season. FotMob frame: `x` along the
+ *  pitch length 0-105 toward the attacked goal, `y` across the width 0-68.
+ *  Already attacking-toward-105 for every shot; nothing is mirrored. */
+export interface AtlasShot {
+  player_id: number | null
+  player: string
+  team_id: number | null
+  team: string | null
+  team_code: number | null
+  minute: number | null
+  x: number
+  y: number
+  xg: number | null
+  outcome: 'Goal' | 'AttemptSaved' | 'Miss' | 'Post' | string
+  situation: string | null
+  foot: string | null
+  match: string | null
+  mine: boolean
+}
+
+export interface AtlasShooter {
+  player_id: number
+  player: string
+  team: string | null
+  team_code: number | null
+  shots: number
+  goals: number
+  xg: number
+  on_target: number
+  xg_per_shot: number
+  goals_minus_xg: number
+  mine: boolean
+}
+
+export interface AtlasZone {
+  col: number
+  row: number
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+  n: number
+  mean_xg: number | null
+}
+
+export interface AtlasPayload {
+  has_shots: boolean
+  pitch: { length: number; width: number; half_x: number }
+  totals: {
+    shots: number; goals: number; xg: number; matches: number
+    mine_shots: number; mine_goals: number; mine_xg: number
+  }
+  situations: [string, number][]
+  shots: AtlasShot[]
+  players: AtlasShooter[]
+  teams: { team_id: number; team: string | null; team_code: number | null; shots: number; goals: number; xg: number; goals_minus_xg: number }[]
+  zones: AtlasZone[]
+  method: string
+}

@@ -683,10 +683,29 @@ def maybe_fetch_live_payload(conn: sqlite3.Connection) -> dict | None:
     try:
         payload = FPLApiAdapter().fetch_event_live(event_num).data
     except SourceFetchError as e:
-        update_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
+        _note_source_health(conn, f"fpl_api_event_live_{event_num}", success=False, error=str(e))
         return None
-    update_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
+    _note_source_health(conn, f"fpl_api_event_live_{event_num}", success=True)
     return payload
+
+
+def _note_source_health(conn: sqlite3.Connection, source: str, success: bool, error: str | None = None) -> None:
+    """Source-health bookkeeping that can never cost the caller its payload.
+
+    This runs inside the live-server's context build during live matches,
+    when `live-match-poll` and `run-scheduled` are writing constantly. The
+    bookkeeping is a DB write, and a `database is locked` on it - observed
+    live 2026-09-19, repeatedly - was propagating up and aborting the whole
+    ~60s context build, so the warm cache was lost over a health note. The
+    payload is already fetched by the time this is called; the note is
+    best-effort.
+    """
+    try:
+        update_source_health(conn, source, success=success, error=error)
+    except sqlite3.OperationalError as exc:
+        logging.getLogger("fpl_agent.dashboard").debug(
+            "source-health note for %s skipped (%s) - payload unaffected", source, exc
+        )
 
 
 def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = _DEFAULT_TTL_SECONDS) -> DashboardContext:
