@@ -1775,27 +1775,18 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled post-GW pipeline failed - not fatal to the sync itself")
 
-    # Real "optimizer must run automatically" fix (2026-08-29, master
-    # automation pass) - see _maybe_trigger_strategic_plan_recompute's own
-    # docstring. Fires a real ~2-10min `fpl strategic-plan` as a detached
-    # background subprocess (never blocks this cycle) only when a real
-    # material change has happened since the last cached decision.
-    try:
-        auto_reason = _maybe_trigger_strategic_plan_recompute(conn)
-        if auto_reason:
-            logger.info("run-scheduled auto-triggered strategic-plan recompute: %s", auto_reason)
-    except Exception:
-        logger.exception("run-scheduled strategic-plan auto-trigger failed - not fatal to the sync itself")
-
-    conn.close()
-
-    if retighten_msg:
-        logger.info("run-scheduled: %s", retighten_msg)
-        click.echo(retighten_msg)
-    if news_result is not None:
-        logger.info("run-scheduled news sync: %d fetched, %d new item(s)", news_result["fetched"], news_result["new_items"])
-        click.echo(f"news: {news_result['new_items']} new item(s) synced")
-
+    # Ordering is load-bearing (2026-09-19, direct user report: "command
+    # still shows my old squad"). This block used to sit AFTER the
+    # strategic-plan auto-trigger below, which meant every scheduled tick
+    # recomputed the plan against the PREVIOUS squad and only then learned
+    # what the squad actually is. With a real wildcard played that is not a
+    # cosmetic lag but a self-perpetuating loop: the gate fires on "locked
+    # squad has changed", spawns a ~10min beam search over the stale squad,
+    # and the squad still looks changed on the next tick, so it re-triggers
+    # forever and COMMAND keeps serving a plan built from players the user
+    # no longer owns (confirmed live: the recompute fired at 12:58:20.666
+    # and the picks landed at 12:58:20.691, 25ms later).
+    #
     # Real gap found 2026-08-21 - the user asked directly for "my real team"
     # to auto-update once their real gameweek deadline passes, and
     # sync_my_team() was never actually wired into the regular unattended
@@ -1819,6 +1810,27 @@ def run_scheduled():
         conn2.close()
     except Exception:
         logger.exception("run-scheduled my-team sync failed - not fatal to the sync itself")
+
+    # Real "optimizer must run automatically" fix (2026-08-29, master
+    # automation pass) - see _maybe_trigger_strategic_plan_recompute's own
+    # docstring. Fires a real ~2-10min `fpl strategic-plan` as a detached
+    # background subprocess (never blocks this cycle) only when a real
+    # material change has happened since the last cached decision.
+    try:
+        auto_reason = _maybe_trigger_strategic_plan_recompute(conn)
+        if auto_reason:
+            logger.info("run-scheduled auto-triggered strategic-plan recompute: %s", auto_reason)
+    except Exception:
+        logger.exception("run-scheduled strategic-plan auto-trigger failed - not fatal to the sync itself")
+
+    conn.close()
+
+    if retighten_msg:
+        logger.info("run-scheduled: %s", retighten_msg)
+        click.echo(retighten_msg)
+    if news_result is not None:
+        logger.info("run-scheduled news sync: %d fetched, %d new item(s)", news_result["fetched"], news_result["new_items"])
+        click.echo(f"news: {news_result['new_items']} new item(s) synced")
 
     # Real gap found 2026-08-26 (section R of a GW1-postmortem ask): no
     # persistent record of "what did the model predict" existed anywhere -
@@ -3720,6 +3732,88 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
 # a real optimization-layer function, never `cli` -> `optimization` in reverse
 # - can share it. Imported below as `_path_detail` (unchanged local name, so
 # every existing call site in this file is untouched).
+
+
+@cli.command("milp-plan")
+@click.option("--horizon", default=5, type=int, help="planning horizon in GWs (default 5)")
+@click.option("--pool-per-position", default=20, type=int, help="transfer candidates per position on top of the current squad (default 20 - raising this strictly widens the search but costs solve time)")
+@click.option("--time-limit", default=180, type=int, help="CBC wall-clock ceiling in seconds (default 180)")
+@click.option("--compare/--no-compare", default=False, help="also run the production beam search over the same horizon and report the gap (real extra cost - the beam is the slower of the two)")
+def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare: bool):
+    """Solve the multi-GW transfer problem exactly, as one MILP.
+
+    The counterpart to `strategic-plan`'s beam search - same per-player
+    per-gameweek projection, different search. Reports whether CBC actually
+    PROVED optimality rather than just returning its best incumbent, because
+    a time-limited solve is a heuristic too and must not be presented as an
+    exact answer. `--compare` additionally runs the beam over the same
+    horizon so the gap between them is a measured number, not an assumption.
+
+    Chips are not modelled here (see milp_planner's module docstring) - chip
+    timing stays with `strategic-plan`/`chips.py`.
+    """
+    from fpl_agent.optimization.locked_squad import get_locked_squad
+    from fpl_agent.optimization.milp_planner import plan_transfers_milp
+    from fpl_agent.optimization.squad import _BENCH_WEIGHT
+
+    conn = get_connection()
+    try:
+        locked = get_locked_squad(conn)
+        if locked is None:
+            click.echo("no locked squad - run `fpl my-team --entry-id <id>` first", err=True)
+            raise SystemExit(1)
+        ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in locked.xi.bench]
+        bank_tenths = int(round(getattr(locked, "bank_tenths", 0) or 0))
+        start_event = locked.event + 1
+
+        click.echo(f"MILP plan  GW{start_event}..GW{start_event + horizon - 1}  "
+                   f"ft={locked.free_transfers}  bank=£{bank_tenths / 10:.1f}m")
+        res = plan_transfers_milp(
+            conn, ids, locked.free_transfers, bank_tenths, start_event=start_event,
+            horizon_gw=horizon, pool_per_position=pool_per_position,
+            bench_weight=_BENCH_WEIGHT, time_limit_seconds=time_limit,
+        )
+        if res.sequence is None:
+            click.echo(f"no plan: {res.status}", err=True)
+            raise SystemExit(1)
+
+        proven = "PROVEN OPTIMAL" if res.proven_optimal else f"NOT PROVEN ({res.status}) - best incumbent only"
+        click.echo(f"  {proven}   pool={res.pool_size}   solved in {res.solve_seconds}s")
+        click.echo(f"  total_net_ev={res.sequence.total_net_ev}  "
+                   f"final_ft={res.sequence.final_free_transfers}  "
+                   f"final_bank=£{res.sequence.final_bank_tenths / 10:.1f}m")
+        click.echo("  chips: not modelled (see `strategic-plan` for chip timing)")
+        for st in res.sequence.steps:
+            if st.player_in_id is None:
+                click.echo(f"    GW{st.event}: ROLL")
+            else:
+                hit = "  (HIT)" if st.uses_hit else ""
+                click.echo(f"    GW{st.event}: {st.player_out_name} -> {st.player_in_name}{hit}")
+
+        if compare:
+            from fpl_agent.optimization.transfers import search_transfer_sequences
+            click.echo("")
+            click.echo("  running the beam search over the same horizon for comparison...")
+            # Chips are marked used so the beam solves the SAME problem the
+            # MILP does - otherwise the two totals are not comparable.
+            no_chips = frozenset({"wildcard", "freehit", "bboost", "3xc"})
+            beam = search_transfer_sequences(
+                conn, ids, locked.free_transfers, bank_tenths, horizon_gw=horizon,
+                beam_width=5, used_chip_names=no_chips, start_event=start_event,
+            )
+            if not beam:
+                click.echo("  beam returned no sequences")
+            else:
+                best = max(beam, key=lambda q: q.total_net_ev)
+                gap = res.sequence.total_net_ev - best.total_net_ev
+                click.echo(f"  beam best total_net_ev={best.total_net_ev}")
+                click.echo(f"  GAP (MILP - beam) = {gap:+.2f} pts over {horizon} GW")
+                if gap < -0.01:
+                    click.echo("  NOTE: the beam beat the MILP - that should be impossible on an "
+                               "identical problem, so the two are NOT solving the same instance "
+                               "(most likely a different candidate pool). Investigate before trusting either.")
+    finally:
+        conn.close()
 
 
 @cli.command("strategic-plan")

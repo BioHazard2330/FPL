@@ -29,6 +29,12 @@ from fpl_agent.config import DATA_DIR
 
 DEFAULT_LOCK_PATH = DATA_DIR / "live_poll.lock"
 
+# Every process this module locks for is a Python one (`live-match-poll`,
+# `run-scheduled`, `live-server`), launched either via the venv interpreter
+# or the `fpl.exe` console script. Used only to recognise a recycled PID -
+# see `_pid_is_alive`.
+_OWN_IMAGE_TOKENS = ("python", "fpl")
+
 
 def _pid_is_alive(pid: int) -> bool:
     """Real, platform-aware liveness check - the one piece of this module a
@@ -43,18 +49,41 @@ def _pid_is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if sys.platform == "win32":
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+        # Retried once (2026-09-19): a single transient `tasklist` failure
+        # used to fall straight through to "assume alive" below, which
+        # refuses the lock for a genuinely dead holder and wedges the
+        # scheduler until a human intervenes - observed live, with
+        # `_pid_is_alive` returning False for the same PID moments later.
+        result = None
+        for _attempt in range(2):
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                break
+            except (OSError, subprocess.TimeoutExpired):
+                result = None
+        if result is None:
             # Real, honest fallback: if we can't even ask the OS, assume
             # alive (the safer failure mode - never steal a lock we can't
             # actually verify is free).
             return True
-        return str(pid) in result.stdout
+        if str(pid) not in result.stdout:
+            return False
+        # Windows recycles PIDs aggressively, and every holder this module
+        # locks for is a Python process (`live-match-poll`, `run-scheduled`,
+        # `live-server`). A live PID whose image is plainly something else
+        # is a REUSED pid, not our holder - treating it as alive is what
+        # makes a stale lock look permanently held. Only claim "not ours"
+        # when the image name is actually readable and clearly foreign;
+        # anything unparseable stays "alive", preserving the cautious
+        # default above.
+        image = result.stdout.strip().split()[0].lower() if result.stdout.strip() else ""
+        if image and not any(tok in image for tok in _OWN_IMAGE_TOKENS):
+            return False
+        return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

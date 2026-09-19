@@ -211,16 +211,121 @@ sits in the existing log file.
 367 tests green across the materiality/run-scheduled/dashboard/context/api/
 live-snapshot/events suites.
 
+## Third pass — the old squad on COMMAND, and a MILP planner
+
+User: "command still shows my old squad."
+
+### An ordering bug in run_scheduled, not a display bug
+
+`get_locked_squad` returned the correct wildcard squad the whole time
+(Kinsky/Calafiori/Bogle/Gvardiol/Konsa/Gibbs-White/Tavernier/Palmer/Rogers/
+Haaland/Calvert-Lewin). MY TEAM rendered it correctly. COMMAND was showing
+Maguire, Ballard, Ajer, Mbeumo, B.Fernandes, Szoboszlai, Tzolis, E.Le Fée -
+players the user does not own - because it renders the cached *strategic
+plan*, and that plan had been computed from a stale squad.
+
+Root cause, visible in the sync log's own ordering:
+
+```
+12:58:20.666  auto-triggered strategic-plan recompute
+12:58:20.691  my-team picks written        <- 25ms later
+12:58:23      "my-team sync: picks_fetched=True"
+```
+
+`run_scheduled` called `_maybe_trigger_strategic_plan_recompute` BEFORE
+`sync_my_team`. So every tick spawned a ~10 minute beam search against the
+PREVIOUS squad and only afterwards learned what the squad actually was. With
+a real wildcard played this is self-perpetuating rather than merely laggy:
+the gate fires on "locked squad has changed", plans the stale squad, and the
+squad still looks changed next tick - which is exactly why that identical
+reason string appears in the log on 09-15 and again twice today.
+
+Fixed by moving the my-team sync above the trigger. Verified afterwards:
+COMMAND serves decision 3143 with action "Palmer -> Mbeumo" over the real
+squad, where it had served 3136 with "Foden -> Mbeumo".
+
+### The context cache could not invalidate early
+
+Even with a correct plan written at 13:40, COMMAND kept serving the 13:07
+one, while `freshness.is_stale` reported False - because that flag describes
+the DECISION's age, not the cache's. This was already disclosed in
+`context.py` as a follow-up; a wildcard turned it into a visible bug.
+
+`_state_fingerprint()` now takes three indexed MAX() lookups (latest
+strategic_plan decision id, latest `my_team_picks.retrieved_at`, latest
+`change_events` id) on every request. A changed fingerprint beats the TTL; an
+unreadable one never forces a rebuild on its own. Microseconds against a
+~60s rebuild, so it runs per request rather than on a timer.
+
+### Stale-lock refusal, root-caused
+
+`_pid_is_alive` now retries `tasklist` once before falling through to its
+"assume alive" path, and - the actual fix - checks the image name of a live
+PID. Windows recycles PIDs aggressively and every holder this module locks
+for is a Python process, so a live PID whose image is plainly something else
+is a recycled pid, not our holder. Verified against real live processes:
+`Registry`/`smss.exe`/`csrss.exe`/`wininit.exe` all correctly read as "not
+ours" (lock reclaimable), while a real `fpl.exe` reads as a live holder.
+
+### The key was scrubbed from the log
+
+485 literal occurrences in `logs/fpl_agent.log` replaced with
+`apiKey=***REDACTED***`. The redaction fix itself is confirmed working in
+production: the 13:26 odds failure logged
+`failed to fetch live odds: the-odds-api.com returned HTTP 401` with no URL.
+The key should still be rotated - it was on disk in cleartext for a while.
+
+### Multi-gameweek MILP planner
+
+`optimization/milp_planner.py`. The project already solved the SINGLE-GW
+squad problem exactly (`squad.py`, PuLP + CBC) but planned MULTI-GW transfers
+with a beam search, which carries no optimality guarantee at all. The
+published formulation (arXiv:2505.02170) and the stronger public solvers both
+use a multi-week MILP instead.
+
+Measured on the real squad, GW6-GW10, chips disabled on both, identical bench
+weight and identical per-player projection primitive:
+
+| | net EV (5 GW) | time | guarantee |
+|---|---|---|---|
+| beam search (production settings) | 276.42 | 30.0s | none |
+| MILP | **291.29** | **7.9s** | proven optimal |
+
+The returned plan was then re-verified against the FPL rulebook from the
+solution itself - 15 players, exact position quotas, <=3 per club, every
+gameweek. Honest caveat recorded in the research doc: the two planners build
+candidate pools differently, so part of the gap is pool composition rather
+than search quality alone.
+
+Deliberately not modelled in v1, and reported as such via
+`MilpPlanResult.chips_modelled`: chips, FPL's real selling-price rule (no
+purchase price is stored anywhere, so the beam already makes the same
+approximation), price drift, and anything stochastic.
+
+Exposed as `fpl milp-plan [--compare]`, which runs the beam over the same
+horizon and prints the gap - including an explicit warning if the beam ever
+beats the MILP, since on a genuinely identical instance that is impossible
+and would mean the two are not solving the same problem.
+
+Full research write-up, including the visual-direction proposals:
+`docs/research/01-optimizer-state-of-the-art-and-visual-direction.md`.
+
+453 tests green across the touched suites.
+
 ## Open, not fixed this session
 
-- **The spurious stale-lock refusal** against a dead PID. `_pid_is_alive`'s
-  `OSError`/timeout path deliberately returns `True` ("never steal a lock we
-  can't verify is free"), which is the right default but makes a transient
-  `tasklist` failure look exactly like a live holder. Worth distinguishing.
-- **`ODDS_API_KEY` already sits in `logs/fpl_agent.log`** from before the
-  redaction fix. `logs/` is gitignored so nothing reached the remote, but the
-  key is on disk in cleartext and is worth rotating.
-- **`get_cached_dashboard_context` still cannot invalidate early** on a
-  material change (its own pre-existing disclosed follow-up). With live
-  fixtures the 45s refresh makes this mostly moot; outside one, a fresh
-  decision can wait up to the 600s TTL to appear.
+- **`ODDS_API_KEY` should be rotated.** The log is scrubbed and new failures
+  no longer leak it, but the key sat in cleartext on disk and is in any
+  backup taken before this session. Rotating costs nothing - it is already
+  out of credits.
+- **Chips are not in the MILP.** Triple captain and bench boost each need one
+  auxiliary binary; wildcard is a per-gameweek waiver of the hit term. Until
+  that lands, chip timing must keep coming from `strategic-plan`/`chips.py`.
+- **No purchase price is stored anywhere**, so both planners treat sell price
+  as current price. This is the single largest approximation either of them
+  makes about money, and closing it is a migration plus one field.
+- **The MILP is not wired into the live decision path.** It is a CLI command
+  and a second opinion, deliberately - replacing the beam should follow the
+  measurement, not precede it.
+- **The visual proposals are researched, not built.** Five are specified in
+  the research doc; none is implemented yet.

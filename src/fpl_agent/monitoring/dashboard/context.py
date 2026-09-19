@@ -565,6 +565,37 @@ def build_dashboard_context(
 _CACHE_LOCK = threading.Lock()
 _cached_context: DashboardContext | None = None
 _cached_at: float = 0.0
+_cached_fingerprint: tuple | None = None
+
+
+def _state_fingerprint(conn: sqlite3.Connection) -> tuple | None:
+    """A cheap identity for "the inputs this context was built from"
+    (2026-09-19, direct user report: "command still shows my old squad").
+
+    The TTL alone is honest but not instant, which this module's own
+    docstring already disclosed as a follow-up. It became a real, visible
+    bug the moment a wildcard was played: a fresh strategic plan landed in
+    the decisions journal, and COMMAND kept serving the PREVIOUS plan - a
+    squad of players the user no longer owned - for up to the full 600s
+    TTL, while `freshness.is_stale` said False, because that flag describes
+    the DECISION's own age, not this cache's.
+
+    Three indexed MAX() lookups against tables that are already hot. The
+    cost of being wrong here is a ~60s rebuild served to a user looking at
+    a stale squad; the cost of this check is microseconds, so it runs on
+    every request rather than on a timer. Returns None if anything fails -
+    the caller then falls back to pure TTL behaviour rather than rebuilding
+    on every single request because one query errored.
+    """
+    try:
+        plan = conn.execute(
+            "SELECT MAX(id) FROM decisions WHERE decision_type='strategic_plan'"
+        ).fetchone()[0]
+        picks = conn.execute("SELECT MAX(retrieved_at) FROM my_team_picks").fetchone()[0]
+        change = conn.execute("SELECT MAX(id) FROM change_events").fetchone()[0]
+        return (plan, picks, change)
+    except Exception:
+        return None
 # Real latency fix (2026-09-08, Phase 9 - direct user requirement: "fix this
 # lag that happens when the site loads... I want it instantly"). The
 # original 60s TTL matched `fpl dashboard`'s own scheduled regen cadence,
@@ -668,13 +699,25 @@ def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = 
     `is_stale`/`RECOMPUTING` signal inside the payload itself already tells
     a client when the underlying decision is stale, independent of this
     cache's own freshness)."""
-    global _cached_context, _cached_at
+    global _cached_context, _cached_at, _cached_fingerprint
     now = time.monotonic()
+    fingerprint = _state_fingerprint(conn)
     with _CACHE_LOCK:
-        if _cached_context is not None and (now - _cached_at) < ttl_seconds:
+        fresh_enough = _cached_context is not None and (now - _cached_at) < ttl_seconds
+        # A changed fingerprint beats the TTL: the inputs genuinely moved,
+        # so serving the cached context would show the user a squad or a
+        # plan that no longer exists. An unreadable fingerprint (None)
+        # never forces a rebuild on its own.
+        inputs_moved = (
+            fingerprint is not None
+            and _cached_fingerprint is not None
+            and fingerprint != _cached_fingerprint
+        )
+        if fresh_enough and not inputs_moved:
             return _cached_context
         _cached_context = build_dashboard_context(conn, live_payload=maybe_fetch_live_payload(conn))
         _cached_at = time.monotonic()
+        _cached_fingerprint = fingerprint
         return _cached_context
 
 
@@ -691,17 +734,19 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
     loop or the server - the next tick retries, and the stale-but-still-
     served cached context is a real, honest degrade (the payload's own
     `freshness`/`is_stale` field already discloses this to the client)."""
-    global _cached_context, _cached_at
+    global _cached_context, _cached_at, _cached_fingerprint
     next_wait = _LIVE_REFRESH_INTERVAL_SECONDS if _any_match_live(conn_factory) else interval
     while not stop_event.is_set():
         if stop_event.wait(next_wait):
             break
         conn = conn_factory()
         try:
+            fingerprint = _state_fingerprint(conn)
             fresh = build_dashboard_context(conn, live_payload=maybe_fetch_live_payload(conn))
             with _CACHE_LOCK:
                 _cached_context = fresh
                 _cached_at = time.monotonic()
+                _cached_fingerprint = fingerprint
         except Exception:
             logging.getLogger("fpl_agent.dashboard").exception(
                 "background dashboard-context refresh failed - keeping the previous cached context, next tick will retry"
