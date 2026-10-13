@@ -73,3 +73,20 @@ def test_table_without_xg_reports_none_not_zero(db_conn):
     row = out["rows"][0]
     assert row["xg_matches"] == 0 and row["xg_per_match"] is None and row["finishing"] is None
     assert build_table_payload.needs_context is False
+
+
+def test_fixture_fpl_has_not_finished_counts_when_fotmob_confirms_full_time(db_conn):
+    """FPL keeps fixtures.finished = 0 until bonus is confirmed (days after the
+    final whistle); a standings query on that flag alone drops a whole
+    gameweek of final scores. FotMob FULL_TIME is the second signal."""
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _fixture(db_conn, 1, 1, 1, 2, 2, 0)
+    db_conn.execute("UPDATE fixtures SET finished = 0 WHERE id = 1")
+    db_conn.commit()
+    assert build_table_payload(_Ctx())["matches"] == 0
+
+    _xg(db_conn, 1, 1.0, 0.4)
+    db_conn.commit()
+    out = build_table_payload(_Ctx())
+    assert out["matches"] == 1
+    assert out["rows"][0]["team_id"] == 1 and out["rows"][0]["points"] == 3

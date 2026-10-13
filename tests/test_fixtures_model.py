@@ -186,8 +186,20 @@ def test_reference_event_reports_gw2_once_the_gw1_deadline_passes_even_mid_match
     assert _reference_event(db_conn) == 2
 
 
+def _kick_off_recently(conn):
+    """A fixture only counts as live for ~5 hours after kickoff (FPL leaves
+    fixtures.finished = 0 for days after the whistle), so the seeded fixed
+    kickoff date has to be recent for the "in progress" cases."""
+    from datetime import datetime, timedelta, timezone
+
+    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE fixtures SET kickoff_time = ? WHERE event = 1", (recent,))
+    conn.commit()
+
+
 def test_current_live_event_finds_the_genuinely_in_progress_gameweek(db_conn):
     _seed_two_events(db_conn, gw1_started=1, gw1_finished=0)
+    _kick_off_recently(db_conn)
 
     assert current_live_event(db_conn) == 1
 
@@ -204,6 +216,7 @@ def test_live_or_reference_event_prefers_the_live_gameweek_over_is_next(db_conn)
     GW1 (genuinely being played) - because is_next already points at GW2
     the moment the deadline passes, well before kickoff."""
     _seed_two_events(db_conn, gw1_started=1, gw1_finished=0)
+    _kick_off_recently(db_conn)
 
     assert live_or_reference_event(db_conn) == 1
 

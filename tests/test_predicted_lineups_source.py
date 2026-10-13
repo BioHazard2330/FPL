@@ -202,3 +202,44 @@ def test_sync_predicted_lineups_replaces_stale_rows_not_accumulates(db_conn, mon
 
     rows = db_conn.execute("SELECT COUNT(*) AS n FROM predicted_lineup_players").fetchone()
     assert rows["n"] == 4  # not 8 - the second sync replaced, not accumulated
+
+
+def _seed_team_with(db_conn, players):
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','t0')")
+    db_conn.execute(
+        "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) "
+        "VALUES (1,'Forward','FWD','Forwards','t0')"
+    )
+    for pid, web, first, second in players:
+        db_conn.execute(
+            "INSERT INTO players (id, code, web_name, first_name, second_name, team_id, element_type, status, updated_at) "
+            "VALUES (?,?,?,?,?,1,1,'a','t0')",
+            (pid, pid, web, first, second),
+        )
+    db_conn.commit()
+
+
+def test_match_player_in_team_falls_back_to_first_initial_and_surname_word(db_conn):
+    """Real FotMob 2026-27 misses: a feed's full "First Surname" against an FPL
+    record whose first_name is spelled differently or whose surname is the FIRST
+    word of second_name, or where two teammates share the surname."""
+    _seed_team_with(db_conn, [
+        (1, "Yeremy", "Yéremy", "Pino Santos"),
+        (2, "N.Gonzalez", "Nico", "González Iglesias"),
+        (3, "Bruno G.", "Bruno", "Guimarães Rodriguez Moura"),
+        (4, "N.Angulo", "Nilson", "Angulo"),
+        (5, "J.Angulo", "Juan", "Angulo"),
+    ])
+    assert match_player_in_team(db_conn, 1, "Yéremi Pino") == 1
+    assert match_player_in_team(db_conn, 1, "Nico González") == 2
+    assert match_player_in_team(db_conn, 1, "Bruno Guimarães") == 3
+    assert match_player_in_team(db_conn, 1, "Nilson Angulo") == 4
+    assert match_player_in_team(db_conn, 1, "Juan Angulo") == 5
+
+
+def test_initial_and_surname_fallback_refuses_an_ambiguous_name(db_conn):
+    _seed_team_with(db_conn, [
+        (1, "J.Angulo", "Juan", "Angulo"),
+        (2, "Ju.Angulo", "Julian", "Angulo"),
+    ])
+    assert match_player_in_team(db_conn, 1, "Jorge Angulo") is None  # initial J fits both Juan and Julian

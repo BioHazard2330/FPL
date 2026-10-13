@@ -20,6 +20,15 @@ from fpl_agent.ingestion.fotmob_source import FotMobFetchError, sync_match
 # instant midnight UTC passes.
 _WINDOW_HOURS_BEFORE = 4
 _WINDOW_HOURS_AFTER = 20
+_CATCH_UP_DAYS = 14
+# `resync_unsettled_full_time_matches`: a FULL_TIME match is captured the moment
+# the whistle goes, and FotMob does not carry per-player minutes until a little
+# later - observed 2026-10-13 on 9 of 60 matches (every starter's `minutes`
+# NULL, still NULL days later because nothing re-fetches a FULL_TIME match).
+# Re-fetch such a match, capped per run so one cycle never turns into a crawl.
+_SETTLE_DAYS = 10
+_SETTLE_MIN_NULL_STARTERS = 10
+_SETTLE_MAX_PER_RUN = 5
 
 
 def discover_and_register_matches(conn: sqlite3.Connection, now: datetime | None = None) -> dict:
@@ -39,6 +48,28 @@ def discover_and_register_matches(conn: sqlite3.Connection, now: datetime | None
         "WHERE f.kickoff_time IS NOT NULL AND f.kickoff_time >= ? AND f.kickoff_time <= ?",
         (lo, hi),
     ).fetchall()
+
+    # Catch-up (2026-10-13): the rolling window above only covers kickoffs
+    # near "now", so a match played while the sync daemon was down never
+    # re-entered it - Brentford 3-0 Chelsea (2026-09-18) had no
+    # match_intelligence row, no analysis job and no detector evidence for
+    # 25 days. Fixtures that have actually been played (FPL started them or
+    # carries a score) in the last `_CATCH_UP_DAYS` and still lack a row are
+    # registered too. Only played fixtures: a postponed one has a past
+    # kickoff and would otherwise be retried against FotMob every cycle.
+    catch_up_lo = (now - timedelta(days=_CATCH_UP_DAYS)).isoformat()
+    seen = {r["fixture_id"] for r in rows}
+    rows = list(rows) + [
+        r for r in conn.execute(
+            "SELECT f.id AS fixture_id, f.kickoff_time, f.team_h, f.team_a, "
+            "ht.name AS home_name, at.name AS away_name "
+            "FROM fixtures f JOIN teams ht ON ht.id=f.team_h JOIN teams at ON at.id=f.team_a "
+            "WHERE f.kickoff_time IS NOT NULL AND f.kickoff_time >= ? AND f.kickoff_time < ? "
+            "AND (f.started = 1 OR f.team_h_score IS NOT NULL)",
+            (catch_up_lo, lo),
+        ).fetchall()
+        if r["fixture_id"] not in seen
+    ]
 
     registered = skipped = failed = 0
     for row in rows:
@@ -61,3 +92,31 @@ def discover_and_register_matches(conn: sqlite3.Connection, now: datetime | None
             failed += 1
 
     return {"registered": registered, "skipped": skipped, "failed": failed}
+
+
+def resync_unsettled_full_time_matches(conn: sqlite3.Connection, now: datetime | None = None) -> dict:
+    """Re-fetches FULL_TIME matches whose starters have no minutes recorded.
+    `sync_match` is an idempotent upsert and a FULL_TIME -> FULL_TIME re-sync
+    publishes no event and enqueues no job, so this is safe to repeat; a match
+    stops qualifying the first time its minutes arrive."""
+    now = now or datetime.now(timezone.utc)
+    lo = (now - timedelta(days=_SETTLE_DAYS)).isoformat()
+    rows = conn.execute(
+        "SELECT mi.id, mi.kickoff_utc, th.name AS home_name, at.name AS away_name, "
+        "SUM(CASE WHEN p.started = 1 AND p.minutes IS NULL THEN 1 ELSE 0 END) AS nulls "
+        "FROM match_intelligence mi "
+        "JOIN teams th ON th.id = mi.home_team_id JOIN teams at ON at.id = mi.away_team_id "
+        "JOIN player_match_state p ON p.match_id = mi.id "
+        "WHERE mi.status = 'FULL_TIME' AND mi.kickoff_utc >= ? "
+        "GROUP BY mi.id HAVING nulls >= ? ORDER BY mi.kickoff_utc DESC LIMIT ?",
+        (lo, _SETTLE_MIN_NULL_STARTERS, _SETTLE_MAX_PER_RUN),
+    ).fetchall()
+    refreshed = failed = 0
+    for row in rows:
+        try:
+            kickoff = datetime.fromisoformat(row["kickoff_utc"].replace("Z", "+00:00"))
+            sync_match(conn, row["home_name"], row["away_name"], kickoff.date())
+            refreshed += 1
+        except (FotMobFetchError, ValueError, AttributeError):
+            failed += 1
+    return {"refreshed": refreshed, "failed": failed}

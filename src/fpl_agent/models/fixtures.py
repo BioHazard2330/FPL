@@ -154,8 +154,15 @@ def current_live_event(conn: sqlite3.Connection) -> int | None:
     confirmed days later - `_reference_event()` would report GW2 as
     "current" for that whole window even though GW1 is what's actually
     live. Live-tracking callers need this function, not `_reference_event`."""
+    # Not "played" by either signal (see PLAYED_FIXTURE_SQL), and kicked off
+    # in the last 5 hours: FPL has kept `finished = 0` for days after the
+    # final whistle (observed 2026-10-13), which made every played GW6 fixture
+    # look live and kept the whole system in its tightest cadence.
     row = conn.execute(
-        "SELECT DISTINCT event FROM fixtures WHERE started=1 AND finished=0 ORDER BY event LIMIT 1"
+        "SELECT DISTINCT f.event FROM fixtures f WHERE f.started=1 AND f.finished=0 "
+        "AND NOT " + PLAYED_FIXTURE_SQL + " "
+        "AND f.kickoff_time >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 hours') "
+        "ORDER BY f.event LIMIT 1"
     ).fetchone()
     return row["event"] if row else None
 
@@ -181,7 +188,7 @@ def _imminent_unfinished_event(conn: sqlite3.Connection) -> int | None:
     alone would never let this move on to GW2 once GW1's matches are
     genuinely all played)."""
     row = conn.execute(
-        "SELECT MIN(event) AS event FROM fixtures WHERE finished = 0"
+        "SELECT MIN(f.event) AS event FROM fixtures f WHERE NOT " + PLAYED_FIXTURE_SQL
     ).fetchone()
     return row["event"] if row and row["event"] is not None else None
 
@@ -198,6 +205,21 @@ def live_or_reference_event(conn: sqlite3.Connection) -> int | None:
         return live
     imminent = _imminent_unfinished_event(conn)
     return imminent if imminent is not None else _reference_event(conn)
+
+
+# SQL fragment for "this fixture has actually been played", over a `fixtures`
+# row aliased `f`. FPL keeps `fixtures.finished = 0` (with only
+# `finished_provisional` true upstream, which this project does not store)
+# until it has confirmed bonus points - observed 2026-10-13, three days after
+# GW6's first kickoff - so a standings or results query keyed on `finished = 1`
+# alone silently drops a whole gameweek of real, final scores. A fixture also
+# counts as played when FotMob confirms FULL_TIME, the same two-signal rule
+# `finished_fixture_ids_fast` applies per event; never the reverse.
+PLAYED_FIXTURE_SQL = (
+    "(f.finished = 1 OR f.id IN ("
+    "SELECT fpl_fixture_id FROM match_intelligence "
+    "WHERE status = 'FULL_TIME' AND fpl_fixture_id IS NOT NULL))"
+)
 
 
 def finished_fixture_ids_fast(conn: sqlite3.Connection, event: int) -> set[int]:

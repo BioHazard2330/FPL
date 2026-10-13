@@ -25,6 +25,7 @@ Read-only, HTTP request path only. Nothing here runs in `run_scheduled`.
 """
 import sqlite3
 
+from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
 from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
@@ -53,7 +54,7 @@ def _club_results(conn: sqlite3.Connection, team_id: int) -> list[dict]:
         "mi.id AS match_id "
         "FROM fixtures f JOIN teams th ON th.id = f.team_h JOIN teams ta ON ta.id = f.team_a "
         "LEFT JOIN match_intelligence mi ON mi.fpl_fixture_id = f.id "
-        "WHERE (f.team_h = ? OR f.team_a = ?) AND f.finished = 1 "
+        f"WHERE (f.team_h = ? OR f.team_a = ?) AND {PLAYED_FIXTURE_SQL} "
         "AND f.team_h_score IS NOT NULL ORDER BY f.kickoff_time DESC",
         (team_id, team_id),
     ).fetchall()

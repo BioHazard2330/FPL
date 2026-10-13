@@ -31,6 +31,7 @@ any scheduled task, so it cannot affect the automation cycle.
 import sqlite3
 from collections import defaultdict
 
+from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _FORM_MATCHES = 5
@@ -50,8 +51,9 @@ def _league_table(conn: sqlite3.Connection, teams: dict[int, dict], squad_team_i
     yet appears with a full row of zeroes - that is a true statement about a
     season that has not started, not a fabricated one."""
     played = conn.execute(
-        "SELECT id, event, team_h, team_a, team_h_score, team_a_score, kickoff_time "
-        "FROM fixtures WHERE finished = 1 AND team_h_score IS NOT NULL AND team_a_score IS NOT NULL "
+        "SELECT f.id, f.event, f.team_h, f.team_a, f.team_h_score, f.team_a_score, f.kickoff_time "
+        "FROM fixtures f "
+        f"WHERE {PLAYED_FIXTURE_SQL} AND team_h_score IS NOT NULL AND team_a_score IS NOT NULL "
         "ORDER BY kickoff_time"
     ).fetchall()
 
@@ -144,7 +146,7 @@ def _matchweeks(conn: sqlite3.Connection, teams: dict[int, dict], squad_team_ids
         by_event[r["event"]].append({
             "fixture_id": r["id"],
             "kickoff_time": r["kickoff_time"],
-            "finished": bool(r["finished"]),
+            "finished": bool(r["finished"]) or r["mi_status"] == "FULL_TIME",
             "started": bool(r["started"]),
             "home": {**home, "score": r["team_h_score"], "in_squad": r["team_h"] in squad_team_ids},
             "away": {**away, "score": r["team_a_score"], "in_squad": r["team_a"] in squad_team_ids},

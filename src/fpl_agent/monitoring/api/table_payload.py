@@ -13,6 +13,7 @@ the per-match rates divide by that count, never by matches played. A club
 missing xG for a match is reported with the smaller denominator, not with a
 number filled in.
 """
+from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 
@@ -47,8 +48,8 @@ def build_table_payload(ctx: DashboardContext) -> dict:
             xg_by_fixture.setdefault(r["fixture_id"], {})[r["team_id"]] = float(r["xg"])
 
         fixtures = conn.execute(
-            "SELECT id, event, kickoff_time, team_h, team_a, team_h_score, team_a_score FROM fixtures "
-            "WHERE finished = 1 AND team_h_score IS NOT NULL AND team_a_score IS NOT NULL ORDER BY kickoff_time"
+            "SELECT f.id, f.event, f.kickoff_time, f.team_h, f.team_a, f.team_h_score, f.team_a_score FROM fixtures f "
+            f"WHERE {PLAYED_FIXTURE_SQL} AND f.team_h_score IS NOT NULL AND f.team_a_score IS NOT NULL ORDER BY f.kickoff_time"
         ).fetchall()
         for f in fixtures:
             h, a = teams.get(f["team_h"]), teams.get(f["team_a"])
@@ -102,7 +103,7 @@ def build_table_payload(ctx: DashboardContext) -> dict:
             "through_event": events[-1] if events else None,
             "rows": rows,
             "method": (
-                "Points, goals and form are arithmetic on every finished fixture this season. xG and xGA "
+                "Points, goals and form are arithmetic on every played fixture this season (FPL-finished, or confirmed full time by FotMob while FPL still awaits bonus confirmation). xG and xGA "
                 "are the sums of FotMob's per-team match xG over the matches that carry one; per-match rates "
                 "divide by that count. Finishing is goals minus xG and keeping is xG allowed minus goals conceded, both over the "
                 "matches that carry xG. "

@@ -213,7 +213,7 @@ def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
     second_name of "Borges Fernandes" (real, confirmed live miss otherwise)."""
     name_folded = _fold(name_raw)
     rows = conn.execute(
-        "SELECT id, web_name, second_name FROM players WHERE team_id=? AND removed=0", (team_id,)
+        "SELECT id, web_name, first_name, second_name FROM players WHERE team_id=? AND removed=0", (team_id,)
     ).fetchall()
 
     # Real, collision-safe surname signal, computed up front so pass 1 (below)
@@ -264,7 +264,37 @@ def match_player_in_team(conn, team_id: int, name_raw: str) -> int | None:
     if best_id is not None:
         return best_id
 
-    return last_word_id
+    if last_word_id is not None:
+        return last_word_id
+
+    return _initial_and_surname_match(rows, name_folded)
+
+
+def _initial_and_surname_match(rows, name_folded: str) -> int | None:
+    """Last-resort pass, 2026-10-13: a full "First Surname" from a feed against
+    the FPL record's own first_name/second_name, when every earlier pass found
+    nothing. Real, confirmed misses this closes (FotMob, 2026-27): "Yéremi Pino"
+    vs FPL "Yéremy"/"Pino Santos" (first-name spelling differs), "Bruno
+    Guimarães" vs "Bruno G."/"Guimarães Rodriguez Moura", "Nico González" vs
+    "N.Gonzalez"/"González Iglesias" (the surname is the FIRST word of
+    second_name, not the last), and "Nilson Angulo" / "Jacob Murphy", where two
+    teammates share the surname so the last-word pass is rightly ambiguous.
+    Match = the feed's surname word appears among second_name's words AND the
+    feed's first word starts with the same letter as first_name. Returned only
+    when exactly one teammate fits - the same collision rule as every other
+    pass here, never a guess by iteration order. Needs at least two words in
+    the raw name; a bare surname has no first-name signal to cross-check."""
+    words = name_folded.split()
+    if len(words) < 2:
+        return None
+    first_initial, surname = words[0][:1], words[-1]
+    matches = [
+        row["id"] for row in rows
+        if row["first_name"] and row["second_name"]
+        and _fold(row["first_name"])[:1] == first_initial
+        and surname in _fold(row["second_name"]).split()
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def sync_predicted_lineups(conn, url: str = TEAM_NEWS_URL) -> dict:
