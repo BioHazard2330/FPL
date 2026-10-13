@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -68,7 +69,7 @@ from fpl_agent.ingestion.qualitative_analysis import (
     record_user_observation,
 )
 from fpl_agent.ingestion.analysis_queue import list_pending_jobs, mark_job_done_for_match_phase
-from fpl_agent.models.match_discovery import discover_and_register_matches
+from fpl_agent.models.match_discovery import discover_and_register_matches, resync_unsettled_full_time_matches
 from fpl_agent.optimization.post_gw_pipeline import maybe_run_post_gw_pipeline
 from fpl_agent.ingestion.odds_live_source import OddsLiveFetchError, sync_live_odds
 from fpl_agent.ingestion.sync import ValidationError, run_sync, update_source_health
@@ -118,8 +119,29 @@ from fpl_agent.optimization.transfers import (
 from fpl_agent.optimization.rate_team import rate_team
 
 
+def _lower_process_priority() -> None:
+    """Every `fpl` process runs at below-normal CPU priority (2026-10-13,
+    direct user request: background work must not be felt while gaming).
+    Child processes inherit it on Windows, so the detached `strategic-plan`
+    job the sync spawns is covered too. Set FPL_NORMAL_PRIORITY=1 to opt out.
+    Best-effort: a failure here must never stop a command."""
+    if os.environ.get("FPL_NORMAL_PRIORITY"):
+        return
+    try:
+        import psutil
+
+        proc = psutil.Process()
+        if sys.platform == "win32":
+            proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            proc.nice(10)
+    except Exception:
+        pass
+
+
 @click.group()
 def cli():
+    _lower_process_priority()
     load_dotenv()
     setup_logging()
     conn = get_connection()
@@ -1432,7 +1454,13 @@ def decision_backtest_cmd(season: str | None):
 
 
 @cli.command("run-scheduled")
-def run_scheduled():
+@click.option(
+    "--gated", is_flag=True,
+    help="Power-gated launch (what Task Scheduler uses): inside the pre-deadline window run every cycle, "
+    "outside it run once per day and skip while a fullscreen app is in the foreground. "
+    "Without the flag the cycle always runs, as before.",
+)
+def run_scheduled(gated: bool):
     """The actual entrypoint the OS scheduler invokes (section 19) - not `fpl sync`
     directly. Checks resources first (defers if constrained), syncs, then delivers
     any newly-pending HIGH+ alerts. Logs to the rotating log file, not just stdout,
@@ -1477,6 +1505,24 @@ def run_scheduled():
         logger.info("run-scheduled: %s - exiting cleanly", lock.reason)
         click.echo(f"run-scheduled: {lock.reason} - exiting cleanly")
         return
+
+    if gated:
+        from fpl_agent.scheduler import power_window
+
+        gate_conn = get_connection()
+        try:
+            decision = power_window.decide_gated_run(
+                gate_conn, recommended_cadence(gate_conn).interval_minutes,
+                fullscreen=power_window.fullscreen_app_running(),
+            )
+        finally:
+            gate_conn.close()
+        if not decision.run:
+            logger.info("run-scheduled (gated) skipped: %s", decision.reason)
+            click.echo(f"skipped: {decision.reason}")
+            release_singleton_lock(run_scheduled_lock_path)
+            return
+        logger.info("run-scheduled (gated) running: %s", decision.reason)
 
     resources = check_resources()
     if resources.defer:
@@ -1760,6 +1806,16 @@ def run_scheduled():
     except Exception:
         logger.exception("run-scheduled match discovery failed - not fatal to the sync itself")
 
+    try:
+        settle_result = resync_unsettled_full_time_matches(conn)
+        if settle_result["refreshed"] or settle_result["failed"]:
+            logger.info(
+                "run-scheduled FULL_TIME settle re-sync: %d refreshed, %d failed",
+                settle_result["refreshed"], settle_result["failed"],
+            )
+    except Exception:
+        logger.exception("run-scheduled FULL_TIME settle re-sync failed - not fatal to the sync itself")
+
     # Post-GW pipeline (automation-lifecycle pass, 2026-08-22) - a cheap,
     # idempotent no-op unless the real lifecycle state says a gameweek has
     # genuinely finished (all real fixtures resolved AND the fixtures source
@@ -1931,6 +1987,22 @@ def run_scheduled():
         logger.info("dashboard regenerated at %s", dashboard_path)
     except Exception:
         logger.exception("dashboard regeneration failed - not fatal to the sync itself")
+
+    # Record the cycle and refresh the gate file the VBS launcher reads. Done
+    # for every run, gated or not, so a manual `fpl run-scheduled` also counts
+    # as today's gather and keeps the window current.
+    try:
+        from datetime import date as _date
+        from fpl_agent.scheduler import power_window
+
+        power_conn = get_connection()
+        try:
+            power_window.record_successful_cycle(power_conn)
+            power_window.write_gate(power_window.compute_window(power_conn), _date.today())
+        finally:
+            power_conn.close()
+    except Exception:
+        logger.exception("run-scheduled power-gate refresh failed - not fatal to the sync itself")
 
     release_singleton_lock(run_scheduled_lock_path)
 
@@ -2266,7 +2338,12 @@ def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
     with open(log_path, "a", encoding="utf-8") as log_file:
         log_file.write(f"\n--- auto-triggered {now.isoformat()} ({reason}) ---\n")
         log_file.flush()
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        # Idle priority: this job is ~20 minutes of one or more cores and is
+        # the single largest CPU burst the system causes. It yields to
+        # anything the user is running.
+        creationflags = (
+            subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS if sys.platform == "win32" else 0
+        )
         subprocess.Popen(
             [str(fpl_exe), "strategic-plan"],
             stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -2832,7 +2909,12 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
               "2026-08-29 tightened from 25 - direct spec target 'ULTRA-LIVE ~10-15s', no rate-limit "
               "evidence found against FotMob's public endpoint this session)")
 @click.option("--max-hours", default=3.0, type=float, help="safety cap on total watch duration")
-def live_match_poll_cmd(interval: int, max_hours: float):
+@click.option(
+    "--gated", is_flag=True,
+    help="Power-gated: stop as soon as the pre-deadline active window closes "
+    "(unless live_matchday_polling is enabled in config/power.yaml).",
+)
+def live_match_poll_cmd(interval: int, max_hours: float, gated: bool):
     """Fast, real live-match polling for Match Intelligence Core (2026-08-21,
     live-match-feed pass) - a deliberate, narrow exception to this project's
     single-shot-command convention, same shape as `fpl live-watch` (which
@@ -2897,8 +2979,16 @@ def live_match_poll_cmd(interval: int, max_hours: float):
         f"live-match-poll: {interval}s while LIVE/HALFTIME, {pre_kickoff_interval}s pre-kickoff - Ctrl+C to stop"
     )
 
+    from fpl_agent.config import load_power_config
+    from fpl_agent.scheduler.power_window import gate_says_active
+
+    stop_outside_window = gated and load_power_config().enabled and not load_power_config().live_matchday_polling
+
     try:
         while time.monotonic() < stop_at:
+            if stop_outside_window and gate_says_active() is False:
+                click.echo("live-match-poll: the pre-deadline active window has closed - stopping")
+                break
             # Auto-discovery (matchday-autonomy pass, 2026-08-22) - closes
             # the real remaining manual step: this used to require a human
             # to have already run `fpl sync-match <home> <away>` by hand for
@@ -3088,7 +3178,11 @@ def live_match_poll_cmd(interval: int, max_hours: float):
 
 @cli.command("live-server")
 @click.option("--port", default=8877, type=int, help="local HTTP/SSE port (default 8877)")
-def live_server_cmd(port: int):
+@click.option(
+    "--always-on", is_flag=True,
+    help="Ignore power gating: keep refreshing caches and never exit when idle (the old behaviour).",
+)
+def live_server_cmd(port: int, always_on: bool):
     """Real-time client transport (2026-08-29, "live architecture rebuild"
     milestone 2, spec section 8: "replace the browser-as-primary-poller
     model with SSE"). A separate, real, persistent process from
@@ -3112,8 +3206,14 @@ def live_server_cmd(port: int):
         click.echo(f"live-server: {lock.reason} - exiting cleanly")
         return
     click.echo(f"live-server: listening on http://127.0.0.1:{port} (SSE at /events) - Ctrl+C to stop")
+    from fpl_agent.config import load_power_config
+
+    power = load_power_config()
+    gating = power.enabled and not always_on
     try:
-        run_forever(DATA_DIR, port)
+        run_forever(
+            DATA_DIR, port, power_gating=gating, idle_exit_minutes=power.idle_exit_minutes if gating else None,
+        )
     finally:
         _release_lock(lock_path=lock_path)
 

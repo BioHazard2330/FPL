@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, timezone
 
 from fpl_agent.config import PROJECT_ROOT
+from fpl_agent.config import load_power_config
 from fpl_agent.scheduler.cadence import recommended_cadence
 from fpl_agent.scheduler.status import check_scheduler_registered
 
@@ -51,6 +52,12 @@ def maybe_retighten_scheduler(conn: sqlite3.Connection) -> str | None:
     re-registration attempt must not take down the sync it's piggybacking
     on, same non-fatal posture as the dashboard regeneration call site."""
     if sys.platform != "win32":
+        return None
+    # With power gating the trigger interval is fixed (the gate, not the
+    # interval, decides whether anything runs), so re-registering the task
+    # every time the recommended cadence changes would only overwrite the
+    # gated action. The cadence still sets how often an in-window cycle runs.
+    if load_power_config().enabled:
         return None
     if check_scheduler_registered() is None:
         return None  # not registered - nothing to adapt (user's own standing choice)

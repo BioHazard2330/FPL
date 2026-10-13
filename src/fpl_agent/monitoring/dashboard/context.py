@@ -787,7 +787,9 @@ def get_cached_dashboard_context(conn: sqlite3.Connection, ttl_seconds: float = 
         return _cached_context
 
 
-def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval: float = _REFRESH_INTERVAL_SECONDS) -> None:
+def run_context_refresh_loop(
+    conn_factory, stop_event: threading.Event, interval: float = _REFRESH_INTERVAL_SECONDS, should_run=None,
+) -> None:
     """Real proactive background cache warming (2026-09-08, Phase 9 -
     "I want it instantly"). Runs for the lifetime of the `LiveServer`
     process (wired into `LiveServer.start()`, same real daemon-thread
@@ -814,6 +816,12 @@ def run_context_refresh_loop(conn_factory, stop_event: threading.Event, interval
             waited += 5.0
         if stop_event.is_set():
             break
+        if should_run is not None and not should_run():
+            # Nobody is using the dashboard (power gating): skip this rebuild
+            # and clear the flag so the wait above does not spin on it.
+            _stale_since_inputs_moved = False
+            next_wait = interval
+            continue
         _stale_since_inputs_moved = False
         conn = conn_factory()
         try:

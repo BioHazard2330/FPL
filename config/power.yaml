@@ -1,0 +1,20 @@
+# Power gating (2026-10-13, direct user request: the always-on Python processes
+# eat CPU/RAM while gaming). Outside the "active window" nothing stays
+# resident: one full gather per day (first launch after the machine wakes or
+# logs in), then everything exits. Inside the window - the last
+# `window_lead_hours` before the next FPL deadline - the sync, live poll and
+# dashboard server run continuously because team news can land at any time.
+enabled: true
+window_lead_hours: 24
+# Keep running a little past the deadline so the locked squad is captured.
+post_deadline_grace_hours: 3
+# Off by default: tracking live matches outside the window keeps CPU busy for
+# most of a weekend. The daily run still catches finished matches up.
+live_matchday_polling: false
+# Outside the window an on-demand dashboard server exits after this many idle
+# minutes (no request and no open browser tab).
+idle_exit_minutes: 30
+# The daily run waits while a fullscreen/D3D app (a game) is in the foreground,
+# unless the last good run is older than `force_after_hours`.
+skip_daily_when_fullscreen: true
+force_after_hours: 36

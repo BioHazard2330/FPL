@@ -87,6 +87,28 @@ def load_freshness() -> dict:
     return _load_yaml("freshness.yaml")
 
 
+@dataclass(frozen=True)
+class PowerConfig:
+    enabled: bool = True
+    window_lead_hours: float = 24.0
+    post_deadline_grace_hours: float = 3.0
+    live_matchday_polling: bool = False
+    idle_exit_minutes: float = 30.0
+    skip_daily_when_fullscreen: bool = True
+    force_after_hours: float = 36.0
+
+
+def load_power_config() -> PowerConfig:
+    """Missing file or key falls back to the defaults above - a deleted
+    config must never change behaviour silently to something stricter."""
+    try:
+        raw = _load_yaml("power.yaml") or {}
+    except FileNotFoundError:
+        raw = {}
+    defaults = PowerConfig()
+    return PowerConfig(**{k: type(getattr(defaults, k))(raw.get(k, getattr(defaults, k))) for k in defaults.__dataclass_fields__})
+
+
 def load_storage_budget() -> StorageBudget:
     raw = _load_yaml("storage.yaml")
     return StorageBudget(

@@ -48,13 +48,15 @@ def build_scout_payload(ctx: DashboardContext) -> dict:
     return payload
 
 
-def run_scout_refresh_loop(ctx_factory, stop_event: threading.Event, interval: float = 480.0) -> None:
+def run_scout_refresh_loop(ctx_factory, stop_event: threading.Event, interval: float = 480.0, should_run=None) -> None:
     """Same real proactive-background-warm shape as the other screens'
     refresh loops - wired into `LiveServer.start()` alongside them."""
     global _cached_payload, _cached_at
     while not stop_event.is_set():
         if stop_event.wait(interval):
             break
+        if should_run is not None and not should_run():
+            continue
         try:
             ctx = ctx_factory()
             payload = _build_scout_payload_uncached(ctx)

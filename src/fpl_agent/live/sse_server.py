@@ -30,6 +30,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -201,7 +202,24 @@ def run_tailer_loop(tailer: DbTailer, stop_event: threading.Event, interval: flo
         stop_event.wait(interval)
 
 
-def make_handler(broadcaster: Broadcaster, data_dir: Path, conn_factory=None) -> type[BaseHTTPRequestHandler]:
+class ActivityTracker:
+    """When a browser last asked this server for anything. Power gating uses it
+    to stop paying for background cache refreshes nobody is looking at, and to
+    let an on-demand server exit once the tab is closed."""
+
+    def __init__(self) -> None:
+        self._last = time.monotonic()
+
+    def touch(self) -> None:
+        self._last = time.monotonic()
+
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last
+
+
+def make_handler(
+    broadcaster: Broadcaster, data_dir: Path, conn_factory=None, activity: ActivityTracker | None = None,
+) -> type[BaseHTTPRequestHandler]:
     """A fresh handler CLASS per server instance (closing over `broadcaster`/
     `data_dir`/`conn_factory`) - `http.server`'s own API requires a class,
     not an instance, for the handler factory.
@@ -220,6 +238,8 @@ def make_handler(broadcaster: Broadcaster, data_dir: Path, conn_factory=None) ->
             pass  # quiet by design - real operational logging goes through `_logger`, not stderr per request
 
         def do_GET(self) -> None:
+            if activity is not None:
+                activity.touch()
             if self.path == "/events":
                 self._serve_sse()
             elif self.path.startswith("/api/") and conn_factory is not None:
@@ -385,13 +405,17 @@ class LiveServer:
     project's own `get_connection()`), never reuse a connection created on
     the caller's thread."""
 
-    def __init__(self, data_dir: Path, port: int = 0, conn_factory=None) -> None:
+    def __init__(self, data_dir: Path, port: int = 0, conn_factory=None, power_gating: bool = False) -> None:
         from fpl_agent.database.connection import get_connection as _get_connection
 
         self.data_dir = data_dir
         self.conn_factory = conn_factory or _get_connection
         self.broadcaster = Broadcaster()
-        handler_cls = make_handler(self.broadcaster, data_dir, conn_factory=self.conn_factory)
+        self.activity = ActivityTracker()
+        self.power_gating = power_gating
+        handler_cls = make_handler(
+            self.broadcaster, data_dir, conn_factory=self.conn_factory, activity=self.activity,
+        )
         self.httpd = ThreadingHTTPServer(("127.0.0.1", port), handler_cls)
         self.port = self.httpd.server_address[1]
         self._stop_event = threading.Event()
@@ -417,6 +441,39 @@ class LiveServer:
             ).fetchone()["m"] or 0
         finally:
             baseline_conn.close()
+
+    # How long after the last request or open tab the background cache
+    # refreshes keep running outside the active window.
+    _REFRESH_GRACE_SECONDS = 20 * 60
+
+    def refresh_allowed(self) -> bool:
+        """Should the background cache-refresh loops spend CPU right now?
+        Always, without power gating or when the gate cannot say. Inside the
+        pre-deadline window, yes. Outside it, only while someone is using the
+        dashboard: a tab holding the SSE stream open, or a request in the last
+        20 minutes."""
+        if not self.power_gating:
+            return True
+        from fpl_agent.scheduler.power_window import gate_says_active
+
+        active = gate_says_active()
+        if active is None or active:
+            return True
+        return self.broadcaster.client_count > 0 or self.activity.idle_seconds() < self._REFRESH_GRACE_SECONDS
+
+    def should_exit_idle(self, idle_exit_minutes: float | None) -> bool:
+        """An on-demand server stops itself outside the window once nothing has
+        used it for `idle_exit_minutes`. Never inside the window, and never when
+        the gate cannot say."""
+        if not idle_exit_minutes or not self.power_gating:
+            return False
+        from fpl_agent.scheduler.power_window import idle_exit_allowed
+
+        return (
+            idle_exit_allowed()
+            and self.broadcaster.client_count == 0
+            and self.activity.idle_seconds() >= idle_exit_minutes * 60
+        )
 
     def _tailer_main(self) -> None:
         self._tailer_conn = self.conn_factory()
@@ -474,7 +531,7 @@ class LiveServer:
             _logger.exception("cache-warming build_dashboard_context failed - first real /api/ request will pay the full cost instead")
         finally:
             conn.close()
-        run_context_refresh_loop(self.conn_factory, self._stop_event)
+        run_context_refresh_loop(self.conn_factory, self._stop_event, should_run=self.refresh_allowed)
 
     def _readiness_refresh_main(self) -> None:
         from fpl_agent.monitoring.api.advanced_payload import _get_cached_readiness, run_readiness_refresh_loop
@@ -489,7 +546,7 @@ class LiveServer:
             _logger.exception("cache-warming readiness checks failed - first real ADVANCED-screen visit will pay the full cost instead")
         finally:
             conn.close()
-        run_readiness_refresh_loop(self.conn_factory, self._stop_event)
+        run_readiness_refresh_loop(self.conn_factory, self._stop_event, should_run=self.refresh_allowed)
 
     def _football_refresh_main(self) -> None:
         from fpl_agent.monitoring.api.football_payload import build_football_payload, run_football_refresh_loop
@@ -506,7 +563,7 @@ class LiveServer:
             build_football_payload(ctx_factory())
         except Exception:
             _logger.exception("cache-warming the football payload failed - first real FOOTBALL-screen visit will pay the full cost instead")
-        run_football_refresh_loop(ctx_factory, self._stop_event)
+        run_football_refresh_loop(ctx_factory, self._stop_event, should_run=self.refresh_allowed)
 
     def _scout_refresh_main(self) -> None:
         from fpl_agent.monitoring.api.scout_payload import build_scout_payload, run_scout_refresh_loop
@@ -523,7 +580,7 @@ class LiveServer:
             build_scout_payload(ctx_factory())
         except Exception:
             _logger.exception("cache-warming the scout payload failed - first real SCOUT-screen visit will pay the full cost instead")
-        run_scout_refresh_loop(ctx_factory, self._stop_event)
+        run_scout_refresh_loop(ctx_factory, self._stop_event, should_run=self.refresh_allowed)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -543,17 +600,27 @@ class LiveServer:
             self._scout_refresh_thread.join(timeout=5)
 
 
-def run_forever(data_dir: Path, port: int, conn_factory=None) -> None:
+def run_forever(
+    data_dir: Path, port: int, conn_factory=None, power_gating: bool = False, idle_exit_minutes: float | None = None,
+) -> None:
     """The real CLI entry point (`fpl live-server`) - blocks until
-    Ctrl+C/KeyboardInterrupt, then shuts down cleanly."""
+    Ctrl+C/KeyboardInterrupt, then shuts down cleanly. With `power_gating`
+    the server stops its background cache refreshes while nobody is using it
+    outside the pre-deadline window, and exits after `idle_exit_minutes` idle
+    (see `scheduler/power_window.py`)."""
     import time
 
-    server = LiveServer(data_dir, port=port, conn_factory=conn_factory)
+    server = LiveServer(data_dir, port=port, conn_factory=conn_factory, power_gating=power_gating)
     server.start()
     _logger.info("live-server listening on http://127.0.0.1:%d (SSE at /events)", server.port)
     try:
+        ticks = 0
         while True:
             time.sleep(1)
+            ticks += 1
+            if ticks % 30 == 0 and server.should_exit_idle(idle_exit_minutes):
+                _logger.info("live-server idle for %g minutes outside the active window - exiting", idle_exit_minutes)
+                break
     except KeyboardInterrupt:
         pass
     finally:

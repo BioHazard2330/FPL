@@ -83,7 +83,7 @@ def build_football_payload(ctx: DashboardContext) -> dict:
     return payload
 
 
-def run_football_refresh_loop(ctx_factory, stop_event: threading.Event, interval: float = 480.0) -> None:
+def run_football_refresh_loop(ctx_factory, stop_event: threading.Event, interval: float = 480.0, should_run=None) -> None:
     """Same real proactive-background-warm shape as `context.py::run_
     context_refresh_loop`/`advanced_payload.py::run_readiness_refresh_loop`
     - wired into `LiveServer.start()` alongside them."""
@@ -91,6 +91,8 @@ def run_football_refresh_loop(ctx_factory, stop_event: threading.Event, interval
     while not stop_event.is_set():
         if stop_event.wait(interval):
             break
+        if should_run is not None and not should_run():
+            continue
         try:
             ctx = ctx_factory()
             payload = _build_football_payload_uncached(ctx)

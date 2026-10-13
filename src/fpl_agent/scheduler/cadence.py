@@ -62,20 +62,28 @@ def _hours_to_nearest_tracked_fixture(conn: sqlite3.Connection, tracked_squad_id
         return None
     team_placeholders = ",".join("?" * len(team_ids))
     rows = conn.execute(
-        f"SELECT kickoff_time, started, finished FROM fixtures "
+        f"SELECT id, kickoff_time, started, finished FROM fixtures "
         f"WHERE kickoff_time IS NOT NULL AND (team_h IN ({team_placeholders}) OR team_a IN ({team_placeholders}))",
         tuple(team_ids) * 2,
     ).fetchall()
+    full_time = {
+        r["fpl_fixture_id"] for r in conn.execute(
+            "SELECT fpl_fixture_id FROM match_intelligence WHERE status = 'FULL_TIME' AND fpl_fixture_id IS NOT NULL"
+        )
+    }
     now = time.time()
     nearest: float | None = None
     for row in rows:
-        if row["started"] and not row["finished"]:
-            return 0.0
         try:
             kickoff_dt = datetime.fromisoformat(row["kickoff_time"].replace("Z", "+00:00"))
         except (ValueError, AttributeError):
             continue
         delta_hours = (kickoff_dt.timestamp() - now) / 3600
+        # "Started and not finished" means live only until FotMob says full
+        # time or ~5 hours have passed: FPL keeps `finished = 0` for days after
+        # the whistle, which pinned this function at "live" for a whole week.
+        if row["started"] and not row["finished"] and row["id"] not in full_time and delta_hours > -5:
+            return 0.0
         if nearest is None or abs(delta_hours) < abs(nearest):
             nearest = delta_hours
     return nearest

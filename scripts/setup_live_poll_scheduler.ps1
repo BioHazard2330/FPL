@@ -39,19 +39,19 @@ param(
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $FplExe = Join-Path $ProjectRoot ".venv\Scripts\fpl.exe"
-$HiddenLauncher = Join-Path $PSScriptRoot "run_scheduled_hidden.vbs"
+$HiddenLauncher = Join-Path $PSScriptRoot "gated_launch.vbs"
 
 if (-not (Test-Path $FplExe)) {
     Write-Error "fpl.exe not found at $FplExe - run 'pip install -e .[dev]' in the project venv first."
     exit 1
 }
 if (-not (Test-Path $HiddenLauncher)) {
-    Write-Error "run_scheduled_hidden.vbs not found at $HiddenLauncher - it should ship alongside this script."
+    Write-Error "gated_launch.vbs not found at $HiddenLauncher - it should ship alongside this script."
     exit 1
 }
 
 $Action = New-ScheduledTaskAction -Execute "wscript.exe" `
-    -Argument "`"$HiddenLauncher`" `"$FplExe`" `"live-match-poll --max-hours $MaxHours`"" -WorkingDirectory $ProjectRoot
+    -Argument "`"$HiddenLauncher`" window `"$FplExe`" `"live-match-poll --max-hours $MaxHours --gated`"" -WorkingDirectory $ProjectRoot
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
     -RepetitionDuration (New-TimeSpan -Days 3650)

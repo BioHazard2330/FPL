@@ -309,7 +309,7 @@ def _get_cached_readiness(
                 _cached_player_odds, _cached_points_revisions, _cached_decision_audit)
 
 
-def run_readiness_refresh_loop(conn_factory, stop_event: threading.Event, interval: float = 480.0) -> None:
+def run_readiness_refresh_loop(conn_factory, stop_event: threading.Event, interval: float = 480.0, should_run=None) -> None:
     """Same real proactive-background-warm shape as `context.py::run_
     context_refresh_loop` (2026-09-08, Phase 9) - wired into `LiveServer.
     start()` alongside it, so a real user's first ADVANCED-screen visit
@@ -317,6 +317,8 @@ def run_readiness_refresh_loop(conn_factory, stop_event: threading.Event, interv
     while not stop_event.is_set():
         if stop_event.wait(interval):
             break
+        if should_run is not None and not should_run():
+            continue
         conn = conn_factory()
         try:
             from fpl_agent.optimization.locked_squad import get_locked_squad

@@ -1,8 +1,18 @@
 import subprocess
 import time
 
+import pytest
+
+from fpl_agent.config import PowerConfig
 from fpl_agent.scheduler import adaptive as adaptive_mod
 from fpl_agent.scheduler.adaptive import maybe_retighten_scheduler
+
+
+@pytest.fixture(autouse=True)
+def _legacy_scheduling(monkeypatch):
+    """These tests cover the interval re-registration used without power
+    gating; with gating the trigger interval is fixed (see the last test)."""
+    monkeypatch.setattr(adaptive_mod, "load_power_config", lambda: PowerConfig(enabled=False))
 
 
 def _insert_event(conn, hours_from_now):
@@ -103,5 +113,20 @@ def test_does_not_crash_on_subprocess_timeout(db_conn, monkeypatch):
     def _raise_timeout(*a, **k):
         raise subprocess.TimeoutExpired(cmd="powershell", timeout=30)
     monkeypatch.setattr(adaptive_mod.subprocess, "run", _raise_timeout)
+
+    assert maybe_retighten_scheduler(db_conn) is None
+
+
+def test_power_gating_leaves_the_registered_interval_alone(db_conn, monkeypatch):
+    """The gate, not the trigger interval, decides whether anything runs; a
+    re-registration would overwrite the gated launcher action."""
+    monkeypatch.setattr(adaptive_mod, "load_power_config", lambda: PowerConfig(enabled=True))
+    monkeypatch.setattr(adaptive_mod.sys, "platform", "win32")
+    monkeypatch.setattr(adaptive_mod, "check_scheduler_registered", lambda: {"State": "Ready"})
+    _insert_event(db_conn, hours_from_now=1)
+
+    def _boom(*a, **k):
+        raise AssertionError("must not re-register while power gating is on")
+    monkeypatch.setattr(adaptive_mod.subprocess, "run", _boom)
 
     assert maybe_retighten_scheduler(db_conn) is None

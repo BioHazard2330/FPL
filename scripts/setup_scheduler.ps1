@@ -5,26 +5,28 @@ season-long backend). `run-scheduled` itself does the resource-aware defer check
 (section 21) - this script just decides how often to knock.
 
 Usage:
-    powershell -ExecutionPolicy Bypass -File setup_scheduler.ps1 [-IntervalMinutes 60]
+    powershell -ExecutionPolicy Bypass -File setup_scheduler.ps1 [-IntervalMinutes 15]
 
 This makes a persistent, unattended change to the machine's Task Scheduler -
 review before running. To remove it later, run remove_scheduler.ps1.
 #>
 param(
-    [int]$IntervalMinutes = 60,
+    [int]$IntervalMinutes = 15,
     [string]$TaskName = "FPLAgentSync"
 )
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $FplExe = Join-Path $ProjectRoot ".venv\Scripts\fpl.exe"
-$HiddenLauncher = Join-Path $PSScriptRoot "run_scheduled_hidden.vbs"
+# Power-gated launcher (2026-10-13): reads data\power_gate.txt and starts Python only
+# inside the pre-deadline window or when today's daily run is still owed.
+$HiddenLauncher = Join-Path $PSScriptRoot "gated_launch.vbs"
 
 if (-not (Test-Path $FplExe)) {
     Write-Error "fpl.exe not found at $FplExe - run 'pip install -e .[dev]' in the project venv first."
     exit 1
 }
 if (-not (Test-Path $HiddenLauncher)) {
-    Write-Error "run_scheduled_hidden.vbs not found at $HiddenLauncher - it should ship alongside this script."
+    Write-Error "gated_launch.vbs not found at $HiddenLauncher - it should ship alongside this script."
     exit 1
 }
 
@@ -34,7 +36,7 @@ if (-not (Test-Path $HiddenLauncher)) {
 # was a real, reported annoyance (a window flashing open every 60 minutes
 # showing raw CLI output). This suppresses that window entirely.
 $Action = New-ScheduledTaskAction -Execute "wscript.exe" `
-    -Argument "`"$HiddenLauncher`" `"$FplExe`" `"run-scheduled`"" -WorkingDirectory $ProjectRoot
+    -Argument "`"$HiddenLauncher`" sync `"$FplExe`" `"run-scheduled --gated`"" -WorkingDirectory $ProjectRoot
 # RepetitionDuration must be a valid ISO 8601 duration Task Scheduler's XML
 # schema accepts - [TimeSpan]::MaxValue (~10,675,199 days) is NOT, and
 # Register-ScheduledTask below throws on it while still falling through to
@@ -59,6 +61,6 @@ try {
     exit 1
 }
 
-Write-Host "Registered scheduled task '$TaskName' - runs 'fpl run-scheduled' every $IntervalMinutes minutes."
+Write-Host "Registered scheduled task '$TaskName' - checks every $IntervalMinutes minutes; 'fpl run-scheduled --gated' runs only inside the pre-deadline window, or once a day."
 Write-Host "Check status with: fpl scheduler-status"
 Write-Host "Remove with: powershell -ExecutionPolicy Bypass -File remove_scheduler.ps1"
