@@ -21,3 +21,10 @@ User, verbatim: *"upgrade every single thing to the maximum ... my own insane fp
 - Ladder is ranked by projection alone; the armband rule can prefer a close second this week.
 - Reddit posts carry no vote counts (feed has none), so none are shown.
 - Guardian items have no pictures in the feed; they get a typographic tile.
+
+## Later the same day: the odds fix, headshots, compare, stories, checklist
+
+- **Market-implied goals were biased and the blend weight was wrong** (see the `CLAUDE.md` blockers entry for the numbers). Found by noticing Man City at 3.15 expected goals against a market that gave them 74%: the old split gave a heavy favourite 88% of the goals. Fixed with a joint Poisson fit, then the blend weight was measured instead of assumed. The GW7 plan changed in one move (Gvardiol to Van Hecke instead of Guehi) and the gains of the other two fell by about a point and a quarter.
+- **Headshots** (official PL CDN, keyed by player code) on transfers, the captain battle, injury notes, previews and the player file; shirts stay on the formation tiles.
+- **Compare** (`/compare`), **projection band** on the player file, **stories** (articles, videos, posts) on player and club files, **deadline checklist** on COMMAND.
+- Name matching: a name preceded by another player's first name ("Scott Allan") or a bare surname without the club ("Fernandez ... Rangers") no longer links to a squad player.

@@ -51,3 +51,26 @@ def test_goals_conceded_band_probability():
     low = goals_conceded_band_probability(expected_goals_against=0.3, min_goals=2)
     high = goals_conceded_band_probability(expected_goals_against=2.5, min_goals=2)
     assert low < high
+
+
+def test_joint_fit_reproduces_the_market_probabilities():
+    from fpl_agent.models.blend import _grid_probabilities, market_implied_fixture_goals
+    from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
+
+    outcome = devig_match_odds(1.25, 6.0, 9.0)
+    totals = devig_totals_odds(1.35, 3.0)
+    goals = market_implied_fixture_goals(outcome, totals)
+    ph, pd, pa, po = _grid_probabilities(goals.home_expected_goals, goals.away_expected_goals)
+    assert ph == pytest.approx(outcome.home_win, abs=0.04)
+    assert pd == pytest.approx(outcome.draw, abs=0.04)
+    assert pa == pytest.approx(outcome.away_win, abs=0.04)
+    assert po == pytest.approx(totals.over, abs=0.04)
+
+
+def test_heavy_favourite_is_no_longer_given_nearly_all_the_goals():
+    from fpl_agent.models.blend import market_implied_fixture_goals
+    from fpl_agent.models.odds_devig import devig_match_odds, devig_totals_odds
+
+    goals = market_implied_fixture_goals(devig_match_odds(1.25, 6.0, 9.0), devig_totals_odds(1.35, 3.0))
+    assert goals.home_expected_goals < 3.0
+    assert goals.away_expected_goals > 0.7
