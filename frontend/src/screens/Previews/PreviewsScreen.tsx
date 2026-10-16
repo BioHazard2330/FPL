@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { RunOfFixtures } from '@/screens/Previews/RunOfFixtures'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchPreviewsPayload } from '@/lib/api'
@@ -193,6 +194,12 @@ export function PreviewsScreen() {
         title={`Gameweek ${d.event}, match by match`}
         right={<span className="text-text-muted">{d.fixtures.length} fixtures · model goals are the same ones every projection uses</span>}
       />
+      {d.ticker && (
+        <RunOfFixtures
+          ticker={d.ticker}
+          mine={new Set(d.fixtures.flatMap((f) => [f.home, f.away]).filter((s) => s.yours.length > 0).map((s) => s.team_id))}
+        />
+      )}
       {days.map((day) => (
         <section key={day.key}>
           <h2 className="border-b border-divider bg-panel px-10 py-2 font-display text-lg font-bold uppercase tracking-wide text-text">{day.key}</h2>

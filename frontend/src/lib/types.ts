@@ -98,6 +98,7 @@ export interface LineupInfo {
 
 export interface SquadPlayer {
   player_id: number
+  photo_code?: number | null
   name: string
   position: string
   team_short: string
@@ -1718,10 +1719,34 @@ export interface PreviewFixture {
   market: { home_win: number; draw: number; away_win: number; bookmakers: number; retrieved_at: string } | null
 }
 
+export interface TickerEntry {
+  opponent: string
+  opponent_code: number
+  home: boolean
+  xg_for: number
+  xg_against: number
+  cs: number
+  market: boolean
+}
+
 export interface PreviewsPayload {
   event: number | null
   generated_at: string
   fixtures: PreviewFixture[]
+  ticker?: {
+    first_event: number
+    events: number[]
+    rows: {
+      team_id: number
+      code: number
+      name: string
+      short: string
+      events: Record<string, TickerEntry[]>
+      xg_for_total: number
+      cs_total: number
+      fixtures: number
+    }[]
+  }
 }
 
 export interface PlayerIndexRow {

@@ -119,3 +119,21 @@ def test_builder_is_registered_and_skips_the_dashboard_context():
 
     assert API_BUILDERS["desk"] is desk_payload.build_desk_payload
     assert desk_payload.build_desk_payload.needs_context is False
+
+
+def test_one_busy_channel_cannot_fill_the_video_shelf(db_conn, monkeypatch):
+    _seed_two_players_two_teams(db_conn)
+    for n in range(8):
+        db_conn.execute(
+            "INSERT INTO media_items (source, kind, external_id, title, link, channel, published_at, retrieved_at) "
+            "VALUES ('youtube_fpl_harry','video',?,?,?,'Busy',?,?)",
+            (f"b{n}", f"Busy {n}", f"https://www.youtube.com/watch?v=b{n}", _ago(n), _ago(n)),
+        )
+    db_conn.execute(
+        "INSERT INTO media_items (source, kind, external_id, title, link, channel, published_at, retrieved_at) "
+        "VALUES ('youtube_fpl_mate','video','q1','Quiet','https://www.youtube.com/watch?v=q1','Quiet',?,?)", (_ago(50), _ago(50)),
+    )
+    d = _build(db_conn, monkeypatch)
+    channels = [v["channel"] for v in d["videos"]]
+    assert channels.count("Busy") == 5
+    assert "Quiet" in channels

@@ -237,6 +237,7 @@ export function DeskScreen() {
   const state = useFetch(fetchDeskPayload, [], 300000)
   const [filter, setFilter] = useState<WireFilter>('all')
   const [playing, setPlaying] = useState<number | null>(null)
+  const [channel, setChannel] = useState('All')
 
   const wire = useMemo(() => {
     if (state.status !== 'ready') return []
@@ -263,6 +264,8 @@ export function DeskScreen() {
     return <ScreenError title="Desk unavailable" description="The news desk could not be fetched, so nothing here is known to be current." message={state.error.message} />
   }
   const d = state.data
+  const channels = Array.from(new Set(d.videos.map((v) => v.channel)))
+  const shelf = channel === 'All' ? d.videos.slice(0, 16) : d.videos.filter((v) => v.channel === channel)
   const filters: { key: WireFilter; label: string; n: number }[] = [
     { key: 'all', label: 'All', n: d.wire.length },
     { key: 'yours', label: 'Your players', n: d.wire.filter((a) => a.relevance >= 2).length },
@@ -310,10 +313,24 @@ export function DeskScreen() {
         <PriceBoard price={d.price} />
       </Section>
 
-      <Section title="Studio" aside="Premier League · Sky Sports · FPL Harry · Let's Talk FPL. Click to play here; nothing loads from YouTube until you do.">
-        {d.videos.length ? (
+      <Section title="Studio" aside={`${channels.length} channels. Click to play here; nothing loads from YouTube until you do.`}>
+        {channels.length > 1 && (
+          <div className="mb-5 flex flex-wrap gap-1">
+            {['All', ...channels].map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setChannel(c)}
+                className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${channel === c ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
+        {shelf.length ? (
           <div className="grid grid-cols-4 gap-x-6 gap-y-7">
-            {d.videos.map((v) => <Video key={v.id} v={v} playing={playing === v.id} onPlay={() => setPlaying(v.id)} />)}
+            {shelf.map((v) => <Video key={v.id} v={v} playing={playing === v.id} onPlay={() => setPlaying(v.id)} />)}
           </div>
         ) : (
           <p className="text-sm text-text-muted">No videos stored yet. Run <span className="font-mono">fpl sync-media</span>.</p>

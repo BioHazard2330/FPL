@@ -4,8 +4,8 @@ Two kinds of item that an RSS article feed does not cover:
 
 - **Videos**, from the public per-channel Atom feed YouTube serves without a
   key (`/feeds/videos.xml?channel_id=...`): the official Premier League channel
-  (which publishes the FPL podcast), Sky Sports Premier League, and two FPL
-  channels, FPL Harry and Let's Talk FPL. Channel ids were resolved from each
+  (which publishes the FPL podcast), Sky Sports Premier League, and six FPL
+  channels (FPL Harry, Let's Talk FPL, Fantasy Football Hub, FPL Focal, FPL Raptor, FPL Mate). Channel ids were resolved from each
   channel's own page and each feed was fetched before being listed - a handle
   that resolved to a different club's channel was found and dropped doing that.
 - **Community posts**, from r/FantasyPL's Atom feed. Reddit's JSON endpoint
@@ -46,6 +46,10 @@ VIDEO_CHANNELS = (
     ("youtube_sky_sports_pl", "Sky Sports Premier League", "UCNAf1k0yIjyGu3k9BwAg3lg"),
     ("youtube_fpl_harry", "FPL Harry", "UCcPWnCj5AKC19HaySZjb25g"),
     ("youtube_lets_talk_fpl", "Let's Talk FPL", "UCxeOc7eFxq37yW_Nc-69deA"),
+    ("youtube_fantasy_football_hub", "Fantasy Football Hub", "UCcqEr3DfrRwtoF2a1yW8qgQ"),
+    ("youtube_fpl_focal", "FPL Focal", "UC72QokPHXQ9r98ROfNZmaDw"),
+    ("youtube_fpl_raptor", "FPL Raptor", "UC54QLWzsMifTRjNQ02z5pCw"),
+    ("youtube_fpl_mate", "FPL Mate", "UCweDAlFm2LnVcOqaFU4_AGA"),
 )
 REDDIT_SOURCE = "reddit_fantasypl"
 REDDIT_URL = "https://www.reddit.com/r/FantasyPL/hot.rss"

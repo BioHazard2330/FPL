@@ -2,7 +2,7 @@
 means for your squad and your plan.
 
 Articles (BBC, Sky, The Guardian), the official FPL injury notes, video from the
-Premier League, Sky Sports and two FPL channels, r/FantasyPL, and the price
+Premier League, Sky Sports and six FPL channels, r/FantasyPL, and the price
 board. Every item is a fact someone published; nothing here is generated.
 Relevance is arithmetic over ids: an item is YOURS if it names a player in your
 squad, a TARGET if it names a player the week plan buys or declined, and
@@ -27,7 +27,8 @@ _INJURY_WORDS = re.compile(
 )
 _TAG = re.compile(r"<[^>]+>")
 _WIRE_LIMIT = 36
-_VIDEO_LIMIT = 12
+_VIDEO_LIMIT = 40
+_VIDEOS_PER_CHANNEL = 5
 _POST_LIMIT = 10
 _NEWS_WINDOW_DAYS = 5
 _INJURY_WINDOW_DAYS = 10
@@ -137,7 +138,7 @@ def _injuries(conn, mine: set[int], targets: set[int]) -> list[dict]:
 def _videos(conn, mine: set[int], targets: set[int]) -> list[dict]:
     rows = conn.execute(
         "SELECT id, source, channel, title, link, thumbnail_url, published_at, description FROM media_items "
-        "WHERE kind='video' ORDER BY published_at DESC LIMIT 60"
+        "WHERE kind='video' ORDER BY published_at DESC LIMIT 140"
     ).fetchall()
     links: dict[int, list[int]] = {r["id"]: [] for r in rows}
     if rows:
@@ -156,9 +157,16 @@ def _videos(conn, mine: set[int], targets: set[int]) -> list[dict]:
             "link": r["link"], "thumbnail": r["thumbnail_url"], "published_at": r["published_at"],
             "players": chip_list, "relevance": _relevance(chip_list),
         })
-    videos.sort(key=lambda v: (-v["relevance"], v["published_at"] or ""), reverse=False)
     videos.sort(key=lambda v: (v["relevance"], v["published_at"] or ""), reverse=True)
-    return videos[:_VIDEO_LIMIT]
+    # Eight channels post daily; without a cap the busiest one fills the shelf.
+    taken: dict[str, int] = {}
+    shelf = []
+    for v in videos:
+        if taken.get(v["channel"], 0) >= _VIDEOS_PER_CHANNEL:
+            continue
+        taken[v["channel"]] = taken.get(v["channel"], 0) + 1
+        shelf.append(v)
+    return shelf[:_VIDEO_LIMIT]
 
 
 def _posts(conn, mine: set[int], targets: set[int]) -> list[dict]:

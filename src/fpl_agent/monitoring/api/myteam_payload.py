@@ -105,7 +105,7 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
     top = max(xi.starting, key=lambda c: c.median)
     strong_link = {"name": top.web_name, "team_short": top.team_short, "median": round(top.median, 1), "expected_minutes": top.expected_minutes}
 
-    return {
+    payload = {
         "has_squad": True,
         "bar": {
             "squad_value_m": ctx.squad_value_m,
@@ -131,6 +131,20 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
         # uses, so a difficulty can never disagree between two screens.
         "fixtures": _fixture_block(ctx),
     }
+    return _with_photo_codes(payload)
+
+
+def _with_photo_codes(payload: dict) -> dict:
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.monitoring.api.photos import attach_photo_codes
+
+    conn = get_connection()
+    try:
+        return attach_photo_codes(conn, payload)
+    except Exception:
+        return payload
+    finally:
+        conn.close()
 
 
 def _fixture_block(ctx: DashboardContext) -> dict:

@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchMyTeamPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
 import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
@@ -173,7 +174,6 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
 }
 
 function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; onClose: () => void }) {
-  const shirt = player ? shirtUrl(player.team_code, player.position === 'GKP', 220) : null
   const crest = player ? crestUrl(player.team_code) : null
   return (
     <Sheet open={player !== null} onOpenChange={(open) => !open && onClose()}>
@@ -182,7 +182,7 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
           <>
             <SheetHeader className="border-b border-divider p-6">
               <div className="flex items-center gap-4">
-                {shirt && <img src={shirt} alt="" className="h-16 w-16 object-contain" />}
+                <PlayerPhoto code={player.photo_code} teamCode={player.team_code} isGkp={player.position === 'GKP'} className="h-20 w-16" />
                 <div>
                   <SheetTitle className="font-display text-2xl font-bold text-text">{player.name}</SheetTitle>
                   <div className="mt-1 flex items-center gap-1.5 text-sm text-text-muted">
@@ -334,7 +334,6 @@ export function MyTeamScreen() {
   }
 
   const star = p.positions?.flatMap((pos) => pos.players).find((pl) => pl.tier === 'CORE') ?? p.positions?.[0]?.players[0]
-  const starShirt = star ? shirtUrl(star.team_code, star.position === 'GKP', 220) : null
   const allSquadPlayers = [...(p.positions?.flatMap((pos) => pos.players) ?? []), ...(p.bench ?? [])]
   const selected = selectedId !== null ? (allSquadPlayers.find((pl) => pl.player_id === selectedId) ?? null) : null
   // Real teamsheet-drop moment: at least one squad player's own match has a
@@ -406,11 +405,7 @@ export function MyTeamScreen() {
 
           {star && (
             <div className="flex items-end gap-8">
-              {starShirt && (
-                <div className="relative h-40 w-40 shrink-0">
-                  <img src={starShirt} alt="" className="h-40 w-40 object-contain" />
-                </div>
-              )}
+              <PlayerPhoto code={star.photo_code} teamCode={star.team_code} isGkp={star.position === 'GKP'} className="h-52 w-40" />
               <div>
                 <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Top projected this GW</div>
                 <div className="font-display text-5xl font-bold uppercase text-text">{star.name}</div>
