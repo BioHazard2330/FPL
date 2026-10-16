@@ -225,20 +225,38 @@ def get_active_chip_for_event(conn: sqlite3.Connection, entry_id: int, event: in
     return row["active_chip"] if row else None
 
 
-def get_used_chips(conn: sqlite3.Connection, entry_id: int) -> set[str]:
-    """Real chip names this entry has actually played, straight from the
-    `active_chip` field on each synced picks row - closes a real gap
-    disclosed in Plan 1b (`fpl season-sim --used-chips` previously had to be
-    typed in by hand every time, since there's no live FPL account
-    integration in this project). Not yet live-verified end to end (no
-    locked event exists this session to have a real active_chip value to
-    read), but the read path itself is real and tested against the same
-    well-established schema `sync_my_team` already parses."""
-    rows = conn.execute(
-        "SELECT DISTINCT active_chip FROM my_team_picks WHERE entry_id=? AND active_chip IS NOT NULL",
+def get_used_chips(conn: sqlite3.Connection, entry_id: int, event: int | None = None) -> set[str]:
+    """Chip names this entry has played that are spent *for the window `event`
+    sits in*. FPL gives every chip twice a season - a first-half window and a
+    second-half window that opens at GW20 - so "ever played" is the wrong
+    question: counted that way, a wildcard used in GW5 would hide the
+    second-half wildcard from the whole of GW20 onward. A chip is spent only
+    if it was played inside the same `chip_windows` span as `event`. Without
+    window rows (or an `event` outside every window) it falls back to the old
+    "ever played" reading, never to "nothing used".
+
+    `event` defaults to the next gameweek to plan."""
+    if event is None:
+        row = conn.execute("SELECT id FROM events WHERE is_next=1 LIMIT 1").fetchone()
+        if row is None:
+            row = conn.execute("SELECT MIN(id) AS id FROM events WHERE finished=0").fetchone()
+        event = row["id"] if row is not None and row["id"] is not None else None
+    played = conn.execute(
+        "SELECT active_chip AS name, event FROM my_team_picks WHERE entry_id=? AND active_chip IS NOT NULL",
         (entry_id,),
     ).fetchall()
-    return {r["active_chip"] for r in rows}
+    windows = conn.execute("SELECT name, start_event, stop_event FROM chip_windows").fetchall() if event is not None else []
+    spans = [(w["start_event"], w["stop_event"]) for w in windows if w["start_event"] <= event <= w["stop_event"]]
+    if not spans:
+        return {r["name"] for r in played}
+    return {
+        r["name"] for r in played
+        if any(
+            w["name"] == r["name"] and w["start_event"] <= event <= w["stop_event"]
+            and w["start_event"] <= r["event"] <= w["stop_event"]
+            for w in windows
+        )
+    }
 
 
 def set_tracked_squad_ids(conn: sqlite3.Connection, player_ids: list[int]) -> None:

@@ -275,3 +275,51 @@ def test_get_active_chip_for_event_is_precise_to_the_real_event(db_conn):
     assert get_active_chip_for_event(db_conn, 7378572, 3) is None
     # The broader "ever used" check still sees both real chips.
     assert get_used_chips(db_conn, 7378572) == {"wildcard", "freehit"}
+
+
+def _seed_chip_windows_and_picks(conn, played):
+    for name in ("wildcard", "freehit", "bboost", "3xc"):
+        conn.execute(
+            "INSERT INTO chip_windows (name, number, start_event, stop_event, chip_type, season, updated_at) "
+            "VALUES (?, 1, 2, 19, 'transfer', '2026-27', 't')", (name,),
+        )
+        conn.execute(
+            "INSERT INTO chip_windows (name, number, start_event, stop_event, chip_type, season, updated_at) "
+            "VALUES (?, 1, 20, 38, 'transfer', '2026-27', 't')", (name,),
+        )
+    for event, chip in played:
+        conn.execute(
+            "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+            "is_vice_captain, active_chip, retrieved_at) VALUES (1, ?, ?, 1, 1, 0, 0, ?, 't')",
+            (event, 100 + event, chip),
+        )
+    conn.commit()
+
+
+def test_a_first_half_chip_is_spent_in_the_first_half_window(db_conn):
+    _seed_chip_windows_and_picks(db_conn, [(5, "wildcard"), (4, "freehit")])
+
+    assert get_used_chips(db_conn, 1, event=7) == {"wildcard", "freehit"}
+
+
+def test_first_half_chips_do_not_count_against_the_second_half_window(db_conn):
+    _seed_chip_windows_and_picks(db_conn, [(5, "wildcard"), (4, "freehit")])
+
+    assert get_used_chips(db_conn, 1, event=20) == set()
+
+
+def test_a_second_half_chip_is_spent_only_in_the_second_half(db_conn):
+    _seed_chip_windows_and_picks(db_conn, [(5, "wildcard"), (22, "wildcard")])
+
+    assert get_used_chips(db_conn, 1, event=25) == {"wildcard"}
+    assert get_used_chips(db_conn, 1, event=7) == {"wildcard"}
+
+
+def test_without_chip_windows_it_falls_back_to_ever_played(db_conn):
+    db_conn.execute(
+        "INSERT INTO my_team_picks (entry_id, event, player_id, squad_slot, multiplier, is_captain, "
+        "is_vice_captain, active_chip, retrieved_at) VALUES (1, 5, 1, 1, 1, 0, 0, 'wildcard', 't')"
+    )
+    db_conn.commit()
+
+    assert get_used_chips(db_conn, 1, event=7) == {"wildcard"}

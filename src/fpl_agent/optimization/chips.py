@@ -37,6 +37,7 @@ class ChipWindow:
     stop_event: int
     chip_type: str
     eligible_now: bool
+    used: bool = False
 
 
 def eligible_chips(conn: sqlite3.Connection, event: int | None = None) -> list[ChipWindow]:
@@ -47,10 +48,14 @@ def eligible_chips(conn: sqlite3.Connection, event: int | None = None) -> list[C
         "WHERE season=? ORDER BY start_event",
         (season,),
     ).fetchall()
+    played = conn.execute(
+        "SELECT active_chip AS name, event FROM my_team_picks WHERE active_chip IS NOT NULL"
+    ).fetchall()
     return [
         ChipWindow(
             name=r["name"], number=r["number"], start_event=r["start_event"], stop_event=r["stop_event"],
             chip_type=r["chip_type"], eligible_now=r["start_event"] <= event <= r["stop_event"],
+            used=any(p["name"] == r["name"] and r["start_event"] <= p["event"] <= r["stop_event"] for p in played),
         )
         for r in rows
     ]
