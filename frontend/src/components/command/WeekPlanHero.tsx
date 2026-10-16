@@ -20,7 +20,28 @@ function Tag({ tone, children, title }: { tone: 'gold' | 'red' | 'blue'; childre
  * rotation call on the player being sold, a price about to move, and - on the
  * player coming in - the one independent projection this project has to set
  * beside its own. */
-function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; fixtures?: FixtureContext }) {
+const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4) % 4]}`
+
+/** The football behind the player: where his club's attack and defence rank over
+ * the next six gameweeks on the team model, and what it plays first. */
+function ClubLine({ outlook, side }: { outlook?: NonNullable<WeekPlanPayload['team_outlook']>[string]; side: 'out' | 'into' }) {
+  if (!outlook) return null
+  const next = outlook.next[0]
+  const good = (rank: number) => (rank <= 6 ? 'text-pitch-green' : rank >= outlook.clubs - 5 ? 'text-alert-red' : 'text-text-muted')
+  return (
+    <div className={`mt-1 text-[11px] leading-snug text-text-faint ${side === 'out' ? 'text-right' : ''}`}>
+      {outlook.short} attack <span className={`font-bold ${good(outlook.attack_rank)}`}>{ordinal(outlook.attack_rank)}</span>, defence{' '}
+      <span className={`font-bold ${good(outlook.defence_rank)}`}>{ordinal(outlook.defence_rank)}</span> of {outlook.clubs} over six gameweeks
+      {next && (
+        <span className="tabular">
+          {' '}&middot; next {next.home ? 'v' : 'at'} {next.opponent}: {next.xg_for.toFixed(1)} scored, {next.xg_against.toFixed(1)} conceded expected
+        </span>
+      )}
+    </div>
+  )
+}
+
+function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: 'out' | 'into'; fixtures?: FixtureContext; outlook?: WeekPlanPayload['team_outlook'] }) {
   const crest = crestUrl(p.team_code)
   const run = p.team_code !== null ? fixtures?.[String(p.team_code)] : undefined
   const rotation = p.start_percent !== null && p.start_percent < 70
@@ -46,6 +67,7 @@ function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'i
         <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
           {p.team_short} &middot; {p.position} &middot; <span className="tabular">{money(p.price_tenths)}</span>
         </div>
+        <ClubLine outlook={outlook?.[String(p.team_id)]} side={side} />
         <div className={`mt-1.5 flex items-baseline gap-1.5 ${mirrored ? 'justify-end' : ''}`}>
           <span className={`tabular font-bold ${side === 'into' ? 'text-2xl text-pitch-green' : 'text-xl text-text-muted'}`}>
             {p.xp_next.toFixed(1)}
@@ -97,10 +119,10 @@ function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'i
   )
 }
 
-function MoveRow({ m, horizon, maxGain, fixtures }: { m: WeekPlanMove; horizon: number; maxGain: number; fixtures?: FixtureContext }) {
+function MoveRow({ m, horizon, maxGain, fixtures, outlook }: { m: WeekPlanMove; horizon: number; maxGain: number; fixtures?: FixtureContext; outlook?: WeekPlanPayload['team_outlook'] }) {
   return (
     <div className="data-in grid grid-cols-1 items-center gap-6 border-l-4 border-pitch-green bg-panel px-6 py-5 lg:grid-cols-[1fr_11rem_1fr]">
-      <PlayerSide p={m.out} side="out" fixtures={fixtures} />
+      <PlayerSide p={m.out} side="out" fixtures={fixtures} outlook={outlook} />
       <div className="flex flex-col items-center">
         <div className="tabular font-display text-5xl font-bold leading-none text-pitch-green">+{m.gain.toFixed(1)}</div>
         <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">pts over {horizon} GW</div>
@@ -123,7 +145,7 @@ function MoveRow({ m, horizon, maxGain, fixtures }: { m: WeekPlanMove; horizon: 
           </div>
         )}
       </div>
-      <PlayerSide p={m.into} side="into" fixtures={fixtures} />
+      <PlayerSide p={m.into} side="into" fixtures={fixtures} outlook={outlook} />
       <div className="border-t border-divider pt-3 lg:col-span-3">
         <Link to={`/compare?a=${m.out.player_id}&b=${m.into.player_id}`} className="float-right text-[10px] font-bold uppercase tracking-[0.14em] text-text-faint hover:text-text">Compare {m.out.name} and {m.into.name} &rarr;</Link>
         {(m.alternatives ?? []).length > 0 && (
@@ -284,7 +306,7 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
       {!rolling && (
         <div className="relative mt-10 space-y-px px-10">
           {moves.map((m) => (
-            <MoveRow key={m.into.player_id} m={m} horizon={horizon} maxGain={maxGain} fixtures={plan.fixtures} />
+            <MoveRow key={m.into.player_id} m={m} horizon={horizon} maxGain={maxGain} fixtures={plan.fixtures} outlook={plan.team_outlook} />
           ))}
         </div>
       )}

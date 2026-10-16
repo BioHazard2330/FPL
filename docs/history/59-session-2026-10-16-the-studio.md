@@ -32,3 +32,11 @@ User, verbatim: *"upgrade every single thing to the maximum ... my own insane fp
 - **Run of fixtures** (on PREVIEWS): six gameweeks x twenty clubs from the team model, attack (expected goals) or defence (clean-sheet chance), coloured by rank across all cells rather than by the official difficulty number; a dot marks fixtures where stored odds fed the goals.
 - **MY TEAM** uses headshots for the top-projected player and the player sheet.
 - Checked and left alone: the clean-sheet probability exp(-opponent goals) is calibrated within a few points on 3,840 team-matches (0.262 predicted against 0.250 actual); it runs 9 points high above 50% (106 matches, about 2 standard errors), not enough to justify a correction yet.
+
+## Evening: free transfers, team football in the optimizer, auto-update timing
+
+- **Free transfers read 5, the app said 3.** The replay credited the gameweeks after a free hit and a wildcard with their +1. Fixed (the window after a chip gets no +1; saved transfers survive), confirmed against this manager's real history, which now gives 3. The plan went from three moves to two because three free transfers cannot fund a third move above the bar.
+- **Team strength now reads chances created (xG) as well as goals.** Backtested before adoption (see CLAUDE.md). Red-card down-weighting tested and rejected.
+- **Every planned player now carries his club's context**: attack and defence rank over six gameweeks and the first fixture's expected goals scored and conceded (`models/fixture_outlook.py`, stored in the plan as `team_outlook`), shown on the transfer cards. The same module feeds the run-of-fixtures heatmap.
+- **Press reports** about your players or targets (injury words in a headline) now appear in the deadline checklist.
+- **Odds and plan refresh tighten near the deadline** (see CLAUDE.md).

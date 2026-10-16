@@ -154,8 +154,35 @@ def parse_live_odds_event(event: dict) -> dict | None:
     return first_h2h_only
 
 
-def _cadence_minutes() -> float:
-    return float(load_freshness().get("odds_api", 360))
+_PRE_DEADLINE_HOURS = 12
+_PRE_DEADLINE_CADENCE_MINUTES = 180.0
+
+
+def _hours_to_next_deadline(conn) -> float | None:
+    row = conn.execute(
+        "SELECT deadline_time FROM events WHERE is_next = 1 AND deadline_time IS NOT NULL ORDER BY id LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        deadline = datetime.fromisoformat(row["deadline_time"].replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (deadline - datetime.now(timezone.utc)).total_seconds() / 3600
+
+
+def _cadence_minutes(conn=None) -> float:
+    """The standing cadence, tightened in the last 12 hours before a deadline:
+    bookmakers move on team news, and that is when the plan's final run reads
+    them. Budget: the free tier is 500 credits a month and a pull costs 2, so
+    4 pulls a day is about 240 a month; three extra pulls in each deadline
+    window (roughly weekly) add about 26 more, still under 270."""
+    standing = float(load_freshness().get("odds_api", 360))
+    if conn is not None:
+        hours = _hours_to_next_deadline(conn)
+        if hours is not None and 0 < hours <= _PRE_DEADLINE_HOURS:
+            return min(standing, _PRE_DEADLINE_CADENCE_MINUTES)
+    return standing
 
 
 def should_sync(conn, force: bool = False) -> tuple[bool, str]:
@@ -172,7 +199,7 @@ def should_sync(conn, force: bool = False) -> tuple[bool, str]:
         return True, "never synced"
     last = datetime.fromisoformat(row["value"])
     age_minutes = (datetime.now(timezone.utc) - last).total_seconds() / 60
-    cadence = _cadence_minutes()
+    cadence = _cadence_minutes(conn)
     if age_minutes >= cadence:
         return True, f"stale ({age_minutes:.0f}min >= {cadence:.0f}min cadence)"
     return False, f"fresh ({age_minutes:.0f}min old, cadence {cadence:.0f}min)"

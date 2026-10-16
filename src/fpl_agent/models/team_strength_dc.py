@@ -22,6 +22,8 @@ class Match:
     home_goals: int
     away_goals: int
     days_since: int  # days between this match and the "as of" fitting date
+    home_xg: float | None = None
+    away_xg: float | None = None
 
 
 @dataclass(frozen=True)
@@ -51,10 +53,17 @@ def _tau(x: int, y: int, lam: float, mu: float, rho: float) -> float:
     return 1.0
 
 
+# Share of each team's fitted scoring signal that comes from actual goals; the rest
+# comes from the chances it created (xG). 0.5 was chosen on a walk-forward test over
+# 1,181 matches (2023-24 to 2026-27): mean log-likelihood of the actual scoreline
+# -3.006 with goals alone, -2.988 at 0.5, -2.995 on xG alone, and 0.3 to 0.7 all
+# within 0.004 of each other. A match without xG falls back to its goals.
+GOALS_WEIGHT = 0.5
+
 _RIDGE_LAMBDA = 2.5  # real, disclosed shrinkage strength - see fit_dixon_coles's own docstring for why
 
 
-def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda):
+def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda, goals_weight=GOALS_WEIGHT):
     n = len(team_ids)
     attack = dict(zip(team_ids[:-1], params[: n - 1], strict=True))
     defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)], strict=True))
@@ -69,9 +78,15 @@ def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda):
         mu = math.exp(attack[m.away_team_id] + defence[m.home_team_id])
         weight = math.exp(-decay_k * m.days_since)
         weight_sum += weight
+        # The Poisson term is fitted to a blend of goals and chances created, so a team
+        # that scored nothing from good chances is not rated as if it had no attack.
+        # The normalising constant (lgamma) does not depend on the parameters and is
+        # kept on the actual goals; tau below also uses the actual goals.
+        home_y = m.home_goals if m.home_xg is None else goals_weight * m.home_goals + (1 - goals_weight) * m.home_xg
+        away_y = m.away_goals if m.away_xg is None else goals_weight * m.away_goals + (1 - goals_weight) * m.away_xg
         log_p = (
-            -lam + m.home_goals * math.log(lam) - math.lgamma(m.home_goals + 1)
-            - mu + m.away_goals * math.log(mu) - math.lgamma(m.away_goals + 1)
+            -lam + home_y * math.log(lam) - math.lgamma(m.home_goals + 1)
+            - mu + away_y * math.log(mu) - math.lgamma(m.away_goals + 1)
         )
         # NOTE: tau(x, y) is only defined (non-1) for the exact scorelines
         # (0,0)/(1,0)/(0,1)/(1,1) per Dixon & Coles (1997) eq. 4 - it corrects
@@ -120,6 +135,7 @@ def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda):
 
 def fit_dixon_coles(
     matches: list[Match], team_ids: list[int], half_life_days: float = 365.0, ridge_lambda: float = _RIDGE_LAMBDA,
+    goals_weight: float = GOALS_WEIGHT,
 ) -> DixonColesModel:
     if len(team_ids) < 2:
         raise ValueError("need at least 2 teams to fit Dixon-Coles")
@@ -132,7 +148,7 @@ def fit_dixon_coles(
     x0[-2] = 0.2  # home-advantage starting guess
 
     result = minimize(
-        _neg_log_likelihood, x0, args=(team_ids, matches, decay_k, ridge_lambda), method="L-BFGS-B",
+        _neg_log_likelihood, x0, args=(team_ids, matches, decay_k, ridge_lambda, goals_weight), method="L-BFGS-B",
         bounds=[(-3, 3)] * (2 * (n - 1)) + [(-1, 1), (-0.2, 0.2)],
     )
     if not result.success:
@@ -156,17 +172,26 @@ def expected_goals(model: DixonColesModel, home_team_id: int, away_team_id: int)
 
 
 def load_matches_for_fitting(conn, as_of_date: str, lookback_days: int = 730) -> tuple[list[Match], list[int]]:
+    """Matches strictly before `as_of_date`, each with both teams' xG where Understat
+    has it (the sum of the players' xG for that team on that date)."""
     rows = conn.execute(
-        "SELECT home_team_id, away_team_id, home_goals, away_goals, "
-        "CAST(julianday(?) - julianday(match_date) AS INTEGER) AS days_since "
-        "FROM match_results_history "
-        "WHERE match_date < ? AND julianday(?) - julianday(match_date) <= ? "
-        "ORDER BY match_date",
+        "SELECT m.home_team_id, m.away_team_id, m.home_goals, m.away_goals, hx.x AS home_xg, ax.x AS away_xg, "
+        "CAST(julianday(?) - julianday(m.match_date) AS INTEGER) AS days_since "
+        "FROM match_results_history m "
+        "LEFT JOIN (SELECT match_date AS d, market_team_id AS t, SUM(xg) AS x FROM player_match_stats_history "
+        "           WHERE xg IS NOT NULL GROUP BY match_date, market_team_id) hx ON hx.d = m.match_date AND hx.t = m.home_team_id "
+        "LEFT JOIN (SELECT match_date AS d, market_team_id AS t, SUM(xg) AS x FROM player_match_stats_history "
+        "           WHERE xg IS NOT NULL GROUP BY match_date, market_team_id) ax ON ax.d = m.match_date AND ax.t = m.away_team_id "
+        "WHERE m.match_date < ? AND julianday(?) - julianday(m.match_date) <= ? "
+        "ORDER BY m.match_date",
         (as_of_date, as_of_date, as_of_date, lookback_days),
     ).fetchall()
-    matches = [
-        Match(r["home_team_id"], r["away_team_id"], r["home_goals"], r["away_goals"], r["days_since"])
-        for r in rows
-    ]
+    matches = []
+    for r in rows:
+        both = r["home_xg"] is not None and r["away_xg"] is not None
+        matches.append(Match(
+            r["home_team_id"], r["away_team_id"], r["home_goals"], r["away_goals"], r["days_since"],
+            r["home_xg"] if both else None, r["away_xg"] if both else None,
+        ))
     team_ids = sorted({m.home_team_id for m in matches} | {m.away_team_id for m in matches})
     return matches, team_ids

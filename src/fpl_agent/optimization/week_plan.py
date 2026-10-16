@@ -195,6 +195,7 @@ class WeekPlan:
     computed_at: str
     notes: list[str] = field(default_factory=list)
     captain_ladder: list[dict] = field(default_factory=list)
+    team_outlook: dict = field(default_factory=dict)
 
 
 def _start_percents(conn: sqlite3.Connection, ids: set[int]) -> dict[int, int]:
@@ -647,6 +648,23 @@ def build_captain_ladder(conn: sqlite3.Connection, squad_after: set[int], event:
     return ladder
 
 
+def compact_team_outlook(conn: sqlite3.Connection, event: int) -> dict[str, dict]:
+    """Every club's attack and defence standing over the next six gameweeks and
+    its next fixture, keyed by team id, so each player in a transfer can be set
+    against the football his club is about to play. See `models/fixture_outlook`."""
+    from fpl_agent.models.fixture_outlook import team_fixture_outlook
+
+    out = {}
+    for tid, row in team_fixture_outlook(conn, event).items():
+        first = row["events"].get(str(event)) or next(iter(row["events"].values()), [])
+        out[str(tid)] = {
+            "short": row["short"], "attack_rank": row["attack_rank"], "defence_rank": row["defence_rank"],
+            "clubs": row["clubs_ranked"], "xg_for_total": row["xg_for_total"], "cs_total": row["cs_total"],
+            "fixtures": row["fixtures"], "next": first,
+        }
+    return out
+
+
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
 ) -> WeekPlan | None:
@@ -791,6 +809,12 @@ def build_week_plan(
     except Exception:
         _logger.exception("captain ladder failed - the plan itself is unaffected")
 
+    team_outlook: dict = {}
+    try:
+        team_outlook = compact_team_outlook(conn, event)
+    except Exception:
+        _logger.exception("team outlook failed - the plan itself is unaffected")
+
     chip_outlook = build_chip_outlook(conn, event, sum(p.xp for p in lineup_after.bench))
     ft_after = min(free_transfers - min(len(moves), free_transfers) + 1, FREE_TRANSFER_CAP)
     notes: list[str] = []
@@ -811,6 +835,7 @@ def build_week_plan(
         },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
+        team_outlook=team_outlook,
     )
 
 
@@ -868,6 +893,42 @@ def light_squad_state(conn: sqlite3.Connection) -> dict | None:
 
 
 REFRESH_AFTER_HOURS = 12
+FINAL_DAY_REFRESH_HOURS = 6
+FINAL_HALF_DAY_REFRESH_HOURS = 3
+
+
+def refresh_after_hours(conn: sqlite3.Connection) -> float:
+    """How old a stored plan may be before it is rebuilt. Twelve hours in the
+    quiet middle of the week, six inside the last day and three inside the last
+    twelve hours: team news, odds and predicted lineups all land close to the
+    deadline, and the plan the manager acts on should have read them."""
+    from fpl_agent.ingestion.odds_live_source import _hours_to_next_deadline
+
+    hours = _hours_to_next_deadline(conn)
+    if hours is not None and 0 < hours <= 12:
+        return FINAL_HALF_DAY_REFRESH_HOURS
+    if hours is not None and 0 < hours <= 24:
+        return FINAL_DAY_REFRESH_HOURS
+    return REFRESH_AFTER_HOURS
+
+
+def _odds_newer_than(conn: sqlite3.Connection, created_at: str) -> bool:
+    """A fresh bookmaker pull since the plan was made, inside the final day. The
+    market reprices on team news, so it is the quickest read of it."""
+    from fpl_agent.ingestion.odds_live_source import _hours_to_next_deadline
+
+    hours = _hours_to_next_deadline(conn)
+    if hours is None or not 0 < hours <= 24:
+        return False
+    row = conn.execute("SELECT value FROM app_meta WHERE key='odds_api_last_synced_at'").fetchone()
+    if row is None:
+        return False
+    try:
+        pulled = datetime.fromisoformat(row["value"].replace("Z", "+00:00"))
+        made = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return pulled > made
 
 
 def week_plan_staleness(conn: sqlite3.Connection, detail: dict, created_at: str) -> list[str]:
@@ -949,8 +1010,11 @@ def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
             reason = reasons[0]
         else:
             age = datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            if age.total_seconds() > REFRESH_AFTER_HOURS * 3600:
+            limit = refresh_after_hours(conn)
+            if age.total_seconds() > limit * 3600:
                 reason = f"the stored plan is {age.total_seconds() / 3600:.0f}h old"
+            elif age.total_seconds() > 1800 and _odds_newer_than(conn, created_at):
+                reason = "bookmaker odds were pulled after this plan was made"
     if reason is None:
         return None
     plan = build_week_plan(conn)

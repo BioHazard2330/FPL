@@ -59,6 +59,28 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
     }
   }
 
+  if (desk) {
+    const reports = [...(desk.lead ? [desk.lead] : []), ...desk.wire].filter((a) => a.injury && a.players.some((p) => p.mine || p.target)).slice(0, 3)
+    if (reports.length > 0) {
+      items.push({
+        tone: 'look',
+        title: 'Press reports touch your players or targets',
+        detail: (
+          <>
+            {reports.map((a, k) => (
+              <span key={a.id}>
+                {k > 0 && ' · '}
+                <a href={a.link} target="_blank" rel="noreferrer" className="font-semibold text-text hover:text-pitch-green">{a.title}</a>{' '}
+                <span className="text-text-faint">({a.source}; names {a.players.filter((p) => p.mine || p.target).map((p) => p.name).join(', ')})</span>
+              </span>
+            ))}
+            . Reports can precede the official flag; the headline decides whether it is about him.
+          </>
+        ),
+      })
+    }
+  }
+
   const doctor = plan.doctor
   if (doctor) {
     if (doctor.worth_changing) {

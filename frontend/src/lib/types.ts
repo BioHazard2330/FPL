@@ -1552,6 +1552,16 @@ export interface WeekPlanPayload {
   ft_after?: number
   bank_after_tenths?: number
   affordability?: string
+  team_outlook?: Record<string, {
+    short: string
+    attack_rank: number
+    defence_rank: number
+    clubs: number
+    xg_for_total: number
+    cs_total: number
+    fixtures: number
+    next: { opponent: string; home: boolean; xg_for: number; xg_against: number; cs: number; market: boolean }[]
+  }>
   captain_ladder?: { event: number; picks: { player_id: number; name: string; team_id: number; xp: number }[] }[]
   road_ahead?: {
     horizon: number

@@ -414,3 +414,42 @@ def test_a_failing_search_leaves_the_move_with_no_alternatives():
         raise RuntimeError("solver down")
 
     assert find_alternatives(solve, [(1, 11)], EVENT) == [[]]
+
+
+def _deadline_in(conn, hours):
+    from datetime import datetime, timedelta, timezone
+
+    stamp = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    conn.execute(
+        "INSERT OR REPLACE INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (7, 'GW7', ?, 0, 0, 0, 0, 1, 't')", (stamp,),
+    )
+
+
+def test_a_plan_is_allowed_to_get_older_the_further_the_deadline(db_conn):
+    from fpl_agent.optimization.week_plan import refresh_after_hours
+
+    _deadline_in(db_conn, 60)
+    assert refresh_after_hours(db_conn) == 12
+    _deadline_in(db_conn, 20)
+    assert refresh_after_hours(db_conn) == 6
+    _deadline_in(db_conn, 5)
+    assert refresh_after_hours(db_conn) == 3
+
+
+def test_fresh_odds_after_the_plan_trigger_a_rebuild_only_in_the_final_day(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.optimization.week_plan import _odds_newer_than
+
+    now = datetime.now(timezone.utc)
+    made = (now - timedelta(hours=2)).isoformat()
+    db_conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('odds_api_last_synced_at', ?, ?)",
+        ((now - timedelta(hours=1)).isoformat(),) * 2,
+    )
+    _deadline_in(db_conn, 10)
+    assert _odds_newer_than(db_conn, made) is True
+    assert _odds_newer_than(db_conn, (now - timedelta(minutes=30)).isoformat()) is False
+    _deadline_in(db_conn, 70)
+    assert _odds_newer_than(db_conn, made) is False

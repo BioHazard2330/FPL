@@ -193,3 +193,47 @@ def test_sync_live_odds_tolerates_single_crashing_event(db_conn, monkeypatch):
     health = db_conn.execute("SELECT * FROM source_health WHERE source_name='odds_api'").fetchone()
     assert health["failure_count"] == 1
     assert "1 of 2" in health["last_error"]
+
+
+def _set_last_odds_sync(conn, hours_ago):
+    from datetime import datetime, timedelta, timezone
+
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('odds_api_last_synced_at', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (stamp, stamp),
+    )
+
+
+def _next_deadline_in(conn, hours):
+    from datetime import datetime, timedelta, timezone
+
+    deadline = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    conn.execute(
+        "INSERT OR REPLACE INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        "VALUES (7, 'GW7', ?, 0, 0, 0, 0, 1, 't')", (deadline,),
+    )
+
+
+def test_odds_are_pulled_more_often_in_the_last_twelve_hours_before_a_deadline(db_conn):
+    from fpl_agent.ingestion.odds_live_source import should_sync
+
+    _set_last_odds_sync(db_conn, hours_ago=4)
+    _next_deadline_in(db_conn, hours=6)
+    assert should_sync(db_conn)[0] is True
+
+
+def test_the_standing_six_hour_cadence_holds_far_from_a_deadline(db_conn):
+    from fpl_agent.ingestion.odds_live_source import should_sync
+
+    _set_last_odds_sync(db_conn, hours_ago=4)
+    _next_deadline_in(db_conn, hours=40)
+    assert should_sync(db_conn)[0] is False
+
+
+def test_a_recent_pull_still_throttles_inside_the_deadline_window(db_conn):
+    from fpl_agent.ingestion.odds_live_source import should_sync
+
+    _set_last_odds_sync(db_conn, hours_ago=1)
+    _next_deadline_in(db_conn, hours=6)
+    assert should_sync(db_conn)[0] is False

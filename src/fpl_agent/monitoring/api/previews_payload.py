@@ -22,7 +22,6 @@ Numerical assumptions, stated where they bite:
 
 Rebuilt at most every ten minutes and held in memory: a full build fits
 Dixon-Coles once (about 4 s) and projects ~160 players."""
-import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -30,6 +29,7 @@ from datetime import datetime, timezone
 import numpy as np
 from scipy.stats import poisson
 
+from fpl_agent.models.fixture_outlook import DEFAULT_WINDOW_GW
 from fpl_agent.monitoring.api.photos import attach_photo_codes
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
@@ -156,45 +156,10 @@ def _absentees(conn, team_id: int) -> list[dict]:
     return [{"player_id": r["id"], "name": r["web_name"], "status": r["status"], "chance": r["chance"], "news": r["news"]} for r in rows[:4]]
 
 
-_TICKER_GW = 6
+def _ticker(conn, event: int) -> list[dict]:
+    from fpl_agent.models.fixture_outlook import team_fixture_outlook
 
-
-def _ticker(conn, event: int, teams: dict[int, dict]) -> list[dict]:
-    """The next six gameweeks as the team model sees them: for every club and
-    gameweek, expected goals scored and conceded in each of its fixtures and the
-    clean-sheet chance, from the same blended goals as the previews. Clubs are
-    ranked by attacking and by defensive return over the window so the best runs
-    sit at the top; a blank gameweek is an empty cell and a double gameweek has
-    two entries. `market` marks fixtures where stored odds fed the goals; beyond
-    the next gameweek or two the figures are the model alone."""
-    from fpl_agent.models.expected_points import _blended_fixture_goals, _fixture_date
-
-    by_team: dict[int, dict[int, list[dict]]] = {tid: {} for tid in teams}
-    for f in conn.execute(
-        "SELECT id, event, kickoff_time, team_h, team_a FROM fixtures WHERE finished=0 AND event >= ? AND event < ? "
-        "ORDER BY event, kickoff_time", (event, event + _TICKER_GW),
-    ).fetchall():
-        date = _fixture_date(f)
-        home_goals, away_goals = _blended_fixture_goals(conn, f["id"], f["team_h"], f["team_a"], date)
-        has_odds = conn.execute("SELECT 1 FROM fixture_odds_live WHERE fixture_id=? LIMIT 1", (f["id"],)).fetchone() is not None
-        for tid, opp, gf, ga, at_home in ((f["team_h"], f["team_a"], home_goals, away_goals, True), (f["team_a"], f["team_h"], away_goals, home_goals, False)):
-            by_team[tid].setdefault(f["event"], []).append({
-                "opponent": teams[opp]["short_name"], "opponent_code": teams[opp]["code"], "home": at_home,
-                "xg_for": round(gf, 2), "xg_against": round(ga, 2), "cs": round(math.exp(-ga), 3), "market": has_odds,
-            })
-    rows = []
-    for tid, events in by_team.items():
-        entries = [e for lst in events.values() for e in lst]
-        if not entries:
-            continue
-        rows.append({
-            "team_id": tid, "code": teams[tid]["code"], "name": teams[tid]["name"], "short": teams[tid]["short_name"],
-            "events": {str(ev): lst for ev, lst in events.items()},
-            "xg_for_total": round(sum(e["xg_for"] for e in entries), 2),
-            "cs_total": round(sum(e["cs"] for e in entries), 2),
-            "fixtures": len(entries),
-        })
-    return rows
+    return list(team_fixture_outlook(conn, event).values())
 
 
 def _build_previews_uncached() -> dict:
@@ -245,10 +210,10 @@ def _build_previews_uncached() -> dict:
                 fx[side]["yours"] = [{"player_id": p, "name": names.get(p, "")} for p in fx[side]["yours"]]
                 for r in fx[side]["form"]:
                     r["opponent"] = teams[r.pop("opponent_id")]["short_name"]
-        ticker = _ticker(conn, event, teams)
+        ticker = _ticker(conn, event)
         return attach_photo_codes(conn, {
             "event": event, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": out,
-            "ticker": {"first_event": event, "events": list(range(event, event + _TICKER_GW)), "rows": ticker},
+            "ticker": {"first_event": event, "events": list(range(event, event + DEFAULT_WINDOW_GW)), "rows": ticker},
         })
     finally:
         conn.close()
