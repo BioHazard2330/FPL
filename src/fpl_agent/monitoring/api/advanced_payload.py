@@ -30,6 +30,7 @@ user would notice."""
 import threading
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
@@ -43,6 +44,9 @@ _cached_points_revisions: dict | None = None
 _cached_decision_audit: dict | None = None
 _cached_at: float = 0.0
 _TTL_SECONDS = 600.0
+_AUDIT_MAX_AGE_DAYS = 3.0
+_ODDS_MAX_AGE_HOURS = 48.0
+_SOURCE_ACTIVE_HOURS = 36.0
 
 
 def _build_benchmark_block(conn) -> dict | None:
@@ -114,7 +118,7 @@ def _build_chip_strategy_block(conn, squad_ids: set[int]) -> list[dict]:
 
     rows = []
     for w in windows:
-        if not w.eligible_now:
+        if not w.eligible_now or w.used:
             continue
         value = value_by_type.get(w.name)
         exp = explanation_by_chip.get(w.name)
@@ -169,6 +173,11 @@ def _player_odds_block(conn, squad_ids: set[int]) -> list[dict]:
         f"ORDER BY po.implied_probability_raw DESC LIMIT 15",
         tuple(squad_ids),
     ).fetchall()
+    fresh = [
+        r for r in rows
+        if (datetime.now(timezone.utc) - datetime.fromisoformat(r["retrieved_at"].replace("Z", "+00:00"))).total_seconds()
+        <= _ODDS_MAX_AGE_HOURS * 3600
+    ]
     return [
         {
             "player_id": r["player_id"],
@@ -178,7 +187,7 @@ def _player_odds_block(conn, squad_ids: set[int]) -> list[dict]:
             "implied_probability_raw": r["implied_probability_raw"],
             "retrieved_at": r["retrieved_at"],
         }
-        for r in rows
+        for r in fresh
     ]
 
 
@@ -238,6 +247,13 @@ def _decision_audit_block(conn) -> dict | None:
     audit = latest_decision_of_type(conn, "decision_audit")
     if audit is None:
         return None
+    age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(audit.created_at.replace("Z", "+00:00"))).total_seconds() / 86400
+    if age_days > _AUDIT_MAX_AGE_DAYS:
+        # An audit of a squad and a recommendation from weeks ago is not
+        # evidence about this week's. Showing its falsifiers - names of players
+        # long since transferred out - as the screen's centrepiece was worse
+        # than showing nothing, so only its existence and age are reported.
+        return {"stale": True, "created_at": audit.created_at, "age_days": round(age_days, 0)}
     d = audit.detail or {}
     sc = d.get("scorecard") or {}
     return {
@@ -265,6 +281,40 @@ def _decision_audit_block(conn) -> dict | None:
             {"label": c.get("label"), "detail": c.get("detail")} for c in (d.get("causal_chain") or [])
         ],
         "league_wide": d.get("league_wide") or None,
+    }
+
+
+def _week_plan_audit_block(conn) -> dict | None:
+    """The week plan, checked: solver facts, what each move is worth if the
+    player coming in disappoints, the one independent projection available for
+    comparison, and the assumptions the plan rests on. Read from the stored
+    plan - nothing here is solved on a page load."""
+    from fpl_agent.models.materiality import transfer_materiality_bar
+    from fpl_agent.optimization.week_plan import assumptions, latest_week_plan, week_plan_staleness
+
+    stored = latest_week_plan(conn)
+    if stored is None:
+        return None
+    detail, created_at, decision_id = stored
+    reasons = week_plan_staleness(conn, detail, created_at)
+    moves = [
+        {
+            "out": m["out"]["name"], "into": m["into"]["name"], "gain": m["gain"], "into_id": m["into"]["player_id"],
+            "xp_out": m["out"]["xp_next"], "xp_in": m["into"]["xp_next"], "solio_in": m["into"]["solio_next"],
+            "start_percent_out": m["out"]["start_percent"], "price_trend_in": m["into"]["price_trend"],
+            "stress": m.get("stress"),
+        }
+        for m in detail["moves"]
+    ]
+    try:
+        mae = transfer_materiality_bar(conn, horizon_gw=detail["horizon"]).mae
+    except Exception:
+        mae = None
+    return {
+        "decision_id": decision_id, "computed_at": created_at, "event": detail["event"],
+        "stale_reasons": reasons, "solver": detail.get("solver"), "moves": moves,
+        "min_move_gain": detail["min_move_gain"], "horizon": detail["horizon"], "model_mae": mae,
+        "assumptions": assumptions(detail["min_move_gain"], detail["horizon"], mae),
     }
 
 
@@ -345,7 +395,7 @@ _PIPELINE_STAGES = [
     ("FOOTBALL", ["Injuries", "Team news", "Change detection"]),
     ("PROJECTIONS", ["Player projections"]),
     ("CANDIDATES", ["First-team generation"]),
-    ("OPTIMIZER", ["Squad optimizer", "Transfer optimizer", "Captaincy", "Chip engine"]),
+    ("OPTIMIZER", ["Squad optimizer", "Transfer planner", "Captaincy", "Chip engine"]),
 ]
 _STATUS_RANK = {"OK": 0, "DEGRADED": 1, "MISSING": 2}
 
@@ -381,21 +431,6 @@ def _pipeline_block(checks: list, conn) -> list[dict]:
     return stages
 
 
-def _robustness_row(ctx: DashboardContext) -> dict | None:
-    """Real robustness reading off the SAME `authoritative` decision object
-    `command_payload.py` reads for its own WHY-line - never a second
-    computation."""
-    current_rec = ctx.current_rec
-    auth = (current_rec or {}).get("authoritative") if current_rec else None
-    if not auth:
-        return None
-    robustness = auth.get("robustness_class")
-    if robustness is None:
-        return None
-    status = "OK" if robustness == "ROBUST" else "DEGRADED"
-    return {"stage": "ROBUSTNESS", "status": status, "detail": f"current decision classified {robustness}"}
-
-
 def build_advanced_payload(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
 
@@ -407,26 +442,38 @@ def build_advanced_payload(ctx: DashboardContext) -> dict:
     finally:
         conn.close()
 
-    robustness_row = _robustness_row(ctx)
-    if robustness_row:
-        pipeline.append(robustness_row)
+    from fpl_agent.database.connection import get_connection as _conn
+
+    plan_conn = _conn()
+    try:
+        week_plan_audit = _build_block("week plan audit", lambda: _week_plan_audit_block(plan_conn), None)
+    finally:
+        plan_conn.close()
+    if week_plan_audit is not None:
+        stale = week_plan_audit["stale_reasons"]
+        pipeline.append({
+            "stage": "WEEK PLAN", "status": "DEGRADED" if stale else "OK",
+            "detail": f"out of date: {stale[0]}" if stale else f"GW{week_plan_audit['event']} plan current",
+        })
 
     freshness = ctx.freshness
-    pipeline.append({
-        "stage": "AUTHORITATIVE DECISION",
-        "status": "DEGRADED" if (freshness and freshness.is_stale) else "OK",
-        "detail": (
-            f"stale - {freshness.stale_reason}" if freshness and freshness.is_stale
-            else (f"computed {freshness.age_relative}" if freshness else "no cached decision yet")
-        ),
-    })
+
+    def source_row(source) -> dict:
+        row = asdict(source)
+        last = source.last_success
+        age_h = None
+        if last:
+            age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(last.replace("Z", "+00:00"))).total_seconds() / 3600
+        row["active"] = bool(source.failure_count) or (age_h is not None and age_h <= _SOURCE_ACTIVE_HOURS)
+        return row
 
     return {
         "readiness": [asdict(c) for c in checks],
-        "sources": [asdict(s) for s in sources],
+        "sources": [source_row(s) for s in sources],
+        "week_plan_audit": week_plan_audit,
         "pipeline": pipeline,
         "benchmark": benchmark,
-        "chips": chips,
+        "chips": [],
         "player_odds": player_odds,
         "points_revisions": points_revisions,
         "decision_audit": decision_audit,

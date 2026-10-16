@@ -217,7 +217,9 @@ def test_advanced_payload_pipeline_groups_real_readiness_checks_by_stage(db_conn
     json.dumps(payload)
     stages = {row["stage"] for row in payload["pipeline"]}
     assert "DATA" in stages
-    assert "AUTHORITATIVE DECISION" in stages
+    assert "MARKET" in stages
+    assert "AUTHORITATIVE DECISION" not in stages, "the beam-search decision no longer leads the engine room"
+    assert "week_plan_audit" in payload
     data_row = next(r for r in payload["pipeline"] if r["stage"] == "DATA")
     assert "Database" in data_row["detail"]
 
@@ -255,10 +257,14 @@ def test_player_odds_block_returns_one_row_per_player_not_one_per_stored_quote(d
             "VALUES (?,?,?,?,?,?,0,0,?)",
             (fid, 1000 + fid, None, "2026-09-12T14:00:00+00:00", team_h, team_a, "t0"),
         )
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    stamp = lambda hours: (now - timedelta(hours=hours)).isoformat()  # noqa: E731
     rows = [
-        (1, pid, "P%d" % pid, "oddsapi", "book", 1.75, 0.5714, "2026-08-23T09:06:43+00:00"),
-        (2, pid, "P%d" % pid, "oddsapi", "book", 1.67, 0.5988, "2026-08-27T12:22:14+00:00"),
-        (3, pid, "P%d" % pid, "oddsapi", "book", 1.49, 0.6711, "2026-09-05T04:19:21+00:00"),
+        (1, pid, "P%d" % pid, "oddsapi", "book", 1.75, 0.5714, stamp(30)),
+        (2, pid, "P%d" % pid, "oddsapi", "book", 1.67, 0.5988, stamp(20)),
+        (3, pid, "P%d" % pid, "oddsapi", "book", 1.49, 0.6711, stamp(2)),
     ]
     for fixture_id, player_id, raw, source, book, price, prob, retrieved in rows:
         db_conn.execute(
@@ -349,3 +355,44 @@ def test_advanced_payload_exposes_the_three_new_blocks(db_conn):
     assert "player_odds" in payload
     assert "points_revisions" in payload
     assert "decision_audit" in payload
+
+
+
+def test_player_odds_older_than_two_days_are_not_shown(db_conn):
+    """Quotes weeks old were being shown as 'market price on my squad'. A price
+    from before the last three gameweeks is history, not a price."""
+    from datetime import datetime, timedelta, timezone
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    pid = _PLAYERS[0][0]
+    team_h, team_a = _PLAYERS[0][2], _PLAYERS[1][2]
+    db_conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (1, 1001, NULL, '2026-09-12T14:00:00+00:00', ?, ?, 0, 0, 't0')", (team_h, team_a),
+    )
+    db_conn.execute(
+        "INSERT INTO player_odds_live (fixture_id, player_id, player_name_raw, source, bookmaker, "
+        "anytime_scorer_price, implied_probability_raw, retrieved_at) VALUES (1, ?, 'x', 'oddsapi', 'book', 1.5, 0.66, ?)",
+        (pid, (datetime.now(timezone.utc) - timedelta(days=41)).isoformat()),
+    )
+    db_conn.commit()
+
+    assert _player_odds_block(db_conn, {pid}) == []
+
+
+def test_a_decision_audit_older_than_three_days_reports_its_age_and_nothing_else(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.database.decisions import log_decision
+    from fpl_agent.monitoring.api.advanced_payload import _decision_audit_block
+
+    log_decision(db_conn, "decision_audit", "old", {"scorecard": {"final_decision": "ACT"}, "falsifiers": [{"description": "x"}]})
+    old = (datetime.now(timezone.utc) - timedelta(days=39)).isoformat()
+    db_conn.execute("UPDATE decisions SET created_at=? WHERE decision_type='decision_audit'", (old,))
+    db_conn.commit()
+
+    block = _decision_audit_block(db_conn)
+
+    assert block["stale"] is True
+    assert block["age_days"] == 39
+    assert "falsifiers" not in block and "scorecard" not in block

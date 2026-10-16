@@ -144,7 +144,24 @@ const TIMELINE_CATEGORIES = ['SET_PIECE_CHANGE', 'SET_PIECES', 'TACTICAL_CHANGE'
  * run large and editorial; a change-of-state signal (set-piece/tactical)
  * reads as a compact timeline entry instead; everything else takes the
  * standard featured size. Same real fields throughout, only the frame differs. */
-function FeaturedSignalCard({ s, large = false }: { s: FootballSignal; large?: boolean }) {
+/** One player, one card. The same match produced three or four signals for the
+ * same footballer (goal threat, creation, role change, minutes) and each used
+ * to take a card of its own, so a screen of eight signals was really three
+ * players said eight ways. The strongest signal leads; the rest sit under it
+ * as single lines. */
+function groupByPlayer(signals: FootballSignal[]): FootballSignal[][] {
+  const groups = new Map<number, FootballSignal[]>()
+  for (const sig of signals) {
+    const g = groups.get(sig.entity_id)
+    if (g) g.push(sig)
+    else groups.set(sig.entity_id, [sig])
+  }
+  return [...groups.values()]
+}
+
+const signalKey = (sig: FootballSignal) => `${sig.entity_id}|${sig.evidence}`
+
+function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSignal; large?: boolean; extra?: FootballSignal[] }) {
   const crest = crestUrl(s.team_code)
   const isTimeline = TIMELINE_CATEGORIES.includes(s.category)
 
@@ -177,6 +194,16 @@ function FeaturedSignalCard({ s, large = false }: { s: FootballSignal; large?: b
       <p className={`mt-2 leading-relaxed text-text-muted ${large ? 'max-w-2xl text-base' : 'text-sm'}`}>{s.evidence}</p>
       {s.interpretation && <p className="mt-1 text-sm italic text-text-faint">{s.interpretation}</p>}
       {s.fpl_effect && <div className={`mt-3 font-bold ${DIRECTION_COLOR[s.direction] ?? 'text-text'} ${large ? 'text-lg' : 'text-sm'}`}>{s.fpl_effect}</div>}
+      {extra.length > 0 && (
+        <ul className="mt-3 space-y-1 border-t border-divider pt-2 text-xs text-text-faint">
+          {extra.map((e) => (
+            <li key={signalKey(e)}>
+              <span className="mr-2 font-bold uppercase tracking-wide">{e.category.replace(/_/g, ' ')}</span>
+              {e.evidence}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -368,6 +395,25 @@ export function FootballScreen() {
   const p = state.data
   const leftBoard = p.categories.filter((c) => LEFT_BOARD_CATEGORIES.includes(c.category))
   const rightBoard = p.categories.filter((c) => !LEFT_BOARD_CATEGORIES.includes(c.category))
+  const featuredGroups = groupByPlayer(p.squad_changes)
+  // A signal already shown above is not shown again below. Without this the
+  // same line of evidence appeared in the featured cards and then again in
+  // its own category band, and a squad player's one good match filled the
+  // screen four times over.
+  const alreadyShown = new Set(p.squad_changes.map(signalKey))
+  const boardRows = [...leftBoard, ...rightBoard]
+    .map((c) => {
+      const rows: FootballSignal[] = []
+      for (const sig of c.signals) {
+        const key = signalKey(sig)
+        if (alreadyShown.has(key)) continue
+        alreadyShown.add(key)
+        rows.push(sig)
+        if (rows.length === 6) break
+      }
+      return { ...c, rows }
+    })
+    .filter((c) => c.rows.length > 0)
 
   return (
     <div className="data-in pb-16">
@@ -423,11 +469,13 @@ export function FootballScreen() {
               <>
                 <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Featured squad signals</div>
                 <div className="flex flex-wrap gap-4">
-                  {p.squad_changes.slice(0, 4).map((s, i) => <FeaturedSignalCard key={i} s={s} large={i === 0} />)}
+                  {featuredGroups.slice(0, 4).map((g, i) => (
+                    <FeaturedSignalCard key={g[0].entity_id} s={g[0]} large={i === 0} extra={g.slice(1, 4)} />
+                  ))}
                 </div>
-                {p.squad_changes.length > 4 && (
+                {featuredGroups.length > 4 && (
                   <div className="mt-4 divide-y divide-divider">
-                    {p.squad_changes.slice(4).map((s, i) => <SignalRow key={i} s={s} />)}
+                    {featuredGroups.slice(4).map((g) => <SignalRow key={g[0].entity_id} s={g[0]} />)}
                   </div>
                 )}
               </>
@@ -450,7 +498,7 @@ export function FootballScreen() {
           categories (set-piece/tactical) still render as timeline ticks
           inside their band; trend categories render as prose rows. */}
       <div className="mt-8">
-        {[...leftBoard, ...rightBoard].map((c) => (
+        {boardRows.map((c) => (
           <div key={c.category} className="grid grid-cols-1 gap-x-8 border-t-2 border-divider px-10 py-6 lg:grid-cols-[13rem_1fr]">
             <div className="mb-3 lg:mb-0">
               <div className={`border-l-4 pl-3 ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
@@ -459,7 +507,7 @@ export function FootballScreen() {
               </div>
             </div>
             <div>
-              {c.signals.slice(0, 6).map((s, i) => <SignalRow key={i} s={s} />)}
+              {c.rows.map((s) => <SignalRow key={signalKey(s)} s={s} />)}
             </div>
           </div>
         ))}

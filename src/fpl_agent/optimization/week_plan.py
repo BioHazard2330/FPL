@@ -50,7 +50,7 @@ Assumptions, stated rather than discovered later:
 import json
 import logging
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
 from fpl_agent.database.decisions import latest_decision_of_type, log_decision
@@ -59,6 +59,27 @@ from fpl_agent.optimization.milp_planner import plan_transfers_milp
 from fpl_agent.optimization.squad import _BENCH_WEIGHT, PlayerCandidate, build_player_pool, resolve_projected_xi
 
 _logger = logging.getLogger("fpl_agent.week_plan")
+
+def assumptions(min_move_gain: float, horizon: int, mae: float | None) -> list[str]:
+    """What the plan rests on, in the words the ADVANCED screen shows. The
+    measured error is passed in rather than written here, so the text can never
+    quote a number the calibration table has since moved off."""
+    error = (
+        f"the model's measured error is {mae:.1f} points per player per gameweek" if mae is not None
+        else "there are too few settled predictions to measure the model's error yet"
+    )
+    return [
+        f"A transfer has to add {min_move_gain:g} points over {horizon} gameweeks to be recommended. That is a judgement, "
+        f"not a fitted number: {error}.",
+        "Sell prices are current prices. FPL pays purchase price plus half the rise, which this project cannot read "
+        "reliably, so the plan reports whether it still fits under the strictest reading.",
+        "Every projection comes from the one model. Solio's is shown beside the player coming in as a check and never feeds it.",
+        "A predicted start percentage discounts the next gameweek's minutes in full and half as much for each gameweek after. "
+        "It is not calibrated: there is no history of that feed to fit it to.",
+        f"The moves are judged by points over {horizon} gameweeks. Price changes, double gameweeks not yet announced and "
+        "chips are outside the decision.",
+    ]
+
 
 DECISION_TYPE = "week_plan"
 HORIZON_GW = 5
@@ -84,6 +105,15 @@ class PlayerRef:
     start_percent: int | None
     price_trend: str
     solio_next: float | None
+    duties: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MoveStress:
+    gain_with_others: float
+    gain_if_half: float
+    breakeven_drop_pct: float | None
+    survives_half: bool
 
 
 @dataclass(frozen=True)
@@ -92,6 +122,7 @@ class PlannedMove:
     into: PlayerRef
     gain: float
     cost_tenths: int
+    stress: MoveStress | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +176,7 @@ class WeekPlan:
     lineup_set_by_you: Lineup | None
     road_ahead: dict | None
     chip_outlook: dict
+    solver: dict
     proven_optimal: bool
     min_move_gain: float
     squad_ids: list[int]
@@ -171,6 +203,30 @@ def _solio_next(conn: sqlite3.Connection, ids: set[int]) -> dict[int, float]:
         f"(SELECT MAX(id) FROM solio_snapshot) AND player_id IN ({marks})", tuple(ids),
     ).fetchall()
     return {r["player_id"]: r["pr_points"] for r in rows if r["pr_points"] is not None}
+
+
+def _set_piece_duties(conn: sqlite3.Connection, ids: set[int]) -> dict[int, list[str]]:
+    """First-choice set-piece duties, from the FPL site's own set-piece notes. A
+    penalty taker is worth roughly half a point a match on his own, and a player
+    whose duty changed this month has no history in the goal-share a projection
+    is built from, so the model cannot see it - the plan shows it instead."""
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT player_id, penalties_order, corners_order, direct_fk_order FROM player_setpiece_history "
+        f"WHERE valid_until IS NULL AND player_id IN ({marks})", tuple(ids),
+    ).fetchall()
+    out: dict[int, list[str]] = {}
+    for r in rows:
+        duties = [
+            label for label, order in (
+                ("penalties", r["penalties_order"]), ("free kicks", r["direct_fk_order"]), ("corners", r["corners_order"]),
+            ) if order == 1
+        ]
+        if duties:
+            out[r["player_id"]] = duties
+    return out
 
 
 def _price_trends(conn: sqlite3.Connection, ids: set[int]) -> dict[int, str]:
@@ -321,9 +377,10 @@ def _strict_sell_shortfall_tenths(conn: sqlite3.Connection, out_ids: list[int]) 
 
 
 def _ref(
-    c: PlayerCandidate, xp_next: float, starts: dict, trends: dict, solio: dict,
+    c: PlayerCandidate, xp_next: float, starts: dict, trends: dict, solio: dict, duties: dict,
 ) -> PlayerRef:
     return PlayerRef(
+        duties=duties.get(c.player_id, []),
         player_id=c.player_id, name=c.web_name, position=c.position, team_short=c.team_short, team_id=c.team_id,
         price_tenths=c.price_tenths, xp_next=round(xp_next, 2), xp_horizon=round(c.xp, 2),
         start_percent=starts.get(c.player_id), price_trend=trends.get(c.player_id, "STABLE"),
@@ -453,6 +510,45 @@ def build_road_ahead(
     }
 
 
+def stress_moves(solve, pairs: list[tuple[int, int]], bar: float, event: int) -> list[MoveStress | None]:
+    """What each move is worth if the player coming in simply returns less than
+    projected. `solve(k, forced_in, forced_out, scale)` is the same planner with
+    that player's projection multiplied by `scale` in every gameweek. Each move
+    is priced against the best plan that makes all the OTHER moves and nothing
+    else, at full projection and at half. The drop that would take the move to
+    the bar is read off the line between the two - an interpolation, not a third
+    solve, and described as such where it is shown."""
+    stresses: list[MoveStress | None] = []
+    for out_id, in_id in pairs:
+        others = [p for p in pairs if p[1] != in_id]
+        o_in, o_out = frozenset(i for _, i in others), frozenset(o for o, _ in others)
+        try:
+            values = {}
+            for scale in (1.0, 0.5):
+                with_move = solve(len(pairs), frozenset(i for _, i in pairs), frozenset(o for o, _ in pairs), {in_id: scale})
+                without = solve(len(others), o_in, o_out, {in_id: scale})
+                if with_move.sequence is None or without.sequence is None:
+                    raise ValueError("unsolved")
+                values[scale] = with_move.sequence.total_net_ev - without.sequence.total_net_ev
+        except Exception:
+            stresses.append(None)
+            continue
+        full, half = values[1.0], values[0.5]
+        if full <= bar:
+            breakeven = 0.0
+        elif half >= bar:
+            breakeven = None
+        elif full - half > 1e-9:
+            breakeven = round((full - bar) / (full - half) * 50.0, 0)
+        else:
+            breakeven = None
+        stresses.append(MoveStress(
+            gain_with_others=round(full, 2), gain_if_half=round(half, 2), breakeven_drop_pct=breakeven,
+            survives_half=half >= bar,
+        ))
+    return stresses
+
+
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
 ) -> WeekPlan | None:
@@ -471,12 +567,12 @@ def build_week_plan(
     by_id = {c.player_id: c for c in pool}
     cache: dict = {}
 
-    def solve(max_moves: int, fin, fout):
+    def solve(max_moves: int, fin, fout, scale=None):
         return plan_transfers_milp(
             conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
             pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves, league_pool=pool,
-            forced_in_first=frozenset(fin), forced_out_first=frozenset(fout),
+            forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -501,6 +597,7 @@ def build_week_plan(
     starts = _start_percents(conn, set(squad_ids) | squad_after | involved)
     trends = _price_trends(conn, involved)
     solio = _solio_next(conn, set(squad_ids) | involved)
+    duties = _set_piece_duties(conn, involved)
     next_xp_cache: dict = {}
 
     from fpl_agent.models.expected_points import expected_points
@@ -521,12 +618,19 @@ def build_week_plan(
     def make_move(o: int, i: int, gain: float) -> PlannedMove:
         out_c, in_c = candidate(o), candidate(i)
         return PlannedMove(
-            out=_ref(out_c, next_xp(o), starts, trends, solio), into=_ref(in_c, next_xp(i), starts, trends, solio),
+            out=_ref(out_c, next_xp(o), starts, trends, solio, duties),
+            into=_ref(in_c, next_xp(i), starts, trends, solio, duties),
             gain=gain, cost_tenths=in_c.price_tenths - out_c.price_tenths,
         )
 
     ordered_pairs = {i: o for o, i in chosen_pairs}
     moves = [make_move(ordered_pairs[i], i, g) for _, i, g in accepted if i in ordered_pairs]
+    if moves:
+        try:
+            stresses = stress_moves(solve, [(m.out.player_id, m.into.player_id) for m in moves], min_move_gain, event)
+            moves = [replace(m, stress=st) for m, st in zip(moves, stresses, strict=True)]
+        except Exception:
+            _logger.exception("move stress test failed - the plan itself is unaffected")
     declined_moves = [make_move(o, i, g) for o, i, g in declined]
 
     xp_by_id = {pid: next_xp(pid) for pid in squad_ids}
@@ -572,6 +676,10 @@ def build_week_plan(
         gain_vs_roll=round(plan_total - roll_total, 2), moves=moves, declined=declined_moves, curve=curve,
         ft_after=ft_after, bank_after_tenths=bank_after, affordability=affordability,
         lineup_now=lineup_now, lineup_after=lineup_after, lineup_set_by_you=as_set, road_ahead=road_ahead, chip_outlook=chip_outlook,
+        solver={
+            "proven_optimal": proven, "horizon": horizon, "pool_size": final.pool_size,
+            "seconds": round(final.solve_seconds, 1), "min_move_gain": min_move_gain,
+        },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes,
     )

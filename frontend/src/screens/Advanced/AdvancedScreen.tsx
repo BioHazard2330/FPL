@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { DecisionAudit } from '@/components/advanced/DecisionAudit'
+import { WeekPlanAudit } from '@/components/advanced/WeekPlanAudit'
 import { fetchAdvancedPayload } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
@@ -8,10 +9,6 @@ import { ScreenError } from '@/components/shell/ScreenStates'
 
 const STATUS_COLOR: Record<string, string> = {
   OK: 'bg-pitch-green text-pitch-green-ink', DEGRADED: 'bg-broadcast-gold text-broadcast-gold-ink', MISSING: 'bg-alert-red text-alert-red-ink',
-}
-
-const CHIP_DISPLAY_NAME: Record<string, string> = {
-  wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
 }
 
 /** Real, name-based presentation grouping of the flat readiness-check list
@@ -23,7 +20,7 @@ const CHIP_DISPLAY_NAME: Record<string, string> = {
 const READINESS_GROUPS: { label: string; names: string[] }[] = [
   { label: 'Data', names: ['Database', 'Current FPL data', 'Rules', 'Fixtures', 'Prices', 'Players', 'Transfers'] },
   { label: 'Intelligence', names: ['Injuries', 'Team news', 'Change detection', 'First-team generation'] },
-  { label: 'Models', names: ['Player projections', 'Squad optimizer', 'Transfer optimizer', 'Captaincy', 'Chip engine'] },
+  { label: 'Models', names: ['Player projections', 'Squad optimizer', 'Transfer planner', 'Captaincy', 'Chip engine'] },
   { label: 'Infrastructure', names: ['Scheduler', 'Storage governor', 'Backup', 'Tests'] },
 ]
 
@@ -84,22 +81,26 @@ export function AdvancedScreen() {
       <Masthead
         edition="Systems Desk"
         title="The Engine Room"
-        right={p.freshness?.is_stale ? <span className="text-broadcast-gold">Decision may be stale: {p.freshness.stale_reason}</span> : undefined}
       />
 
-      {/* DECISION AUDIT - the workbench's real centrepiece: the cached
-          adversarial trace of the standing recommendation. Previously this
-          screen sent the reader to the old dashboard for it. */}
-      {p.decision_audit ? (
-        <DecisionAudit audit={p.decision_audit} />
+      {p.week_plan_audit ? (
+        <WeekPlanAudit audit={p.week_plan_audit} />
       ) : (
         <div className="border-b-2 border-divider px-10 py-8">
-          <div className="font-display text-2xl font-bold text-text-faint">No adversarial audit on file</div>
+          <div className="font-display text-2xl font-bold text-text-faint">No week plan on file</div>
           <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
-            The standing recommendation has never been stress-tested on this database. Run{' '}
-            <code className="font-mono text-text">fpl decision-audit</code> to produce a real falsifier set, counterfactual
-            stress tests and a trust scorecard &mdash; they appear here, with their own age, once it has.
+            Run <code className="font-mono text-text">fpl week-plan</code>, or use Sync now in the header. The plan, and the stress test of each
+            move in it, appear here once it exists.
           </p>
+        </div>
+      )}
+
+      {p.decision_audit && !p.decision_audit.stale && <DecisionAudit audit={p.decision_audit} />}
+      {p.decision_audit?.stale && (
+        <div className="border-b-2 border-divider bg-panel px-10 py-4 text-sm text-text-muted">
+          <span className="mr-3 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">Adversarial audit</span>
+          The last one is {p.decision_audit.age_days} days old and audits an earlier squad and an earlier recommendation, so it says nothing about
+          this week. Run <code className="font-mono text-text">fpl decision-audit</code> to redo it.
         </div>
       )}
 
@@ -124,64 +125,6 @@ export function AdvancedScreen() {
                 {i < p.pipeline.length - 1 && <div className="flex items-center px-1.5 text-text-faint">&rarr;</div>}
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* CHIP STRATEGY - a real horizontal comparison rail (chip xP values are
-          directly comparable magnitudes, the same broadcast-bar language
-          Command's own ComparisonGraphic already established) instead of a
-          card grid - on its own flat panel band, colour-separated from the
-          pipeline strip above. */}
-      {p.chips.length > 0 && (
-        <div className="bg-panel px-10 py-8">
-          <div className="mb-5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Chip strategy</div>
-          <div className="space-y-5">
-            {(() => {
-              const maxValue = Math.max(...p.chips.map((c) => Math.abs(c.value ?? 0)), 1)
-              return p.chips.map((c) => {
-                const positive = c.value !== null && c.value >= 2.0
-                const negative = c.value !== null && c.value < 0
-                const barColor = positive ? 'bg-pitch-green' : negative ? 'bg-alert-red' : 'bg-broadcast-gold'
-                const textColor = positive ? 'text-pitch-green' : negative ? 'text-alert-red' : 'text-broadcast-gold'
-                return (
-                  <div key={c.name}>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="font-display text-lg font-bold text-text">{CHIP_DISPLAY_NAME[c.name] ?? c.name}</span>
-                      <span className="text-[10px] uppercase tracking-wide text-text-faint">
-                        GW{c.start_event}-{c.stop_event}
-                        {c.value_as_of && <span className="ml-2">as of {relativeTime(c.value_as_of)}</span>}
-                      </span>
-                    </div>
-                    {c.value !== null ? (
-                      <div className="mt-1.5 flex items-center gap-3">
-                        <div className="h-4 flex-1 bg-void">
-                          <div className={`bar-draw h-full ${barColor}`} style={{ width: `${Math.max(4, (Math.abs(c.value) / maxValue) * 100)}%` }} />
-                        </div>
-                        <span className={`tabular w-16 shrink-0 text-right text-xl font-bold ${textColor}`}>{c.value.toFixed(1)}</span>
-                      </div>
-                    ) : (
-                      <div className="mt-1.5 text-sm text-text-faint">run `fpl chips` for a value</div>
-                    )}
-                    {(c.best_alternative_event !== null && c.opportunity_cost !== null) || c.confidence ? (
-                      <div className="mt-1 text-xs text-text-muted">
-                        {c.best_alternative_event !== null && c.opportunity_cost !== null && (
-                          <>
-                            Best alternative GW{c.best_alternative_event} (+{c.best_alternative_value?.toFixed(1)}pts) &middot; timing edge{' '}
-                            <span className="font-semibold text-pitch-green">{c.opportunity_cost >= 0 ? '+' : ''}{c.opportunity_cost.toFixed(1)}pts</span>
-                          </>
-                        )}
-                        {c.confidence && (
-                          <span className="ml-2 uppercase tracking-wide text-text-faint">
-                            {c.confidence}-confidence{c.season_sim_as_of ? ` · ${relativeTime(c.season_sim_as_of)}` : ''}
-                          </span>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })
-            })()}
           </div>
         </div>
       )}
@@ -238,11 +181,6 @@ export function AdvancedScreen() {
         </div>
       )}
 
-      {/* MARKET PRICE RAIL - real anytime-goalscorer odds for squad players.
-          Sorted by the bookmaker's own raw implied probability, which is
-          NOT devigged and is labelled as such - a goalscorer market can't
-          be devigged the way a match-result market can, so this is market
-          sentiment to weigh, never a calibrated probability to trust. */}
       {p.player_odds.length > 0 && (
         <div className="border-t-2 border-divider px-10 py-8">
           <div className="mb-1 flex flex-wrap items-baseline gap-3">
@@ -256,9 +194,6 @@ export function AdvancedScreen() {
                   {o.web_name ?? `#${o.player_id}`}
                 </Link>
                 <span className="w-10 shrink-0 text-[10px] font-bold uppercase text-text-faint">{o.team_short ?? ''}</span>
-                <span className="relative h-3 min-w-0 flex-1 bg-void">
-                  <span className="bar-draw absolute inset-y-0 left-0 bg-broadcast-blue" style={{ width: `${Math.min(100, o.implied_probability_raw * 100)}%` }} />
-                </span>
                 <span className="tabular w-12 shrink-0 text-right text-sm font-bold text-text">
                   {(o.implied_probability_raw * 100).toFixed(0)}%
                 </span>
@@ -363,7 +298,11 @@ export function AdvancedScreen() {
       <div className="border-t-2 border-divider px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
           <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Source health</span>
-          <span className="text-[11px] text-text-faint">every real connector, last successful fetch</span>
+          <span className="text-[11px] text-text-faint">
+            {p.sources.filter((s) => s.active !== false).length} sources in use
+            {p.sources.some((s) => s.active === false) &&
+              ` · ${p.sources.filter((s) => s.active === false).length} dormant (one-off backfills and per-gameweek feeds, not fetched on a cycle)`}
+          </span>
         </div>
         {/* An analytical instrument, not a table inside a box: thick header
             rule, dense rows, a state marker in the gutter, no container
@@ -380,7 +319,7 @@ export function AdvancedScreen() {
               </tr>
             </thead>
             <tbody>
-              {p.sources.map((s) => {
+              {p.sources.filter((s) => s.active !== false).map((s) => {
                 const failing = s.failure_count > 0
                 return (
                   <tr key={s.source_name} className={`border-b border-divider ${failing ? 'bg-panel' : ''}`}>
@@ -403,14 +342,6 @@ export function AdvancedScreen() {
         </div>
       </div>
 
-      <div className="border-t-2 border-divider px-10 py-6 text-sm text-text-faint">
-        Optimizer Delta (the from-scratch squad rebuild comparison) and Regret Analysis are real and already computed but
-        not yet shaped into this screen's payload &mdash; the{' '}
-        <a href="/dashboard.html#advanced" className="text-broadcast-blue underline">
-          old dashboard's Advanced screen
-        </a>{' '}
-        remains their reference view.
-      </div>
     </div>
   )
 }

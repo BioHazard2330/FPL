@@ -531,6 +531,9 @@ export interface PointsRevisionsBlock {
  * journal entry. Expensive and manual, so `created_at` can legitimately be
  * days older than the decision it audits - the UI must disclose that age. */
 export interface DecisionAuditBlock {
+  /** Set when the audit is too old to say anything about this week; only its age is shipped. */
+  stale?: boolean
+  age_days?: number
   created_at: string | null
   summary: string | null
   cross_check_note: string | null
@@ -556,12 +559,37 @@ export interface DecisionAuditBlock {
   } | null
 }
 
+export interface WeekPlanAuditBlock {
+  decision_id: number
+  computed_at: string
+  event: number
+  stale_reasons: string[]
+  solver: { proven_optimal: boolean; horizon: number; pool_size: number; seconds: number; min_move_gain: number } | null
+  moves: {
+    out: string
+    into: string
+    into_id: number
+    gain: number
+    xp_out: number
+    xp_in: number
+    solio_in: number | null
+    start_percent_out: number | null
+    price_trend_in: string
+    stress: { gain_with_others: number; gain_if_half: number; breakeven_drop_pct: number | null; survives_half: boolean } | null
+  }[]
+  min_move_gain: number
+  horizon: number
+  model_mae: number | null
+  assumptions: string[]
+}
+
 export interface AdvancedPayload {
   readiness: { name: string; status: string; detail: string }[]
   sources: {
     source_name: string; last_success: string | null; last_failure: string | null
-    last_error: string | null; latency_ms: number | null; failure_count: number
+    last_error: string | null; latency_ms: number | null; failure_count: number; active?: boolean
   }[]
+  week_plan_audit?: WeekPlanAuditBlock | null
   pipeline: { stage: string; status: string; detail: string }[]
   benchmark: BenchmarkBlock | null
   chips: ChipStrategyRow[]
@@ -1442,6 +1470,8 @@ export interface WeekPlanPlayer {
   start_percent: number | null
   price_trend: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
   solio_next: number | null
+  /** First-choice set-piece duties: any of penalties, free kicks, corners. */
+  duties?: string[]
 }
 
 export interface WeekPlanMove {

@@ -63,6 +63,19 @@ function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'i
           {side === 'into' && p.price_trend === 'RISE_LIKELY' && (
             <Tag tone="gold" title="Net transfers in suggest the price is about to rise">price rising</Tag>
           )}
+          {(p.duties ?? []).length > 0 && (
+            <Tag
+              tone={side === 'out' && p.duties!.includes('penalties') ? 'red' : 'gold'}
+              title={
+                side === 'out'
+                  ? 'First choice on these set pieces, per the FPL site. Selling him gives that up.'
+                  : 'First choice on these set pieces, per the FPL site.'
+              }
+            >
+              {p.duties!.includes('penalties') ? 'pens' : p.duties![0]}
+              {p.duties!.length > 1 ? ` +${p.duties!.length - 1}` : ''}
+            </Tag>
+          )}
           {disagree && (
             <Tag tone="blue" title="Solio Analytics' independent projection for the same gameweek">
               Solio has {p.solio_next!.toFixed(1)}

@@ -103,12 +103,23 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
         checks.append(ReadinessCheck("Chip engine", "DEGRADED", "no real locked squad to evaluate yet"))
     else:
         try:
-            from fpl_agent.optimization.decision_analysis import analyze_transfer_decision
+            from fpl_agent.optimization.week_plan import latest_week_plan, week_plan_staleness
 
-            ta = analyze_transfer_decision(conn, locked)
-            checks.append(ReadinessCheck("Transfer optimizer", "OK", f"live-exercised, verdict={ta.decision_kind}"))
+            stored = latest_week_plan(conn)
+            if stored is None:
+                checks.append(ReadinessCheck("Week plan", "DEGRADED", "none stored yet - run `fpl week-plan`"))
+            else:
+                detail, created_at, _ = stored
+                reasons = week_plan_staleness(conn, detail, created_at)
+                checks.append(ReadinessCheck(
+                    "Transfer planner", "DEGRADED" if reasons else "OK",
+                    f"out of date: {reasons[0]}" if reasons else (
+                        f"week plan current, {len(detail['moves'])} move(s), "
+                        f"{'proven best' if detail['proven_optimal'] else 'best found, not proven'}"
+                    ),
+                ))
         except Exception as e:
-            checks.append(ReadinessCheck("Transfer optimizer", "DEGRADED", f"live exercise raised: {e}"))
+            checks.append(ReadinessCheck("Transfer planner", "DEGRADED", f"week plan check raised: {e}"))
 
         try:
             from fpl_agent.optimization.decision_analysis import analyze_captain_decision
@@ -140,6 +151,25 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
     # the three - a real problem on any one of them must not be hidden by
     # the other two being healthy.
     task_healths = assess_all_task_health()
+    try:
+        from fpl_agent.scheduler.power_window import compute_window
+
+        window = compute_window(conn)
+    except Exception:
+        window = None
+    if window is not None and not window.active:
+        # Outside the pre-deadline window the live poll and the dashboard server
+        # are meant to be down (power gating). A task that is correctly idle is
+        # not stale, and reporting it as such sent a standing DEGRADED to the
+        # one screen meant for spotting real faults.
+        from dataclasses import replace
+
+        task_healths = [
+            replace(h, status="OK", detail=f"idle by design outside the pre-deadline window ({window.reason})")
+            if h.task_name in ("FPLAgentLiveServer", "FPLAgentLivePoll") and h.status in ("STALE", "UNKNOWN")
+            else h
+            for h in task_healths
+        ]
     _STATUS_RANK = {"OK": 0, "STALE": 1, "UNKNOWN": 1, "CRITICAL": 2, "UNREGISTERED": 2}
     worst = max(task_healths, key=lambda h: _STATUS_RANK.get(h.status, 2))
     overall = "OK" if worst.status == "OK" else ("DEGRADED" if worst.status in ("STALE", "UNKNOWN") else "CRITICAL")
@@ -169,8 +199,7 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
         age_h = (datetime.now(timezone.utc).timestamp() - nodeids_file.stat().st_mtime) / 3600
         checks.append(ReadinessCheck(
             "Tests", "OK" if age_h < 24 else "DEGRADED",
-            f"pytest last ran {age_h:.1f}h ago (.pytest_cache/v/cache/nodeids mtime) - "
-            "this check does not re-execute the suite or know pass/fail counts, run `pytest` to confirm",
+            f"pytest last ran {age_h:.1f}h ago (cache timestamp only; pass/fail is not known here)",
         ))
     else:
         checks.append(ReadinessCheck("Tests", "DEGRADED", "no .pytest_cache found - pytest has never run here"))

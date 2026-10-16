@@ -191,6 +191,7 @@ def plan_transfers_milp(
     forced_in_first: frozenset[int] = frozenset(),
     forced_out_first: frozenset[int] = frozenset(),
     transfer_penalty: float = 0.0,
+    xp_scale: dict[int, float] | None = None,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -212,7 +213,10 @@ def plan_transfers_milp(
     build a recommendation one move at a time and price each against the best
     plan that still contains the earlier ones. `transfer_penalty` charges every
     transfer that many points in the objective only (reported totals stay pure
-    expected points), so a plan stops making moves that do not earn their keep. `league_pool` lets a caller
+    expected points), so a plan stops making moves that do not earn their keep.
+    `xp_scale` multiplies chosen players' projections in every gameweek - a
+    stress test asks what a plan is worth if one of them is simply worse than
+    projected. `league_pool` lets a caller
     that solves the same horizon several times build the ~560-player pool once.
     """
     if len(squad_ids) != 15:
@@ -262,7 +266,10 @@ def plan_transfers_milp(
         return MilpPlanResult(None, "Infeasible (pool smaller than a legal squad)",
                               False, None, horizon_gw, len(pool), time.monotonic() - started)
 
-    xp = {(c.player_id, t): _gw_xp(conn, c.player_id, t, cache) for c in pool for t in events}
+    xp = {
+        (c.player_id, t): _gw_xp(conn, c.player_id, t, cache) * (xp_scale or {}).get(c.player_id, 1.0)
+        for c in pool for t in events
+    }
     price = {c.player_id: c.price_tenths for c in pool}
     sell_price = {p: min((sell_prices_tenths or {}).get(p, price[p]), price[p]) for p in price}
     pos = {c.player_id: c.position for c in pool}
