@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
-import { fetchLiveSnapshot } from '@/lib/api'
+import { fetchLiveSnapshot, fetchWeekPlanPayload } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, baseChart, flatAreaFill, intAxisLabels, rankAxisLabels } from '@/lib/chartTheme'
@@ -16,12 +16,6 @@ const CLASS_COLOR: Record<string, string> = {
   DOUBTFUL: 'text-broadcast-gold',
   'LIKELY UNAVAILABLE': 'text-alert-red',
   'CONFIRMED UNAVAILABLE': 'text-alert-red',
-}
-
-const DECISION_STATUS_COLOR: Record<string, string> = {
-  CURRENT: 'text-pitch-green',
-  STALE: 'text-alert-red',
-  RECOMPUTING: 'text-broadcast-gold',
 }
 
 const RETURN_KIND: Record<LiveMatchEvent['kind'], { label: string; color: string }> = {
@@ -79,6 +73,7 @@ function LiveSkeleton() {
 
 export function LiveScreen() {
   const state = useFetch(fetchLiveSnapshot, [], 10000)
+  const planState = useFetch(fetchWeekPlanPayload, [], 60000)
 
   if (state.status === 'loading') return <LiveSkeleton />
   if (state.status === 'error') {
@@ -110,7 +105,9 @@ export function LiveScreen() {
   const bench = squad.filter((s) => s.slot === 'bench')
   const rankArrowUp = rank?.rank_gain !== null && rank?.rank_gain !== undefined ? rank.rank_gain > 0 : null
   const charts = p.charts
-  const rec = p.recommendation
+  const plan = planState.status === 'ready' && planState.data.status !== 'none' ? planState.data : null
+  const snapshotAgeMs = p.generated_at ? Date.now() - new Date(p.generated_at).getTime() : null
+  const snapshotOld = !isLive && snapshotAgeMs !== null && snapshotAgeMs > 30 * 60 * 1000
   const pointsChanges = p.points_changes
   const bonusDefcon = p.bonus_defcon ?? []
   const squadMatches = matches.filter((m) => m.is_squad_match).length
@@ -130,6 +127,16 @@ export function LiveScreen() {
         title={`GW${p.event ?? '?'} · ${p.gw?.state ?? 'No live window'}`}
         right={<span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>}
       />
+
+      {snapshotOld && (
+        <div className="border-b-2 border-divider bg-panel px-10 py-3">
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-broadcast-gold">This is an old snapshot</span>
+          <span className="ml-3 text-sm text-text-muted">
+            Written {relativeTime(p.generated_at)}. Nothing polls outside the pre-deadline window, so everything below is how things stood
+            then. &ldquo;Sync now&rdquo; in the header brings it up to date.
+          </span>
+        </div>
+      )}
 
       {/* THE BOTTOM LINE - real gap found 2026-09-12 (direct user report:
           "cant even see where my live points is", plus a direct comparison
@@ -277,13 +284,13 @@ export function LiveScreen() {
           </div>
         </ConsoleCell>
 
-        {rec?.status && (
-          <ConsoleCell label="Standing decision">
-            <div className={`font-display text-lg font-bold uppercase tracking-wide ${DECISION_STATUS_COLOR[rec.status] ?? 'text-text'}`}>
-              {rec.status}
+        {plan && (
+          <ConsoleCell label="Week plan">
+            <div className={`font-display text-lg font-bold uppercase tracking-wide ${plan.status === 'current' ? 'text-pitch-green' : 'text-alert-red'}`}>
+              {plan.status === 'current' ? 'Current' : 'Out of date'}
             </div>
             <div className="mt-0.5 text-[10px] text-text-faint">
-              {rec.stale_reason ?? (rec.computed_at ? `computed ${relativeTime(rec.computed_at)}` : '')}
+              {plan.status === 'stale' ? (plan.stale_reasons?.[0] ?? '') : `solved ${relativeTime(plan.computed_at)}`}
             </div>
           </ConsoleCell>
         )}

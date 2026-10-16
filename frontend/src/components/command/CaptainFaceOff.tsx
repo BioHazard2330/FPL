@@ -92,6 +92,8 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
         )}
       </div>
 
+      {block.note && <div className="mt-8 border-t-2 border-divider pt-4 text-center text-sm text-text-muted">{block.note}</div>}
+
       {block.edge_driver && (
         <div className="mt-8 border-t-2 border-divider pt-4 text-center text-sm text-text-muted">
           Edge driven by <span className="font-semibold text-text">{block.edge_driver.label}</span>{' '}

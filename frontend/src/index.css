@@ -333,6 +333,20 @@ body,
   animation: bar-draw 620ms var(--ease-broadcast) both;
 }
 
+@keyframes bar-rise {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.bar-draw-up {
+  transform-origin: bottom center;
+  animation: bar-rise 620ms var(--ease-broadcast) both;
+}
+
 /* 3. LIVE. The one continuous animation in the system, and it is a signal:
       it runs only where something is genuinely live right now. */
 
@@ -342,7 +356,8 @@ body,
   .data-in,
   .data-in-seq > *,
   .bar-draw,
-  .bar-draw-right {
+  .bar-draw-right,
+  .bar-draw-up {
     animation: none;
   }
 }

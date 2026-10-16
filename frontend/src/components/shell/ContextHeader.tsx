@@ -3,6 +3,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar'
 import { currentDestination } from '@/lib/nav'
 import { useLiveMeta } from '@/lib/useLiveMeta'
 import { relativeTime } from '@/lib/time'
+import { SyncButton } from '@/components/shell/SyncButton'
 
 /** Global contextual header + live intelligence strip (full redesign pass,
  * Part 4) - replaces the bare `<SidebarTrigger>`-only bar every screen sat
@@ -54,6 +55,7 @@ export function ContextHeader() {
           <span className={isFresh ? 'text-pitch-green' : live ? 'text-broadcast-gold' : 'text-text-faint'}>
             {updated ? `Synced ${updated}` : 'Connecting'}
           </span>
+          <SyncButton />
         </div>
       </div>
     </header>

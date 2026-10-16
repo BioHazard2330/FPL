@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Masthead } from '@/components/shell/Masthead'
-import { fetchPlanPayload, shirtUrl } from '@/lib/api'
+import { fetchPlanPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { TransferWormhole } from '@/components/three/TransferWormhole'
+import { WeekPlanDesk } from '@/components/plan/WeekPlanDesk'
 import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -294,9 +295,11 @@ function StepRail({ path }: { path: PlanPath }) {
 
 export function PlanScreen() {
   const state = useFetch(fetchPlanPayload, [], 60000)
+  const weekState = useFetch(fetchWeekPlanPayload, [], 60000)
   const [activePath, setActivePath] = useState(1)
+  const week = weekState.status === 'ready' && weekState.data.status !== 'none' ? weekState.data : null
 
-  if (state.status === 'loading') {
+  if (state.status === 'loading' && !week) {
     // Shaped like the strategy desk it precedes: headline path, then the
     // gameweek-by-path grid, then the selected-path step rail.
     return (
@@ -318,7 +321,7 @@ export function PlanScreen() {
       </div>
     )
   }
-  if (state.status === 'error') {
+  if (state.status === 'error' && !week) {
     return (
       <ScreenError
         title="No strategy to show"
@@ -328,9 +331,44 @@ export function PlanScreen() {
     )
   }
 
+  const BeamDivider = (
+    <div className="border-y-2 border-divider bg-raised/40 px-10 py-5">
+      <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-broadcast-gold">The beam search&apos;s view</div>
+      <p className="mt-1 max-w-3xl text-sm text-text-muted">
+        The older planner: one transfer a gameweek, chips included, a search that keeps its best five paths. It answers a different question from the plan
+        above and is kept as a second opinion. When the two disagree about this week, the plan above is the one to act on.
+      </p>
+    </div>
+  )
+
+  if (state.status !== 'ready') {
+    return (
+      <div className="data-in pb-16">
+        <Masthead edition="Strategy Desk" title="Plan" />
+        {week && <WeekPlanDesk plan={week} />}
+        {BeamDivider}
+        {state.status === 'loading' ? (
+          <div className="animate-pulse px-10 py-8">
+            <Skel className="h-2 w-40" />
+            <Skel className="mt-4 h-14 w-[26rem]" />
+          </div>
+        ) : (
+          <div className="px-10 py-8 text-sm text-text-muted">The beam search&apos;s plan could not be fetched. Nothing is being shown in its place.</div>
+        )}
+      </div>
+    )
+  }
+
   const p = state.data
   if (!p.has_plan) {
-    return <div className="p-10 text-text-muted">{p.reason}</div>
+    return (
+      <div className="data-in pb-16">
+        <Masthead edition="Strategy Desk" title="Plan" />
+        {week && <WeekPlanDesk plan={week} />}
+        {BeamDivider}
+        <div className="p-10 text-text-muted">{p.reason}</div>
+      </div>
+    )
   }
 
   const leader = p.leader!
@@ -338,7 +376,9 @@ export function PlanScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Strategy Desk" title={`${p.horizon_gw}-gameweek plan`} />
+      <Masthead edition="Strategy Desk" title={week ? 'Plan' : `${p.horizon_gw}-gameweek plan`} />
+      {week && <WeekPlanDesk plan={week} />}
+      {week && BeamDivider}
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
         <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
           PLAN

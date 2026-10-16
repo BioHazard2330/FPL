@@ -21,6 +21,8 @@ export interface CaptainBlock {
   second: PlayerBrief | null
   edge: number | null
   edge_driver: { label: string; value: number } | null
+  /** Why the armband is not simply on the top projection, when it is not. */
+  note?: string | null
 }
 
 export interface ContributionRow {
@@ -1263,6 +1265,10 @@ export interface LedgerRow {
   note: string | null
   /** Its recommendation scored no more than doing nothing would have. */
   worthless_vs_roll: boolean
+  /** The week plan's own eleven and armband, where one was on file at the deadline. */
+  plan_points?: number | null
+  plan_action?: string | null
+  plan_followed?: boolean | null
 }
 
 /** MODEL vs REALITY - one frozen pre-deadline prediction per player per
@@ -1305,6 +1311,10 @@ export interface ReceiptsPayload {
     events: number
     followed_count: number
     recommendations_logged: number
+    plan_events?: number
+    plan_total?: number | null
+    plan_your_total?: number | null
+    plan_roll_total?: number | null
     optimizer_ahead: boolean
   }
   ledger?: LedgerRow[]
@@ -1413,4 +1423,112 @@ export interface TablePayload {
   through_event: number | null
   rows: TableRow[]
   method: string
+}
+
+
+/** THE WEEK PLAN - this gameweek's transfers as a set, with each move's
+ * marginal value, plus the lineup and armband. Produced by
+ * `optimization/week_plan.py` and read from the decision journal. */
+export interface WeekPlanPlayer {
+  player_id: number
+  name: string
+  position: string
+  team_short: string
+  team_id: number
+  team_code: number | null
+  price_tenths: number
+  xp_next: number
+  xp_horizon: number
+  start_percent: number | null
+  price_trend: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
+  solio_next: number | null
+}
+
+export interface WeekPlanMove {
+  out: WeekPlanPlayer
+  into: WeekPlanPlayer
+  gain: number
+  cost_tenths: number
+}
+
+export interface WeekPlanLineupPlayer {
+  player_id: number
+  name: string
+  position: string
+  team_short: string
+  team_id: number
+  team_code: number | null
+  xp: number
+  start_percent: number | null
+  floor: number | null
+  ceiling: number | null
+}
+
+export interface WeekPlanLineup {
+  starting: WeekPlanLineupPlayer[]
+  bench: WeekPlanLineupPlayer[]
+  captain_id: number | null
+  vice_id: number | null
+  xp_total: number
+  captain_note: string | null
+}
+
+export interface LineupChanges {
+  bring_in: WeekPlanLineupPlayer[]
+  take_out: WeekPlanLineupPlayer[]
+  captain_from: WeekPlanLineupPlayer | null
+  captain_to: WeekPlanLineupPlayer | null
+  vice_from: WeekPlanLineupPlayer | null
+  vice_to: WeekPlanLineupPlayer | null
+  xp_gain: number
+  worth_changing: boolean
+}
+
+export interface WeekPlanPayload {
+  status: 'none' | 'current' | 'stale'
+  stale_reasons?: string[]
+  decision_id?: number
+  computed_at?: string
+  age_hours?: number
+  event?: number
+  horizon?: number
+  free_transfers?: number
+  free_transfers_known?: boolean
+  bank_tenths?: number
+  roll_total?: number
+  plan_total?: number
+  gain_vs_roll?: number
+  min_move_gain?: number
+  moves?: WeekPlanMove[]
+  declined?: WeekPlanMove[]
+  curve?: { moves: number; total: number; gain_vs_roll: number }[]
+  ft_after?: number
+  bank_after_tenths?: number
+  affordability?: string
+  road_ahead?: {
+    horizon: number
+    total: number
+    roll_total: number
+    gain_vs_roll: number
+    proven: boolean
+    final_free_transfers: number
+    weeks: { event: number; moves: { out: string; into: string; hit: boolean }[] }[]
+  } | null
+  chip_outlook?: {
+    available: string[]
+    double_gameweeks: { event: number; teams: string[] }[]
+    blank_gameweeks: { event: number; teams: string[] }[]
+    bench_boost_this_week: number
+    horizon: number
+  } | null
+  proven_optimal?: boolean
+  notes?: string[]
+  lineup_now?: WeekPlanLineup
+  lineup_after?: WeekPlanLineup
+  lineup_set_by_you?: WeekPlanLineup | null
+  doctor?: LineupChanges | null
+  doctor_after_moves?: LineupChanges | null
+  action_squad?: ActionSquadBlock
+  captain?: CaptainBlock | null
+  fixtures?: FixtureContext
 }

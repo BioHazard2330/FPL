@@ -21,7 +21,12 @@ export function TrackRecordStrip() {
   const h = state.data.headline
   const f = state.data.flags
   if (h.delta === null || h.optimizer_total === null || h.your_total === null) return null
-  const behind = h.delta < 0
+  const planned = (h.plan_events ?? 0) > 0 && h.plan_total != null && h.plan_your_total != null
+  const ours = planned ? h.plan_total! : h.optimizer_total
+  const yours = planned ? h.plan_your_total! : h.your_total
+  const delta = ours - yours
+  const gws = planned ? h.plan_events! : h.comparable_events
+  const behind = delta < 0
 
   return (
     <Link
@@ -30,26 +35,29 @@ export function TrackRecordStrip() {
     >
       <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">
-          Its record against you
+          {planned ? 'The week plan against you' : 'The old single-swap engine against you'}
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="tabular text-2xl font-bold text-pitch-green">{h.your_total}</span>
+          <span className="tabular text-2xl font-bold text-pitch-green">{yours}</span>
           <span className="text-[10px] uppercase tracking-wide text-text-faint">yours</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="tabular text-2xl font-bold text-broadcast-blue">{h.optimizer_total}</span>
+          <span className="tabular text-2xl font-bold text-broadcast-blue">{ours}</span>
           <span className="text-[10px] uppercase tracking-wide text-text-faint">its</span>
         </div>
         <div className={`tabular text-2xl font-bold ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
-          {h.delta > 0 ? '+' : ''}{h.delta}
+          {delta > 0 ? '+' : ''}{delta}
           <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-text-faint">
-            over {h.comparable_events} GW
+            over {gws} GW
           </span>
         </div>
-        {f?.never_recommended_roll && (
+        {!planned && (
+          <div className="text-xs text-text-muted">the week plan is scored from GW{state.data.ledger?.length ? Math.max(...state.data.ledger.map((r) => r.event)) + 1 : '7'}</div>
+        )}
+        {!planned && f?.never_recommended_roll && (
           <div className="text-xs text-alert-red">it had never said roll</div>
         )}
-        {f?.followed_none && (
+        {!planned && f?.followed_none && (
           <div className="text-xs text-text-muted">you have followed none of its {h.recommendations_logged} calls</div>
         )}
         <div className="ml-auto text-[10px] font-bold uppercase tracking-wide text-text-faint group-hover:text-text">

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
-import { crestUrl, fetchCommandPayload, fetchMyTeamPayload, shirtUrl } from '@/lib/api'
+import { crestUrl, fetchMyTeamPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
 import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
@@ -16,7 +16,7 @@ const CHIP_DISPLAY_NAME: Record<string, string> = {
   wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
 }
 function actionLabel(action: string | null): string {
-  if (!action) return 'the recommended action'
+  if (!action) return 'the week plan'
   return CHIP_DISPLAY_NAME[action] ?? action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
@@ -288,7 +288,7 @@ export function MyTeamScreen() {
   // a presentation layer over data that already exists, not new
   // computation. A separate, independent fetch: this screen's own pitch
   // must render correctly with or without it.
-  const cmd = useFetch(fetchCommandPayload, [])
+  const planState = useFetch(fetchWeekPlanPayload, [], 60000)
 
   if (state.status === 'loading') {
     // Shaped like the tactical board it precedes: fact column beside the
@@ -349,7 +349,9 @@ export function MyTeamScreen() {
   // compares starting-XI to starting-XI (never against `action_squad.bench`)
   // since a locked bench player moving to the action squad's bench isn't a
   // real recommended change worth flagging.
-  const actionSquad = cmd.status === 'ready' ? cmd.data.action_squad : null
+  const plan = planState.status === 'ready' && planState.data.status !== 'none' ? planState.data : null
+  const actionSquad = plan?.action_squad ?? null
+  const doctor = plan?.doctor ?? null
   const lockedStartingIds = new Set(p.positions?.flatMap((pos) => pos.players.map((pl) => pl.player_id)) ?? [])
   const actionStartingIds = new Set(actionSquad?.starting.map((a) => a.player_id) ?? [])
   const ghostOutIds = new Set([...lockedStartingIds].filter((id) => !actionStartingIds.has(id)))
@@ -426,6 +428,26 @@ export function MyTeamScreen() {
           under a full-width pitch. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="border-r-0 border-divider px-8 py-10 lg:border-r-2">
+          {doctor?.worth_changing && (
+            <Link
+              to="/"
+              className="mb-4 block border-l-4 border-broadcast-gold bg-panel px-4 py-3 hover:bg-raised"
+            >
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-broadcast-gold">This is last week&apos;s lineup</span>
+              <span className="mt-1 block text-sm text-text-muted">
+                Set properly, the same fifteen are worth{' '}
+                <span className="tabular font-bold text-pitch-green">+{doctor.xp_gain.toFixed(1)} xP</span> in GW{plan?.event}: start{' '}
+                <span className="font-semibold text-text">{doctor.bring_in.map((b) => b.name).join(', ') || 'no one new'}</span>
+                {doctor.take_out.length > 0 && (
+                  <>
+                    {' '}
+                    for <span className="font-semibold text-text">{doctor.take_out.map((b) => b.name).join(', ')}</span>
+                  </>
+                )}
+                .
+              </span>
+            </Link>
+          )}
           <div className="mb-3 flex items-center justify-between">
             {lineupsConfirmed ? (
               <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-pitch-green">
@@ -440,10 +462,10 @@ export function MyTeamScreen() {
                 <button
                   type="button"
                   onClick={() => setShowGhost((v) => !v)}
-                  title={`Overlay the real resulting XI if you played the current recommended action (${actionLabel(actionSquad?.action ?? null)}) - the same squad CommandScreen's own recommendation resolves to, never a second competing suggestion.`}
+                  title="Overlay the eleven you would field after this week's planned transfers - the same squad COMMAND's week plan resolves to, never a second competing suggestion."
                   className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${showGhost ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
                 >
-                  {showGhost ? 'Hide ghost XI' : `Ghost XI: ${actionLabel(actionSquad?.action ?? null)}`}
+                  {showGhost ? 'Hide ghost XI' : 'Ghost XI: after the week plan'}
                 </button>
               )}
               <button

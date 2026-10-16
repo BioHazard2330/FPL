@@ -38,6 +38,9 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
       value: row.optimizer_points === null || row.roll_points === null ? null : row.optimizer_points - row.roll_points,
       tone: 'bg-broadcast-blue',
     },
+    ...(row.plan_points != null && row.roll_points !== null
+      ? [{ label: 'Week plan', value: row.plan_points - row.roll_points, tone: 'bg-broadcast-blue' }]
+      : []),
   ]
   return (
     <div className="space-y-2">
@@ -90,9 +93,13 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
           </div>
         )}
         <div className="text-xs text-text-muted">
-          {row.optimizer_action
-            ? <>it said <span className="font-semibold text-text">{row.optimizer_action}</span></>
-            : <span className="text-text-faint">it said nothing</span>}
+          {row.plan_action != null ? (
+            <>the week plan said <span className="font-semibold text-text">{row.plan_action}</span></>
+          ) : row.optimizer_action ? (
+            <>it said <span className="font-semibold text-text">{row.optimizer_action}</span></>
+          ) : (
+            <span className="text-text-faint">it said nothing</span>
+          )}
         </div>
         {row.delta_vs_you !== null && (
           <div className={`tabular ml-auto text-lg font-bold ${beat ? 'text-broadcast-blue' : 'text-pitch-green'}`}>
