@@ -378,6 +378,36 @@ def _apply_live_availability_damping(
     return damped_zero, damped_partial, damped_full
 
 
+_CAMEO_SHARE_OF_REMOVED_STARTS = 0.4
+
+
+def apply_start_probability(
+    conn: sqlite3.Connection, player_id: int, probs: MinutesBucketProbabilities, weight: float = 1.0,
+) -> MinutesBucketProbabilities:
+    """The empirical branch is built from past minutes and cannot see a
+    freshly predicted rotation: Gvardiol, 90 minutes in every recent match,
+    was carrying a 24% predicted start with a 90-minute projection. Removed
+    full-match probability moves to a substitute appearance at
+    `_CAMEO_SHARE_OF_REMOVED_STARTS`, the rest to zero.
+
+    `weight` is how much of the discount applies to this fixture. A predicted
+    start percentage is a statement about the next match; the caller decays it
+    for later gameweeks rather than carrying a one-week rotation across a whole
+    planning horizon. Live callers only - never a historical replay."""
+    from fpl_agent.ingestion.lineup_probability_source import get_start_percent, start_percent_minutes_factor
+
+    factor = start_percent_minutes_factor(get_start_percent(conn, player_id))
+    effective = 1.0 - max(0.0, min(weight, 1.0)) * (1.0 - factor)
+    if effective >= 1.0:
+        return probs
+    new_full = probs.p_full * effective
+    removed = probs.p_full - new_full
+    new_partial = min(probs.p_partial + removed * _CAMEO_SHARE_OF_REMOVED_STARTS, 1.0 - new_full)
+    return MinutesBucketProbabilities(
+        max(0.0, 1.0 - new_full - new_partial), new_partial, new_full, probs.source,
+    )
+
+
 def minutes_bucket_probabilities(
     conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None
 ) -> MinutesBucketProbabilities:

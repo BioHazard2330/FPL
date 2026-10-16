@@ -1,4 +1,8 @@
-from fpl_agent.models.minutes_distribution import expected_appearance_points, minutes_bucket_probabilities
+from fpl_agent.models.minutes_distribution import (
+    apply_start_probability,
+    expected_appearance_points,
+    minutes_bucket_probabilities,
+)
 
 
 def _seed(conn, minutes_list, player_id=1):
@@ -110,6 +114,60 @@ def test_empirical_bucket_is_not_damped_during_a_historical_backtest_replay(db_c
     replay = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25", as_of_date="2025-01-01")
 
     assert live.p_full < replay.p_full
+
+
+def _set_start_percent(conn, percent, player_id=1):
+    conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (?, 1, 'CF', ?, 't1') ON CONFLICT(player_id) DO UPDATE SET start_percent=excluded.start_percent",
+        (player_id, percent),
+    )
+    conn.commit()
+
+
+def test_a_low_predicted_start_discounts_a_nailed_players_empirical_minutes(db_conn):
+    _seed(db_conn, [90, 90, 90, 90, 90, 90, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    _set_start_percent(db_conn, 24)
+    rotated = apply_start_probability(db_conn, 1, baseline)
+
+    assert rotated.p_full < baseline.p_full * 0.6
+    assert rotated.p_partial > baseline.p_partial
+    assert abs((rotated.p_zero + rotated.p_partial + rotated.p_full) - 1.0) < 1e-9
+
+
+def test_the_sources_ceiling_of_90_is_not_treated_as_a_rotation_risk(db_conn):
+    _seed(db_conn, [90, 90, 90, 90, 90, 90, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    _set_start_percent(db_conn, 90)
+
+    assert apply_start_probability(db_conn, 1, baseline).p_full == baseline.p_full
+
+
+def test_a_high_predicted_start_never_raises_minutes_above_the_players_own_record(db_conn):
+    _seed(db_conn, [0, 0, 0, 0, 0, 0, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    _set_start_percent(db_conn, 90)
+
+    assert apply_start_probability(db_conn, 1, baseline).p_full == baseline.p_full
+
+
+def test_the_start_discount_fades_for_later_gameweeks(db_conn):
+    _seed(db_conn, [90, 90, 90, 90, 90, 90, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    _set_start_percent(db_conn, 24)
+
+    next_match = apply_start_probability(db_conn, 1, baseline, weight=1.0)
+    two_weeks_out = apply_start_probability(db_conn, 1, baseline, weight=0.25)
+
+    assert next_match.p_full < two_weeks_out.p_full < baseline.p_full
+
+
+def test_no_start_percentage_means_no_change(db_conn):
+    _seed(db_conn, [90, 90, 90, 90, 90, 90, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+
+    assert apply_start_probability(db_conn, 1, baseline) == baseline
 
 
 def test_expected_appearance_points_weights_buckets_correctly():

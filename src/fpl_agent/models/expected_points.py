@@ -95,6 +95,7 @@ from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.minutes_distribution import (
     MinutesBucketProbabilities,
+    apply_start_probability,
     expected_appearance_points,
     minutes_bucket_probabilities,
 )
@@ -193,6 +194,28 @@ def _confirmed_bench_probs(
     partial = min(probs.p_partial, _CONFIRMED_BENCHED_PARTIAL_CAP)
     zero = max(0.0, 1.0 - full - partial)
     return MinutesBucketProbabilities(zero, partial, full, "confirmed_benched_override")
+
+
+# A predicted start percentage describes the next match. Each gameweek further
+# out keeps this fraction of the discount - a one-week rotation call is not
+# evidence about the whole horizon.
+_START_PERCENT_DECAY_PER_EVENT = 0.5
+
+
+def _fixture_minutes_probs(
+    conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities, first_event: int | None,
+) -> MinutesBucketProbabilities:
+    """Per-fixture minutes distribution: a real confirmed bench wins outright,
+    otherwise the player's own record is discounted by the predicted start
+    percentage, decaying with distance from the next gameweek."""
+    confirmed = _confirmed_bench_probs(conn, player_id, fixture_row, probs)
+    if confirmed is not probs or fixture_row is None:
+        return confirmed
+    event = fixture_row["event"]
+    if event is None or first_event is None:
+        return probs
+    weight = _START_PERCENT_DECAY_PER_EVENT ** max(event - first_event, 0)
+    return apply_start_probability(conn, player_id, probs, weight)
 
 
 # Real, disclosed weight (2026-09-13, "make the optimizer smarter" research
@@ -1311,9 +1334,10 @@ def expected_points(
     # player+fixture - see _market_blended_share's own docstring. Falls
     # back to the shared `rates` for the blank-gameweek case (no real
     # fixture to check).
+    next_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
     fixture_rates = [
         {
-            **rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, f, probs),
+            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, f, probs, next_event),
             "player_share_per90": _market_blended_share(conn, player_id, f, goals_pairs[i][0], rates["player_share_per90"]),
         }
         for i, f in enumerate(fixtures)
@@ -1436,13 +1460,14 @@ def expected_points_window(
     ).fetchall()
 
     breakdowns = []
+    next_event = _reference_event(conn)
     for i, fixture in enumerate(fixtures):
         team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
         # Only the nearest fixture(s) in a multi-GW window could plausibly
         # have a real confirmed teamsheet, or real anytime-scorer odds,
         # yet - see _confirmed_bench_probs/_market_blended_share.
         fixture_rates = {
-            **rates, "minutes_probs": _confirmed_bench_probs(conn, player_id, fixture, rates["minutes_probs"]),
+            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, fixture, rates["minutes_probs"], next_event),
             "player_share_per90": _market_blended_share(conn, player_id, fixture, team_goals, rates["player_share_per90"]),
         }
         breakdowns.append(_match_components(

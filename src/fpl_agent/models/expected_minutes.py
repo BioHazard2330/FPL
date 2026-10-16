@@ -1,7 +1,7 @@
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.ingestion.lineup_probability_source import get_start_percent
+from fpl_agent.ingestion.lineup_probability_source import get_start_percent, start_percent_minutes_factor
 from fpl_agent.models.availability import classify
 from fpl_agent.models.rules import current_season
 from fpl_agent.models.team_news_risk import rotation_risk_snippet
@@ -330,6 +330,7 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
     # binary gate + rotation_risk keyword heuristic exactly as before for any
     # player this newer, narrower-coverage source hasn't matched.
     start_percent = get_start_percent(conn, player_id)
+    start_proportional = False
 
     if basis in ("blended_current_and_prior_season", "current_season_only", "last_season_prior_no_current_data"):
         # Real, well-evidenced bases - only ever raises the estimate (never
@@ -380,6 +381,7 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
             if target > base:
                 base = target
                 basis = "predicted_lineup_confirmed_starting"
+                start_proportional = True
         else:
             predicted_starting = conn.execute(
                 "SELECT 1 FROM predicted_lineup_players WHERE player_id=? AND predicted_status='starting'",
@@ -463,6 +465,9 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
                 confidence = "LOW"
     except Exception:
         pass
+
+    if start_percent is not None and not start_proportional:
+        base = base * start_percent_minutes_factor(start_percent)
 
     damped = min(base * _AVAILABILITY_DAMPING[classification], 90.0)
 

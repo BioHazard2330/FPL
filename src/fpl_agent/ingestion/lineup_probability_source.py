@@ -154,6 +154,23 @@ def sync_lineup_probabilities(conn, url: str = TEAM_NEWS_URL) -> dict:
     }
 
 
+START_PERCENT_CEILING = 90
+START_PERCENT_TRUST = 0.75
+
+
+def start_percent_minutes_factor(start_percent: int | None) -> float:
+    """Multiplier on a nailed player's minutes implied by this source's start
+    percentage. The source never prints above 90 (125 of 360 players sit at
+    exactly 90 - its "certain"), so 90 is the reference, not 100. Discount
+    only: a high number is not evidence of more minutes than the player's own
+    record already shows. Trust is capped below 1 because no historical
+    snapshots exist to calibrate the source against."""
+    if start_percent is None:
+        return 1.0
+    ratio = max(0.0, min(start_percent / START_PERCENT_CEILING, 1.0))
+    return 1.0 - START_PERCENT_TRUST * (1.0 - ratio)
+
+
 def get_start_percent(conn, player_id: int) -> int | None:
     """Real synced start percentage for this player, or `None` if this
     source has never covered them (unsynced, or the site simply didn't list
