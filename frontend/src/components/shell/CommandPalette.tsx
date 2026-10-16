@@ -13,6 +13,7 @@ const ITEMS: Item[] = [
   { label: 'Plan', hint: 'Strategic trajectory', to: '/plan' },
   { label: 'Football', hint: 'Match intelligence', to: '/football' },
   { label: 'Desk', hint: 'News, video, price board', to: '/desk' },
+  { label: 'Previews', hint: 'Next gameweek, match by match', to: '/previews' },
   { label: 'Scout', hint: 'Player market', to: '/scout' },
   { label: 'Advanced', hint: 'System diagnostics', to: '/advanced' },
   { label: 'Live', hint: 'Live matches & events', to: '/live' },

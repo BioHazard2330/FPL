@@ -7,6 +7,7 @@
 // built app is served from the same origin as that server.
 import type {
   DeskPayload,
+  PreviewsPayload,
   AtlasPayload,
   ReceiptsPayload,
   AdvancedPayload, ClubProfilePayload, CommandPayload, FootballPayload, LiveSnapshot, MatchweekPayload,
@@ -40,6 +41,10 @@ export function fetchWeekPlanPayload(): Promise<WeekPlanPayload> {
 
 export function fetchDeskPayload(): Promise<DeskPayload> {
   return getJson<DeskPayload>('/api/desk')
+}
+
+export function fetchPreviewsPayload(): Promise<PreviewsPayload> {
+  return getJson<PreviewsPayload>('/api/previews')
 }
 
 export function fetchMyTeamPayload(): Promise<MyTeamPayload> {

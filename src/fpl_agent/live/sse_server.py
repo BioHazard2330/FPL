@@ -506,6 +506,7 @@ class LiveServer:
         self._readiness_refresh_thread: threading.Thread | None = None
         self._football_refresh_thread: threading.Thread | None = None
         self._scout_refresh_thread: threading.Thread | None = None
+        self._previews_refresh_thread: threading.Thread | None = None
         self._server_thread: threading.Thread | None = None
         self._tailer_conn = None
         # Real startup-race fix (see `DbTailer.__init__`'s own docstring) -
@@ -575,7 +576,10 @@ class LiveServer:
         # away rather than relying on the retry.
         import fpl_agent.monitoring.api  # noqa: F401
         import fpl_agent.monitoring.dashboard.context  # noqa: F401
+        import fpl_agent.models.expected_points  # noqa: F401
+        import fpl_agent.models.fixtures  # noqa: F401
         import fpl_agent.optimization.locked_squad  # noqa: F401
+        import fpl_agent.optimization.week_plan  # noqa: F401
 
         self._tailer_thread = threading.Thread(target=self._tailer_main, daemon=True)
         self._tailer_thread.start()
@@ -611,6 +615,8 @@ class LiveServer:
         # time (Phase 9, learned from the football/advanced/command bugs).
         self._scout_refresh_thread = threading.Thread(target=self._scout_refresh_main, daemon=True)
         self._scout_refresh_thread.start()
+        self._previews_refresh_thread = threading.Thread(target=self._previews_refresh_main, daemon=True)
+        self._previews_refresh_thread.start()
 
     def _context_refresh_main(self) -> None:
         from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context, run_context_refresh_loop
@@ -673,6 +679,15 @@ class LiveServer:
             _logger.exception("cache-warming the scout payload failed - first real SCOUT-screen visit will pay the full cost instead")
         run_scout_refresh_loop(ctx_factory, self._stop_event, should_run=self.refresh_allowed)
 
+    def _previews_refresh_main(self) -> None:
+        from fpl_agent.monitoring.api.previews_payload import build_previews_payload, run_previews_refresh_loop
+
+        try:
+            build_previews_payload(None)
+        except Exception:
+            _logger.exception("cache-warming the previews payload failed - first visit to the previews will pay the full cost instead")
+        run_previews_refresh_loop(self._stop_event, should_run=self.refresh_allowed)
+
     def stop(self) -> None:
         self._stop_event.set()
         self.httpd.shutdown()
@@ -689,6 +704,8 @@ class LiveServer:
             self._football_refresh_thread.join(timeout=5)
         if self._scout_refresh_thread is not None:
             self._scout_refresh_thread.join(timeout=5)
+        if self._previews_refresh_thread is not None:
+            self._previews_refresh_thread.join(timeout=5)
 
 
 def run_forever(

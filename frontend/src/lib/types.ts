@@ -1660,3 +1660,51 @@ export interface DeskPayload {
   price: { rises: DeskPriceMove[]; falls: DeskPriceMove[]; leaning: DeskPriceLean[] }
   counts: { articles: number; yours: number; targets: number }
 }
+
+export interface PreviewKeyPlayer {
+  player_id: number
+  name: string
+  position: string
+  xp: number
+  price: number | null
+  mine: boolean
+  doubt: number | null
+  news: string | null
+}
+
+export interface PreviewSide {
+  team_id: number
+  code: number
+  name: string
+  short: string
+  difficulty: number | null
+  form: { fixture_id: number; result: 'W' | 'D' | 'L'; score: string; home: boolean; opponent: string }[]
+  key_players: PreviewKeyPlayer[]
+  absentees: { player_id: number; name: string; status: string; chance: number | null; news: string }[]
+  yours: { player_id: number; name: string }[]
+}
+
+export interface PreviewFixture {
+  fixture_id: number
+  kickoff: string | null
+  home: PreviewSide
+  away: PreviewSide
+  xg: { home: number; away: number }
+  model: {
+    home_win: number
+    draw: number
+    away_win: number
+    home_clean_sheet: number
+    away_clean_sheet: number
+    over_2_5: number
+    likely_score: [number, number]
+    likely_score_p: number
+  }
+  market: { home_win: number; draw: number; away_win: number; bookmakers: number; retrieved_at: string } | null
+}
+
+export interface PreviewsPayload {
+  event: number | null
+  generated_at: string
+  fixtures: PreviewFixture[]
+}
