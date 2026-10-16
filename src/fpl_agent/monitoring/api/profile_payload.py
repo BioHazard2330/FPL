@@ -27,6 +27,7 @@ import sqlite3
 
 from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
 from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
+from fpl_agent.monitoring.api.stories import stories_for_player, stories_for_team
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _MATCH_LOG_LIMIT = 20
@@ -170,6 +171,7 @@ def build_club_profile(ctx: DashboardContext, params: dict | None = None) -> dic
             },
             "results": results,
             "fixtures": fixture_context_by_team_code(conn, {team_id}, n_gw=8).get(str(team["code"]), []),
+            "stories": stories_for_team(conn, team_id),
             "squad": _club_squad(conn, team_id, squad_ids),
             "owned_count": sum(1 for p in _club_squad(conn, team_id, squad_ids) if p["is_mine"]),
         }
@@ -302,6 +304,7 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
         return {
             "player": {
                 "player_id": p["id"], "name": p["web_name"],
+                "photo_code": (conn.execute("SELECT code FROM players WHERE id = ?", (p["id"],)).fetchone() or {"code": None})["code"],
                 "full_name": " ".join(x for x in (p["first_name"], p["second_name"]) if x) or p["web_name"],
                 "position": p["position"], "status": p["status"], "news": p["news"],
                 "team_id": p["team_id"], "team_name": p["team_name"],
@@ -318,6 +321,7 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "ownership": ownership,
             "momentum": momentum,
             "deadlines": deadlines,
+            "stories": stories_for_player(conn, p["id"]),
         }
     finally:
         conn.close()

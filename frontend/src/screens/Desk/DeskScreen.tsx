@@ -4,6 +4,7 @@ import { Play } from 'lucide-react'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchDeskPayload } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
 import type { DeskArticle, DeskInjury, DeskPayload, DeskPlayerChip, DeskPost, DeskPriceLean, DeskPriceMove, DeskVideo } from '@/lib/types'
@@ -113,7 +114,9 @@ function InjuryRow({ i }: { i: DeskInjury }) {
   const crest = crestUrl(i.team_code)
   const tone = chance === null ? 'bg-text-faint' : chance >= 75 ? 'bg-pitch-green' : chance >= 50 ? 'bg-broadcast-gold' : 'bg-alert-red'
   return (
-    <div className="border-b border-divider py-2.5">
+    <div className="flex gap-3 border-b border-divider py-2.5">
+      <PlayerPhoto code={i.photo_code} teamCode={i.team_code} className="h-12 w-10" />
+      <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4" />}
         <Link to={`/player/${i.player_id}`} className="text-sm font-bold text-text hover:text-pitch-green">{i.name}</Link>
@@ -129,6 +132,7 @@ function InjuryRow({ i }: { i: DeskInjury }) {
         <span className="min-w-0 truncate text-xs text-text-muted" title={i.news}>{i.news}</span>
       </div>
       <div className="mt-0.5 font-mono text-[10px] text-text-faint">official FPL note · {relativeTime(i.added_at) ?? ''}</div>
+      </div>
     </div>
   )
 }

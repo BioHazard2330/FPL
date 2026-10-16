@@ -11,6 +11,7 @@ client decides how loudly to say so.
 """
 from datetime import datetime, timezone
 
+from fpl_agent.monitoring.api.photos import attach_photo_codes
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 
@@ -126,7 +127,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             }
 
         age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace("Z", "+00:00"))).total_seconds() / 3600
-        return {
+        payload = {
             "status": "stale" if reasons else "current",
             "stale_reasons": reasons,
             "decision_id": decision_id,
@@ -161,6 +162,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "captain": captain_block(lineup_after),
             "fixtures": fixture_context_by_team_code(conn, team_ids),
         }
+        return attach_photo_codes(conn, payload)
     finally:
         conn.close()
 

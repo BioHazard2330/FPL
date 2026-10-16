@@ -1,6 +1,5 @@
 import xml.etree.ElementTree as ET
 
-import pytest
 
 from fpl_agent.ingestion import media_source
 from fpl_agent.ingestion.media_source import (
@@ -138,3 +137,28 @@ def test_a_first_name_with_someone_elses_surname_is_not_the_player(db_conn):
     assert match_players(db_conn, "Enzo Maresca hails City") == []
     assert match_players(db_conn, "Enzo Fernández scores late") == [3]
     assert match_players(db_conn, "Enzo shines for Chelsea") == [3]
+
+
+def _add_player(conn, pid, web, first, second, team_id=2):
+    conn.execute(
+        "INSERT INTO players (id, code, web_name, first_name, second_name, team_id, element_type, status, removed, updated_at) "
+        "SELECT ?, ?, ?, ?, ?, ?, element_type, 'a', 0, 't0' FROM players WHERE id = 1",
+        (pid, 1000 + pid, web, first, second, team_id),
+    )
+
+
+def test_a_name_preceded_by_another_players_first_name_is_someone_else(db_conn):
+    _seed_two_players_two_teams(db_conn)
+    _add_player(db_conn, 3, "Allan", "Allan", "Andrade Elias")
+    _add_player(db_conn, 4, "Scott", "Scott", "Parker", team_id=1)
+    db_conn.commit()
+    assert match_players(db_conn, "Craig Telfer, Scott Allan and Conor Sammon preview the weekend") == []
+    assert match_players(db_conn, "Allan scores a late winner") == [3]
+
+
+def test_a_bare_surname_needs_its_club_named_too(db_conn):
+    _seed_two_players_two_teams(db_conn)
+    _add_player(db_conn, 3, "Enzo", "Enzo", "Fernandez")
+    db_conn.commit()
+    assert match_players(db_conn, "Fernandez: no European football could boost Rangers") == []
+    assert match_players(db_conn, "Chelsea's Fernandez strikes late") == [3]

@@ -7,6 +7,8 @@
 // built app is served from the same origin as that server.
 import type {
   DeskPayload,
+  ComparePayload,
+  PlayerIndexRow,
   PreviewsPayload,
   AtlasPayload,
   ReceiptsPayload,
@@ -45,6 +47,14 @@ export function fetchDeskPayload(): Promise<DeskPayload> {
 
 export function fetchPreviewsPayload(): Promise<PreviewsPayload> {
   return getJson<PreviewsPayload>('/api/previews')
+}
+
+export function fetchPlayersIndex(): Promise<{ players: PlayerIndexRow[] }> {
+  return getJson<{ players: PlayerIndexRow[] }>('/api/players')
+}
+
+export function fetchComparePayload(a: number, b: number): Promise<ComparePayload> {
+  return getJson<ComparePayload>(`/api/compare?a=${a}&b=${b}`)
 }
 
 export function fetchMyTeamPayload(): Promise<MyTeamPayload> {
@@ -127,4 +137,10 @@ export function shirtUrl(teamCode: number | null, isGkp: boolean, size = 110): s
  * `live/sse_server.py`'s static handler - real, no CORS/referer issues. */
 export function crestUrl(teamCode: number | null): string | null {
   return teamCode === null ? null : `/crests/t${teamCode}.png`
+}
+
+/** Official Premier League headshot (transparent PNG), keyed by the FPL player
+ * `code`. 110x140 for anything above a small avatar, 40x40 below. */
+export function playerPhotoUrl(code: number, size: 'large' | 'small' = 'large'): string {
+  return `https://resources.premierleague.com/premierleague25/photos/players/${size === 'small' ? '40x40' : '110x140'}/${code}.png`
 }

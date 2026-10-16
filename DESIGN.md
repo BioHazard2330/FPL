@@ -250,6 +250,8 @@ against the canvas. **Scale is meaning**: a large shirt is a hero, a 16px
 crest is an identifier. Never a tiny decorative shirt inside every card, and
 never stock football photography.
 
+**Headshots (2026-10-16).** Where a *person* is the subject - a transfer, the captain battle, an injury note, a fixture's key players - the official Premier League headshot (`playerPhotoUrl`, keyed by the FPL player `code`, so a transfer cannot leave it stale) is used through `PlayerPhoto`, on a flat `raised` tile, bottom-aligned and cropped, never stretched, falling back to the club shirt when the code or image is missing. The formation and squad tiles keep shirts: position on the pitch is their meaning. Attached to payloads by `monitoring/api/photos.py::attach_photo_codes`.
+
 ### The armband
 `C` on gold, `V` on raised. On the tile, top-right, always.
 

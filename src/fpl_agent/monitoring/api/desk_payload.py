@@ -15,6 +15,7 @@ import html
 import re
 from datetime import datetime, timedelta, timezone
 
+from fpl_agent.monitoring.api.photos import attach_photo_codes
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _SOURCE_LABEL = {
@@ -252,7 +253,7 @@ def build_desk_payload(ctx: DashboardContext) -> dict:
         )
         wire = [a for a in ranked if lead is None or a["id"] != lead["id"]][:_WIRE_LIMIT]
 
-        return {
+        payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "lead": lead,
             "wire": wire,
@@ -265,6 +266,7 @@ def build_desk_payload(ctx: DashboardContext) -> dict:
                 "targets": sum(1 for a in articles if a["relevance"] == 1),
             },
         }
+        return attach_photo_codes(conn, payload)
     finally:
         conn.close()
 

@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { StoriesRail } from '@/components/shell/StoriesRail'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchClubProfile } from '@/lib/api'
@@ -169,6 +170,8 @@ export function ClubScreen() {
           </div>
         </div>
       )}
+
+      <StoriesRail stories={p.stories} subject={p.club.name} />
 
       {/* THE TWO PITCHES - where they shoot, where they concede. */}
       <div className="border-b-2 border-divider">

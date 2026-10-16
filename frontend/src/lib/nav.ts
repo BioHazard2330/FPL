@@ -1,4 +1,4 @@
-import { Activity, Crosshair, Goal, ListOrdered, Newspaper, Swords, LocateFixed, Radio, Receipt, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Activity, Crosshair, Goal, ListOrdered, Newspaper, Scale, Swords, LocateFixed, Radio, Receipt, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -8,6 +8,7 @@ export const DESTINATIONS = [
   { to: '/football', label: 'Football', icon: Goal },
   { to: '/desk', label: 'Desk', icon: Newspaper },
   { to: '/previews', label: 'Previews', icon: Swords },
+  { to: '/compare', label: 'Compare', icon: Scale },
   { to: '/atlas', label: 'Atlas', icon: LocateFixed },
   { to: '/table', label: 'Table', icon: ListOrdered },
   { to: '/scout', label: 'Scout', icon: Search },
@@ -25,7 +26,7 @@ export const DESTINATIONS = [
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
   { label: 'Decision', routes: ['/', '/my-team', '/plan', '/receipts'] },
   { label: 'The football', routes: ['/matchweek', '/football', '/atlas', '/table'] },
-  { label: 'Intelligence', routes: ['/desk', '/previews', '/scout'] },
+  { label: 'Intelligence', routes: ['/desk', '/previews', '/compare', '/scout'] },
   { label: 'Operations', routes: ['/live', '/advanced'] },
 ]
 

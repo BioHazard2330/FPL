@@ -14,6 +14,7 @@ const ITEMS: Item[] = [
   { label: 'Football', hint: 'Match intelligence', to: '/football' },
   { label: 'Desk', hint: 'News, video, price board', to: '/desk' },
   { label: 'Previews', hint: 'Next gameweek, match by match', to: '/previews' },
+  { label: 'Compare', hint: 'Two players, side by side', to: '/compare' },
   { label: 'Scout', hint: 'Player market', to: '/scout' },
   { label: 'Advanced', hint: 'System diagnostics', to: '/advanced' },
   { label: 'Live', hint: 'Live matches & events', to: '/live' },

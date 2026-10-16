@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchPreviewsPayload } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fdrFill } from '@/lib/fdr'
 import { useFetch } from '@/lib/useFetch'
 import type { PreviewFixture, PreviewKeyPlayer, PreviewSide } from '@/lib/types'
@@ -63,9 +64,10 @@ function FormDots({ side }: { side: PreviewSide }) {
   )
 }
 
-function KeyPlayer({ p }: { p: PreviewKeyPlayer }) {
+function KeyPlayer({ p, teamCode }: { p: PreviewKeyPlayer; teamCode: number }) {
   return (
-    <div className="flex items-baseline gap-2 py-0.5 text-sm">
+    <div className="flex items-center gap-2 py-0.5 text-sm">
+      <PlayerPhoto code={p.photo_code} teamCode={teamCode} isGkp={p.position === 'GKP'} className="h-9 w-7" />
       <span className="w-8 font-mono text-[10px] uppercase text-text-faint">{p.position}</span>
       <Link to={`/player/${p.player_id}`} className="min-w-0 truncate font-semibold text-text hover:text-pitch-green">{p.name}</Link>
       {p.mine && <span className="bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
@@ -96,7 +98,7 @@ function Side({ side, home, cs }: { side: PreviewSide; home: boolean; cs: number
           <span>Top projected</span>
           <span>clean sheet {pct(cs)}</span>
         </div>
-        {side.key_players.map((p) => <KeyPlayer key={p.player_id} p={p} />)}
+        {side.key_players.map((p) => <KeyPlayer key={p.player_id} p={p} teamCode={side.code} />)}
         {side.absentees.length > 0 && (
           <div className="mt-1.5 border-t border-divider pt-1.5 text-[11px] text-text-muted">
             {side.absentees.map((a, i) => (

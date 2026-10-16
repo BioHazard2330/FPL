@@ -5,6 +5,7 @@
 
 export interface PlayerBrief {
   player_id: number
+  photo_code?: number | null
   name: string
   median: number
   floor: number | null
@@ -885,6 +886,7 @@ export interface LiveCadence {
 
 export interface ActionSquadPlayer {
   player_id: number
+  photo_code?: number | null
   name: string
   position: string
   team_code: number | null
@@ -1043,8 +1045,10 @@ export interface PlayerMatchRow {
 }
 
 export interface PlayerProfilePayload {
+  stories?: Story[]
   player: {
     player_id: number
+    photo_code?: number | null
     name: string
     full_name: string
     position: string
@@ -1133,6 +1137,7 @@ export interface ClubResultRow {
 }
 
 export interface ClubProfilePayload {
+  stories?: Story[]
   club: {
     team_id: number
     code: number
@@ -1461,6 +1466,7 @@ export interface TablePayload {
  * `optimization/week_plan.py` and read from the decision journal. */
 export interface WeekPlanPlayer {
   player_id: number
+  photo_code?: number | null
   name: string
   position: string
   team_short: string
@@ -1492,6 +1498,7 @@ export interface WeekPlanMove {
 
 export interface WeekPlanLineupPlayer {
   player_id: number
+  photo_code?: number | null
   name: string
   position: string
   team_short: string
@@ -1575,6 +1582,7 @@ export interface WeekPlanPayload {
 
 export interface DeskPlayerChip {
   player_id: number
+  photo_code?: number | null
   name: string
   team_code: number | null
   mine: boolean
@@ -1596,6 +1604,7 @@ export interface DeskArticle {
 
 export interface DeskInjury {
   player_id: number
+  photo_code?: number | null
   name: string
   team_code: number | null
   team_short: string
@@ -1632,6 +1641,7 @@ export interface DeskPost {
 
 export interface DeskPriceMove {
   player_id: number
+  photo_code?: number | null
   name: string
   team_code: number | null
   old: string
@@ -1644,6 +1654,7 @@ export interface DeskPriceMove {
 
 export interface DeskPriceLean {
   player_id: number
+  photo_code?: number | null
   name: string
   team_code: number | null
   direction: 'RISE_LIKELY' | 'FALL_LIKELY'
@@ -1666,6 +1677,7 @@ export interface DeskPayload {
 
 export interface PreviewKeyPlayer {
   player_id: number
+  photo_code?: number | null
   name: string
   position: string
   xp: number
@@ -1710,4 +1722,86 @@ export interface PreviewsPayload {
   event: number | null
   generated_at: string
   fixtures: PreviewFixture[]
+}
+
+export interface PlayerIndexRow {
+  player_id: number
+  photo_code?: number | null
+  name: string
+  full_name: string
+  team_short: string
+  team_code: number
+  position: string
+  price: number | null
+  owned: number | null
+  status: string
+}
+
+export interface ComparePlayer {
+  player_id: number
+  photo_code?: number | null
+  name: string
+  full_name: string
+  team_id: number
+  team_name: string
+  team_short: string
+  team_code: number
+  position: string
+  status: string
+  news: string | null
+  chance: number | null
+  is_mine: boolean
+  price: number | null
+  owned: number | null
+  xp_next: number
+  floor: number
+  ceiling: number
+  xp_window: number
+  fixture_count: number
+  expected_minutes: number
+  p_blank: number | null
+  p_5plus: number | null
+  components: Record<'appearance' | 'goals' | 'assists' | 'bonus' | 'clean_sheet' | 'cards' | 'conceded' | 'defcon', number> | null
+  points_per_pound: number | null
+  form: number | null
+  ppg: number | null
+  total_points: number | null
+  minutes: number
+  starts: number | null
+  goals: number | null
+  assists: number | null
+  xg: number | null
+  xa: number | null
+  xg90: number | null
+  xa90: number | null
+  start_percent: number | null
+  solio_next: number | null
+  price_trend: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
+  duties: string[]
+  fixtures: FixtureEntry[]
+}
+
+export interface ComparePayload {
+  event: number | null
+  window: number
+  a: ComparePlayer
+  b: ComparePlayer
+  rows: { label: string; key: string; a: number | null; b: number | null; winner: 'a' | 'b' | null; a_text: string | null; b_text: string | null }[]
+  gap_window: number
+  gap_next: number
+  price_gap: number | null
+  model_mae: number | null
+}
+
+export interface Story {
+  kind: 'article' | 'video' | 'post'
+  id: string
+  source: string
+  title: string
+  link: string
+  summary: string | null
+  image: string | null
+  published_at: string | null
+  video_id?: string | null
+  author?: string | null
 }

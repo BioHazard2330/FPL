@@ -1,5 +1,5 @@
 import { MetricNumber } from '@/components/shell/MetricNumber'
-import { shirtUrl } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { NextFixture } from '@/components/football/FixtureRun'
 import type { CaptainBlock, FixtureContext } from '@/lib/types'
 
@@ -25,9 +25,6 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
   // opponent anywhere in the graphic.
   const bestRun = block.best.team_code !== null ? fixtures?.[String(block.best.team_code)] : undefined
   const secondRun = block.second?.team_code != null ? fixtures?.[String(block.second.team_code)] : undefined
-  const bestShirt = block.best.team_code !== null ? shirtUrl(block.best.team_code, block.best.position === 'GKP', 220) : null
-  const secondShirt =
-    block.second && block.second.team_code !== null ? shirtUrl(block.second.team_code, block.second.position === 'GKP', 180) : null
   const max = Math.max(block.best.median, block.second?.median ?? 0, 1)
 
   return (
@@ -39,7 +36,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
             it toward the camera (see module docstring: static, never
             animated, per this project's own motion law) */}
         <div className="flex items-center justify-end gap-6 text-right md:[transform:translateZ(40px)]">
-          {bestShirt && <img src={bestShirt} alt="" className="h-28 w-28 shrink-0 object-contain md:h-36 md:w-36" />}
+          <PlayerPhoto code={block.best.photo_code} teamCode={block.best.team_code} isGkp={block.best.position === 'GKP'} className="h-36 w-28 md:h-44 md:w-36" />
           <div className="min-w-0">
             <div className="truncate font-display text-4xl font-bold uppercase text-text md:text-5xl">{block.best.name}</div>
             <div className="tabular mt-1 text-4xl font-bold text-pitch-green">
@@ -70,7 +67,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
             of the static depth read */}
         {block.second ? (
           <div className="flex items-center gap-6 md:[transform:translateZ(-50px)]">
-            {secondShirt && <img src={secondShirt} alt="" className="h-20 w-20 shrink-0 object-contain opacity-80 md:h-24 md:w-24" />}
+            <PlayerPhoto code={block.second.photo_code} teamCode={block.second.team_code} isGkp={block.second.position === 'GKP'} className="h-24 w-20 md:h-28 md:w-24" muted />
             <div className="min-w-0">
               <div className="truncate font-display text-2xl font-bold uppercase text-text-muted md:text-3xl">{block.second.name}</div>
               <div className="tabular mt-1 text-2xl font-bold text-text-muted">{block.second.median.toFixed(1)} xP</div>

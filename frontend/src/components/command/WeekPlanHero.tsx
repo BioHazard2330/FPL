@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { crestUrl, shirtUrl } from '@/lib/api'
+import { crestUrl } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { FixtureRun } from '@/components/football/FixtureRun'
 import type { FixtureContext, WeekPlanMove, WeekPlanPayload, WeekPlanPlayer } from '@/lib/types'
 
@@ -20,7 +21,6 @@ function Tag({ tone, children, title }: { tone: 'gold' | 'red' | 'blue'; childre
  * player coming in - the one independent projection this project has to set
  * beside its own. */
 function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; fixtures?: FixtureContext }) {
-  const shirt = shirtUrl(p.team_code, p.position === 'GKP', 110)
   const crest = crestUrl(p.team_code)
   const run = p.team_code !== null ? fixtures?.[String(p.team_code)] : undefined
   const rotation = p.start_percent !== null && p.start_percent < 70
@@ -30,9 +30,9 @@ function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'i
 
   return (
     <div className={`flex items-center gap-4 ${mirrored ? 'flex-row-reverse text-right' : ''}`}>
-      <div className="relative h-16 w-16 shrink-0">
-        {shirt ? <img src={shirt} alt="" className="h-16 w-16 object-contain" /> : <div className="h-16 w-16 bg-raised" />}
-        {crest && <img src={crest} alt="" className="absolute -bottom-0.5 -right-0.5 h-5 w-5 rounded-full bg-void ring-2 ring-void" />}
+      <div className="relative shrink-0">
+        <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className={side === 'into' ? 'h-24 w-[4.75rem]' : 'h-20 w-16'} muted={side === 'out'} />
+        {crest && <img src={crest} alt="" className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-void ring-2 ring-void" />}
       </div>
       <div className="min-w-0">
         <Link
@@ -124,19 +124,22 @@ function MoveRow({ m, horizon, maxGain, fixtures }: { m: WeekPlanMove; horizon: 
         )}
       </div>
       <PlayerSide p={m.into} side="into" fixtures={fixtures} />
-      {(m.alternatives ?? []).length > 0 && (
-        <div className="border-t border-divider pt-3 lg:col-span-3">
-          <span className="mr-4 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">If not {m.into.name}</span>
-          {m.alternatives!.map((a) => (
-            <span key={a.into.player_id} className="mr-6 inline-block text-sm text-text-muted">
-              <span className="font-semibold text-text">{a.into.name}</span>{' '}
-              <span className="text-text-faint">({a.into.team_short}, {money(a.into.price_tenths)})</span>{' '}
-              <span className="tabular font-bold text-pitch-green">+{a.gain.toFixed(1)}</span>
-              <span className="text-text-faint"> in that slot over {horizon} GW</span>
-            </span>
-          ))}
-        </div>
-      )}
+      <div className="border-t border-divider pt-3 lg:col-span-3">
+        <Link to={`/compare?a=${m.out.player_id}&b=${m.into.player_id}`} className="float-right text-[10px] font-bold uppercase tracking-[0.14em] text-text-faint hover:text-text">Compare {m.out.name} and {m.into.name} &rarr;</Link>
+        {(m.alternatives ?? []).length > 0 && (
+          <>
+            <span className="mr-4 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">If not {m.into.name}</span>
+            {m.alternatives!.map((a) => (
+              <span key={a.into.player_id} className="mr-6 inline-block text-sm text-text-muted">
+                <span className="font-semibold text-text">{a.into.name}</span>{' '}
+                <span className="text-text-faint">({a.into.team_short}, {money(a.into.price_tenths)})</span>{' '}
+                <span className="tabular font-bold text-pitch-green">+{a.gain.toFixed(1)}</span>
+                <span className="text-text-faint"> in that slot over {horizon} GW</span>
+              </span>
+            ))}
+          </>
+        )}
+      </div>
     </div>
   )
 }

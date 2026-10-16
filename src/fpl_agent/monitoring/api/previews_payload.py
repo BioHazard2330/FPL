@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 import numpy as np
 from scipy.stats import poisson
 
+from fpl_agent.monitoring.api.photos import attach_photo_codes
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _MAX_GOALS = 8
@@ -202,7 +203,7 @@ def _build_previews_uncached() -> dict:
                 fx[side]["yours"] = [{"player_id": p, "name": names.get(p, "")} for p in fx[side]["yours"]]
                 for r in fx[side]["form"]:
                     r["opponent"] = teams[r.pop("opponent_id")]["short_name"]
-        return {"event": event, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": out}
+        return attach_photo_codes(conn, {"event": event, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": out})
     finally:
         conn.close()
 

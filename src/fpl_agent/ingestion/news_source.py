@@ -142,20 +142,30 @@ def _mentions(folded_text: str, folded_name: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])", folded_text) is not None
 
 
-def _is_someone_else(text: str, row) -> bool:
-    """A player known by a first name or nickname ("Enzo", "Rayan") is another
-    person when the text gives that word a capitalised surname the player does
-    not have - "Enzo Maresca" is City's manager, not Chelsea's midfielder."""
-    web, second = _fold_name(row["web_name"]), _fold_name(row["second_name"] or "")
-    if not web or web == second or web in second.split():
-        return False
+def _is_someone_else(text: str, row, field: str, first_names: frozenset[str]) -> bool:
+    """True when every occurrence of the name in the text belongs to another
+    person. A word attached to a surname the player does not have is a different
+    man: "Enzo Maresca" is City's manager, not the midfielder known as Enzo. A
+    word preceded by another player's first name ("Scott Allan", "Emmanuel
+    Fernandez") is the same kind of mistake from the other side. An occurrence
+    with neither mark is taken at face value."""
+    name = row[field]
+    own = {
+        w for part in (row["first_name"], row["second_name"], row["web_name"]) for w in _fold_name(part or "").split()
+    }
     plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
-    own = set(second.split()) | set(_fold_name(row["first_name"] or "").split())
-    for m in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(row['web_name'])}\s+([A-Z][\w'-]+)", plain, flags=re.I):
-        follower = m.group(1)
-        if follower[0].isupper() and follower.lower() not in own:
-            return True
-    return False
+    web, second = _fold_name(row["web_name"]), _fold_name(row["second_name"] or "")
+    check_follower = field == "web_name" and web and web != second and web not in second.split()
+    pattern = rf"(?:([A-Z][A-Za-z'-]+)\s+)?(?<![A-Za-z0-9]){re.escape(_fold_name(name))}(?![A-Za-z0-9])(?:\s+([A-Z][A-Za-z'-]+))?"
+    seen = False
+    for m in re.finditer(pattern, plain, flags=re.I):
+        seen = True
+        before, after = m.group(1), m.group(2)
+        before_bad = bool(before) and before[0].isupper() and _fold_name(before) in first_names and _fold_name(before) not in own
+        after_bad = check_follower and bool(after) and after[0].isupper() and _fold_name(after) not in own
+        if not before_bad and not after_bad:
+            return False
+    return seen
 
 
 def match_players(conn, text: str) -> list[int]:
@@ -172,6 +182,9 @@ def match_players(conn, text: str) -> list[int]:
     to those whose club the same text names; if it names none, nobody gets it."""
     folded_text = _fold_name(text)
     rows = conn.execute("SELECT id, web_name, first_name, second_name, team_id FROM players WHERE removed = 0").fetchall()
+    first_names = frozenset(
+        w for r in rows for part in (r["first_name"], r["web_name"]) for w in _fold_name(part or "").split() if len(w) >= 3
+    )
 
     def pick(field: str) -> set[int]:
         by_name: dict[str, list] = {}
@@ -179,7 +192,7 @@ def match_players(conn, text: str) -> list[int]:
             name = row[field]
             if (
                 name and len(name) >= _MIN_NAME_LENGTH and _mentions(folded_text, _fold_name(name))
-                and not (field == "web_name" and _is_someone_else(text, row))
+                and not _is_someone_else(text, row, field, first_names)
             ):
                 by_name.setdefault(_fold_name(name), []).append(row)
         chosen: set[int] = set()
@@ -196,7 +209,14 @@ def match_players(conn, text: str) -> list[int]:
     matched = pick("web_name")
     if matched:
         return sorted(matched)
-    return sorted(pick("second_name"))
+    # A bare surname is weak evidence on its own ("Fernandez" is also a Rangers
+    # manager): it counts only when the club is named too.
+    by_id = {r["id"]: r for r in rows}
+    surname_hits = pick("second_name")
+    if not surname_hits:
+        return []
+    teams = set(match_teams(conn, text))
+    return sorted(i for i in surname_hits if by_id[i]["team_id"] in teams)
 
 
 def match_teams(conn, text: str) -> list[int]:

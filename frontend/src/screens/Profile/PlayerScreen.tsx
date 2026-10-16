@@ -5,7 +5,9 @@ import { Masthead } from '@/components/shell/Masthead'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { CHART_COLORS, baseChart } from '@/lib/chartTheme'
-import { crestUrl, fetchPlayerProfile, shirtUrl } from '@/lib/api'
+import { crestUrl, fetchPlayerProfile } from '@/lib/api'
+import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { StoriesRail } from '@/components/shell/StoriesRail'
 import { FlipCard } from '@/components/three/FlipCard'
 import { PlayerShots } from '@/components/football/PlayerShots'
 import { XgRace } from '@/components/football/XgRace'
@@ -73,7 +75,6 @@ export function PlayerScreen() {
 
   const p = state.data
   const pl = p.player
-  const shirt = shirtUrl(pl.team_code, pl.position === 'GKP', 260)
   const crest = crestUrl(pl.team_code)
   const status = STATUS_LABEL[pl.status ?? 'a']
 
@@ -94,13 +95,13 @@ export function PlayerScreen() {
           {pl.position}
         </span>
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          {shirt && (
+          {(
             <FlipCard
-              className="h-32 w-32 shrink-0"
+              className="h-44 w-36 shrink-0"
               ariaLabel={`Flip ${pl.name}'s card to see season totals`}
-              front={<img src={shirt} alt="" className="h-32 w-32 object-contain" />}
+              front={<PlayerPhoto code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} className="h-44 w-36" />}
               back={
-                <div className="flex h-32 w-32 flex-col items-center justify-center gap-1 border-2 border-divider bg-panel text-center">
+                <div className="flex h-44 w-36 flex-col items-center justify-center gap-1 border-2 border-divider bg-panel text-center">
                   <span className="text-[8px] font-bold uppercase tracking-wide text-text-faint">This season</span>
                   <span className="tabular font-display text-2xl font-bold text-pitch-green">{totals?.total_points ?? '—'}</span>
                   <span className="text-[9px] uppercase tracking-wide text-text-faint">points</span>
@@ -121,6 +122,7 @@ export function PlayerScreen() {
               </Link>
               <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{pl.position}</span>
               {pl.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[10px] font-bold text-broadcast-gold-ink">IN MY SQUAD</span>}
+              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[10px] font-bold uppercase text-text-muted hover:text-text">Compare</Link>
             </div>
             <div className="mt-1 font-display text-5xl font-bold uppercase leading-none text-text">{pl.name}</div>
             <div className="mt-3 flex flex-wrap items-center gap-4">
@@ -262,6 +264,8 @@ export function PlayerScreen() {
           </div>
         )}
       </div>
+
+      <StoriesRail stories={p.stories} subject={pl.name} />
 
       {/* PRICE - the FPL market's own read on this player over time. */}
       {p.price_history.length > 1 && (
