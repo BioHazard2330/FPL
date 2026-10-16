@@ -72,3 +72,27 @@ def test_projection_needs_a_player_id():
 
     assert API_BUILDERS["projection"] is build_projection_payload
     assert build_projection_payload.needs_context is False
+
+
+def _player_dict(pid, team_id, pos, price, mine, xp_window, xp_next):
+    return {"player_id": pid, "team_id": team_id, "position": pos, "price": price, "is_mine": mine, "xp_window": xp_window, "xp_next": xp_next}
+
+
+def test_as_transfer_checks_position_club_limit_and_bank(db_conn, monkeypatch):
+    from fpl_agent.monitoring.api.compare_payload import _as_transfer
+
+    _seed_two_players_two_teams(db_conn)
+    monkeypatch.setattr(
+        "fpl_agent.optimization.week_plan.light_squad_state",
+        lambda conn: {"squad_ids": [1], "bank_tenths": 3, "free_transfers": 2, "event": 6},
+    )
+    out = _player_dict(1, 1, "FWD", 8.0, True, 20.0, 5.0)
+    into = _player_dict(2, 2, "MID", 8.4, False, 24.0, 6.5)
+    r = _as_transfer(db_conn, out, into)
+    assert r["out_id"] == 1 and r["in_id"] == 2
+    assert r["same_position"] is False
+    assert r["bank_after_tenths"] == 3 + 80 - 84 and r["affordable"] is False
+    assert r["gain_window"] == 4.0 and r["gain_next"] == 1.5
+    assert r["club_after"] == 1 and r["club_ok"] is True
+    assert _as_transfer(db_conn, out, dict(into, is_mine=True)) is None
+    assert _as_transfer(db_conn, dict(out, is_mine=False), into) is None

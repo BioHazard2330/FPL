@@ -165,6 +165,37 @@ def build_compare_payload(ctx: DashboardContext, params: dict | None = None) -> 
     return payload
 
 
+def _as_transfer(conn: sqlite3.Connection, a: dict, b: dict) -> dict | None:
+    """When exactly one of the two is in the squad, the comparison is also a
+    transfer question: could he be swapped for the other, and what does the swap
+    change. Sale price is the current price (FPL pays purchase price plus half
+    the rise, which cannot be read reliably here), so affordability is the
+    optimistic reading and says so."""
+    from fpl_agent.optimization.week_plan import light_squad_state
+
+    if a["is_mine"] == b["is_mine"]:
+        return None
+    out, into = (a, b) if a["is_mine"] else (b, a)
+    state = light_squad_state(conn)
+    if state is None:
+        return None
+    marks = ",".join("?" * len(state["squad_ids"]))
+    club_count = conn.execute(
+        f"SELECT COUNT(*) AS n FROM players WHERE id IN ({marks}) AND team_id = ? AND id != ?",
+        (*state["squad_ids"], into["team_id"], out["player_id"]),
+    ).fetchone()["n"] + 1
+    bank_after = state["bank_tenths"] + round((out["price"] or 0) * 10) - round((into["price"] or 0) * 10)
+    return {
+        "out_id": out["player_id"], "in_id": into["player_id"],
+        "same_position": out["position"] == into["position"],
+        "club_after": club_count, "club_ok": club_count <= 3,
+        "bank_after_tenths": bank_after, "affordable": bank_after >= 0,
+        "gain_window": round(into["xp_window"] - out["xp_window"], 2),
+        "gain_next": round(into["xp_next"] - out["xp_next"], 2),
+        "free_transfers": state["free_transfers"],
+    }
+
+
 def _build_compare(ctx: DashboardContext, params: dict | None = None) -> dict:
     from fpl_agent.database.connection import get_connection
 
@@ -191,6 +222,7 @@ def _build_compare(ctx: DashboardContext, params: dict | None = None) -> dict:
             "gap_next": round(a["xp_next"] - b["xp_next"], 2),
             "price_gap": round(a["price"] - b["price"], 1) if a["price"] is not None and b["price"] is not None else None,
             "model_mae": mae,
+            "as_transfer": _as_transfer(conn, a, b),
         }
         return attach_photo_codes(conn, payload)
     finally:

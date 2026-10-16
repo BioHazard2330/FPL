@@ -190,6 +190,40 @@ function Verdict({ d }: { d: ComparePayload }) {
   )
 }
 
+function AsTransfer({ d }: { d: ComparePayload }) {
+  const t = d.as_transfer
+  if (!t) return null
+  const out = d.a.player_id === t.out_id ? d.a : d.b
+  const into = d.a.player_id === t.in_id ? d.a : d.b
+  const bank = t.bank_after_tenths / 10
+  const checks: { ok: boolean; text: string }[] = [
+    { ok: t.same_position, text: t.same_position ? `Same position (${out.position})` : `Different positions: ${out.name} is ${out.position}, ${into.name} is ${into.position}, so this is not a like-for-like swap` },
+    { ok: t.club_ok, text: t.club_ok ? `${t.club_after} from ${into.team_short} after the swap` : `${t.club_after} from ${into.team_short} would break the three-per-club limit` },
+    { ok: t.affordable, text: t.affordable ? `Bank after: £${bank.toFixed(1)}m at current sale prices` : `£${Math.abs(bank).toFixed(1)}m short at current sale prices` },
+  ]
+  return (
+    <section className="border-b-2 border-divider bg-void px-10 py-6">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+        <span className="font-display text-xl font-bold uppercase tracking-wide text-text">As a transfer</span>
+        <span className="text-sm text-text-muted">
+          {out.name} out, {into.name} in:{' '}
+          <span className="tabular font-bold text-pitch-green">{t.gain_window >= 0 ? '+' : ''}{t.gain_window.toFixed(1)}</span> xP over {d.window} fixtures,{' '}
+          <span className="tabular font-bold text-text">{t.gain_next >= 0 ? '+' : ''}{t.gain_next.toFixed(1)}</span> next gameweek. You hold {t.free_transfers} free transfer{t.free_transfers === 1 ? '' : 's'}.
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-8 gap-y-1">
+        {checks.map((c) => (
+          <span key={c.text} className="flex items-center gap-2 text-xs text-text-muted">
+            <span className={`px-1.5 text-[9px] font-bold uppercase leading-4 ${c.ok ? 'bg-pitch-green text-pitch-green-ink' : 'bg-alert-red text-alert-red-ink'}`}>{c.ok ? 'ok' : 'check'}</span>
+            {c.text}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-text-faint">The xP gap is the two players on their own; the week plan prices the same move inside your whole squad, so its figure can differ. Sale price is today's price; FPL pays purchase price plus half the rise, so confirm the bank on the transfers page.</p>
+    </section>
+  )
+}
+
 function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
   const plan = useFetch(fetchWeekPlanPayload, [])
   if (plan.status !== 'ready' || plan.data.status === 'none') return null
@@ -256,6 +290,7 @@ export function CompareScreen() {
             <Hero p={compare.data.b} align="right" />
           </section>
           <Verdict d={compare.data} />
+          <AsTransfer d={compare.data} />
           <section className="border-b-2 border-divider px-10 py-7">
             {compare.data.rows.map((r) => <Row key={r.key} r={r} />)}
           </section>

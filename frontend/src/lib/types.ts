@@ -1816,6 +1816,18 @@ export interface ComparePayload {
   gap_next: number
   price_gap: number | null
   model_mae: number | null
+  as_transfer?: {
+    out_id: number
+    in_id: number
+    same_position: boolean
+    club_after: number
+    club_ok: boolean
+    bank_after_tenths: number
+    affordable: boolean
+    gain_window: number
+    gain_next: number
+    free_transfers: number
+  } | null
 }
 
 export interface Story {
