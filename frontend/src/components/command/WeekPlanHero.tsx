@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { crestUrl, shirtUrl } from '@/lib/api'
 import { FixtureRun } from '@/components/football/FixtureRun'
@@ -72,8 +73,12 @@ function PlayerSide({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'i
                   : 'First choice on these set pieces, per the FPL site.'
               }
             >
-              {p.duties!.includes('penalties') ? 'pens' : p.duties![0]}
-              {p.duties!.length > 1 ? ` +${p.duties!.length - 1}` : ''}
+              {p.duties!.map((d) => (d === 'penalties' ? 'pens' : d === 'free kicks' ? 'free kicks' : d)).join(' · ')}
+            </Tag>
+          )}
+          {side === 'into' && (p.match_analysis_xp ?? 0) >= 0.3 && (
+            <Tag tone="blue" title="Part of the projection comes from the match-analysis signal (a persistent trend over two or more matches), already counted in the xP shown">
+              +{p.match_analysis_xp!.toFixed(1)} from match analysis
             </Tag>
           )}
           {disagree && (
@@ -109,6 +114,14 @@ function MoveRow({ m, horizon, maxGain, fixtures }: { m: WeekPlanMove; horizon: 
         <div className="tabular mt-1 text-[10px] font-semibold text-text-faint">
           {m.cost_tenths > 0 ? `costs ${money(m.cost_tenths)}` : m.cost_tenths < 0 ? `frees ${money(-m.cost_tenths)}` : 'like for like'}
         </div>
+        {m.timing && m.timing !== 'any' && (
+          <div className="mt-2 max-w-[11rem] text-center">
+            <Tag tone={m.timing === 'early' ? 'gold' : m.timing === 'late' ? 'blue' : 'red'} title={m.timing_note}>
+              {m.timing === 'early' ? 'do early' : m.timing === 'late' ? 'wait for team news' : 'price vs news'}
+            </Tag>
+            <div className="mt-1 text-[10px] leading-snug text-text-faint">{m.timing_note}</div>
+          </div>
+        )}
       </div>
       <PlayerSide p={m.into} side="into" fixtures={fixtures} />
     </div>
@@ -120,6 +133,43 @@ function Stat({ label, value, tone = 'text-text' }: { label: string; value: Reac
     <div>
       <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">{label}</div>
       <div className={`tabular mt-0.5 font-display text-2xl font-bold leading-none ${tone}`}>{value}</div>
+    </div>
+  )
+}
+
+/** The moves as plain text, in the order to make them, for pasting into a note
+ * or a message while the FPL transfers page is open. The app recommends and
+ * never submits anything, so this is the closest it gets to the last step. */
+function ChecklistActions({ plan }: { plan: WeekPlanPayload }) {
+  const [copied, setCopied] = useState(false)
+  const moves = plan.moves ?? []
+  if (moves.length === 0) return null
+  const text = [
+    `GW${plan.event} transfers`,
+    ...moves.map((m, i) => `${i + 1}. ${m.out.name} (${money(m.out.price_tenths)}) -> ${m.into.name} (${money(m.into.price_tenths)})`),
+  ].join('\n')
+  return (
+    <div className="flex flex-wrap items-center gap-4 text-[11px] font-bold uppercase tracking-[0.12em]">
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+          })
+        }}
+        className="bg-raised px-2.5 py-1.5 text-text-muted hover:text-text"
+      >
+        {copied ? 'Copied' : 'Copy the moves'}
+      </button>
+      <a
+        href="https://fantasy.premierleague.com/transfers"
+        target="_blank"
+        rel="noreferrer"
+        className="text-text-faint hover:text-text"
+      >
+        Open the FPL transfers page &#8599;
+      </a>
     </div>
   )
 }
@@ -199,6 +249,12 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
             </>
           )}
         </p>
+
+        {!rolling && !stale && (
+          <div className="mt-6">
+            <ChecklistActions plan={plan} />
+          </div>
+        )}
 
         <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4 border-t-2 border-divider pt-5">
           <Stat label="Free transfers now" value={ft} />

@@ -119,6 +119,8 @@ _MIN_STARTS_FOR_PER_START_RATE = 5
 # the override is structurally raise-only (never lowers an already-higher
 # estimate), so including this basis here can only correct an
 # under-estimate, never inflate a well-evidenced one.
+_MIN_CURRENT_STARTS_FOR_START_RATE = 2
+
 _WEAK_EVIDENCE_BASES = {
     "no_data_available", "stale_prior_season", "cross_league_prior_new_signing",
     "blended_current_and_stale_prior",
@@ -195,7 +197,7 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         raise ValueError(f"unknown player_id: {player_id}")
 
     snapshot = conn.execute(
-        "SELECT minutes, chance_of_playing_this_round, chance_of_playing_next_round "
+        "SELECT minutes, starts, chance_of_playing_this_round, chance_of_playing_next_round "
         "FROM player_stats_snapshot WHERE player_id=? ORDER BY retrieved_at DESC LIMIT 1",
         (player_id,),
     ).fetchone()
@@ -400,6 +402,28 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
         if real_ownership >= _MARKET_CONVICTION_OWNERSHIP_THRESHOLD:
             base = _MARKET_CONVICTION_DEFAULT_MINUTES
             basis = "market_conviction_override"
+
+    # A player who has started every match he was available for, with a start
+    # predicted for the next one, is a regular - but his minutes per gameweek
+    # (the base above) also count the gameweeks he was injured, suspended or not
+    # yet signed. Fulham's Affengruber: three starts of 90 minutes in six
+    # gameweeks, 90% to start again, projected at 45 minutes, a quarter of
+    # Solio's number. His per-start minutes times the predicted start chance is
+    # the better read once he has a few starts to estimate it from. It only ever
+    # raises the estimate, same safety property as the per-start rate above, and
+    # it is already proportional to the start percentage, so the discount that
+    # follows is not applied a second time.
+    current_starts = (snapshot["starts"] if snapshot else None) or 0
+    if (
+        start_percent is not None and not start_proportional and current_starts >= _MIN_CURRENT_STARTS_FOR_START_RATE
+        and current_minutes
+    ):
+        current_per_start = min(current_minutes / current_starts, 90)
+        target = current_per_start * start_percent / 100
+        if target > base:
+            base = target
+            basis = f"{basis}+predicted_start_current_rate"
+            start_proportional = True
 
     # Real, bounded, evidence-gated qualitative ROLE/MINUTES signal
     # (2026-08-26, GW1-postmortem audit P0 item 3) - the minutes-side

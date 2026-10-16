@@ -35,6 +35,9 @@ function GalleryTile({ p, captainId, viceId, tier = 'normal', fixtures }: {
   const widthClass = tier === 'captain' ? 'w-24' : tier === 'bench' ? 'w-16' : 'w-20'
   return (
     <div className={`relative flex flex-col items-center text-center ${widthClass}`}>
+      {p.is_new && (
+        <span className="absolute left-1 top-0 z-10 bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">in</span>
+      )}
       {p.player_id === captainId && (
         <span className="absolute right-1 top-0 z-10 flex h-5 w-5 items-center justify-center bg-broadcast-gold text-xs font-bold text-broadcast-gold-ink">C</span>
       )}

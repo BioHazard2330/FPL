@@ -70,7 +70,7 @@ def has_material_change_since(
             f"""
             SELECT event_type, entity, entity_id, old_value, new_value, detected_at
             FROM change_events
-            WHERE severity='HIGH' AND event_type != 'kickoff_reminder' AND detected_at > ?
+            WHERE severity='HIGH' AND event_type NOT IN ('kickoff_reminder', 'week_plan_change') AND detected_at > ?
               AND (entity != 'player' OR entity_id IN ({placeholders}))
             ORDER BY detected_at DESC LIMIT 1
             """,
@@ -79,7 +79,7 @@ def has_material_change_since(
     else:
         row = conn.execute(
             "SELECT event_type, entity, entity_id, old_value, new_value, detected_at "
-            "FROM change_events WHERE severity='HIGH' AND event_type != 'kickoff_reminder' AND detected_at > ? "
+            "FROM change_events WHERE severity='HIGH' AND event_type NOT IN ('kickoff_reminder', 'week_plan_change') AND detected_at > ? "
             "ORDER BY detected_at DESC LIMIT 1",
             (since_iso,),
         ).fetchone()

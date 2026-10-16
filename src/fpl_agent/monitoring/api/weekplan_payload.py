@@ -88,10 +88,12 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         lineup_set = coded_lineup(detail.get("lineup_set_by_you"))
 
         def squad_block(lineup: dict) -> dict:
+            incoming = {m["into"]["player_id"] for m in detail["moves"]}
+
             def tile(p: dict) -> dict:
                 return {
                     "player_id": p["player_id"], "name": p["name"], "position": p["position"],
-                    "team_code": p["team_code"], "median": p["xp"],
+                    "team_code": p["team_code"], "median": p["xp"], "is_new": p["player_id"] in incoming,
                 }
 
             return {

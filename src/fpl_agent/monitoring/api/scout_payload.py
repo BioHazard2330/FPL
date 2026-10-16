@@ -95,15 +95,23 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
 
     squad_ids = ctx.squad_ids or set()
 
+    reasons_by_player: dict[int, str] = {}
+
     def confidence_label(pid: int) -> str:
         try:
-            return assess_projection_confidence(conn, pid).overall
+            assessed = assess_projection_confidence(conn, pid)
         except Exception:
             return "MEDIUM"
+        if assessed.overall in ("LOW", "VERY_LOW") and assessed.reasons:
+            reasons_by_player[pid] = assessed.reasons[0]
+        return assessed.overall
 
-    def risk_from_confidence(confidence: str) -> str | None:
+    def risk_from_confidence(confidence: str, pid: int | None = None) -> str | None:
+        """The concrete reason a projection is thin (its own evidence trail's
+        first line: how many matches it rests on, or what minutes basis it
+        falls back to), not a sentence announcing that confidence is low."""
         if confidence in ("LOW", "VERY_LOW"):
-            return f"projection confidence is {confidence.replace('_', ' ').lower()} - based on limited real evidence so far"
+            return reasons_by_player.get(pid) if pid is not None else None
         return None
 
     def mins(pid: int) -> float | None:
@@ -185,7 +193,7 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
             ownership_pct=b.ownership_percent, key_metric=f"{b.value_ratio:.2f} xP/£m value ratio",
             why_now="; ".join(b.reasons) if b.reasons else f"{b.value_ratio:.2f} xP/£m, {own_bit}",
             confidence=confidence, team_code=team_code, xp=b.median, expected_minutes=mins(b.player_id),
-            risk=risk_from_confidence(confidence), considered_by_optimizer=None,
+            risk=risk_from_confidence(confidence, b.player_id), considered_by_optimizer=None,
             squad_impact=impact_by_player.get(b.player_id), what_would_change=change_txt,
         ))
 
@@ -198,7 +206,7 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
             ownership_pct=t.ownership_percent, key_metric=f"{t.eo_source} ownership source",
             why_now="; ".join(t.reasons) if t.reasons else f"{own_bit}, case weakening",
             confidence=confidence, team_code=team_code, xp=median_xp(t.player_id), expected_minutes=mins(t.player_id),
-            risk=risk_from_confidence(confidence), considered_by_optimizer=None,
+            risk=risk_from_confidence(confidence, t.player_id), considered_by_optimizer=None,
             squad_impact=impact_by_player.get(t.player_id), what_would_change=None,
         ))
 
@@ -210,7 +218,7 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
             "Role Change", name=r["web_name"], position=r["position"], price_m=price_m(r["entity_id"]),
             ownership_pct=None, key_metric=f"set-piece {order_bit}, {_relative_time(r['detected_at'])}",
             why_now=order_bit, confidence=confidence, team_code=team_code, xp=median_xp(r["entity_id"]),
-            expected_minutes=mins(r["entity_id"]), risk=risk_from_confidence(confidence),
+            expected_minutes=mins(r["entity_id"]), risk=risk_from_confidence(confidence, r["entity_id"]),
             considered_by_optimizer=None, squad_impact=impact_by_player.get(r["entity_id"]), what_would_change=None,
         ))
 
@@ -221,7 +229,7 @@ def _build_opportunities(conn, ctx: DashboardContext) -> dict:
             "Value", name=r["web_name"], position=r["position"], price_m=r["new_value"] / 10,
             ownership_pct=None, key_metric=f"£{r['old_value']/10:.1f}m -> £{r['new_value']/10:.1f}m",
             why_now=f"price rise {_relative_time(r['changed_at'])}", confidence=confidence, team_code=team_code,
-            xp=median_xp(r["player_id"]), expected_minutes=mins(r["player_id"]), risk=risk_from_confidence(confidence),
+            xp=median_xp(r["player_id"]), expected_minutes=mins(r["player_id"]), risk=risk_from_confidence(confidence, r["player_id"]),
             considered_by_optimizer=None, squad_impact=impact_by_player.get(r["player_id"]), what_would_change=None,
         ))
 

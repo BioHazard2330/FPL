@@ -106,6 +106,7 @@ class PlayerRef:
     price_trend: str
     solio_next: float | None
     duties: list[str] = field(default_factory=list)
+    match_analysis_xp: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ class PlannedMove:
     gain: float
     cost_tenths: int
     stress: MoveStress | None = None
+    timing: str = "any"
+    timing_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -376,11 +379,35 @@ def _strict_sell_shortfall_tenths(conn: sqlite3.Connection, out_ids: list[int]) 
     return shortfall
 
 
+def move_timing(out: "PlayerRef", into: "PlayerRef") -> tuple[str, str]:
+    """When to make a move, not whether to. A price that is moving against you
+    makes waiting cost money; a rotation call that is still open makes acting
+    early cost information, because team news lands before the deadline. When
+    both are true the move is marked as such rather than resolved by a guess."""
+    price_moving = into.price_trend == "RISE_LIKELY" or out.price_trend == "FALL_LIKELY"
+    doubts = [p for p in (out, into) if p.start_percent is not None and p.start_percent < 70]
+    if price_moving and doubts:
+        return "split", (
+            f"The price is moving, but {doubts[0].name}'s start is not settled ({doubts[0].start_percent}%). "
+            "Waiting risks a price change; acting risks the team news."
+        )
+    if price_moving:
+        mover = into.name if into.price_trend == "RISE_LIKELY" else out.name
+        direction = "rise" if into.price_trend == "RISE_LIKELY" else "fall"
+        return "early", f"{mover} is likely to {direction} in price. Make this before the next overnight price change."
+    if doubts:
+        return "late", (
+            f"{doubts[0].name}'s start is in doubt ({doubts[0].start_percent}%). "
+            "Team news lands before the deadline: wait for it."
+        )
+    return "any", ""
+
+
 def _ref(
-    c: PlayerCandidate, xp_next: float, starts: dict, trends: dict, solio: dict, duties: dict,
+    c: PlayerCandidate, xp_next: float, starts: dict, trends: dict, solio: dict, duties: dict, match_xp: dict,
 ) -> PlayerRef:
     return PlayerRef(
-        duties=duties.get(c.player_id, []),
+        duties=duties.get(c.player_id, []), match_analysis_xp=round(match_xp.get(c.player_id, 0.0), 2),
         player_id=c.player_id, name=c.web_name, position=c.position, team_short=c.team_short, team_id=c.team_id,
         price_tenths=c.price_tenths, xp_next=round(xp_next, 2), xp_horizon=round(c.xp, 2),
         start_percent=starts.get(c.player_id), price_trend=trends.get(c.player_id, "STABLE"),
@@ -519,7 +546,7 @@ def stress_moves(solve, pairs: list[tuple[int, int]], bar: float, event: int) ->
     the bar is read off the line between the two - an interpolation, not a third
     solve, and described as such where it is shown."""
     stresses: list[MoveStress | None] = []
-    for out_id, in_id in pairs:
+    for _out_id, in_id in pairs:
         others = [p for p in pairs if p[1] != in_id]
         o_in, o_out = frozenset(i for _, i in others), frozenset(o for o, _ in others)
         try:
@@ -586,7 +613,6 @@ def build_week_plan(
 
     chosen_pairs = first_moves(final) if accepted else []
     plan_total = final.sequence.total_net_ev if accepted else roll_total
-    gain_by_in = {i: g for _, i, g in accepted}
 
     squad_after = set(squad_ids)
     for o, i in chosen_pairs:
@@ -599,12 +625,15 @@ def build_week_plan(
     solio = _solio_next(conn, set(squad_ids) | involved)
     duties = _set_piece_duties(conn, involved)
     next_xp_cache: dict = {}
+    match_xp: dict[int, float] = {}
 
     from fpl_agent.models.expected_points import expected_points
 
     def next_xp(pid: int) -> float:
         if pid not in next_xp_cache:
-            next_xp_cache[pid] = expected_points(conn, pid, n_gw=1, from_event=event).median
+            projection = expected_points(conn, pid, n_gw=1, from_event=event)
+            next_xp_cache[pid] = projection.median
+            match_xp[pid] = projection.qualitative_adjustment
         return next_xp_cache[pid]
 
     def candidate(pid: int) -> PlayerCandidate:
@@ -617,10 +646,13 @@ def build_week_plan(
 
     def make_move(o: int, i: int, gain: float) -> PlannedMove:
         out_c, in_c = candidate(o), candidate(i)
+        next_xp(o), next_xp(i)
+        out_ref = _ref(out_c, next_xp(o), starts, trends, solio, duties, match_xp)
+        in_ref = _ref(in_c, next_xp(i), starts, trends, solio, duties, match_xp)
+        timing, note = move_timing(out_ref, in_ref)
         return PlannedMove(
-            out=_ref(out_c, next_xp(o), starts, trends, solio, duties),
-            into=_ref(in_c, next_xp(i), starts, trends, solio, duties),
-            gain=gain, cost_tenths=in_c.price_tenths - out_c.price_tenths,
+            out=out_ref, into=in_ref, gain=gain, cost_tenths=in_c.price_tenths - out_c.price_tenths,
+            timing=timing, timing_note=note,
         )
 
     ordered_pairs = {i: o for o, i in chosen_pairs}
@@ -773,6 +805,36 @@ def week_plan_staleness(conn: sqlite3.Connection, detail: dict, created_at: str)
     return reasons
 
 
+def _headline_from_detail(detail: dict) -> str:
+    moves = detail.get("moves", [])
+    return "; ".join(f"{m['out']['name']} -> {m['into']['name']}" for m in moves) or "ROLL"
+
+
+def announce_plan_change(conn: sqlite3.Connection, previous: dict | None, plan: WeekPlan, reason: str) -> bool:
+    """A new plan that makes different transfers from the last one for the same
+    gameweek is worth a notification: it means something changed that the
+    manager would want to know before the deadline. A rebuild that lands on the
+    same moves is silent, as is the first plan of a gameweek. Recorded as a
+    change event, so the alert engine's existing toast and the football wire
+    carry it, and excluded from the staleness check so it can never make the
+    plan it announces look out of date."""
+    if previous is None or previous.get("event") != plan.event:
+        return False
+    old_moves = {(m["out"]["player_id"], m["into"]["player_id"]) for m in previous.get("moves", [])}
+    new_moves = {(m.out.player_id, m.into.player_id) for m in plan.moves}
+    if old_moves == new_moves:
+        return False
+    from fpl_agent.ingestion.change_detection import record_event
+
+    record_event(
+        conn, "week_plan_change", "plan", plan.event, _headline_from_detail(previous), headline(plan),
+        datetime.now(timezone.utc).isoformat(), "week_plan", "model", "HIGH",
+        fpl_impact=f"GW{plan.event} plan changed: {reason}",
+    )
+    conn.commit()
+    return True
+
+
 def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
     """Rebuilds and stores the plan when the stored one is missing, stale, or
     older than `REFRESH_AFTER_HOURS` (prices and fixtures drift even when
@@ -798,6 +860,10 @@ def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
     if plan is None:
         return None
     persist_week_plan(conn, plan)
+    try:
+        announce_plan_change(conn, stored[0] if stored else None, plan, reason)
+    except Exception:
+        _logger.exception("could not record the plan change - the plan itself is saved")
     return reason
 
 

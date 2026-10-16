@@ -268,3 +268,108 @@ def test_a_high_severity_change_to_a_transfer_target_makes_the_plan_stale(db_con
 
     assert len(reasons) == 1
     assert "Cherki" in reasons[0] and "status change" in reasons[0]
+
+
+def _ref(**over):
+    from fpl_agent.optimization.week_plan import PlayerRef
+
+    base = dict(
+        player_id=1, name="Player", position="MID", team_short="T", team_id=1, price_tenths=50, xp_next=4.0,
+        xp_horizon=20.0, start_percent=90, price_trend="STABLE", solio_next=None,
+    )
+    base.update(over)
+    return PlayerRef(**base)
+
+
+def test_a_rising_target_is_an_early_move():
+    from fpl_agent.optimization.week_plan import move_timing
+
+    timing, note = move_timing(_ref(name="Out"), _ref(name="Cherki", price_trend="RISE_LIKELY"))
+
+    assert timing == "early"
+    assert "Cherki" in note and "rise" in note
+
+
+def test_a_falling_player_being_sold_is_also_early():
+    from fpl_agent.optimization.week_plan import move_timing
+
+    timing, note = move_timing(_ref(name="Gibbs-White", price_trend="FALL_LIKELY"), _ref())
+
+    assert timing == "early"
+    assert "fall" in note
+
+
+def test_an_open_rotation_call_means_wait_for_team_news():
+    from fpl_agent.optimization.week_plan import move_timing
+
+    timing, note = move_timing(_ref(name="Gvardiol", start_percent=24), _ref())
+
+    assert timing == "late"
+    assert "24%" in note
+
+
+def test_a_moving_price_and_an_open_rotation_call_is_marked_as_a_trade_off():
+    from fpl_agent.optimization.week_plan import move_timing
+
+    timing, _ = move_timing(_ref(start_percent=24), _ref(price_trend="RISE_LIKELY"))
+
+    assert timing == "split"
+
+
+def test_nothing_pressing_means_no_timing_advice():
+    from fpl_agent.optimization.week_plan import move_timing
+
+    assert move_timing(_ref(), _ref()) == ("any", "")
+
+
+
+def _plan_with(moves, event=7):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        event=event,
+        moves=[
+            SimpleNamespace(out=SimpleNamespace(player_id=o, name=f"P{o}"), into=SimpleNamespace(player_id=i, name=f"P{i}"))
+            for o, i in moves
+        ],
+    )
+
+
+def _detail_with(moves, event=7):
+    return {"event": event, "moves": [{"out": {"player_id": o, "name": f"P{o}"}, "into": {"player_id": i, "name": f"P{i}"}} for o, i in moves]}
+
+
+def test_a_changed_move_set_is_recorded_as_a_high_severity_event(db_conn):
+    from fpl_agent.optimization.week_plan import announce_plan_change
+
+    changed = announce_plan_change(db_conn, _detail_with([(1, 11)]), _plan_with([(1, 12)]), "Cherki: status change")
+
+    row = db_conn.execute("SELECT event_type, severity, old_value, new_value, fpl_impact FROM change_events").fetchone()
+    assert changed is True
+    assert row["event_type"] == "week_plan_change" and row["severity"] == "HIGH"
+    assert "P11" in row["old_value"] and "P12" in row["new_value"]
+    assert "Cherki" in row["fpl_impact"]
+
+
+def test_a_rebuild_that_lands_on_the_same_moves_is_silent(db_conn):
+    from fpl_agent.optimization.week_plan import announce_plan_change
+
+    assert announce_plan_change(db_conn, _detail_with([(1, 11)]), _plan_with([(1, 11)]), "12h old") is False
+    assert db_conn.execute("SELECT COUNT(*) FROM change_events").fetchone()[0] == 0
+
+
+def test_the_first_plan_of_a_gameweek_is_silent(db_conn):
+    from fpl_agent.optimization.week_plan import announce_plan_change
+
+    assert announce_plan_change(db_conn, None, _plan_with([(1, 11)]), "none yet") is False
+    assert announce_plan_change(db_conn, _detail_with([(1, 11)], event=6), _plan_with([(1, 12)]), "new gameweek") is False
+
+
+def test_the_plan_change_event_never_makes_a_plan_look_stale(db_conn, monkeypatch):
+    from fpl_agent.optimization import week_plan
+    from fpl_agent.optimization.week_plan import announce_plan_change
+
+    announce_plan_change(db_conn, _detail_with([(1, 11)]), _plan_with([(1, 12)]), "reason")
+    monkeypatch.setattr(week_plan, "light_squad_state", lambda conn: _state())
+
+    assert week_plan.week_plan_staleness(db_conn, _detail(), "2000-01-01T00:00:00+00:00") == []

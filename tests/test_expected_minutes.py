@@ -685,3 +685,65 @@ def test_doubtful_partially_damps_expected_minutes(db_conn):
 
     assert result.classification == "DOUBTFUL"
     assert 0 < result.expected_minutes < 90
+
+
+
+def _finish_events(conn, n):
+    for e in range(2, n + 1):
+        conn.execute(
+            "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, "
+            "updated_at) VALUES (?, ?, 't', 0, 1, 0, 0, 0, 't')", (e, f"Gameweek {e}"),
+        )
+    conn.execute("UPDATE events SET finished=1 WHERE id=1")
+    conn.commit()
+
+
+def _set_start_percent(conn, percent):
+    conn.execute(
+        "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "
+        "VALUES (1, 1, 'CB', ?, 't')", (percent,),
+    )
+    conn.commit()
+
+
+def test_a_regular_who_missed_gameweeks_is_not_projected_at_his_gameweek_average(db_conn):
+    """Three 90-minute starts in six gameweeks and a 90% predicted start is a
+    regular who was unavailable for the rest, not a 45-minute player."""
+    bootstrap = make_bootstrap()
+    bootstrap["elements"][0]["minutes"] = 270
+    bootstrap["elements"][0]["starts"] = 3
+    _seed(db_conn, bootstrap, "t0")
+    _finish_events(db_conn, 6)
+    _set_start_percent(db_conn, 90)
+
+    result = expected_minutes(db_conn, 1)
+
+    assert result.expected_minutes == pytest.approx(81.0, abs=0.5)
+    assert result.basis.endswith("predicted_start_current_rate")
+
+
+def test_the_start_rate_never_lowers_a_higher_estimate_or_double_discounts(db_conn):
+    bootstrap = make_bootstrap()
+    bootstrap["elements"][0]["minutes"] = 540
+    bootstrap["elements"][0]["starts"] = 6
+    _seed(db_conn, bootstrap, "t0")
+    _finish_events(db_conn, 6)
+    _set_start_percent(db_conn, 45)
+
+    result = expected_minutes(db_conn, 1)
+
+    # base is 90 a gameweek; 45% on a 90-minute start rate is 40.5, below it, so
+    # the single start-percentage discount applies and nothing is raised.
+    assert "predicted_start_current_rate" not in result.basis
+    assert result.expected_minutes < 60
+
+
+def test_one_start_is_too_few_to_estimate_a_start_rate_from(db_conn):
+    bootstrap = make_bootstrap()
+    bootstrap["elements"][0]["minutes"] = 90
+    bootstrap["elements"][0]["starts"] = 1
+    _seed(db_conn, bootstrap, "t0")
+    _finish_events(db_conn, 6)
+    _set_start_percent(db_conn, 90)
+
+    assert "predicted_start_current_rate" not in expected_minutes(db_conn, 1).basis

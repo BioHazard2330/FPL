@@ -181,7 +181,7 @@ export function ReceiptsScreen() {
 
   return (
     <div>
-      <Masthead edition="The Receipts" title="Its squad vs your squad" />
+      <Masthead edition="The Receipts" title={(h.plan_events ?? 0) > 0 ? 'The plan vs your squad' : 'Its squad vs your squad'} />
 
       {/* HERO - three totals over the SAME gameweeks. The delta is coloured
           by who is actually ahead, not by who we would like to be ahead. */}
@@ -222,7 +222,7 @@ export function ReceiptsScreen() {
       {data.flags && (
         <div className="border-b border-divider bg-raised/40 px-10 py-6">
           <div className="mb-3 text-[11px] font-bold uppercase tracking-wide text-alert-red">
-            Why this is not being followed
+            Why the single-swap engine was not followed
           </div>
           <ul className="space-y-2 text-xs text-text-muted">
             {data.flags.followed_none && (
@@ -236,6 +236,11 @@ export function ReceiptsScreen() {
             )}
             <li>· It only ever proposes a single transfer. It cannot express a chip, and cannot express doing nothing.</li>
           </ul>
+          <div className="mt-4 border-t border-divider pt-3 text-xs text-text-muted">
+            <span className="font-semibold text-text">The week plan replaced it for GW7.</span> It plans several transfers at once, says roll
+            when no move earns its place, and picks the eleven and the armband. Its own record is scored here from GW7, on the same terms:
+            its eleven and armband against yours, with doing nothing alongside.
+          </div>
         </div>
       )}
 

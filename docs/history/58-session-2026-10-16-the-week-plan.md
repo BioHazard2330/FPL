@@ -52,6 +52,18 @@ GW7 and costs nothing. No surface said so.
 - The 4 refresh threads in `live/sse_server.py` raced into a circular import on
   start (`_DeadlockError`, flagged in PROJECT_STATE since 2026-09-08). Eager
   import on the starting thread; the race no longer exists.
+- **Solio's "King" was Everton's King.** Solio publishes surnames only, and the
+  generic resolver takes the first league-wide exact match on a surname and then
+  caches it under the surname alone. Fulham's King (500 minutes) was filed as
+  Everton's (0), so the benchmark reported a perfectly ordinary projection as a
+  MAJOR_OUTLIER, and "Martinez" went to Villa's goalkeeper whichever Martinez
+  Solio meant. 18 surnames are shared between clubs. Solio rows are now resolved
+  inside the club Solio names; zero cross-club mismatches in the 61 rows.
+- **A regular who missed gameweeks was projected at his gameweek average.**
+  Fulham's Affengruber: three starts of 90 minutes in six gameweeks, 90% to start
+  again, projected 45 minutes (xP 1.9 against Solio's 4.5). With two or more
+  starts and a predicted start, minutes are now at least his per-start minutes
+  times that chance (81, xP 3.4). Raise-only, and not discounted a second time.
 - `/api/weekplan` first took 6s: its staleness check called `get_locked_squad`,
   which projects all fifteen players and refits the team-strength model on a
   fresh connection. Plain reads now; 4ms.
@@ -87,6 +99,16 @@ Stored in the decision journal as `week_plan`; rebuilt inside `run-scheduled`
 when missing, stale (`week_plan_staleness`: squad, bank, free transfers,
 gameweek, or a HIGH change event for anyone owned or targeted), or 12h old.
 ~35s, inline.
+
+Each move also carries what a good FPL player reads off the card: when to make
+it (a moving price says early, an open rotation call says wait for team news, both
+says so), first-choice set pieces from the FPL site's own notes (Gibbs-White is
+Forest's first-choice penalty and free-kick taker, which the goal-share the model
+projects from cannot see, since the duty changed this month), and how much of the
+incoming player's projection is the match-analysis signal (Cherki: 0.85 of 6.69).
+A plan whose transfers change between rebuilds raises a HIGH `week_plan_change`
+event, so the existing toast alert fires; a rebuild landing on the same moves
+is silent.
 
 ### Surfaces
 
@@ -129,4 +151,12 @@ gameweek, or a HIGH change event for anyone owned or targeted), or 12h old.
   login this project does not hold).
 - Backtesting multi-transfer MILP policies against single-swap ones over past
   seasons (`backtesting/season_backtest.py` replays single swaps only).
-- Scout and Football screens were surveyed, not reworked.
+- Scout and Football were surveyed. Football now groups signals per player and
+  stops repeating evidence in its category bands; Scout's boilerplate confidence
+  sentence now states the concrete reason. Neither was redesigned.
+- Penalty duty is shown, not modelled: `models/penalty_duty.py` needs 20 observed
+  penalty shots and the league has 2 this season.
+- The match-analysis adjustment (35% of the targeted component, raised from 15% on
+  an explicit instruction) is the largest single input to the plan's lead move and
+  contradicts the project's own backtest finding that recency weighting does not
+  help. It is shown on the card; it was not changed.

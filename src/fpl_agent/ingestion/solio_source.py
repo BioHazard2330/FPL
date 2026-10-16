@@ -206,7 +206,36 @@ def _resolve_team_id_by_display_name(conn, team_name: str) -> int | None:
 
 
 def _resolve_player_id(conn, source_name: str, team_id: int | None) -> int | None:
-    from fpl_agent.ingestion.market_identity import resolve_player_id
+    """Solio publishes surnames only ("King", "Wilson", "Palmer", "Martinez"),
+    and the generic resolver takes the first league-wide exact match on a
+    surname and then caches that answer under the surname alone. Fulham's King
+    was therefore filed as Everton's (0 minutes), which made the benchmark call
+    a perfectly ordinary projection a MAJOR_OUTLIER, and "Martinez" went to
+    Aston Villa's goalkeeper whichever Martinez Solio meant. A surname is only
+    unique inside one club, and Solio gives the club, so the club decides first.
+    The generic resolver remains the fallback for a row with no usable club."""
+    from fpl_agent.ingestion.market_identity import _normalize, resolve_player_id
+
+    if team_id is not None:
+        wanted = _normalize(source_name)
+        squad = conn.execute(
+            "SELECT id, first_name, second_name, web_name FROM players WHERE team_id=? AND removed=0", (team_id,),
+        ).fetchall()
+        exact = [
+            r["id"] for r in squad
+            if wanted in (
+                _normalize(r["web_name"] or ""),
+                _normalize(f"{r['first_name'] or ''} {r['second_name'] or ''}"),
+            )
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        if not exact:
+            from fpl_agent.ingestion.predicted_lineups_source import match_player_in_team
+
+            fuzzy = match_player_in_team(conn, team_id, source_name)
+            if fuzzy is not None:
+                return fuzzy
 
     return resolve_player_id(conn, SOURCE_NAME, source_name, team_id=team_id)
 

@@ -32,11 +32,24 @@ Honesty rules enforced here rather than left to the UI:
   nothing scored is the single most useful thing this screen can surface,
   and it has already happened once.
 """
+import threading
+import time
+
 from fpl_agent.models.counterfactual_ledger import build_counterfactual_ledger, ledger_totals
 from fpl_agent.models.decision_calibration import decision_backtest_summary
 from fpl_agent.monitoring.dashboard.context import DashboardContext
 
 _MIN_MEANINGFUL_SAMPLE = 8
+
+# The ledger scores every finished gameweek against FPL's per-event live
+# endpoint, one network call each, on every request - 2.8s for six gameweeks
+# and growing by a call per week, from a screen COMMAND also reads every two
+# minutes. A finished gameweek's points only move on a bonus correction, so a
+# few minutes of caching costs nothing a reader would see.
+_CACHE_LOCK = threading.Lock()
+_cached_payload: dict | None = None
+_cached_at: float = 0.0
+_TTL_SECONDS = 600.0
 
 _CHIP_LABEL = {
     "3xc": "Triple Captain",
@@ -110,6 +123,18 @@ def _calibration_block(conn) -> dict | None:
 
 
 def build_receipts_payload(ctx: DashboardContext) -> dict:
+    global _cached_payload, _cached_at
+    with _CACHE_LOCK:
+        if _cached_payload is not None and (time.monotonic() - _cached_at) < _TTL_SECONDS:
+            return _cached_payload
+    payload = _build_receipts_payload_uncached(ctx)
+    with _CACHE_LOCK:
+        _cached_payload = payload
+        _cached_at = time.monotonic()
+    return payload
+
+
+def _build_receipts_payload_uncached(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
 
     conn = get_connection()

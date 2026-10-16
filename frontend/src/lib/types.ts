@@ -889,6 +889,8 @@ export interface ActionSquadPlayer {
   position: string
   team_code: number | null
   median: number
+  /** Bought by the plan: not in the squad as it stands. */
+  is_new?: boolean
 }
 
 export interface ActionSquadBlock {
@@ -1472,6 +1474,8 @@ export interface WeekPlanPlayer {
   solio_next: number | null
   /** First-choice set-piece duties: any of penalties, free kicks, corners. */
   duties?: string[]
+  /** Expected points the match-analysis signal added to xp_next. Already inside it. */
+  match_analysis_xp?: number
 }
 
 export interface WeekPlanMove {
@@ -1479,6 +1483,9 @@ export interface WeekPlanMove {
   into: WeekPlanPlayer
   gain: number
   cost_tenths: number
+  /** When to make it: a moving price says early, an open rotation call says wait for team news. */
+  timing?: 'early' | 'late' | 'split' | 'any'
+  timing_note?: string
 }
 
 export interface WeekPlanLineupPlayer {

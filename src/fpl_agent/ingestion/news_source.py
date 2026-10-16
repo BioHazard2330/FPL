@@ -9,6 +9,7 @@ from, per this project's own Tier 2-4 precedence policy (CLAUDE.md: "one
 journalism source alone isn't enough to build a corroboration detector
 around" - the reason the manager-change engine stayed deferred through
 Pillar 2 Plan 2a)."""
+import functools
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -98,27 +99,53 @@ def parse_rss_items(xml_text: str) -> list[dict]:
 _MIN_NAME_LENGTH = 4
 
 
+@functools.lru_cache(maxsize=4096)
+def _fold_name(name: str) -> str:
+    from fpl_agent.ingestion.predicted_lineups_source import _fold
+
+    return _fold(name)
+
+
+def _mentions(folded_text: str, folded_name: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])", folded_text) is not None
+
+
 def match_players(conn, text: str) -> list[int]:
-    """Case-insensitive substring match against players.web_name, falling back to
+    """Whole-word, accent-folded match against players.web_name, falling back to
     second_name only if web_name matched nothing. Heuristic, documented in the
     design doc as best-effort indexing only - never treat this as a confirmed
-    identification."""
-    text_lower = text.lower()
-    rows = conn.execute("SELECT id, web_name, second_name FROM players WHERE removed = 0").fetchall()
+    identification.
 
-    matched = {
-        row["id"] for row in rows
-        if row["web_name"] and len(row["web_name"]) >= _MIN_NAME_LENGTH and row["web_name"].lower() in text_lower
-    }
+    Two things this used to get wrong. A bare substring test linked "King" to
+    every headline containing "making" or "looking" (721 articles, filed under
+    both Kings), and a surname two players share was linked to both of them, so a
+    story about Ipswich's goalkeeper Palmer reached Cole Palmer's file. A name is
+    now a whole word, and a surname shared by several players is attributed only
+    to those whose club the same text names; if it names none, nobody gets it."""
+    folded_text = _fold_name(text)
+    rows = conn.execute("SELECT id, web_name, second_name, team_id FROM players WHERE removed = 0").fetchall()
+
+    def pick(field: str) -> set[int]:
+        by_name: dict[str, list] = {}
+        for row in rows:
+            name = row[field]
+            if name and len(name) >= _MIN_NAME_LENGTH and _mentions(folded_text, _fold_name(name)):
+                by_name.setdefault(_fold_name(name), []).append(row)
+        chosen: set[int] = set()
+        mentioned_teams: set[int] | None = None
+        for candidates in by_name.values():
+            if len(candidates) == 1:
+                chosen.add(candidates[0]["id"])
+                continue
+            if mentioned_teams is None:
+                mentioned_teams = set(match_teams(conn, text))
+            chosen.update(c["id"] for c in candidates if c["team_id"] in mentioned_teams)
+        return chosen
+
+    matched = pick("web_name")
     if matched:
         return sorted(matched)
-
-    matched = {
-        row["id"] for row in rows
-        if row["second_name"] and len(row["second_name"]) >= _MIN_NAME_LENGTH
-        and row["second_name"].lower() in text_lower
-    }
-    return sorted(matched)
+    return sorted(pick("second_name"))
 
 
 def match_teams(conn, text: str) -> list[int]:
