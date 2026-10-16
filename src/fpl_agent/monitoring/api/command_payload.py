@@ -174,12 +174,22 @@ def _noise_bar_for(horizon_gw) -> float | None:
         return None
 
 
+def _real_alt_label(auth: dict | None) -> str:
+    """The decision engine writes "none (only one real candidate)" into
+    `best_alternative` when there was no runner-up. That is a sentence about the
+    absence of an alternative, not an alternative, and rendering it as one put
+    "not none (only one real candidate)" under the verdict."""
+    alt = (auth or {}).get("best_alternative") or ""
+    label = alt.partition(": ")[0]
+    return "" if label.lower().startswith("none") else label
+
+
 def _alternative_block(auth: dict | None, diag: dict | None) -> dict | None:
     if not auth:
         return None
     alt = auth.get("best_alternative") or ""
     alt_label, _, alt_action = alt.partition(": ")
-    if not alt_label:
+    if not _real_alt_label(auth):
         return None
     stats = {}
     if diag:
@@ -214,7 +224,7 @@ def _monitor_block(auth: dict | None) -> list[dict]:
     for d in (auth.get("critical_dependencies") or [])[:3]:
         rows.append({"current": d, "trigger": "status or price changes", "consequence": "re-run the plan"})
     ev = auth.get("nominal_ev_advantage")
-    alt_label = (auth.get("best_alternative") or "").partition(": ")[0]
+    alt_label = _real_alt_label(auth)
     if ev is not None and alt_label:
         rows.append({
             "current": f"ALTERNATIVE -{ev:.1f}pts behind", "trigger": "margin closes",
@@ -280,7 +290,7 @@ def build_command_payload(ctx: DashboardContext) -> dict:
     current_gw = _gw_num(ctx.gw_label)
 
     ev = auth.get("nominal_ev_advantage") if auth else None
-    alt_label = (auth.get("best_alternative") or "").partition(": ")[0] if auth else None
+    alt_label = _real_alt_label(auth) if auth else None
     chosen_total = (current_rec or {}).get("path_total") if auth else None
     edge = None
     if auth and ev is not None and alt_label and chosen_total is not None and ev > 0:

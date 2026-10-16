@@ -269,3 +269,13 @@ def test_time_limited_solve_is_never_reported_as_proven(db_conn):
         pytest.skip("solver finished inside the limit on this machine")
     assert res.proven_optimal is False
     assert "unproven" in res.status
+
+
+def test_transfers_in_one_gameweek_are_paired_within_position():
+    from fpl_agent.optimization.milp_planner import _pair_by_position
+
+    pos = {1: "DEF", 2: "MID", 3: "GKP", 10: "DEF", 11: "GKP", 12: "MID"}
+
+    pairs = _pair_by_position([1, 2, 3], [10, 11, 12], pos)
+
+    assert {(o, i) for o, i in pairs} == {(1, 10), (2, 12), (3, 11)}

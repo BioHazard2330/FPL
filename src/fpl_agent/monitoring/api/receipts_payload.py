@@ -148,6 +148,9 @@ def build_receipts_payload(ctx: DashboardContext) -> dict:
             "delta_vs_you": r.delta_vs_you,
             "followed": r.followed,
             "note": r.note,
+            "plan_points": r.plan_points,
+            "plan_action": r.plan_action,
+            "plan_followed": r.plan_followed,
             # A recommendation worth exactly what doing nothing was worth.
             # Called out explicitly because it is invisible in any
             # win/loss framing and is the clearest possible evidence that
@@ -186,6 +189,10 @@ def build_receipts_payload(ctx: DashboardContext) -> dict:
                 "events": totals.events,
                 "followed_count": totals.followed_count,
                 "recommendations_logged": totals.recommendations_logged,
+                "plan_events": totals.plan_events,
+                "plan_total": totals.plan_total,
+                "plan_your_total": totals.plan_your_total,
+                "plan_roll_total": totals.plan_roll_total,
                 # Signed from the optimizer's point of view: negative means
                 # your own decisions scored more.
                 "optimizer_ahead": (totals.delta or 0) > 0,

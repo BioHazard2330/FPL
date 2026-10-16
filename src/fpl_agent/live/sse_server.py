@@ -29,8 +29,11 @@ import inspect
 import json
 import logging
 import queue
+import subprocess
+import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -217,6 +220,61 @@ class ActivityTracker:
         return time.monotonic() - self._last
 
 
+class RefreshJob:
+    """One on-demand `fpl run-scheduled`, launched from the browser.
+
+    Outside the pre-deadline window nothing runs on a schedule, so the data on
+    screen can be most of a day old at exactly the moment a manager sits down to
+    decide. This starts the same full cycle the scheduler would - sync, change
+    detection, week plan rebuild, dashboard and live snapshot regeneration - as
+    a detached child at below-normal priority, never more than one at a time.
+    It only ever reads public data and writes this project's own files."""
+
+    BELOW_NORMAL_PRIORITY = 0x00004000
+
+    def __init__(self) -> None:
+        self._proc: subprocess.Popen | None = None
+        self._started_at: str | None = None
+        self._finished_at: str | None = None
+        self._lock = threading.Lock()
+
+    def _executable(self) -> list[str]:
+        scripts = Path(sys.executable).parent
+        for name in ("fpl.exe", "fpl"):
+            if (scripts / name).is_file():
+                return [str(scripts / name)]
+        return [sys.executable, "-c", "from fpl_agent.cli.main import cli; cli()"]
+
+    def start(self) -> str:
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is None:
+                return "already_running"
+            flags = 0
+            if sys.platform == "win32":
+                flags = subprocess.CREATE_NO_WINDOW | self.BELOW_NORMAL_PRIORITY
+            self._proc = subprocess.Popen(
+                self._executable() + ["run-scheduled"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=flags,
+            )
+            self._started_at = datetime.now(timezone.utc).isoformat()
+            self._finished_at = None
+            return "started"
+
+    def status(self) -> dict:
+        with self._lock:
+            running = self._proc is not None and self._proc.poll() is None
+            code = None if self._proc is None else self._proc.poll()
+            if self._proc is not None and not running and self._finished_at is None:
+                self._finished_at = datetime.now(timezone.utc).isoformat()
+            return {
+                "running": running, "started_at": self._started_at, "finished_at": self._finished_at,
+                "returncode": code,
+            }
+
+
+refresh_job = RefreshJob()
+
+
 def make_handler(
     broadcaster: Broadcaster, data_dir: Path, conn_factory=None, activity: ActivityTracker | None = None,
 ) -> type[BaseHTTPRequestHandler]:
@@ -247,6 +305,27 @@ def make_handler(
             else:
                 self._serve_static()
 
+        def do_POST(self) -> None:
+            if activity is not None:
+                activity.touch()
+            path = self.path.split("?", 1)[0]
+            # A custom header makes this a non-simple cross-origin request, which
+            # a browser will not send without a CORS preflight this server never
+            # answers - so a page on another origin cannot trigger a sync.
+            if path != "/api/refresh" or self.headers.get("X-FPL-Refresh") != "1":
+                self.send_error(404)
+                return
+            outcome = refresh_job.start()
+            self._send_json({"result": outcome, **refresh_job.status()})
+
+        def _send_json(self, payload: dict) -> None:
+            body = json.dumps(payload, default=str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _serve_api(self) -> None:
             # Real, deliberate scope limit (2026-09-08, Phase 8.2 Stage 2) -
             # this endpoint ONLY shapes already-computed real data into JSON
@@ -268,6 +347,9 @@ def make_handler(
             raw = self.path.removeprefix("/api/")
             screen, _, query = raw.partition("?")
             screen = screen.strip("/")
+            if screen == "refresh-status":
+                self._send_json(refresh_job.status())
+                return
             builder = API_BUILDERS.get(screen)
             if builder is None:
                 self.send_error(404, f"no real API payload for '{screen}'")
@@ -486,6 +568,15 @@ class LiveServer:
         self._tailer_conn.close()
 
     def start(self) -> None:
+        # Four refresh threads each import the payload modules lazily. Two of
+        # them racing into a circular import raised `_DeadlockError` on process
+        # start and left a cache cold until its next retry. Importing the whole
+        # API package here, on the one thread that exists yet, takes the race
+        # away rather than relying on the retry.
+        import fpl_agent.monitoring.api  # noqa: F401
+        import fpl_agent.monitoring.dashboard.context  # noqa: F401
+        import fpl_agent.optimization.locked_squad  # noqa: F401
+
         self._tailer_thread = threading.Thread(target=self._tailer_main, daemon=True)
         self._tailer_thread.start()
         self._server_thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)

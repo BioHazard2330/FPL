@@ -20,6 +20,7 @@ from fpl_agent.monitoring.api.profile_payload import build_club_profile, build_p
 from fpl_agent.monitoring.api.receipts_payload import build_receipts_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.table_payload import build_table_payload
+from fpl_agent.monitoring.api.weekplan_payload import build_week_plan_payload
 
 API_BUILDERS = {
     "command": build_command_payload,
@@ -32,6 +33,7 @@ API_BUILDERS = {
     "receipts": build_receipts_payload,
     "atlas": build_atlas_payload,
     "table": build_table_payload,
+    "weekplan": build_week_plan_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a
     # builder that declares it, and turns a LookupError into a real 404.
     "club": build_club_profile,

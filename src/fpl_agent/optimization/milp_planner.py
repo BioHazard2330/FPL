@@ -185,6 +185,12 @@ def plan_transfers_milp(
     used_chip_names: frozenset[str] = frozenset(),
     model_chips: bool = True,
     xp_cache: dict | None = None,
+    max_first_gw_transfers: int | None = None,
+    sell_prices_tenths: dict[int, int] | None = None,
+    league_pool: list[PlayerCandidate] | None = None,
+    forced_in_first: frozenset[int] = frozenset(),
+    forced_out_first: frozenset[int] = frozenset(),
+    transfer_penalty: float = 0.0,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -195,6 +201,19 @@ def plan_transfers_milp(
     are the real current state - this function never re-derives them, for
     the same reason the rest of the decision layer doesn't
     (`models/free_transfers.py` is the single source of truth).
+
+    `max_first_gw_transfers` caps how many transfers the first gameweek may
+    make (0 = roll now, keep planning). It is how a caller prices "act now"
+    against "roll now" with the same solver instead of two different models.
+    `sell_prices_tenths` overrides what an OWNED player raises when sold
+    (FPL pays purchase price plus half the profit, not the current price);
+    anything absent falls back to the current price. `forced_in_first`/
+    `forced_out_first` pin first-gameweek moves already decided, so a caller can
+    build a recommendation one move at a time and price each against the best
+    plan that still contains the earlier ones. `transfer_penalty` charges every
+    transfer that many points in the objective only (reported totals stay pure
+    expected points), so a plan stops making moves that do not earn their keep. `league_pool` lets a caller
+    that solves the same horizon several times build the ~560-player pool once.
     """
     if len(squad_ids) != 15:
         return MilpPlanResult(None, f"Infeasible (squad has {len(squad_ids)} players, expected 15)",
@@ -221,7 +240,7 @@ def plan_transfers_milp(
     # a plan that cannot express "keep this player" is not a plan) plus the
     # strongest transfer targets per position.
     owned = set(squad_ids)
-    league = build_player_pool(conn, n_gw=horizon_gw)
+    league = league_pool if league_pool is not None else build_player_pool(conn, n_gw=horizon_gw)
     by_id = {c.player_id: c for c in league}
     pool: list[PlayerCandidate] = [c for c in league if c.player_id in owned]
     missing_owned = owned - {c.player_id for c in pool}
@@ -245,6 +264,7 @@ def plan_transfers_milp(
 
     xp = {(c.player_id, t): _gw_xp(conn, c.player_id, t, cache) for c in pool for t in events}
     price = {c.player_id: c.price_tenths for c in pool}
+    sell_price = {p: min((sell_prices_tenths or {}).get(p, price[p]), price[p]) for p in price}
     pos = {c.player_id: c.position for c in pool}
     club = {c.player_id: c.team_id for c in pool}
     ids = [c.player_id for c in pool]
@@ -335,6 +355,7 @@ def plan_transfers_milp(
             for p in ids for t in events
         ) if bbp else 0)
         - HIT_COST * pulp.lpSum(hits[t] for t in events)
+        - transfer_penalty * pulp.lpSum(tin[(p, t)] for p in ids for t in events)
     )
 
     for t in events:
@@ -368,6 +389,15 @@ def plan_transfers_milp(
     # --- free transfers, hits, bank --------------------------------------
     for i, t in enumerate(events):
         transfers_t = pulp.lpSum(tin[(p, t)] for p in ids)
+        if i == 0 and max_first_gw_transfers is not None:
+            prob += transfers_t <= max_first_gw_transfers
+        if i == 0:
+            for p in forced_in_first:
+                if (p, t) in tin:
+                    prob += tin[(p, t)] == 1
+            for p in forced_out_first:
+                if (p, t) in tout:
+                    prob += tout[(p, t)] == 1
 
         # fuse = min(transfers, ft). Both <= constraints are stated; the
         # objective does the rest, because every unit of fuse the solver
@@ -407,7 +437,7 @@ def plan_transfers_milp(
                 prob += ft[t] <= 1 + (ft_cap - 1) * (1 - chip[("wildcard", prev_t)])
 
         spend = pulp.lpSum(price[p] * tin[(p, t)] for p in ids)
-        raised = pulp.lpSum(price[p] * tout[(p, t)] for p in ids)
+        raised = pulp.lpSum(sell_price[p] * tout[(p, t)] for p in ids)
         prev_bank = bank_tenths if i == 0 else bank[events[i - 1]]
         prob += bank[t] == prev_bank + raised - spend
 
@@ -461,6 +491,22 @@ def _name_of(conn: sqlite3.Connection, player_id: int, by_id: dict) -> str:
         return c.web_name
     row = conn.execute("SELECT web_name FROM players WHERE id=?", (player_id,)).fetchone()
     return row["web_name"] if row else str(player_id)
+
+
+def _pair_by_position(outs: list[int], ins: list[int], pos: dict[int, str]) -> list[tuple[int, int]]:
+    """Squad composition is fixed at every gameweek, so within one gameweek the
+    players sold and bought balance exactly by position. Pairing them by player
+    id instead reads as "sold a goalkeeper, bought a midfielder" - a nonsense
+    transfer that was never made."""
+    remaining = list(ins)
+    pairs: list[tuple[int, int]] = []
+    for p_out in outs:
+        match = next((i for i in remaining if pos[i] == pos[p_out]), None)
+        if match is None:
+            match = remaining[0]
+        remaining.remove(match)
+        pairs.append((p_out, match))
+    return pairs
 
 
 def _sequence_from_solution(
@@ -520,7 +566,7 @@ def _sequence_from_solution(
                 resulting_squad_ids=tuple(sorted(squad_t)), gw_ev=round(net_gw_ev, 2),
             ))
         else:
-            paired = list(zip(outs, ins))
+            paired = _pair_by_position(outs, ins, pos)
             for idx, (p_out, p_in) in enumerate(paired):
                 steps.append(TransferSequenceStep(
                     event=t,

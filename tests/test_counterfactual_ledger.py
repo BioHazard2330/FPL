@@ -172,3 +172,76 @@ def test_never_reaches_the_network_when_a_stub_is_supplied(db_conn, monkeypatch)
           summaries={2: {"points": 5}})
     rows = build_counterfactual_ledger(db_conn, live_stats_fn=_live({10: 5}))
     assert rows, "the stub should have been used"
+
+
+def _seed_week_plan(conn, event, created_at, starting, captain, moves):
+    import json
+
+    detail = {
+        "event": event,
+        "moves": [{"out": {"player_id": o, "name": f"P{o}"}, "into": {"player_id": i, "name": f"P{i}"}} for o, i in moves],
+        "lineup_after": {"starting": [{"player_id": p} for p in starting], "captain_id": captain},
+    }
+    conn.execute(
+        "INSERT INTO decisions (decision_type, summary, detail, created_at) VALUES ('week_plan', 's', ?, ?)",
+        (json.dumps(detail), created_at),
+    )
+    conn.commit()
+
+
+def _seed_deadline(conn, event, deadline):
+    conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, "
+        "updated_at) VALUES (?, ?, ?, 0, 1, 0, 0, 0, 't')", (event, f"GW{event}", deadline),
+    )
+    conn.commit()
+
+
+def test_week_plan_is_scored_with_its_own_eleven_and_armband(db_conn, monkeypatch):
+    monkeypatch.setattr("fpl_agent.models.counterfactual_ledger.current_season", lambda conn: "2026-27")
+    _seed(
+        db_conn,
+        events={1: [(10, 1, 0, None), (11, 0, 0, None)], 2: [(10, 1, 0, None), (11, 0, 0, None)]},
+        summaries={2: {"points": 5}},
+    )
+    _seed_deadline(db_conn, 2, "2026-09-01T10:00:00Z")
+    _seed_week_plan(db_conn, 2, "2026-09-01T09:00:00Z", starting=[11, 12], captain=12, moves=[(10, 12)])
+
+    rows = build_counterfactual_ledger(db_conn, live_stats_fn=_live({10: 5, 11: 4, 12: 9}))
+    row = next(r for r in rows if r.event == 2)
+
+    assert row.plan_points == 4 + 9 * 2
+    assert row.plan_action == "P10 -> P12"
+    assert row.plan_followed is False
+
+
+def test_a_plan_saved_after_the_deadline_is_never_used(db_conn, monkeypatch):
+    monkeypatch.setattr("fpl_agent.models.counterfactual_ledger.current_season", lambda conn: "2026-27")
+    _seed(
+        db_conn,
+        events={1: [(10, 1, 0, None)], 2: [(10, 1, 0, None)]},
+        summaries={2: {"points": 5}},
+    )
+    _seed_deadline(db_conn, 2, "2026-09-01T10:00:00Z")
+    _seed_week_plan(db_conn, 2, "2026-09-01T10:00:01Z", starting=[10], captain=10, moves=[])
+
+    rows = build_counterfactual_ledger(db_conn, live_stats_fn=_live({10: 5}))
+
+    assert next(r for r in rows if r.event == 2).plan_points is None
+
+
+def test_week_plan_totals_span_only_the_gameweeks_a_plan_was_on_file(db_conn, monkeypatch):
+    monkeypatch.setattr("fpl_agent.models.counterfactual_ledger.current_season", lambda conn: "2026-27")
+    _seed(
+        db_conn,
+        events={1: [(10, 1, 0, None)], 2: [(10, 1, 0, None)], 3: [(10, 1, 0, None)]},
+        summaries={2: {"points": 5}, 3: {"points": 8}},
+    )
+    _seed_deadline(db_conn, 2, "2026-09-01T10:00:00Z")
+    _seed_week_plan(db_conn, 2, "2026-09-01T09:00:00Z", starting=[10], captain=10, moves=[])
+
+    totals = ledger_totals(build_counterfactual_ledger(db_conn, live_stats_fn=_live({10: 5})))
+
+    assert totals.plan_events == 1
+    assert totals.plan_your_total == 5
+    assert totals.plan_total == 10

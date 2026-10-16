@@ -61,6 +61,12 @@ class LedgerRow:
     # Did your real squad end up matching what it proposed?
     followed: bool | None
     note: str | None = None
+    # The week plan (optimization/week_plan.py): every transfer it recommended,
+    # the eleven it picked and its armband, scored at the gameweek it was made
+    # for. None where no plan was on file at that deadline - never zero.
+    plan_points: int | None = None
+    plan_action: str | None = None
+    plan_followed: bool | None = None
 
 
 def _squad_points(live: dict, picks: list[tuple[int, int]]) -> int:
@@ -73,6 +79,37 @@ def _squad_points(live: dict, picks: list[tuple[int, int]]) -> int:
         stats = live.get(player_id) or {}
         total += (stats.get("total_points") or 0) * multiplier
     return total
+
+
+def week_plan_for_event(conn: sqlite3.Connection, event: int) -> dict | None:
+    """The last week plan saved before this gameweek's deadline, i.e. the one
+    the manager could actually have followed. A plan saved after the deadline
+    was written with the answer partly in view and is never used."""
+    import json
+
+    deadline = conn.execute("SELECT deadline_time FROM events WHERE id=?", (event,)).fetchone()
+    if deadline is None:
+        return None
+    rows = conn.execute(
+        "SELECT detail, created_at FROM decisions WHERE decision_type='week_plan' ORDER BY id DESC"
+    ).fetchall()
+    for r in rows:
+        detail = json.loads(r["detail"])
+        if detail.get("event") == event and r["created_at"] <= deadline["deadline_time"]:
+            return detail
+    return None
+
+
+def week_plan_points(live: dict, plan: dict) -> int:
+    """The plan's eleven and armband scored on the real gameweek. Autosubs are
+    not simulated, so a starter who plays no minutes scores nothing here, where
+    FPL would have brought a bench player on. That understates the plan and is
+    not corrected for, because correcting it would mean simulating FPL's own
+    substitution rules on the plan's behalf."""
+    lineup = plan["lineup_after"]
+    captain = lineup.get("captain_id")
+    picks = [(p["player_id"], 2 if p["player_id"] == captain else 1) for p in lineup["starting"]]
+    return _squad_points(live, picks)
 
 
 def build_counterfactual_ledger(
@@ -176,6 +213,17 @@ def build_counterfactual_ledger(
                 current_ids = {p["player_id"] for p in picks_by_event[event]}
                 followed = in_id in current_ids and out_id not in current_ids
 
+        plan = week_plan_for_event(conn, event)
+        plan_points = plan_action = plan_followed = None
+        if plan is not None:
+            plan_points = week_plan_points(live, plan)
+            moves = plan.get("moves", [])
+            plan_action = "; ".join(f"{m['out']['name']} -> {m['into']['name']}" for m in moves) or "ROLL"
+            current_ids = {p["player_id"] for p in picks_by_event[event]}
+            plan_followed = all(
+                m["into"]["player_id"] in current_ids and m["out"]["player_id"] not in current_ids for m in moves
+            )
+
         rows.append(LedgerRow(
             event=event,
             your_points=summary["points"],
@@ -188,6 +236,9 @@ def build_counterfactual_ledger(
             delta_vs_you=(optimizer_points - summary["points"]) if optimizer_points is not None else None,
             followed=followed,
             note=note,
+            plan_points=plan_points,
+            plan_action=plan_action,
+            plan_followed=plan_followed,
         ))
     return rows
 
@@ -210,11 +261,22 @@ class LedgerTotals:
     delta: int | None
     followed_count: int
     recommendations_logged: int
+    # Same discipline as the optimizer column: every comparison total spans
+    # exactly the gameweeks a week plan was on file for.
+    plan_events: int = 0
+    plan_total: int | None = None
+    plan_your_total: int | None = None
+    plan_roll_total: int | None = None
 
 
 def ledger_totals(rows: list[LedgerRow]) -> LedgerTotals:
     comparable = [r for r in rows if r.optimizer_points is not None]
+    planned = [r for r in rows if r.plan_points is not None]
     return LedgerTotals(
+        plan_events=len(planned),
+        plan_total=sum(r.plan_points for r in planned) if planned else None,
+        plan_your_total=sum(r.your_points for r in planned) if planned else None,
+        plan_roll_total=sum(r.roll_points for r in planned if r.roll_points is not None) if planned else None,
         events=len(rows),
         your_total_all_events=sum(r.your_points for r in rows),
         your_total=sum(r.your_points for r in comparable) if comparable else None,

@@ -1879,6 +1879,15 @@ def run_scheduled(gated: bool):
     except Exception:
         logger.exception("run-scheduled strategic-plan auto-trigger failed - not fatal to the sync itself")
 
+    try:
+        from fpl_agent.optimization.week_plan import refresh_week_plan_if_needed
+
+        plan_reason = refresh_week_plan_if_needed(conn)
+        if plan_reason:
+            logger.info("run-scheduled week plan rebuilt: %s", plan_reason)
+    except Exception:
+        logger.exception("run-scheduled week plan refresh failed - not fatal to the sync itself")
+
     conn.close()
 
     if retighten_msg:
@@ -3559,7 +3568,7 @@ def chips(squad: str | None):
     chip scheduling - see optimization/chips.py docstring for why."""
     conn = get_connection()
     for w in eligible_chips(conn):
-        mark = "ELIGIBLE" if w.eligible_now else "-"
+        mark = "USED" if w.used else ("ELIGIBLE" if w.eligible_now else "-")
         click.echo(f"{w.name:<10} #{w.number} GW{w.start_event}-{w.stop_event} {mark}")
 
     squad_ids = _parse_squad_option(squad)
@@ -3659,6 +3668,29 @@ def transfers(squad: str, bank: float, free_transfers: int, gw_window: int, sear
         )
 
 
+def _echo_week_plan_header(conn) -> None:
+    """The week plan is the decision of record. This command's own analysis
+    prices one swap against rolling, so with several free transfers it can
+    only ever describe part of the choice; say so before it speaks."""
+    from fpl_agent.optimization.week_plan import latest_week_plan, week_plan_staleness
+
+    stored = latest_week_plan(conn)
+    if stored is None:
+        click.echo("WEEK PLAN: none stored yet - run `fpl week-plan`. The analysis below prices a single swap only.")
+        click.echo()
+        return
+    detail, created_at, decision_id = stored
+    reasons = week_plan_staleness(conn, detail, created_at)
+    moves = detail["moves"]
+    headline = "; ".join(f"{m['out']['name']} -> {m['into']['name']}" for m in moves) or "ROLL"
+    click.echo(f"WEEK PLAN (decision #{decision_id}, the decision of record): {headline}")
+    click.echo(f"  {detail['gain_vs_roll']:+.1f} over {detail['horizon']} GW against rolling; {detail['free_transfers']} free transfers now, {detail['ft_after']} after")
+    if reasons:
+        click.echo(f"  OUT OF DATE: {reasons[0]} - run `fpl week-plan`")
+    click.echo("  The single-swap analysis below prices one transfer against rolling and cannot see multi-transfer moves.")
+    click.echo()
+
+
 @cli.command("transfer-analysis")
 @click.option("--squad", default=None, help="comma-separated player ids (default: the real locked squad, if one exists)")
 @click.option("--bank", default=None, type=float, help="bank in £m - required when --squad is given explicitly")
@@ -3689,6 +3721,9 @@ def transfer_analysis_cmd(squad: str | None, bank: float | None):
             if locked is None:
                 click.echo("no real locked squad found - pass --squad and --bank explicitly", err=True)
                 raise SystemExit(1)
+
+        if squad is None:
+            _echo_week_plan_header(conn)
 
         a = analyze_transfer_decision(conn, locked)
         c = analyze_captain_decision(conn, locked)
@@ -3925,6 +3960,66 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
                     click.echo("  NOTE: the beam beat the MILP - that should be impossible on an "
                                "identical problem, so the two are NOT solving the same instance "
                                "(most likely a different candidate pool). Investigate before trusting either.")
+    finally:
+        conn.close()
+
+
+@cli.command("week-plan")
+@click.option("--horizon", default=5, type=int, help="gameweeks the moves are judged over (default 5)")
+@click.option("--min-gain", default=1.5, type=float, help="least a move must add over the horizon to be recommended (default 1.5)")
+@click.option("--save/--no-save", default=True, help="record the plan in the decision journal so the dashboard can show it")
+def week_plan_cmd(horizon: int, min_gain: float, save: bool):
+    """This gameweek's transfers, planned as a set.
+
+    Rolls and each added move are priced with the exact multi-gameweek
+    solver, so five banked free transfers are treated as five transfers
+    rather than as one swap and a roll.
+    """
+    from fpl_agent.optimization.week_plan import build_week_plan, headline, persist_week_plan
+
+    conn = get_connection()
+    try:
+        plan = build_week_plan(conn, horizon=horizon, min_move_gain=min_gain)
+        if plan is None:
+            click.echo("no synced squad to plan from - run `fpl my-team` first", err=True)
+            raise SystemExit(1)
+        click.echo(f"GW{plan.event}  free transfers {plan.free_transfers}  bank £{plan.bank_tenths / 10:.1f}m  "
+                   f"horizon {plan.horizon} GW  {'proven optimal' if plan.proven_optimal else 'best found, not proven'}")
+        click.echo(f"DECISION: {headline(plan)}")
+        click.echo(f"  rolling and re-planning from next week: {plan.roll_total}")
+        click.echo(f"  this plan:                              {plan.plan_total}  ({plan.gain_vs_roll:+.2f})")
+        for i, m in enumerate(plan.moves, 1):
+            click.echo(
+                f"  {i}. {m.out.name} ({m.out.team_short}, £{m.out.price_tenths / 10:.1f}m) -> "
+                f"{m.into.name} ({m.into.team_short}, £{m.into.price_tenths / 10:.1f}m)  {m.gain:+.2f} over {plan.horizon} GW"
+                f"  next GW {m.out.xp_next:.1f} -> {m.into.xp_next:.1f}"
+                + (f"  [Solio {m.into.solio_next:.1f}]" if m.into.solio_next is not None else "")
+            )
+        for m in plan.declined:
+            click.echo(f"  not recommended: {m.out.name} -> {m.into.name} adds {m.gain:+.2f}, under the {plan.min_move_gain:g} bar")
+        click.echo("  moves by count: " + ", ".join(f"{c.moves}: {c.gain_vs_roll:+.2f}" for c in plan.curve))
+        click.echo(f"  after: {plan.ft_after} free transfer(s), bank £{plan.bank_after_tenths / 10:.1f}m. {plan.affordability}")
+        la, ln = plan.lineup_after, plan.lineup_now
+        cap = next((p.name for p in la.starting if p.player_id == la.captain_id), "-")
+        vice = next((p.name for p in la.starting if p.player_id == la.vice_id), "-")
+        click.echo(f"  XI after moves: {', '.join(p.name for p in la.starting)}")
+        click.echo(f"  bench: {', '.join(p.name for p in la.bench)}   captain {cap}  vice {vice}")
+        if plan.lineup_set_by_you is not None:
+            set_cap = next((p.name for p in plan.lineup_set_by_you.starting if p.player_id == plan.lineup_set_by_you.captain_id), "-")
+            click.echo(f"  lineup as you set it is worth {plan.lineup_set_by_you.xp_total}; best from the same squad "
+                       f"{ln.xp_total} (captain {set_cap} now)")
+        if plan.road_ahead:
+            ra = plan.road_ahead
+            click.echo(f"  road ahead ({ra['horizon']} GW, each move must earn {plan.min_move_gain:g}): "
+                       f"{ra['gain_vs_roll']:+.1f} vs rolling now")
+            for week in ra["weeks"][1:]:
+                moves = ", ".join(f"{m['out']} -> {m['into']}" + (" (HIT)" if m["hit"] else "") for m in week["moves"])
+                click.echo(f"    GW{week['event']}: {moves or 'roll'}")
+        for note in plan.notes:
+            click.echo(f"  note: {note}")
+        if save:
+            decision_id = persist_week_plan(conn, plan)
+            click.echo(f"  saved as decision #{decision_id}")
     finally:
         conn.close()
 
