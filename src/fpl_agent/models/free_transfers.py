@@ -75,19 +75,29 @@ def compute_real_free_transfers(conn: sqlite3.Connection, entry_id: int, upto_ev
     # still real data worth reading (a non-zero value there would be a
     # genuine FPL API quirk worth knowing about) but must never seed
     # `ft_carry` for event 2.
+    # Second real bug fixed 2026-10-16 (the app showed 3, this replay said 5):
+    # the gameweek AFTER a wildcard or free hit does not get the usual +1. Saved
+    # transfers survive the chip (that part was right) but the increment is not
+    # granted for the next window - FPL's own FAQ names a previous chip as "the
+    # most common explanation" for a missing free transfer. This manager played
+    # a free hit in GW4 and a wildcard in GW5: GW5 and GW6 each opened with the
+    # bank unchanged (2), GW7 got its +1, so 3, which is what the app showed.
     ft_carry = 0
+    chip_last_event = False
     for r in rows:
         if r["event"] == 1:
             continue  # no real FT mechanic exists for the initial squad pick
-        available = min(ft_carry + 1, cap)
+        available = min(ft_carry + (0 if chip_last_event else 1), cap)
         transfers_made = r["event_transfers"] or 0
         if chip_by_event.get(r["event"]) in _WILDCARD_LIKE_CHIPS:
             ft_carry = available  # real rule: wildcard/free-hit transfers are free, never touch the bank
+            chip_last_event = True
         else:
             ft_carry = max(available - transfers_made, 0)
+            chip_last_event = False
     if events_present[-1] == 1:
         return 1  # walking into event 2, the real flat starting amount - no rollover exists yet
-    return min(ft_carry + 1, cap)
+    return min(ft_carry + (0 if chip_last_event else 1), cap)
 
 
 def count_pending_transfers(conn: sqlite3.Connection, entry_id: int, event: int) -> int:

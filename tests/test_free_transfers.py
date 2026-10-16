@@ -92,8 +92,33 @@ def test_wildcard_transfers_never_touch_the_bank(db_conn):
     db_conn.commit()
 
     # available=1 walking into GW2 (flat baseline; real wildcard use),
-    # untouched by the 12 "transfers" it made -> carry=1 -> next FT = min(1+1,5)=2
-    assert compute_real_free_transfers(db_conn, 7378572) == 2
+    # untouched by the 12 "transfers" it made -> carry=1. The window after a chip
+    # gets no +1, so GW3 opens with the saved 1, not 2.
+    assert compute_real_free_transfers(db_conn, 7378572) == 1
+
+
+def test_a_wildcard_then_free_hit_run_matches_what_the_app_showed(db_conn):
+    """The real case behind the fix (entry 7378572, 2026-10-16): GW3 one transfer
+    and a triple captain, GW4 free hit, GW5 wildcard, GW6 nothing. The app said 3
+    free transfers for GW7; the replay said 5 because it gave GW5 and GW6 their +1."""
+    transfers = {1: 0, 2: 0, 3: 1, 4: 0, 5: 0, 6: 0}
+    for event, n in transfers.items():
+        _seed_gw_summary(db_conn, 7378572, event, event_transfers=n)
+    _seed_chip(db_conn, 7378572, 3, "3xc")
+    _seed_chip(db_conn, 7378572, 4, "freehit")
+    _seed_chip(db_conn, 7378572, 5, "wildcard")
+    db_conn.commit()
+
+    assert compute_real_free_transfers(db_conn, 7378572) == 3
+
+
+def test_a_triple_captain_week_does_not_withhold_the_next_free_transfer(db_conn):
+    for event in range(1, 5):
+        _seed_gw_summary(db_conn, 7378572, event, event_transfers=0)
+    _seed_chip(db_conn, 7378572, 3, "3xc")
+    db_conn.commit()
+
+    assert compute_real_free_transfers(db_conn, 7378572) == 4
 
 
 def test_a_gap_in_synced_history_returns_none_not_a_guess(db_conn):
