@@ -1,4 +1,5 @@
 import { CaptainFaceOff } from '@/components/command/CaptainFaceOff'
+import { DeadlineChecklist } from '@/components/command/DeadlineChecklist'
 import { DeskStrip } from '@/components/command/DeskStrip'
 import { CaptainLadder } from '@/components/command/CaptainLadder'
 import { ConfidenceGraphic } from '@/components/command/ConfidenceGraphic'
@@ -12,7 +13,7 @@ import { LineupDoctor } from '@/components/command/LineupDoctor'
 import { MarginalValue } from '@/components/command/MarginalValue'
 import { RoadAhead } from '@/components/command/RoadAhead'
 import { WeekPlanHero } from '@/components/command/WeekPlanHero'
-import { fetchCommandPayload, fetchWeekPlanPayload } from '@/lib/api'
+import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
 import { derivePhase, useCountdown } from '@/lib/clock'
@@ -31,7 +32,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * previous version already rendered. */
 
 type SectionKey =
-  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk'
+  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk' | 'checklist'
 
 /** Two real orders, one per answerable question.
  *
@@ -43,7 +44,7 @@ type SectionKey =
  * leads, the captain (who is on the pitch right now) comes straight after,
  * and the decision drops to where it belongs: a record, read last. */
 const ACTIONABLE_ORDER: SectionKey[] = [
-  'decision', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'desk', 'evidence', 'confidence',
+  'decision', 'checklist', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'desk', 'evidence', 'confidence',
 ]
 const LOCKED_ORDER: SectionKey[] = [
   'squad', 'captain', 'desk', 'evidence', 'lineup', 'decision', 'value', 'record', 'horizon', 'strategy', 'later', 'confidence',
@@ -57,6 +58,8 @@ function orderSections(nodes: Record<SectionKey, React.ReactNode>, actionable: b
 export function CommandScreen() {
   const state = useFetch(fetchCommandPayload, [], 60000)
   const planState = useFetch(fetchWeekPlanPayload, [], 60000)
+  const deskState = useFetch(fetchDeskPayload, [], 300000)
+  const desk = deskState.status === 'ready' ? deskState.data : null
   const live = useLiveMeta()
   const countdown = useCountdown(live?.gw?.next_deadline_time)
 
@@ -142,7 +145,8 @@ export function CommandScreen() {
           </>
         ) : null,
         later: <RoadAhead plan={plan} compact />,
-        desk: <DeskStrip />,
+        desk: <DeskStrip desk={desk} />,
+        checklist: <DeadlineChecklist plan={plan} desk={desk} />,
       }
     : {}
 

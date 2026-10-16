@@ -7,6 +7,7 @@ import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/S
 import { CHART_COLORS, baseChart } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile } from '@/lib/api'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { ProjectionBand } from '@/components/shell/ProjectionBand'
 import { StoriesRail } from '@/components/shell/StoriesRail'
 import { FlipCard } from '@/components/three/FlipCard'
 import { PlayerShots } from '@/components/football/PlayerShots'
@@ -165,6 +166,8 @@ export function PlayerScreen() {
           ))}
         </div>
       )}
+
+      <ProjectionBand playerId={pl.player_id} />
 
       {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
       <div className="border-b-2 border-divider px-10 py-8">

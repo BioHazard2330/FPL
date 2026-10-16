@@ -8,6 +8,7 @@
 import type {
   DeskPayload,
   ComparePayload,
+  ProjectionPayload,
   PlayerIndexRow,
   PreviewsPayload,
   AtlasPayload,
@@ -55,6 +56,10 @@ export function fetchPlayersIndex(): Promise<{ players: PlayerIndexRow[] }> {
 
 export function fetchComparePayload(a: number, b: number): Promise<ComparePayload> {
   return getJson<ComparePayload>(`/api/compare?a=${a}&b=${b}`)
+}
+
+export function fetchProjection(playerId: number): Promise<ProjectionPayload> {
+  return getJson<ProjectionPayload>(`/api/projection?id=${playerId}`)
 }
 
 export function fetchMyTeamPayload(): Promise<MyTeamPayload> {

@@ -1805,3 +1805,9 @@ export interface Story {
   video_id?: string | null
   author?: string | null
 }
+
+export interface ProjectionPayload {
+  event: number | null
+  window: number
+  player: ComparePlayer
+}

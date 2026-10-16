@@ -198,3 +198,37 @@ def _build_compare(ctx: DashboardContext, params: dict | None = None) -> dict:
 
 
 build_compare_payload.needs_context = False
+
+
+_PROJECTION_CACHE: dict[tuple, tuple[float, dict]] = {}
+
+
+def build_projection_payload(ctx: DashboardContext, params: dict | None = None) -> dict:
+    """One player's forward-looking line for his profile page: the same
+    projection the comparison uses, cached five minutes per player for the same
+    reason (a fresh connection refits team strength, about 3s)."""
+    import time
+
+    from fpl_agent.database.connection import get_connection
+
+    try:
+        player_id = int((params or {})["id"])
+    except (KeyError, ValueError):
+        raise LookupError("projection needs a player id") from None
+    key = (player_id, tuple(sorted(ctx.squad_ids or ())))
+    hit = _PROJECTION_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _CACHE_SECONDS:
+        return hit[1]
+    conn = get_connection()
+    try:
+        event = _next_event(conn)
+        payload = {"event": event, "window": _WINDOW_GW, "player": _player(conn, player_id, event, set(ctx.squad_ids or ()))}
+    finally:
+        conn.close()
+    _PROJECTION_CACHE[key] = (time.monotonic(), payload)
+    if len(_PROJECTION_CACHE) > 128:
+        _PROJECTION_CACHE.pop(next(iter(_PROJECTION_CACHE)))
+    return payload
+
+
+build_projection_payload.needs_context = False

@@ -1,17 +1,14 @@
 import { Link } from 'react-router-dom'
-import { fetchDeskPayload } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
-import { useFetch } from '@/lib/useFetch'
+import type { DeskPayload } from '@/lib/types'
 
 /** FROM THE DESK - the few stories that name your players or the plan's
  * targets, straight from the wire, with a link out to each. The full desk is
  * one click away; this is only here so a transfer decision is never made
  * without the news that touches it in view. Renders nothing when no story
  * does: an empty strip would only be filler. */
-export function DeskStrip() {
-  const state = useFetch(fetchDeskPayload, [], 300000)
-  if (state.status !== 'ready') return null
-  const d = state.data
+export function DeskStrip({ desk: d }: { desk: DeskPayload | null }) {
+  if (!d) return null
   const items = [...(d.lead ? [d.lead] : []), ...d.wire].filter((a) => a.relevance > 0).slice(0, 4)
   const flagged = d.injuries.filter((i) => i.mine || i.target).slice(0, 4)
   if (items.length === 0 && flagged.length === 0) return null

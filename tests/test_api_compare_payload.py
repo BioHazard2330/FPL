@@ -61,3 +61,14 @@ def test_builders_are_registered_without_the_dashboard_context():
     assert API_BUILDERS["players"] is compare_payload.build_players_index
     assert API_BUILDERS["compare"] is compare_payload.build_compare_payload
     assert compare_payload.build_compare_payload.needs_context is False
+
+
+def test_projection_needs_a_player_id():
+    from fpl_agent.monitoring.api.compare_payload import build_projection_payload
+
+    with pytest.raises(LookupError):
+        build_projection_payload(type("C", (), {"squad_ids": set()})(), {})
+    from fpl_agent.monitoring.api import API_BUILDERS
+
+    assert API_BUILDERS["projection"] is build_projection_payload
+    assert build_projection_payload.needs_context is False

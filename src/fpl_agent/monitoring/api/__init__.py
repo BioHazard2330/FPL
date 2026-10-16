@@ -10,7 +10,7 @@ docs/FRONTEND_MIGRATION_PLAN.md for the full Python<->React boundary.
 migrated (Stage 3 onward), never all at once."""
 from fpl_agent.monitoring.api.advanced_payload import build_advanced_payload
 from fpl_agent.monitoring.api.atlas_payload import build_atlas_payload
-from fpl_agent.monitoring.api.compare_payload import build_compare_payload, build_players_index
+from fpl_agent.monitoring.api.compare_payload import build_compare_payload, build_players_index, build_projection_payload
 from fpl_agent.monitoring.api.desk_payload import build_desk_payload
 from fpl_agent.monitoring.api.command_payload import build_command_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
@@ -41,6 +41,7 @@ API_BUILDERS = {
     "previews": build_previews_payload,
     "players": build_players_index,
     "compare": build_compare_payload,
+    "projection": build_projection_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a
     # builder that declares it, and turns a LookupError into a real 404.
     "club": build_club_profile,
