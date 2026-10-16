@@ -1,4 +1,5 @@
 import { CaptainFaceOff } from '@/components/command/CaptainFaceOff'
+import { FieldStrip } from '@/components/command/FieldStrip'
 import { DeadlineChecklist } from '@/components/command/DeadlineChecklist'
 import { DeskStrip } from '@/components/command/DeskStrip'
 import { CaptainLadder } from '@/components/command/CaptainLadder'
@@ -32,7 +33,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * previous version already rendered. */
 
 type SectionKey =
-  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk' | 'checklist'
+  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk' | 'checklist' | 'field'
 
 /** Two real orders, one per answerable question.
  *
@@ -44,7 +45,7 @@ type SectionKey =
  * leads, the captain (who is on the pitch right now) comes straight after,
  * and the decision drops to where it belongs: a record, read last. */
 const ACTIONABLE_ORDER: SectionKey[] = [
-  'decision', 'checklist', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'desk', 'evidence', 'confidence',
+  'decision', 'checklist', 'field', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'desk', 'evidence', 'confidence',
 ]
 const LOCKED_ORDER: SectionKey[] = [
   'squad', 'captain', 'desk', 'evidence', 'lineup', 'decision', 'value', 'record', 'horizon', 'strategy', 'later', 'confidence',
@@ -147,6 +148,7 @@ export function CommandScreen() {
         later: <RoadAhead plan={plan} compact />,
         desk: <DeskStrip desk={desk} />,
         checklist: <DeadlineChecklist plan={plan} desk={desk} />,
+        field: <FieldStrip />,
       }
     : {}
 

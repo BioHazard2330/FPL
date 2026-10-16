@@ -10,10 +10,13 @@ docs/FRONTEND_MIGRATION_PLAN.md for the full Python<->React boundary.
 migrated (Stage 3 onward), never all at once."""
 from fpl_agent.monitoring.api.advanced_payload import build_advanced_payload
 from fpl_agent.monitoring.api.atlas_payload import build_atlas_payload
+from fpl_agent.monitoring.api.audit_payload import build_audit_payload
 from fpl_agent.monitoring.api.compare_payload import build_compare_payload, build_players_index, build_projection_payload
 from fpl_agent.monitoring.api.desk_payload import build_desk_payload
 from fpl_agent.monitoring.api.command_payload import build_command_payload
+from fpl_agent.monitoring.api.field_payload import build_field_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
+from fpl_agent.monitoring.api.livecone_payload import build_livecone_payload
 from fpl_agent.monitoring.api.match_payload import build_match_report
 from fpl_agent.monitoring.api.matchweek_payload import build_matchweek_payload
 from fpl_agent.monitoring.api.myteam_payload import build_my_team_payload
@@ -41,6 +44,9 @@ API_BUILDERS = {
     "previews": build_previews_payload,
     "players": build_players_index,
     "compare": build_compare_payload,
+    "field": build_field_payload,
+    "audit": build_audit_payload,
+    "livecone": build_livecone_payload,
     "projection": build_projection_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a
     # builder that declares it, and turns a LookupError into a real 404.

@@ -103,6 +103,14 @@ function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: '
               +{p.match_analysis_xp!.toFixed(1)} from match analysis
             </Tag>
           )}
+          {p.luck && Math.abs(p.luck.z) >= 1.5 && (
+            <Tag
+              tone={p.luck.z > 0 ? 'gold' : 'blue'}
+              title={`${p.luck.actual} points so far against ${p.luck.deserved.toFixed(0)} from the chances behind them (z ${p.luck.z.toFixed(1)})`}
+            >
+              {p.luck.z > 0 ? `+${p.luck.luck.toFixed(0)} lucky` : `${p.luck.luck.toFixed(0)} owed`}
+            </Tag>
+          )}
           {disagree && (
             <Tag tone="blue" title="Solio Analytics' independent projection for the same gameweek">
               Solio has {p.solio_next!.toFixed(1)}

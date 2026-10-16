@@ -1,6 +1,7 @@
 import Chart from 'react-apexcharts'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
 import { fetchLiveSnapshot, fetchWeekPlanPayload } from '@/lib/api'
@@ -204,6 +205,8 @@ export function LiveScreen() {
           </div>
         </div>
       )}
+
+      <LiveCone />
 
       {/* LIVE PROGRESSION - real gap found 2026-09-12 (direct user report:
           "amazing graphs... barely there" - a real sub-gameweek points/rank

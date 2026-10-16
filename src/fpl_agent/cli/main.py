@@ -1621,6 +1621,15 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.gw_stats import sync_gw_stats
+
+        gw_result = sync_gw_stats(conn)
+        if gw_result["events"]:
+            logger.info("run-scheduled gameweek stats: events %s, %d rows", gw_result["events"], gw_result["rows"])
+    except Exception:
+        logger.exception("run-scheduled gameweek stats failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.media_source import sync_media
 
         media_result = sync_media(conn)
@@ -1916,6 +1925,13 @@ def run_scheduled(gated: bool):
             logger.info("run-scheduled auto-triggered strategic-plan recompute: %s", auto_reason)
     except Exception:
         logger.exception("run-scheduled strategic-plan auto-trigger failed - not fatal to the sync itself")
+
+    try:
+        eo_reason = _maybe_trigger_eo_sample(conn)
+        if eo_reason:
+            logger.info("run-scheduled auto-triggered effective-ownership sample: %s", eo_reason)
+    except Exception:
+        logger.exception("run-scheduled effective-ownership trigger failed - not fatal to the sync itself")
 
     try:
         from fpl_agent.optimization.week_plan import refresh_week_plan_if_needed
@@ -2397,6 +2413,63 @@ def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
             cwd=str(PROJECT_ROOT), creationflags=creationflags,
         )
     return reason
+
+
+_EO_SAMPLE_AUTO_STALE_MINUTES = 120
+
+
+def _maybe_trigger_eo_sample(conn) -> str | None:
+    """Starts `fpl sync-eo --event N` as a detached, idle-priority background
+    process for the latest gameweek whose deadline has passed and which has no
+    effective-ownership sample yet. The sample (750 managers, politely paced) takes
+    around 25 minutes, far beyond Task Scheduler's 10-minute limit on this cycle,
+    so it is never awaited. It feeds the Field screen and the live forecast with
+    the field's real picks; a gameweek is sampled once, and an in-flight start
+    blocks a second for two hours."""
+    from fpl_agent.models.effective_ownership import sample_season
+
+    now = datetime.now(timezone.utc)
+    row = conn.execute(
+        "SELECT MAX(id) AS event FROM events WHERE deadline_time IS NOT NULL AND deadline_time <= ?", (now.isoformat(),),
+    ).fetchone()
+    event = row["event"] if row else None
+    if event is None:
+        return None
+    have = conn.execute(
+        "SELECT 1 FROM player_sample_ownership_history WHERE event=? AND season=? LIMIT 1", (event, sample_season(conn)),
+    ).fetchone()
+    if have is not None:
+        return None
+    lock_row = conn.execute("SELECT value FROM app_meta WHERE key='eo_sample_auto_started_at'").fetchone()
+    if lock_row is not None:
+        try:
+            lock_ts = datetime.fromisoformat(lock_row["value"].replace("Z", "+00:00"))
+            if lock_ts.tzinfo is None:
+                lock_ts = lock_ts.replace(tzinfo=timezone.utc)
+            if (now - lock_ts).total_seconds() / 60 < _EO_SAMPLE_AUTO_STALE_MINUTES:
+                return None
+        except ValueError:
+            pass
+    fpl_exe = Path(sys.executable).parent / ("fpl.exe" if sys.platform == "win32" else "fpl")
+    if not fpl_exe.exists():
+        return None
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('eo_sample_auto_started_at', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (now.isoformat(), now.isoformat()),
+    )
+    conn.commit()
+    log_path = LOGS_DIR / "eo_sample_auto.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(f"\n--- auto-triggered {now.isoformat()} (GW{event} locked, no sample) ---\n")
+        log_file.flush()
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS if sys.platform == "win32" else 0
+        subprocess.Popen(
+            [str(fpl_exe), "sync-eo", "--event", str(event)],
+            stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(PROJECT_ROOT), creationflags=creationflags,
+        )
+    return f"GW{event} has no effective-ownership sample"
 
 
 def _write_dashboard(

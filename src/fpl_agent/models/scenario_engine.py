@@ -86,14 +86,14 @@ def _draw_fixture_for_team(
     return (home_goals, away_goals) if team_id == home_team_id else (away_goals, home_goals)
 
 
-def sample_season_scenarios(
+def sample_season_arrays(
     conn: sqlite3.Connection,
     squad_ids: list[int],
     from_event: int,
     horizon_gw: int,
     n_trials: int = 1000,
     rng: np.random.Generator | None = None,
-) -> list[ScenarioOutcome]:
+) -> dict[tuple[int, int], np.ndarray]:
     """Real correlation fix (2026-08-28) - grouped by (event, team) rather
     than looped one player at a time, so two+ squad-tracked teammates
     sharing a fixture get their goals jointly attributed
@@ -142,6 +142,21 @@ def sample_season_scenarios(
             for pid in team_player_ids:
                 per_player_event_trials[(event, pid)] = totals[pid]
 
+    return per_player_event_trials
+
+
+def sample_season_scenarios(
+    conn: sqlite3.Connection,
+    squad_ids: list[int],
+    from_event: int,
+    horizon_gw: int,
+    n_trials: int = 1000,
+    rng: np.random.Generator | None = None,
+) -> list[ScenarioOutcome]:
+    """Per-trial view of `sample_season_arrays`: one outcome per trial, holding
+    every tracked player's points for every event. Callers that want a whole
+    trial dimension at once (the rank engine) use the arrays directly."""
+    per_player_event_trials = sample_season_arrays(conn, squad_ids, from_event, horizon_gw, n_trials, rng)
     return [
         ScenarioOutcome(trial_index=i, points_by_event_player={k: float(v[i]) for k, v in per_player_event_trials.items()})
         for i in range(n_trials)

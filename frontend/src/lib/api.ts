@@ -8,6 +8,9 @@
 import type {
   DeskPayload,
   ComparePayload,
+  AuditPayload,
+  LiveConePayload,
+  FieldPayload,
   ProjectionPayload,
   PlayerIndexRow,
   PreviewsPayload,
@@ -60,6 +63,18 @@ export function fetchComparePayload(a: number, b: number): Promise<ComparePayloa
 
 export function fetchProjection(playerId: number): Promise<ProjectionPayload> {
   return getJson<ProjectionPayload>(`/api/projection?id=${playerId}`)
+}
+
+export function fetchAuditPayload(event?: number): Promise<AuditPayload> {
+  return getJson<AuditPayload>(event ? `/api/audit?event=${event}` : '/api/audit')
+}
+
+export function fetchLiveCone(): Promise<LiveConePayload> {
+  return getJson<LiveConePayload>('/api/livecone')
+}
+
+export function fetchFieldPayload(kind: 'population' | 'top10k'): Promise<FieldPayload> {
+  return getJson<FieldPayload>(`/api/field?kind=${kind}`)
 }
 
 export function fetchMyTeamPayload(): Promise<MyTeamPayload> {

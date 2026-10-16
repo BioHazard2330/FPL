@@ -1468,6 +1468,7 @@ export interface TablePayload {
 export interface WeekPlanPlayer {
   player_id: number
   photo_code?: number | null
+  luck?: { luck: number; z: number; actual: number; deserved: number }
   name: string
   position: string
   team_short: string
@@ -1857,4 +1858,135 @@ export interface ProjectionPayload {
   event: number | null
   window: number
   player: ComparePlayer
+}
+
+export interface LuckRow {
+  player_id: number
+  photo_code?: number | null
+  name: string
+  team_id: number
+  team_short: string
+  team_code: number
+  position: string
+  minutes: number
+  gws: number
+  actual: number
+  deserved: number
+  luck: number
+  goals_luck: number
+  assists_luck: number
+  cs_luck: number
+  conceded_luck: number
+  goals: number
+  xg: number
+  assists: number
+  xa: number
+  z: number
+  luck_per_gw: number
+  mine: boolean
+  price: number | null
+  owned: number | null
+}
+
+export interface MatchRebuild {
+  match_id: number
+  event: number | null
+  kickoff: string
+  home: { team_id: number; name: string; short: string; code: number; score: number; xg: number; shots: number }
+  away: { team_id: number; name: string; short: string; code: number; score: number; xg: number; shots: number }
+  shots: { minute: number; side: 'home' | 'away'; xg: number; goal: boolean; player: string; situation: string | null }[]
+  deserved: { home_win: number; draw: number; away_win: number; home_points: number; away_points: number; likely_score: [number, number] }
+  own_goals_or_unshot: { home: number; away: number }
+}
+
+export interface AuditPayload {
+  event: number | null
+  events: number[]
+  radar_season: { hot: LuckRow[]; cold: LuckRow[] }
+  radar_recent: { hot: LuckRow[]; cold: LuckRow[] }
+  squad: LuckRow[]
+  matches: MatchRebuild[]
+  thresholds: { min_minutes: number; recent_gameweeks: number }
+}
+
+export interface EdgeStats {
+  mean: number
+  sd: number
+  p_beat: number
+  p10: number
+  p90: number
+  big_win: number
+  big_loss: number
+  percentile: number
+  hist: number[]
+}
+
+export interface FieldOption {
+  key: string
+  label: string
+  moves: { out: string; into: string }[]
+  captain: { player_id: number; name?: string; team_short?: string } | null
+  xi: { player_id: number; name?: string }[]
+  edge: EdgeStats
+  mean_points: number
+}
+
+export interface FieldPayload {
+  status: 'ok' | 'no_plan' | 'no_sample'
+  detail?: string
+  event?: number
+  n_trials?: number
+  decision_id?: number
+  field?: { kind: 'top10k' | 'population'; label: string; sample_event: number; sample_size: number; coverage: number; spread: number }
+  posture?: { overall_rank: number; total_players: number; percentile: number; after_event: number } | null
+  model_bias?: { n: number; bias_per_player: number; standard_error: number } | null
+  options?: FieldOption[]
+  plan_option?: FieldOption
+  captains?: {
+    player_id: number
+    photo_code?: number | null
+    name: string
+    team_short: string
+    team_code: number
+    position: string
+    mean_points: number | null
+    captain_share: number
+    field_eo: number
+    edge: EdgeStats
+    chosen: boolean
+  }[]
+  best_captain_id?: number
+  upside_captain_id?: number
+  threats?: { player_id: number; photo_code?: number | null; name: string; team_short: string; team_code: number; position: string; field_eo: number; mean_points: number; p_haul: number; cost: number }[]
+  contributions?: { player_id: number; name: string; team_short: string; team_code: number; position: string; you: number; field_eo: number; mean_points: number; edge: number }[]
+  axis?: { min: number; max: number; bins: number }
+}
+
+export interface LiveConePayload {
+  status: 'ok' | 'not_live' | 'settled' | 'no_picks' | 'no_sample' | 'no_live_data'
+  detail?: string
+  event?: number
+  field?: { kind: string; label: string }
+  now?: number
+  forecast?: { mean: number; p10: number; p50: number; p90: number }
+  field_now?: number
+  field_forecast?: number
+  edge?: { mean: number; p_beat: number; p10: number; p90: number; percentile: number; hist: number[] }
+  fixtures_left?: number
+  fixtures_live?: number
+  players?: {
+    player_id: number
+    photo_code?: number | null
+    name?: string
+    team_short?: string
+    team_code?: number
+    position?: string
+    multiplier: number
+    points_now: number
+    remaining_mean: number
+    remaining_sd: number
+    p_five_more: number
+    swing: number
+  }[]
+  axis?: { min: number; max: number; bins: number }
 }

@@ -26,6 +26,30 @@ def _with_code(player: dict, codes: dict[int, int]) -> dict:
     return {**player, "team_code": codes.get(player.get("team_id"))}
 
 
+def _attach_luck(conn, payload: dict) -> None:
+    """Beside every player in a transfer: how far his season has run above or
+    below the chances behind it (`models/luck_audit`). A player who is up 16
+    points on his chances is a different sale or purchase from one level with
+    them, and the plan's projections, which already use chances, do not show it."""
+    from fpl_agent.models.luck_audit import season_luck
+
+    try:
+        rows = {r["player_id"]: r for r in season_luck(conn)}
+    except Exception:
+        return
+
+    def stamp(player: dict) -> None:
+        r = rows.get(player.get("player_id"))
+        if r is not None and r["minutes"] >= 180:
+            player["luck"] = {"luck": r["luck"], "z": r["z"], "actual": r["actual"], "deserved": r["deserved"]}
+
+    for move in payload.get("moves", []) + payload.get("declined", []):
+        stamp(move["out"])
+        stamp(move["into"])
+        for alt in move.get("alternatives", []):
+            stamp(alt["into"])
+
+
 def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
     """What it takes to turn the lineup the manager has set into the best one
     from the same fifteen: who comes into the eleven, who leaves it, the
@@ -163,6 +187,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "captain": captain_block(lineup_after),
             "fixtures": fixture_context_by_team_code(conn, team_ids),
         }
+        _attach_luck(conn, payload)
         return attach_photo_codes(conn, payload)
     finally:
         conn.close()

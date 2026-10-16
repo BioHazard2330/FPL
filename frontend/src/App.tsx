@@ -15,6 +15,8 @@ import { ReceiptsScreen } from '@/screens/Receipts/ReceiptsScreen'
 import { AtlasScreen } from '@/screens/Atlas/AtlasScreen'
 import { TableScreen } from '@/screens/Table/TableScreen'
 import { FootballScreen } from '@/screens/Football/FootballScreen'
+import { AuditScreen } from '@/screens/Audit/AuditScreen'
+import { FieldScreen } from '@/screens/Field/FieldScreen'
 import { CompareScreen } from '@/screens/Compare/CompareScreen'
 import { PreviewsScreen } from '@/screens/Previews/PreviewsScreen'
 import { DeskScreen } from '@/screens/Desk/DeskScreen'
@@ -46,6 +48,8 @@ function App() {
             <Route path="/desk" element={<DeskScreen />} />
             <Route path="/previews" element={<PreviewsScreen />} />
             <Route path="/compare" element={<CompareScreen />} />
+            <Route path="/field" element={<FieldScreen />} />
+            <Route path="/audit" element={<AuditScreen />} />
             <Route path="/scout" element={<ScoutScreen />} />
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />
