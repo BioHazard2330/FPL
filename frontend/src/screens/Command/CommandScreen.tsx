@@ -1,4 +1,6 @@
 import { CaptainFaceOff } from '@/components/command/CaptainFaceOff'
+import { DeskStrip } from '@/components/command/DeskStrip'
+import { CaptainLadder } from '@/components/command/CaptainLadder'
 import { ConfidenceGraphic } from '@/components/command/ConfidenceGraphic'
 import { DecisionHero } from '@/components/command/DecisionHero'
 import { DecisionHorizon } from '@/components/command/DecisionHorizon'
@@ -29,7 +31,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * previous version already rendered. */
 
 type SectionKey =
-  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later'
+  | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk'
 
 /** Two real orders, one per answerable question.
  *
@@ -41,10 +43,10 @@ type SectionKey =
  * leads, the captain (who is on the pitch right now) comes straight after,
  * and the decision drops to where it belongs: a record, read last. */
 const ACTIONABLE_ORDER: SectionKey[] = [
-  'decision', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'evidence', 'confidence',
+  'decision', 'value', 'lineup', 'record', 'squad', 'horizon', 'captain', 'strategy', 'later', 'desk', 'evidence', 'confidence',
 ]
 const LOCKED_ORDER: SectionKey[] = [
-  'squad', 'captain', 'evidence', 'lineup', 'decision', 'value', 'record', 'horizon', 'strategy', 'later', 'confidence',
+  'squad', 'captain', 'desk', 'evidence', 'lineup', 'decision', 'value', 'record', 'horizon', 'strategy', 'later', 'confidence',
 ]
 
 function orderSections(nodes: Record<SectionKey, React.ReactNode>, actionable: boolean) {
@@ -133,8 +135,14 @@ export function CommandScreen() {
         value: <MarginalValue plan={plan} />,
         lineup: <LineupDoctor changes={plan.doctor} event={plan.event} />,
         squad: plan.action_squad ? <PlayerGallery block={plan.action_squad} fixtures={plan.fixtures} /> : null,
-        captain: plan.captain ? <CaptainFaceOff block={plan.captain} fixtures={plan.fixtures} /> : null,
+        captain: plan.captain ? (
+          <>
+            <CaptainFaceOff block={plan.captain} fixtures={plan.fixtures} />
+            <CaptainLadder plan={plan} />
+          </>
+        ) : null,
         later: <RoadAhead plan={plan} compact />,
+        desk: <DeskStrip />,
       }
     : {}
 

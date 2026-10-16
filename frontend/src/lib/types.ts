@@ -1486,6 +1486,8 @@ export interface WeekPlanMove {
   /** When to make it: a moving price says early, an open rotation call says wait for team news. */
   timing?: 'early' | 'late' | 'split' | 'any'
   timing_note?: string
+  /** The best other ways to spend this transfer if the target is unavailable, each priced against the plan without him. */
+  alternatives?: { out: WeekPlanPlayer; into: WeekPlanPlayer; gain: number; cost_tenths: number }[]
 }
 
 export interface WeekPlanLineupPlayer {
@@ -1542,6 +1544,7 @@ export interface WeekPlanPayload {
   ft_after?: number
   bank_after_tenths?: number
   affordability?: string
+  captain_ladder?: { event: number; picks: { player_id: number; name: string; team_id: number; xp: number }[] }[]
   road_ahead?: {
     horizon: number
     total: number

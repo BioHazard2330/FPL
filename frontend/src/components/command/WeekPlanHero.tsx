@@ -124,6 +124,19 @@ function MoveRow({ m, horizon, maxGain, fixtures }: { m: WeekPlanMove; horizon: 
         )}
       </div>
       <PlayerSide p={m.into} side="into" fixtures={fixtures} />
+      {(m.alternatives ?? []).length > 0 && (
+        <div className="border-t border-divider pt-3 lg:col-span-3">
+          <span className="mr-4 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">If not {m.into.name}</span>
+          {m.alternatives!.map((a) => (
+            <span key={a.into.player_id} className="mr-6 inline-block text-sm text-text-muted">
+              <span className="font-semibold text-text">{a.into.name}</span>{' '}
+              <span className="text-text-faint">({a.into.team_short}, {money(a.into.price_tenths)})</span>{' '}
+              <span className="tabular font-bold text-pitch-green">+{a.gain.toFixed(1)}</span>
+              <span className="text-text-faint"> in that slot over {horizon} GW</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

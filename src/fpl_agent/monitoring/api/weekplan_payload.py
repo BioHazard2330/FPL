@@ -148,6 +148,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "bank_after_tenths": detail["bank_after_tenths"],
             "affordability": detail["affordability"],
             "road_ahead": detail.get("road_ahead"),
+            "captain_ladder": detail.get("captain_ladder", []),
             "chip_outlook": detail.get("chip_outlook"),
             "proven_optimal": detail["proven_optimal"],
             "notes": detail["notes"],

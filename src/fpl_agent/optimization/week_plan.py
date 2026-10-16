@@ -118,6 +118,14 @@ class MoveStress:
 
 
 @dataclass(frozen=True)
+class Alternative:
+    out: PlayerRef
+    into: PlayerRef
+    gain: float
+    cost_tenths: int
+
+
+@dataclass(frozen=True)
 class PlannedMove:
     out: PlayerRef
     into: PlayerRef
@@ -126,6 +134,7 @@ class PlannedMove:
     stress: MoveStress | None = None
     timing: str = "any"
     timing_note: str = ""
+    alternatives: list[Alternative] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -185,6 +194,7 @@ class WeekPlan:
     squad_ids: list[int]
     computed_at: str
     notes: list[str] = field(default_factory=list)
+    captain_ladder: list[dict] = field(default_factory=list)
 
 
 def _start_percents(conn: sqlite3.Connection, ids: set[int]) -> dict[int, int]:
@@ -576,6 +586,67 @@ def stress_moves(solve, pairs: list[tuple[int, int]], bar: float, event: int) ->
     return stresses
 
 
+ALTERNATIVES_PER_MOVE = 2
+
+
+def find_alternatives(solve, pairs: list[tuple[int, int]], event: int, count: int = ALTERNATIVES_PER_MOVE):
+    """For each move: the best way to spend the same transfer if the player
+    coming in is not available, not wanted or has just been announced as injured.
+    `solve(k, forced_in, forced_out, scale, banned)` is the planner with `banned`
+    removed from the pool. Every other move stays forced, so an alternative is
+    priced against the best plan that makes the other moves and never buys the
+    banned player: with Cherki unavailable the question is what the slot is worth
+    then, not what it was worth beside a plan that still buys him next week. The next alternative bans the one before, so the list is
+    a ranking and not three versions of one idea. An alternative worth nothing or
+    less is not listed: the honest answer there is that the slot is not worth
+    spending."""
+    found: list[list[tuple[int, int, float]]] = []
+    for _out_id, in_id in pairs:
+        others = [p for p in pairs if p[1] != in_id]
+        o_in, o_out = frozenset(i for _, i in others), frozenset(o for o, _ in others)
+        alts: list[tuple[int, int, float]] = []
+        try:
+            base = solve(len(others), o_in, o_out, None, frozenset({in_id}))
+            if base.sequence is None:
+                found.append(alts)
+                continue
+            banned = {in_id}
+            for _ in range(count):
+                trial = solve(len(pairs), o_in, o_out, None, frozenset(banned))
+                if trial.sequence is None:
+                    break
+                new = [m for m in _first_moves(trial, event) if m[1] not in o_in]
+                gain = trial.sequence.total_net_ev - base.sequence.total_net_ev
+                if not new or gain <= 0:
+                    break
+                alts.append((new[0][0], new[0][1], round(gain, 2)))
+                banned.add(new[0][1])
+        except Exception:
+            _logger.exception("alternative search failed for a move - the move itself is unaffected")
+        found.append(alts)
+    return found
+
+
+def build_captain_ladder(conn: sqlite3.Connection, squad_after: set[int], event: int, horizon: int, xp_cache: dict) -> list[dict]:
+    """Who takes the armband in each of the next gameweeks if this squad is kept.
+    A pick that changes from week to week is information the manager needs
+    before choosing between two similar targets: the player who captains for
+    one week and is benched the next is worth less than the one who does it for
+    four. Same expected points as the lineup, no extra model."""
+    from fpl_agent.optimization.squad import build_player_pool_for_ids
+
+    ladder = []
+    for e in range(event, event + horizon):
+        pool = build_player_pool_for_ids(conn, squad_after, e, xp_cache=xp_cache)
+        ranked = sorted(pool, key=lambda c: c.xp, reverse=True)[:3]
+        if ranked:
+            ladder.append({
+                "event": e,
+                "picks": [{"player_id": c.player_id, "name": c.web_name, "team_id": c.team_id, "xp": round(c.xp, 2)} for c in ranked],
+            })
+    return ladder
+
+
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
 ) -> WeekPlan | None:
@@ -594,11 +665,12 @@ def build_week_plan(
     by_id = {c.player_id: c for c in pool}
     cache: dict = {}
 
-    def solve(max_moves: int, fin, fout, scale=None):
+    def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
         return plan_transfers_milp(
             conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
             pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
-            model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves, league_pool=pool,
+            model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
+            league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
         )
 
@@ -619,7 +691,12 @@ def build_week_plan(
         squad_after.discard(o)
         squad_after.add(i)
 
+    ordered_pairs = {i: o for o, i in chosen_pairs}
+    move_pairs = [(ordered_pairs[i], i) for _, i, _ in accepted if i in ordered_pairs]
+    found_alternatives = find_alternatives(solve, move_pairs, event) if move_pairs else []
+
     involved = {p for pair in chosen_pairs for p in pair} | {o for o, _, _ in declined} | {i for _, i, _ in declined}
+    involved |= {p for alts in found_alternatives for o, i, _ in alts for p in (o, i)}
     starts = _start_percents(conn, set(squad_ids) | squad_after | involved)
     trends = _price_trends(conn, involved)
     solio = _solio_next(conn, set(squad_ids) | involved)
@@ -655,7 +732,6 @@ def build_week_plan(
             timing=timing, timing_note=note,
         )
 
-    ordered_pairs = {i: o for o, i in chosen_pairs}
     moves = [make_move(ordered_pairs[i], i, g) for _, i, g in accepted if i in ordered_pairs]
     if moves:
         try:
@@ -663,6 +739,21 @@ def build_week_plan(
             moves = [replace(m, stress=st) for m, st in zip(moves, stresses, strict=True)]
         except Exception:
             _logger.exception("move stress test failed - the plan itself is unaffected")
+    if moves:
+        for idx, alts in enumerate(found_alternatives):
+            slot = moves[idx]
+            built = []
+            for o, i, g in alts:
+                a = make_move(o, i, g)
+                # Same-position moves are interchangeable to the solver, so it pairs
+                # them arbitrarily; an alternative into this slot sells this slot's player.
+                if a.into.position == slot.into.position:
+                    built.append(Alternative(
+                        out=slot.out, into=a.into, gain=g, cost_tenths=a.into.price_tenths - slot.out.price_tenths,
+                    ))
+                else:
+                    built.append(Alternative(out=a.out, into=a.into, gain=g, cost_tenths=a.cost_tenths))
+            moves[idx] = replace(slot, alternatives=built)
     declined_moves = [make_move(o, i, g) for o, i, g in declined]
 
     xp_by_id = {pid: next_xp(pid) for pid in squad_ids}
@@ -694,6 +785,12 @@ def build_week_plan(
     except Exception:
         _logger.exception("road-ahead solve failed - the plan for this week is unaffected")
 
+    captain_ladder: list[dict] = []
+    try:
+        captain_ladder = build_captain_ladder(conn, squad_after, event, horizon, {})
+    except Exception:
+        _logger.exception("captain ladder failed - the plan itself is unaffected")
+
     chip_outlook = build_chip_outlook(conn, event, sum(p.xp for p in lineup_after.bench))
     ft_after = min(free_transfers - min(len(moves), free_transfers) + 1, FREE_TRANSFER_CAP)
     notes: list[str] = []
@@ -713,7 +810,7 @@ def build_week_plan(
             "seconds": round(final.solve_seconds, 1), "min_move_gain": min_move_gain,
         },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
-        computed_at=datetime.now(timezone.utc).isoformat(), notes=notes,
+        computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
     )
 
 

@@ -476,6 +476,9 @@ def make_handler(
     return Handler
 
 
+_PREVIEWS_WARM_DELAY_SECONDS = 30.0
+
+
 class LiveServer:
     """Owns the real HTTP server + tailer thread together so a caller (the
     CLI command, or a test) can start/stop both as one unit.
@@ -682,6 +685,11 @@ class LiveServer:
     def _previews_refresh_main(self) -> None:
         from fpl_agent.monitoring.api.previews_payload import build_previews_payload, run_previews_refresh_loop
 
+        # Not needed at boot the way the dashboard context is, and its first build
+        # (a Dixon-Coles fit plus ~160 projections) is CPU-heavy enough to starve the
+        # tailer thread while the server is still settling. A few seconds' grace.
+        if self._stop_event.wait(_PREVIEWS_WARM_DELAY_SECONDS):
+            return
         try:
             build_previews_payload(None)
         except Exception:

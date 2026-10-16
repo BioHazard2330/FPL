@@ -373,3 +373,44 @@ def test_the_plan_change_event_never_makes_a_plan_look_stale(db_conn, monkeypatc
     monkeypatch.setattr(week_plan, "light_squad_state", lambda conn: _state())
 
     assert week_plan.week_plan_staleness(db_conn, _detail(), "2000-01-01T00:00:00+00:00") == []
+
+
+def test_alternatives_are_priced_against_a_plan_that_never_buys_the_banned_player():
+    from fpl_agent.optimization.week_plan import find_alternatives
+
+    calls = []
+
+    def solve(k, fin, fout, scale, banned):
+        calls.append((k, fin, fout, banned))
+        if k == 0:
+            return _plan(100.0, [])
+        if 11 in banned and 12 in banned:
+            return _plan(101.0, [(1, 13)])
+        if 11 in banned:
+            return _plan(102.5, [(1, 12)])
+        return _plan(105.0, [(1, 11)])
+
+    found = find_alternatives(solve, [(1, 11)], EVENT, count=2)
+
+    assert found == [[(1, 12, 2.5), (1, 13, 1.0)]]
+    assert calls[0][3] == frozenset({11})
+    assert calls[2][3] == frozenset({11, 12})
+    assert calls[0][0] == 0
+
+
+def test_an_alternative_worth_nothing_is_not_listed():
+    from fpl_agent.optimization.week_plan import find_alternatives
+
+    def solve(k, fin, fout, scale, banned):
+        return _plan(100.0, [(1, 12)] if k else [])
+
+    assert find_alternatives(solve, [(1, 11)], EVENT) == [[]]
+
+
+def test_a_failing_search_leaves_the_move_with_no_alternatives():
+    from fpl_agent.optimization.week_plan import find_alternatives
+
+    def solve(*args):
+        raise RuntimeError("solver down")
+
+    assert find_alternatives(solve, [(1, 11)], EVENT) == [[]]

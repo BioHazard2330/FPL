@@ -119,6 +119,7 @@ Claude is the reasoning/orchestration layer for qualitative work (match analysis
 | Real free-transfer state | `models/free_transfers.py` |
 | Single-swap transfer/captain analysis (the week plan above supersedes it for transfers; captain still feeds the legacy decision stack) | `optimization/decision_analysis.py` (`analyze_transfer_decision`, `analyze_captain_decision`) |
 | **The** transfer/lineup/armband decision for this gameweek (2026-10-16) - nested multi-transfer MILP, marginal value per move, XI + armband, 8-GW road ahead, chip outlook, per-move stress test, staleness check; stored as `week_plan` decisions, rebuilt in `run-scheduled`, served by `/api/weekplan` | `optimization/week_plan.py` (`build_week_plan`, `select_moves`, `week_plan_staleness`, `refresh_week_plan_if_needed`), `optimization/milp_planner.py` (`max_first_gw_transfers`, `forced_in_first`/`forced_out_first`, `transfer_penalty`, `xp_scale`), `monitoring/api/weekplan_payload.py`, `fpl week-plan` |
+| News desk + match previews (2026-10-16): relevance-ranked articles/video/community and model-vs-market fixture previews, both read stored rows only | `monitoring/api/desk_payload.py`, `monitoring/api/previews_payload.py`, `ingestion/media_source.py`, `fpl sync-media` |
 | Thin KEEP/CHANGE wrapper over the above | `optimization/decision_engine.py` (`evaluate_locked_squad`) |
 | Canonical, reproducible decision object (single source of truth for "what should I do, and how sure") | `optimization/decision_snapshot.py` (`DecisionSnapshot`, `build_decision_snapshot`, `evaluate_user_scenario`) |
 | Canonical football-intelligence signal (real unifying view over qualitative evidence — never a second storage layer); category-aware expiry/reconfirmation | `models/football_signal.py` (`FootballSignal`, `classify_decision_effect`, `squad_football_signals`) |
@@ -223,7 +224,7 @@ Check `fpl scheduler-status` / `Get-ScheduledTask` to confirm both tasks are reg
 
 Run `fpl --help` for the full, current, real list (curated groups below — do not let this list drift from `fpl --help`, it is the ground truth):
 
-- **Sync**: `sync`, `sync-history`, `sync-news`, `sync-live-odds`, `sync-eo`, `sync-predicted-lineups`, `sync-lineup-probability`, `sync-match`, `sync-crests`, `sync-elite-panel`, `solio-sync`, `backfill-odds`, `backfill-xg`, `backfill-cross-league`, `repair-understat-players`, `my-team`.
+- **Sync**: `sync`, `sync-history`, `sync-news`, `sync-media`, `sync-live-odds`, `sync-eo`, `sync-predicted-lineups`, `sync-lineup-probability`, `sync-match`, `sync-crests`, `sync-elite-panel`, `solio-sync`, `backfill-odds`, `backfill-xg`, `backfill-cross-league`, `repair-understat-players`, `my-team`.
 - **Decision**: `week-plan` (the decision of record), `milp-plan`, `transfer-analysis`, `decision-fusion`, `model-benchmark`, `strategic-plan`, `decision-audit`, `season-sim`, `chips`, `captain`, `transfers`, `rate-team`, `build-team`, `build-squad`.
 - **Intelligence**: `team-outlook`, `team-news`, `manager-changes`, `manager-intelligence`, `player-intelligence`, `match-report`, `match-analyze`, `match-note`, `analysis-queue`, `calibration-report`, `decision-backtest`, `decision-changes`, `points-changes`, `team-strength-backtest`.
 - **Live**: `live-bonus`, `live-rank`, `live-watch`, `live-match-poll`, `post-gw-pipeline`.
