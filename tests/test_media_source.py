@@ -76,7 +76,7 @@ def test_sync_media_stores_links_players_and_is_idempotent(db_conn, monkeypatch)
 
     second = sync_media(db_conn, force=True)
     assert all(v["new"] == 0 for v in second["sources"].values())
-    assert db_conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0] == 5
+    assert db_conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0] == len(media_source.VIDEO_CHANNELS) + 1
 
 
 def test_one_dead_feed_does_not_cost_the_others(db_conn, monkeypatch):
