@@ -12,6 +12,7 @@ const ITEMS: Item[] = [
   { label: 'My Team', hint: 'Squad & pitch', to: '/my-team' },
   { label: 'Plan', hint: 'Strategic trajectory', to: '/plan' },
   { label: 'Football', hint: 'Match intelligence', to: '/football' },
+  { label: 'Desk', hint: 'News, video, price board', to: '/desk' },
   { label: 'Scout', hint: 'Player market', to: '/scout' },
   { label: 'Advanced', hint: 'System diagnostics', to: '/advanced' },
   { label: 'Live', hint: 'Live matches & events', to: '/live' },

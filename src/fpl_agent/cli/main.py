@@ -364,6 +364,29 @@ def sync_news_cmd(limit: int | None):
         raise SystemExit(1)
 
 
+@cli.command("sync-media")
+@click.option("--force", is_flag=True, help="bypass the 30-minute throttle and fetch now")
+def sync_media_cmd(force: bool):
+    """Ingest the video channels (Premier League, Sky Sports PL, FPL Harry,
+    Let's Talk FPL) and r/FantasyPL for the news desk. Free public Atom feeds,
+    no key; each feed fails independently."""
+    from fpl_agent.ingestion.media_source import sync_media
+
+    conn = get_connection()
+    try:
+        result = sync_media(conn, force=force)
+    finally:
+        conn.close()
+    if result.get("skipped"):
+        click.echo("skipped: synced under 30 minutes ago (use --force)")
+        return
+    for source, detail in result["sources"].items():
+        if "error" in detail:
+            click.echo(f"{source:<26} FAILED  {detail['error']}", err=True)
+        else:
+            click.echo(f"{source:<26} {detail['fetched']:>3} fetched  {detail['new']:>3} new  {detail['players_linked']:>3} player links")
+
+
 @cli.command("sync-live-odds")
 @click.option("--force", is_flag=True, help="bypass the real app_meta freshness gate and sync now")
 def sync_live_odds_cmd(force: bool):
@@ -1596,6 +1619,18 @@ def run_scheduled(gated: bool):
         news_result = sync_all_news_sources(conn)
     except Exception:
         logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
+
+    try:
+        from fpl_agent.ingestion.media_source import sync_media
+
+        media_result = sync_media(conn)
+        if not media_result.get("skipped"):
+            logger.info(
+                "run-scheduled media sync: %s",
+                ", ".join(f"{k}: {v.get('new', 'error')}" for k, v in media_result["sources"].items()),
+            )
+    except Exception:
+        logger.exception("run-scheduled media sync failed - not fatal to the sync itself")
 
     # Real gap found 2026-08-26 (GW1-postmortem audit): backfill-odds/
     # backfill-xg were built and proven for historical seasons, but NEVER

@@ -11,6 +11,7 @@ around" - the reason the manager-change engine stayed deferred through
 Pillar 2 Plan 2a)."""
 import functools
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -31,7 +32,10 @@ SKY_SPORTS_PL_RSS_URL = "https://www.skysports.com/rss/11095"
 # ones rather than replacing either - broader competition coverage without
 # diluting the PL-specific corroboration signal manager_change.py depends on.
 BBC_FOOTBALL_ALL_RSS_URL = "https://feeds.bbci.co.uk/sport/football/rss.xml"
+GUARDIAN_PL_RSS_URL = "https://www.theguardian.com/football/premierleague/rss"
 _TIMEOUT_SECONDS = 15
+_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) fpl-agent/personal"}
+_GUARDIAN_SOURCE_NAME = "guardian_pl_rss"
 _SOURCE_NAME = "bbc_sport_rss"
 _SOURCE_TIER = "strong_reporter"
 _SKY_SPORTS_SOURCE_NAME = "sky_sports_rss"
@@ -43,6 +47,7 @@ NEWS_SOURCES = (
     (_SOURCE_NAME, BBC_PL_RSS_URL, _SOURCE_TIER),
     (_SKY_SPORTS_SOURCE_NAME, SKY_SPORTS_PL_RSS_URL, _SOURCE_TIER),
     (_BBC_FOOTBALL_ALL_SOURCE_NAME, BBC_FOOTBALL_ALL_RSS_URL, _SOURCE_TIER),
+    (_GUARDIAN_SOURCE_NAME, GUARDIAN_PL_RSS_URL, _SOURCE_TIER),
 )
 
 
@@ -52,7 +57,7 @@ class NewsFetchError(Exception):
 
 def fetch_rss(url: str) -> str:
     try:
-        resp = requests.get(url, timeout=_TIMEOUT_SECONDS)
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise NewsFetchError(f"failed to fetch {url}: {exc}") from exc
@@ -64,6 +69,32 @@ def _text_or_none(item: ET.Element, tag: str) -> str | None:
     if el is None or not el.text:
         return None
     return el.text.strip()
+
+
+def _image_url(item: ET.Element) -> str | None:
+    """The widest picture the item offers: a media:thumbnail/media:content with
+    an url, or an image enclosure. Feeds disagree on which they use, and several
+    give the same picture at five sizes."""
+    best_url, best_width = None, -1
+    for child in item:
+        tag = child.tag.rsplit("}", 1)[-1]
+        url = child.get("url")
+        if not url:
+            continue
+        is_image = (
+            tag == "thumbnail"
+            or (tag == "content" and (child.get("medium") == "image" or (child.get("type") or "").startswith("image")))
+            or (tag == "enclosure" and (child.get("type") or "").startswith("image"))
+        )
+        if not is_image:
+            continue
+        try:
+            width = int(child.get("width") or 0)
+        except ValueError:
+            width = 0
+        if width > best_width:
+            best_url, best_width = url, width
+    return best_url
 
 
 def parse_rss_items(xml_text: str) -> list[dict]:
@@ -92,6 +123,7 @@ def parse_rss_items(xml_text: str) -> list[dict]:
             "link": link,
             "summary": summary,
             "published_at": published_at,
+            "image_url": _image_url(item),
         })
     return items
 
@@ -110,6 +142,22 @@ def _mentions(folded_text: str, folded_name: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])", folded_text) is not None
 
 
+def _is_someone_else(text: str, row) -> bool:
+    """A player known by a first name or nickname ("Enzo", "Rayan") is another
+    person when the text gives that word a capitalised surname the player does
+    not have - "Enzo Maresca" is City's manager, not Chelsea's midfielder."""
+    web, second = _fold_name(row["web_name"]), _fold_name(row["second_name"] or "")
+    if not web or web == second or web in second.split():
+        return False
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    own = set(second.split()) | set(_fold_name(row["first_name"] or "").split())
+    for m in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(row['web_name'])}\s+([A-Z][\w'-]+)", plain, flags=re.I):
+        follower = m.group(1)
+        if follower[0].isupper() and follower.lower() not in own:
+            return True
+    return False
+
+
 def match_players(conn, text: str) -> list[int]:
     """Whole-word, accent-folded match against players.web_name, falling back to
     second_name only if web_name matched nothing. Heuristic, documented in the
@@ -123,13 +171,16 @@ def match_players(conn, text: str) -> list[int]:
     now a whole word, and a surname shared by several players is attributed only
     to those whose club the same text names; if it names none, nobody gets it."""
     folded_text = _fold_name(text)
-    rows = conn.execute("SELECT id, web_name, second_name, team_id FROM players WHERE removed = 0").fetchall()
+    rows = conn.execute("SELECT id, web_name, first_name, second_name, team_id FROM players WHERE removed = 0").fetchall()
 
     def pick(field: str) -> set[int]:
         by_name: dict[str, list] = {}
         for row in rows:
             name = row[field]
-            if name and len(name) >= _MIN_NAME_LENGTH and _mentions(folded_text, _fold_name(name)):
+            if (
+                name and len(name) >= _MIN_NAME_LENGTH and _mentions(folded_text, _fold_name(name))
+                and not (field == "web_name" and _is_someone_else(text, row))
+            ):
                 by_name.setdefault(_fold_name(name), []).append(row)
         chosen: set[int] = set()
         mentioned_teams: set[int] | None = None
@@ -195,13 +246,17 @@ def sync_news(
             (source_name, item["external_id"]),
         ).fetchone()
         if existing is not None:
+            if item.get("image_url"):
+                conn.execute(
+                    "UPDATE news_items SET image_url=? WHERE id=? AND image_url IS NULL", (item["image_url"], existing["id"]),
+                )
             continue
 
         cur = conn.execute(
-            "INSERT INTO news_items (source, source_tier, external_id, title, link, summary, published_at, retrieved_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO news_items (source, source_tier, external_id, title, link, summary, published_at, retrieved_at, "
+            "image_url) VALUES (?,?,?,?,?,?,?,?,?)",
             (source_name, source_tier, item["external_id"], item["title"], item["link"],
-             item["summary"], item["published_at"], now),
+             item["summary"], item["published_at"], now, item.get("image_url")),
         )
         news_item_id = cur.lastrowid
         new_items += 1

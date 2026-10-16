@@ -1569,3 +1569,94 @@ export interface WeekPlanPayload {
   captain?: CaptainBlock | null
   fixtures?: FixtureContext
 }
+
+export interface DeskPlayerChip {
+  player_id: number
+  name: string
+  team_code: number | null
+  mine: boolean
+  target: boolean
+}
+
+export interface DeskArticle {
+  id: number
+  source: string
+  title: string
+  link: string
+  summary: string | null
+  image: string | null
+  published_at: string | null
+  players: DeskPlayerChip[]
+  relevance: number
+  injury: boolean
+}
+
+export interface DeskInjury {
+  player_id: number
+  name: string
+  team_code: number | null
+  team_short: string
+  status: string
+  news: string
+  added_at: string | null
+  chance: number | null
+  owned: number | null
+  mine: boolean
+  target: boolean
+}
+
+export interface DeskVideo {
+  id: number
+  video_id: string
+  channel: string
+  title: string
+  link: string
+  thumbnail: string | null
+  published_at: string | null
+  players: DeskPlayerChip[]
+  relevance: number
+}
+
+export interface DeskPost {
+  id: number
+  title: string
+  link: string
+  author: string | null
+  thumbnail: string | null
+  published_at: string | null
+  players: DeskPlayerChip[]
+}
+
+export interface DeskPriceMove {
+  player_id: number
+  name: string
+  team_code: number | null
+  old: string
+  new: string
+  at: string
+  owned: number | null
+  mine: boolean
+  target: boolean
+}
+
+export interface DeskPriceLean {
+  player_id: number
+  name: string
+  team_code: number | null
+  direction: 'RISE_LIKELY' | 'FALL_LIKELY'
+  net_ratio: number
+  owned: number | null
+  mine: boolean
+  target: boolean
+}
+
+export interface DeskPayload {
+  generated_at: string
+  lead: DeskArticle | null
+  wire: DeskArticle[]
+  injuries: DeskInjury[]
+  videos: DeskVideo[]
+  posts: DeskPost[]
+  price: { rises: DeskPriceMove[]; falls: DeskPriceMove[]; leaning: DeskPriceLean[] }
+  counts: { articles: number; yours: number; targets: number }
+}
