@@ -193,7 +193,10 @@ def status():
 
     click.echo(f"last sync:        {last_sync or 'never'}")
     if event:
-        click.echo(f"next deadline:    {event['name']}")
+        deadline = datetime.fromtimestamp(event["deadline_time_epoch"], timezone.utc)
+        hours = (deadline - datetime.now(timezone.utc)).total_seconds() / 3600
+        remaining = f"{hours:.0f}h" if hours < 48 else f"{hours / 24:.1f}d"
+        click.echo(f"next deadline:    {event['name']}, {deadline.strftime('%a %d %b %H:%M')} UTC (in {remaining})")
     else:
         click.echo("next deadline:    none found")
     click.echo(f"pending alerts:   {pending}")
