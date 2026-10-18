@@ -8,6 +8,12 @@ enabled: true
 window_lead_hours: 24
 # Keep running a little past the deadline so the locked squad is captured.
 post_deadline_grace_hours: 3
+# The unattended cycles (run-scheduled, live-match-poll) used to rebuild the old
+# Python HTML dashboard (data/dashboard.html) on every cycle: about a minute of
+# CPU every 15 minutes, for a page the React app does not read. Off by default;
+# the live snapshot the React app reads is still written every cycle, and
+# `fpl dashboard` still builds the HTML on request. true restores the old behaviour.
+legacy_dashboard_html: false
 # Each fixture keeps the window open from `pre_kickoff_minutes` before kickoff
 # to `post_match_hours` after it; fixtures less than `matchday_bridge_hours`
 # apart are joined, so Friday-to-Monday is one stretch.

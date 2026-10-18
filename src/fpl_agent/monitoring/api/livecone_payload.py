@@ -25,7 +25,11 @@ def _build(kind: str) -> dict:
     from fpl_agent.models.fixtures import live_or_reference_event
     from fpl_agent.models.live_forecast import fixture_states, forecast_event, forecast_scorecard, log_forecast
 
+    from fpl_agent.models.projection_memo import projection_memo
+
     conn = get_connection()
+    memo = projection_memo(conn)
+    memo.__enter__()
     try:
         event = live_or_reference_event(conn)
         if event is None:
@@ -82,6 +86,7 @@ def _build(kind: str) -> dict:
         }
         return attach_photo_codes(conn, result)
     finally:
+        memo.__exit__(None, None, None)
         conn.close()
 
 

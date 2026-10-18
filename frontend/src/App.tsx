@@ -18,6 +18,7 @@ import { FootballScreen } from '@/screens/Football/FootballScreen'
 import { AuditScreen } from '@/screens/Audit/AuditScreen'
 import { FieldScreen } from '@/screens/Field/FieldScreen'
 import { CompareScreen } from '@/screens/Compare/CompareScreen'
+import { ExplorerScreen } from '@/screens/Explorer/ExplorerScreen'
 import { PreviewsScreen } from '@/screens/Previews/PreviewsScreen'
 import { DeskScreen } from '@/screens/Desk/DeskScreen'
 import { ScoutScreen } from '@/screens/Scout/ScoutScreen'
@@ -49,6 +50,7 @@ function App() {
             <Route path="/desk" element={<DeskScreen />} />
             <Route path="/previews" element={<PreviewsScreen />} />
             <Route path="/compare" element={<CompareScreen />} />
+            <Route path="/explorer" element={<ExplorerScreen />} />
             <Route path="/field" element={<FieldScreen />} />
             <Route path="/audit" element={<AuditScreen />} />
             <Route path="/scout" element={<ScoutScreen />} />

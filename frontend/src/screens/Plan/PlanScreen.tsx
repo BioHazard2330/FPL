@@ -5,6 +5,7 @@ import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { TransferWormhole } from '@/components/three/TransferWormhole'
 import { WeekPlanDesk } from '@/components/plan/WeekPlanDesk'
+import { WhatIf } from '@/components/plan/WhatIf'
 import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -346,6 +347,7 @@ export function PlanScreen() {
       <div className="data-in pb-16">
         <Masthead edition="Strategy Desk" title="Plan" />
         {week && <WeekPlanDesk plan={week} />}
+        {week && <WhatIf />}
         {BeamDivider}
         {state.status === 'loading' ? (
           <div className="animate-pulse px-10 py-8">
@@ -365,6 +367,7 @@ export function PlanScreen() {
       <div className="data-in pb-16">
         <Masthead edition="Strategy Desk" title="Plan" />
         {week && <WeekPlanDesk plan={week} />}
+        {week && <WhatIf />}
         {BeamDivider}
         <div className="p-10 text-text-muted">{p.reason}</div>
       </div>
@@ -378,6 +381,7 @@ export function PlanScreen() {
     <div className="data-in pb-16">
       <Masthead edition="Strategy Desk" title={week ? 'Plan' : `${p.horizon_gw}-gameweek plan`} />
       {week && <WeekPlanDesk plan={week} />}
+      {week && <WhatIf />}
       {week && BeamDivider}
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
         <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">

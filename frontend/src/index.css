@@ -435,3 +435,16 @@ body,
     border-radius: 6px;
   }
 }
+
+/* A band that hosts a floating menu (a search list) must not clip it. */
+.screen-frame > * > .allow-overflow {
+  overflow: visible;
+}
+
+/* The explorer's row grid: a name column, ten figure columns, the next three fixtures. */
+.explorer-grid {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.6fr) repeat(10, minmax(3.4rem, 1fr)) 9rem;
+  align-items: center;
+  gap: 0.5rem;
+}

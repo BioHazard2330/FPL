@@ -2021,3 +2021,70 @@ export interface LiveConePayload {
   }[]
   axis?: { min: number; max: number; bins: number }
 }
+
+export interface WhatIfBrief {
+  player_id: number
+  name: string
+  team_id: number
+  team_short: string
+  team_code: number
+  position: string
+  status: string
+  news: string | null
+  price: number | null
+  photo_code?: number | null
+}
+
+export interface WhatIfPayload {
+  status: 'ok' | 'no_squad'
+  event?: number
+  horizon?: number
+  free_transfers?: number
+  bank_tenths?: number
+  squad?: WhatIfBrief[]
+  moves?: { out: WhatIfBrief; into: WhatIfBrief }[]
+  problems?: string[]
+  hits?: number
+  hit_cost?: number
+  bank_after_tenths?: number
+  per_gw?: { event: number; before: number; after: number }[]
+  totals?: { before: number; after: number; gain_gross: number; gain_net: number } | null
+  plan?: { gain: number | null; moves: string[] } | null
+}
+
+export interface ExplorerPlayer {
+  player_id: number
+  name: string
+  full_name: string
+  team_id: number
+  team_short: string
+  team_code: number
+  position: string
+  mine: boolean
+  price: number | null
+  owned: number | null
+  xp_next: number
+  xp_five: number
+  xp_per_m: number | null
+  form: number | null
+  ppg: number | null
+  points: number | null
+  minutes: number
+  minutes_share: number
+  g_a_90: number | null
+  xgi_90: number | null
+  luck: number | null
+  luck_z: number | null
+  status: string
+  chance: number | null
+  news: string | null
+  fixtures: { opponent: string; home: boolean; difficulty: number | null }[]
+  photo_code?: number | null
+}
+
+export interface ExplorerPayload {
+  event: number
+  generated_at: string
+  window: number
+  players: ExplorerPlayer[]
+}

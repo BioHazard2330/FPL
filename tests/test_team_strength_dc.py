@@ -96,8 +96,8 @@ def test_neg_log_likelihood_ignores_rho_for_non_special_scorelines():
     params_a = np.array([0.1, -0.1, 0.2, -0.15])
     params_b = np.array([0.1, -0.1, 0.2, 0.15])
 
-    nll_a = team_strength_dc._neg_log_likelihood(params_a, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
-    nll_b = team_strength_dc._neg_log_likelihood(params_b, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
+    nll_a = team_strength_dc._neg_log_likelihood_reference(params_a, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
+    nll_b = team_strength_dc._neg_log_likelihood_reference(params_b, team_ids, matches, decay_k=0.0, ridge_lambda=0.0)
 
     assert nll_a == pytest.approx(nll_b)
 
@@ -169,3 +169,33 @@ def test_goals_weight_one_ignores_xg():
     a = fit_dixon_coles(with_xg, [1, 2], goals_weight=1.0)
     b = fit_dixon_coles(without, [1, 2], goals_weight=1.0)
     assert a.teams[1].attack == pytest.approx(b.teams[1].attack, abs=1e-6)
+
+
+def test_vectorised_objective_and_gradient_match_the_reference_loop():
+    import numpy as np
+
+    matches = [
+        team_strength_dc.Match(1, 2, 2, 1, 5, 1.7, 0.9),
+        team_strength_dc.Match(2, 3, 0, 0, 20),
+        team_strength_dc.Match(3, 1, 1, 0, 40, 0.6, 1.1),
+        team_strength_dc.Match(1, 3, 1, 1, 60),
+        team_strength_dc.Match(2, 1, 0, 1, 90, 0.4, 0.8),
+        team_strength_dc.Match(3, 2, 3, 2, 120),
+    ]
+    team_ids = [1, 2, 3]
+    decay_k = 0.004
+    params = np.array([0.2, -0.1, 0.15, -0.2, 0.3, 0.05])
+    data = team_strength_dc._FitData(team_ids, matches, decay_k, team_strength_dc.GOALS_WEIGHT)
+    f, g = team_strength_dc._objective_and_gradient(params, data, 2.5)
+    ref = team_strength_dc._neg_log_likelihood_reference(params, team_ids, matches, decay_k, 2.5)
+    assert f == pytest.approx(ref, rel=1e-10)
+    numeric = np.zeros_like(params)
+    for i in range(len(params)):
+        up, down = params.copy(), params.copy()
+        up[i] += 1e-6
+        down[i] -= 1e-6
+        numeric[i] = (
+            team_strength_dc._neg_log_likelihood_reference(up, team_ids, matches, decay_k, 2.5)
+            - team_strength_dc._neg_log_likelihood_reference(down, team_ids, matches, decay_k, 2.5)
+        ) / 2e-6
+    assert g == pytest.approx(numeric, abs=1e-5)

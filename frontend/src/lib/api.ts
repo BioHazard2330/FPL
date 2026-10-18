@@ -6,6 +6,8 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
+  ExplorerPayload,
+  WhatIfPayload,
   DeskPayload,
   ComparePayload,
   AuditPayload,
@@ -55,6 +57,15 @@ export function fetchPreviewsPayload(): Promise<PreviewsPayload> {
 
 export function fetchPlayersIndex(): Promise<{ players: PlayerIndexRow[] }> {
   return getJson<{ players: PlayerIndexRow[] }>('/api/players')
+}
+
+export function fetchExplorerPayload(): Promise<ExplorerPayload> {
+  return getJson<ExplorerPayload>('/api/explorer')
+}
+
+export function fetchWhatIf(moves: [number, number][]): Promise<WhatIfPayload> {
+  const q = moves.map(([o, i]) => `${o}:${i}`).join(',')
+  return getJson<WhatIfPayload>(`/api/whatif${q ? `?moves=${q}` : ''}`)
 }
 
 export function fetchComparePayload(a: number, b: number): Promise<ComparePayload> {

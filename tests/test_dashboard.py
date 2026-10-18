@@ -811,7 +811,7 @@ def test_dashboard_cli_writes_to_the_patched_data_dir_not_the_real_one(db_conn, 
     monkeypatch.setattr(main_mod, "get_connection", lambda: db_conn)
     _seed(db_conn, budget_tenths=950, club_limit=4)
 
-    path = main_mod._write_dashboard()
+    path = main_mod._write_dashboard(force=True)
 
     assert path == tmp_path / "dashboard.html"
     assert path.exists()
@@ -834,7 +834,7 @@ def test_write_dashboard_does_not_fetch_live_data_outside_a_live_window(db_conn,
 
     monkeypatch.setattr(main_mod, "FPLApiAdapter", _FailingAdapter)
 
-    main_mod._write_dashboard()  # must not raise
+    main_mod._write_dashboard(force=True)  # must not raise
 
 
 def test_dashboard_fixture_ticker_panel_shows_real_per_gameweek_difficulty(db_conn):
@@ -1215,7 +1215,7 @@ def test_write_dashboard_passes_bare_args_straight_through(db_conn, tmp_path, mo
 
     monkeypatch.setattr(main_mod, "generate_dashboard_html", fake_generate)
 
-    main_mod._write_dashboard(gw_window=3, must_include_ids={1}, must_start_ids={1}, exclude_ids={2})
+    main_mod._write_dashboard(gw_window=3, must_include_ids={1}, must_start_ids={1}, exclude_ids={2}, force=True)
 
     assert captured == {"gw_window": 3, "must_include_ids": {1}, "must_start_ids": {1}, "exclude_ids": {2}}
 
@@ -1250,7 +1250,7 @@ def test_dashboard_after_a_real_locked_build_team_run_shows_the_locked_squad(db_
     assert set(detail["must_include_ids"]) == {20, 21, 22}
     assert detail["must_start_ids"] == [20]
 
-    path = main_mod._write_dashboard()
+    path = main_mod._write_dashboard(force=True)
     rendered = path.read_text(encoding="utf-8")
     assert "P20" in rendered  # _seed's own web_name for the forced must-include/must-start player
 
@@ -1267,7 +1267,7 @@ def test_dashboard_cli_command_prints_the_real_written_path(monkeypatch, tmp_pat
     fake_path = tmp_path / "dashboard.html"
     monkeypatch.setattr(
         main_mod, "_write_dashboard",
-        lambda gw_window=1, must_include_ids=None, must_start_ids=None, exclude_ids=None: fake_path,
+        lambda gw_window=1, must_include_ids=None, must_start_ids=None, exclude_ids=None, force=False: fake_path,
     )
 
     result = CliRunner().invoke(cli, ["dashboard"])
@@ -2691,3 +2691,19 @@ def test_current_fpl_state_shows_no_stale_banner_when_nothing_material_changed(d
     # which `home.py::_freshness_html` only ever emits when `is_stale` is True.
     assert "<div class='home-hero-stale-banner'>" not in result
     assert "ROLL" in result
+
+
+def test_unattended_cycles_skip_the_legacy_html_but_still_write_the_live_snapshot(db_conn, tmp_path, monkeypatch):
+    import fpl_agent.cli.main as main_mod
+    from fpl_agent.config import PowerConfig
+
+    monkeypatch.setattr(main_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main_mod, "get_connection", lambda: db_conn)
+    monkeypatch.setattr(main_mod, "load_power_config", lambda: PowerConfig(legacy_dashboard_html=False))
+    monkeypatch.setattr(main_mod, "generate_dashboard_html", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    written = []
+    import fpl_agent.monitoring.live_snapshot as snap
+
+    monkeypatch.setattr(snap, "write_live_snapshot", lambda conn, payload, path=None: written.append(path))
+    main_mod._write_dashboard()
+    assert written == [tmp_path / "live_snapshot.json"]

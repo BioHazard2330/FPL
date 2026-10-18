@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from fpl_agent.models.projection_memo import scoped
 from fpl_agent.database.decisions import latest_decision_of_type, list_decisions_of_type
 from fpl_agent.ingestion.fpl_api import FPLApiAdapter, SourceFetchError
 from fpl_agent.ingestion.live_rank_sample import get_live_rank_reference
@@ -125,6 +126,7 @@ class DashboardContext:
     played_chip_this_event: str | None
 
 
+@scoped
 def build_dashboard_context(
     conn: sqlite3.Connection, live_payload: dict | None = None,
     gw_window: int = 1, must_include_ids: set[int] | None = None, must_start_ids: set[int] | None = None,

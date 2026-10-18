@@ -210,8 +210,8 @@ def test_expected_points_zero_for_confirmed_unavailable(db_conn):
     assert ep.floor == 0.0
 
 
-def test_model_version_is_calibrated_v2():
-    assert MODEL_VERSION == "calibrated-v2"
+def test_model_version_is_calibrated_v3():
+    assert MODEL_VERSION == "calibrated-v3"
 
 
 def test_component_breakdown_sums_to_the_real_median_zero_drift(db_conn):
@@ -273,7 +273,7 @@ def test_expected_points_falls_back_gracefully_with_no_market_data(db_conn):
     result = expected_points(db_conn, 1)
 
     assert result.median >= 0
-    assert result.model_version == "calibrated-v2"
+    assert result.model_version == "calibrated-v3"
     # Degraded, not fabricated: no shot-level data -> no xG share, so the
     # goals term contributes nothing and the estimate is appearance+bonus only.
     from fpl_agent.models.player_regression import player_share_of_team_xg

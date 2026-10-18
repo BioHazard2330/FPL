@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from fpl_agent.ingestion.lineup_probability_source import get_start_percent, start_percent_minutes_factor
 from fpl_agent.models.availability import classify
 from fpl_agent.models.rules import current_season
+from fpl_agent.models.projection_memo import memoised_in_scope
 from fpl_agent.models.team_news_risk import rotation_risk_snippet
 
 # A season gap of 2+ (i.e. missing at least one full season between the most
@@ -191,6 +192,7 @@ class ExpectedMinutes:
     rotation_risk: str | None = None  # real quoted evidence from team_news_risk.py, else None
 
 
+@memoised_in_scope
 def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinutes:
     player = conn.execute("SELECT status, team_id FROM players WHERE id=?", (player_id,)).fetchone()
     if player is None:

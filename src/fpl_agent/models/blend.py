@@ -53,7 +53,14 @@ def market_implied_total_goals(totals: GoalsTotalProbabilities) -> float:
     markets - resolves. totals.over outside that band would require an
     over/under line no real bookmaker would price.
     """
-    target = totals.over
+    return _total_goals_for_over(totals.over)
+
+
+@lru_cache(maxsize=8192)
+def _total_goals_for_over(target: float) -> float:
+    """The inversion itself, cached on the over probability: every player
+    projection for a fixture asks for the same fixture's total, and a
+    dashboard build asked 12,937 times for about 400 distinct answers."""
     f_lower = (1 - poisson.cdf(2, _LAMBDA_LOWER)) - target
     f_upper = (1 - poisson.cdf(2, _LAMBDA_UPPER)) - target
     if f_lower * f_upper > 0:

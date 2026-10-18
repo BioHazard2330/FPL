@@ -63,7 +63,9 @@ GOALS_WEIGHT = 0.5
 _RIDGE_LAMBDA = 2.5  # real, disclosed shrinkage strength - see fit_dixon_coles's own docstring for why
 
 
-def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda, goals_weight=GOALS_WEIGHT):
+def _neg_log_likelihood_reference(params, team_ids, matches, decay_k, ridge_lambda, goals_weight=GOALS_WEIGHT):
+    """The plain-loop objective. Not used by the fit; kept as the readable
+    statement of the model and as the check `_objective_and_gradient` is tested against."""
     n = len(team_ids)
     attack = dict(zip(team_ids[:-1], params[: n - 1], strict=True))
     defence = dict(zip(team_ids[:-1], params[n - 1 : 2 * (n - 1)], strict=True))
@@ -133,6 +135,88 @@ def _neg_log_likelihood(params, team_ids, matches, decay_k, ridge_lambda, goals_
     return total
 
 
+class _FitData:
+    """The matches as arrays, built once per fit."""
+
+    def __init__(self, team_ids, matches, decay_k, goals_weight):
+        index = {t: i for i, t in enumerate(team_ids)}
+        self.n = len(team_ids)
+        self.h = np.array([index[m.home_team_id] for m in matches])
+        self.a = np.array([index[m.away_team_id] for m in matches])
+        hg = np.array([m.home_goals for m in matches], dtype=float)
+        ag = np.array([m.away_goals for m in matches], dtype=float)
+        hx = np.array([np.nan if m.home_xg is None else m.home_xg for m in matches])
+        ax = np.array([np.nan if m.away_xg is None else m.away_xg for m in matches])
+        self.hy = np.where(np.isnan(hx), hg, goals_weight * hg + (1 - goals_weight) * hx)
+        self.ay = np.where(np.isnan(ax), ag, goals_weight * ag + (1 - goals_weight) * ax)
+        self.const = -sum(math.lgamma(g + 1) for g in hg) - sum(math.lgamma(g + 1) for g in ag)
+        self.lgamma = np.array([math.lgamma(g + 1) for g in hg]) + np.array([math.lgamma(g + 1) for g in ag])
+        self.w = np.exp(-decay_k * np.array([m.days_since for m in matches], dtype=float))
+        self.m00 = (hg == 0) & (ag == 0)
+        self.m01 = (hg == 0) & (ag == 1)
+        self.m10 = (hg == 1) & (ag == 0)
+        self.m11 = (hg == 1) & (ag == 1)
+
+
+def _objective_and_gradient(params, data: "_FitData", ridge_lambda):
+    """The same objective as `_neg_log_likelihood_reference`, vectorised, with its
+    exact gradient. The reference loop plus a finite-difference gradient took 5 to 15
+    seconds per fit; this takes well under one."""
+    n = data.n
+    A = np.concatenate([params[: n - 1], [0.0]])
+    D = np.concatenate([params[n - 1 : 2 * (n - 1)], [0.0]])
+    gamma, rho = params[-2], params[-1]
+
+    eta_h = A[data.h] + D[data.a] + gamma
+    eta_a = A[data.a] + D[data.h]
+    lam, mu = np.exp(eta_h), np.exp(eta_a)
+
+    tau = np.ones_like(lam)
+    d_tau_h = np.zeros_like(lam)
+    d_tau_a = np.zeros_like(lam)
+    d_tau_rho = np.zeros_like(lam)
+    m = data.m00
+    tau[m] = 1 - lam[m] * mu[m] * rho
+    d_tau_h[m] = d_tau_a[m] = -lam[m] * mu[m] * rho
+    d_tau_rho[m] = -lam[m] * mu[m]
+    m = data.m01
+    tau[m] = 1 + lam[m] * rho
+    d_tau_h[m] = lam[m] * rho
+    d_tau_rho[m] = lam[m]
+    m = data.m10
+    tau[m] = 1 + mu[m] * rho
+    d_tau_a[m] = mu[m] * rho
+    d_tau_rho[m] = mu[m]
+    m = data.m11
+    tau[m] = 1 - rho
+    d_tau_rho[m] = -1.0
+
+    live = tau > 1e-10
+    safe_tau = np.where(live, tau, 1.0)
+    log_tau = np.log(np.maximum(tau, 1e-10))
+    dlt_h = np.where(live, d_tau_h / safe_tau, 0.0)
+    dlt_a = np.where(live, d_tau_a / safe_tau, 0.0)
+    dlt_rho = np.where(live, d_tau_rho / safe_tau, 0.0)
+
+    log_p = -lam + data.hy * eta_h - mu + data.ay * eta_a - data.lgamma
+    w = data.w
+    total = -np.sum(w * (log_p + log_tau))
+
+    g_h = w * (-lam + data.hy + dlt_h)
+    g_a = w * (-mu + data.ay + dlt_a)
+    grad_A = -(np.bincount(data.h, weights=g_h, minlength=n) + np.bincount(data.a, weights=g_a, minlength=n))
+    grad_D = -(np.bincount(data.a, weights=g_h, minlength=n) + np.bincount(data.h, weights=g_a, minlength=n))
+    grad_gamma = -np.sum(g_h)
+    grad_rho = -np.sum(w * dlt_rho)
+
+    mean_weight = np.sum(w) / len(w)
+    total += 0.5 * ridge_lambda * mean_weight * (np.sum(A * A) + np.sum(D * D))
+    grad_A = grad_A + ridge_lambda * mean_weight * A
+    grad_D = grad_D + ridge_lambda * mean_weight * D
+    grad = np.concatenate([grad_A[: n - 1], grad_D[: n - 1], [grad_gamma, grad_rho]])
+    return total, grad
+
+
 def fit_dixon_coles(
     matches: list[Match], team_ids: list[int], half_life_days: float = 365.0, ridge_lambda: float = _RIDGE_LAMBDA,
     goals_weight: float = GOALS_WEIGHT,
@@ -147,8 +231,9 @@ def fit_dixon_coles(
     x0 = np.zeros(2 * (n - 1) + 2)
     x0[-2] = 0.2  # home-advantage starting guess
 
+    data = _FitData(team_ids, matches, decay_k, goals_weight)
     result = minimize(
-        _neg_log_likelihood, x0, args=(team_ids, matches, decay_k, ridge_lambda, goals_weight), method="L-BFGS-B",
+        _objective_and_gradient, x0, args=(data, ridge_lambda), method="L-BFGS-B", jac=True,
         bounds=[(-3, 3)] * (2 * (n - 1)) + [(-1, 1), (-0.2, 0.2)],
     )
     if not result.success:

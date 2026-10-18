@@ -510,6 +510,7 @@ class LiveServer:
         self._football_refresh_thread: threading.Thread | None = None
         self._scout_refresh_thread: threading.Thread | None = None
         self._previews_refresh_thread: threading.Thread | None = None
+        self._explorer_refresh_thread: threading.Thread | None = None
         self._server_thread: threading.Thread | None = None
         self._tailer_conn = None
         # Real startup-race fix (see `DbTailer.__init__`'s own docstring) -
@@ -620,6 +621,8 @@ class LiveServer:
         self._scout_refresh_thread.start()
         self._previews_refresh_thread = threading.Thread(target=self._previews_refresh_main, daemon=True)
         self._previews_refresh_thread.start()
+        self._explorer_refresh_thread = threading.Thread(target=self._explorer_refresh_main, daemon=True)
+        self._explorer_refresh_thread.start()
 
     def _context_refresh_main(self) -> None:
         from fpl_agent.monitoring.dashboard.context import get_cached_dashboard_context, run_context_refresh_loop
@@ -696,6 +699,17 @@ class LiveServer:
             _logger.exception("cache-warming the previews payload failed - first visit to the previews will pay the full cost instead")
         run_previews_refresh_loop(self._stop_event, should_run=self.refresh_allowed)
 
+    def _explorer_refresh_main(self) -> None:
+        from fpl_agent.monitoring.api.explorer_payload import build_explorer_payload, run_explorer_refresh_loop
+
+        if self._stop_event.wait(_PREVIEWS_WARM_DELAY_SECONDS + 15):
+            return
+        try:
+            build_explorer_payload(None)
+        except Exception:
+            _logger.exception("cache-warming the explorer payload failed - first visit to the explorer will pay the full cost instead")
+        run_explorer_refresh_loop(self._stop_event, should_run=self.refresh_allowed)
+
     def stop(self) -> None:
         self._stop_event.set()
         self.httpd.shutdown()
@@ -714,6 +728,8 @@ class LiveServer:
             self._scout_refresh_thread.join(timeout=5)
         if self._previews_refresh_thread is not None:
             self._previews_refresh_thread.join(timeout=5)
+        if self._explorer_refresh_thread is not None:
+            self._explorer_refresh_thread.join(timeout=5)
 
 
 def run_forever(

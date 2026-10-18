@@ -92,6 +92,7 @@ class PowerConfig:
     enabled: bool = True
     window_lead_hours: float = 24.0
     post_deadline_grace_hours: float = 3.0
+    legacy_dashboard_html: bool = False
     pre_kickoff_minutes: float = 60.0
     post_match_hours: float = 3.0
     matchday_bridge_hours: float = 36.0

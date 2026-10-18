@@ -60,3 +60,6 @@ User, verbatim: *"upgrade every single thing to the maximum ... my own insane fp
 - The live forecast now logs itself every ten minutes (`live_forecast_log`, migration 0048) and scores itself against the final points when the gameweek settles (`forecast_scorecard`). The first GW7 forecast was logged live at 69.6 (61 to 80) with 46 on the board.
 - Five pending match analyses written (Everton-Chelsea, Fulham-Hull, Man City-Ipswich, Brentford-Liverpool, Newcastle-Villa).
 - Visual rebuild begun: palette, type scale, framed screens, softer corners.
+- Matchup Lab on previews, armband table on the audit, `/api/whatif` and the "Try your own moves" panel on PLAN (sandbox +8.9 for Palmer to Saka against the week plan's +2.5: the sandbox compares with never making the move, the plan with making it a week later).
+- Speed: DC fit vectorised (5-15s to 0.01s), process-wide fit cache, opt-in projection memo, legacy HTML dashboard off the unattended cycles.
+- Previews now list the unstarted fixtures of the current and next gameweek (they had listed all of GW7 including finished matches).

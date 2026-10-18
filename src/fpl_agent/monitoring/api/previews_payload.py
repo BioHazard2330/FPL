@@ -167,7 +167,11 @@ def _build_previews_uncached() -> dict:
     from fpl_agent.models.expected_points import _blended_fixture_goals, _fixture_date, _get_or_fit_dc_model
     from fpl_agent.optimization.week_plan import light_squad_state
 
+    from fpl_agent.models.projection_memo import projection_memo
+
     conn = get_connection()
+    memo = projection_memo(conn)
+    memo.__enter__()
     try:
         state = light_squad_state(conn)
         mine = set(state["squad_ids"]) if state else set()
@@ -229,6 +233,7 @@ def _build_previews_uncached() -> dict:
             "ticker": {"first_event": event, "events": list(range(event, event + DEFAULT_WINDOW_GW)), "rows": ticker},
         })
     finally:
+        memo.__exit__(None, None, None)
         conn.close()
 
 

@@ -53,6 +53,7 @@ import sqlite3
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
+from fpl_agent.models.projection_memo import scoped
 from fpl_agent.database.decisions import latest_decision_of_type, log_decision
 from fpl_agent.optimization.locked_squad import LockedSquadState, get_locked_squad
 from fpl_agent.optimization.milp_planner import plan_transfers_milp
@@ -665,6 +666,7 @@ def compact_team_outlook(conn: sqlite3.Connection, event: int) -> dict[str, dict
     return out
 
 
+@scoped
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
 ) -> WeekPlan | None:

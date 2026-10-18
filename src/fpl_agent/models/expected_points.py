@@ -76,6 +76,7 @@ Three interface notes, all deliberate:
 
 import math
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -91,6 +92,7 @@ from fpl_agent.models.blend import (
 )
 from fpl_agent.models.bonus_regression import expected_bonus_per90
 from fpl_agent.models.defensive_contribution import defcon_points_probability, expected_defcon_actions_per90
+from fpl_agent.models.projection_memo import memoised_in_scope
 from fpl_agent.models.saves import expected_saves
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
@@ -405,15 +407,55 @@ def _get_or_fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
     if cached is not None:
         return cached[1]
 
+    shared_key = _shared_dc_key(conn, as_of_date)
+    if shared_key is None:
+        model = _fit_dc_model(conn, as_of_date)
+    else:
+        with _shared_dc_lock:
+            hit = _shared_dc_cache.get(shared_key)
+            if hit is None:
+                model = _fit_dc_model(conn, as_of_date)
+                _shared_dc_cache[shared_key] = (model,)
+                while len(_shared_dc_cache) > _SHARED_DC_MAX:
+                    _shared_dc_cache.pop(next(iter(_shared_dc_cache)))
+            else:
+                model = hit[0]
+    _dc_model_cache[key] = (conn, model)
+    return model
+
+
+_shared_dc_cache: dict = {}
+_shared_dc_lock = threading.Lock()
+_SHARED_DC_MAX = 6
+
+
+def _shared_dc_key(conn: sqlite3.Connection, as_of_date: str):
+    """Key for the process-wide Dixon-Coles cache, or None when there is no
+    file behind the connection (an in-memory test database). A fit is a pure
+    function of the stored matches, so the key is the database file, the
+    cutoff and a fingerprint of the two tables the fit reads. The per-
+    connection cache alone meant every request of the live server, each with a
+    fresh connection, paid the 5-15 second fit again (LIVE took 85 seconds
+    cold, three fits per build)."""
+    try:
+        files = [r[2] for r in conn.execute("PRAGMA database_list").fetchall() if r[1] == "main"]
+        if not files or not files[0]:
+            return None
+        results = conn.execute("SELECT COUNT(*), MAX(match_date) FROM match_results_history").fetchone()
+        stats = conn.execute("SELECT COUNT(*), MAX(match_date) FROM player_match_stats_history").fetchone()
+        return (files[0], as_of_date, current_season(conn), tuple(results), tuple(stats))
+    except sqlite3.Error:
+        return None
+
+
+def _fit_dc_model(conn: sqlite3.Connection, as_of_date: str):
     matches, team_ids = load_matches_for_fitting(conn, as_of_date)
     if len(matches) < _MIN_MATCHES_TO_FIT_DC or len(team_ids) < 2:
-        model = None
-    else:
-        model = fit_dixon_coles(matches, team_ids)
-        season = current_season(conn)
-        if season is not None:
-            model = augment_model_with_promoted_teams(conn, model, season)
-    _dc_model_cache[key] = (conn, model)
+        return None
+    model = fit_dixon_coles(matches, team_ids)
+    season = current_season(conn)
+    if season is not None:
+        model = augment_model_with_promoted_teams(conn, model, season)
     return model
 
 
@@ -731,6 +773,7 @@ def _hierarchical_share_prior(
     return rate_derived_fallback
 
 
+@memoised_in_scope
 def _player_match_rates(
     conn: sqlite3.Connection, player_id: int, as_of_date: str | None = None, season: str | None = None
 ) -> dict:
@@ -1289,6 +1332,7 @@ class ExpectedPoints:
     outcome_probs: "OutcomeProbabilities | None" = None
 
 
+@memoised_in_scope
 def expected_points(
     conn: sqlite3.Connection, player_id: int, n_gw: int = 1, from_event: int | None = None
 ) -> ExpectedPoints:
@@ -1456,6 +1500,7 @@ class WindowExpectedPoints:
     qualitative_note: str | None = None
 
 
+@memoised_in_scope
 def expected_points_window(
     conn: sqlite3.Connection, player_id: int, n_gw: int, from_event: int | None = None
 ) -> WindowExpectedPoints:

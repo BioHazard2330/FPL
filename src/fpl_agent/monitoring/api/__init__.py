@@ -15,6 +15,7 @@ from fpl_agent.monitoring.api.compare_payload import build_compare_payload, buil
 from fpl_agent.monitoring.api.desk_payload import build_desk_payload
 from fpl_agent.monitoring.api.command_payload import build_command_payload
 from fpl_agent.monitoring.api.field_payload import build_field_payload
+from fpl_agent.monitoring.api.explorer_payload import build_explorer_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
 from fpl_agent.monitoring.api.livecone_payload import build_livecone_payload
 from fpl_agent.monitoring.api.match_payload import build_match_report
@@ -27,6 +28,7 @@ from fpl_agent.monitoring.api.receipts_payload import build_receipts_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.table_payload import build_table_payload
 from fpl_agent.monitoring.api.weekplan_payload import build_week_plan_payload
+from fpl_agent.monitoring.api.whatif_payload import build_whatif_payload
 
 API_BUILDERS = {
     "command": build_command_payload,
@@ -47,6 +49,8 @@ API_BUILDERS = {
     "field": build_field_payload,
     "audit": build_audit_payload,
     "livecone": build_livecone_payload,
+    "whatif": build_whatif_payload,
+    "explorer": build_explorer_payload,
     "projection": build_projection_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a
     # builder that declares it, and turns a LookupError into a real 404.

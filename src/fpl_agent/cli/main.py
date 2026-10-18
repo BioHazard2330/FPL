@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from fpl_agent.alerts.engine import Alert, TerminalNotifier, configured_notifiers, deliver_pending_alerts, pending_alerts
 from fpl_agent.backtesting.harness import run_backtest, save_backtest_run, score_bonus_regression, score_differentials
-from fpl_agent.config import DATA_DIR, LOGS_DIR, PROJECT_ROOT, load_dotenv, load_storage_budget
+from fpl_agent.config import DATA_DIR, LOGS_DIR, PROJECT_ROOT, load_dotenv, load_power_config, load_storage_budget
 from fpl_agent.database.backup import BACKUP_DIR, create_backup, list_backups, restore_backup, verify_backup
 from fpl_agent.database.connection import get_connection
 from fpl_agent.database.decisions import get_decision, latest_decision_of_type, list_decisions, log_decision
@@ -2474,10 +2474,19 @@ def _maybe_trigger_eo_sample(conn) -> str | None:
 
 def _write_dashboard(
     gw_window: int = 1, must_include_ids: set[int] | None = None, must_start_ids: set[int] | None = None,
-    exclude_ids: set[int] | None = None,
+    exclude_ids: set[int] | None = None, force: bool = False,
 ) -> None:
+    """Regenerates the legacy HTML dashboard and the live snapshot. Without `force`
+    the HTML is only rebuilt when `legacy_dashboard_html` is on in config/power.yaml:
+    the React app reads the APIs and the snapshot, and the rebuild cost about a
+    minute of CPU on every 15-minute cycle. The snapshot is written either way."""
     conn = get_connection()
     try:
+        if not force and not load_power_config().legacy_dashboard_html:
+            from fpl_agent.monitoring.live_snapshot import write_live_snapshot
+
+            write_live_snapshot(conn, maybe_fetch_live_payload(conn), path=DATA_DIR / "live_snapshot.json")
+            return _dashboard_path()
         # Real fix, 2026-08-21 (superseded same day by the locked-squad
         # product architecture pass - see generate_dashboard_html's own
         # docstring): this function used to pre-resolve the locked
@@ -2569,7 +2578,7 @@ def dashboard(gw_window: int, must_include: str | None, must_start: str | None, 
     exclude_ids = set(parsed_exclude) if parsed_exclude else None
     path = _write_dashboard(
         gw_window=gw_window, must_include_ids=must_include_ids, must_start_ids=must_start_ids,
-        exclude_ids=exclude_ids,
+        exclude_ids=exclude_ids, force=True,
     )
     click.echo(f"wrote {path}")
     click.echo("open it in a browser and leave the tab open - it live-updates via the snapshot poll, no periodic reload")
