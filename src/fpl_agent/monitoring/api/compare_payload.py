@@ -94,7 +94,7 @@ def _player(conn: sqlite3.Connection, player_id: int, event: int | None, mine: s
         "p_blank": round(probs.prob_blank, 3) if probs else None,
         "p_5plus": round(probs.prob_5plus, 3) if probs else None,
         "components": (
-            {k: round(getattr(parts, k), 2) for k in ("appearance", "goals", "assists", "bonus", "clean_sheet", "cards", "conceded", "defcon")}
+            {k: round(getattr(parts, k), 2) for k in ("appearance", "goals", "assists", "bonus", "clean_sheet", "cards", "conceded", "defcon", "saves")}
             if parts else None
         ),
         "points_per_pound": round(window.total_median / price, 2) if price else None,

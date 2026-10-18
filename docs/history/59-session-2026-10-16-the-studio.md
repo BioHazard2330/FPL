@@ -53,3 +53,10 @@ User, verbatim: *"upgrade every single thing to the maximum ... my own insane fp
 
 - Report: live poll, live server and sync not running with matches live. Cause: the power-gating window (2026-10-13) was the 24h before a deadline until 3h after it, so it closed at 14:00 BST on Saturday while the gameweek ran to Monday night; `live_matchday_polling: false` made the live poll stop with it.
 - Fix: `scheduler/power_window.py::compute_window` merges the deadline run-up with the matches (each fixture from 60 minutes before kickoff to 3 hours after; fixtures within 36 hours of each other joined; a fixture rescheduled weeks away does not join). `live_matchday_polling` removed; new keys `pre_kickoff_minutes`, `post_match_hours`, `matchday_bridge_hours`. GW7's window now runs to Mon 22:00 UTC. Tests in `tests/test_power_window.py`.
+
+## 2026-10-18: the cool bias found, `calibrated-v3`
+
+- Laid the model's per-component GW8 projection for every available player against FPL's actual component totals for GW1-6. Goalkeeper saves were absent from the model (11 points a gameweek league-wide); assists were low by position (forwards 6.6 predicted against 11.5 actual). Both fixed, plus save and defensive-contribution points added to the simulation. Details in CLAUDE.md.
+- The live forecast now logs itself every ten minutes (`live_forecast_log`, migration 0048) and scores itself against the final points when the gameweek settles (`forecast_scorecard`). The first GW7 forecast was logged live at 69.6 (61 to 80) with 46 on the board.
+- Five pending match analyses written (Everton-Chelsea, Fulham-Hull, Man City-Ipswich, Brentford-Liverpool, Newcastle-Villa).
+- Visual rebuild begun: palette, type scale, framed screens, softer corners.

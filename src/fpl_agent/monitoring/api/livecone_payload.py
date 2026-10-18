@@ -23,7 +23,7 @@ def _build(kind: str) -> dict:
     from fpl_agent.ingestion.my_team import get_my_team_entry_id
     from fpl_agent.models import rank_engine as re
     from fpl_agent.models.fixtures import live_or_reference_event
-    from fpl_agent.models.live_forecast import fixture_states, forecast_event
+    from fpl_agent.models.live_forecast import fixture_states, forecast_event, forecast_scorecard, log_forecast
 
     conn = get_connection()
     try:
@@ -33,9 +33,15 @@ def _build(kind: str) -> dict:
         states = fixture_states(conn, event)
         if not any(s.status in ("live", "done") for s in states):
             return {"status": "not_live", "event": event, "detail": "no match of this gameweek has kicked off"}
-        if all(s.status == "done" for s in states):
-            return {"status": "settled", "event": event, "detail": "every match of this gameweek has finished"}
         entry = get_my_team_entry_id(conn)
+        if all(s.status == "done" for s in states):
+            settled = {"status": "settled", "event": event, "detail": "every match of this gameweek has finished"}
+            final = conn.execute(
+                "SELECT points FROM my_team_gw_summary WHERE entry_id=? AND event=?", (entry, event),
+            ).fetchone() if entry is not None else None
+            if final is not None and final["points"] is not None:
+                settled["scorecard"] = forecast_scorecard(conn, event, float(final["points"]))
+            return settled
         picks = [
             (r["player_id"], r["multiplier"]) for r in conn.execute(
                 "SELECT player_id, multiplier FROM my_team_picks WHERE entry_id=? AND event=?", (entry, event),
@@ -54,6 +60,10 @@ def _build(kind: str) -> dict:
         live_points = {pid: s.get("total_points", 0) for pid, s in stats.items()}
         live_minutes = {pid: s.get("minutes", 0) for pid, s in stats.items()}
         f = forecast_event(conn, event, picks, live_points, live_minutes, field_model, re.population_sd(conn))
+        try:
+            log_forecast(conn, event, f)
+        except Exception:
+            pass
         names = {
             r["id"]: {"name": r["web_name"], "team_short": r["short_name"], "team_code": r["code"], "position": r["position"]}
             for r in conn.execute(

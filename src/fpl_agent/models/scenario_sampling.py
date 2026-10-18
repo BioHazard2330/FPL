@@ -8,6 +8,9 @@ already-computed inputs (lam/mu/rho, a rates dict, drawn scorelines).
 import numpy as np
 from scipy.stats import poisson
 
+from fpl_agent.models.defensive_contribution import defcon_points_probability
+from fpl_agent.models.saves import expected_saves
+
 _MAX_GOALS_GRID = 10  # tail probability beyond this is negligible for realistic fixture rates
 
 # Real, disclosed, uncalibrated heuristic (2026-09-13, "make the optimizer
@@ -73,6 +76,27 @@ def sample_fixture_scorelines(
     return home_goals, away_goals
 
 
+def _saves_and_defcon_points(
+    rng: np.random.Generator, rates: dict, opp_goals: np.ndarray, weight: np.ndarray, played_full: np.ndarray,
+) -> np.ndarray:
+    """Goalkeeper save points (saves drawn Poisson around the match's own
+    drawn opponent goals, a point per 3) and the defensive-contribution bonus
+    (a full-match threshold, Bernoulli at the player's own probability). Both
+    were in the point estimate and missing from the simulation. Zero for
+    players whose rates carry neither."""
+    n_trials = opp_goals.shape[0]
+    points = np.zeros(n_trials)
+    saves_rule = rates.get("saves_pts_rule", 0)
+    if saves_rule:
+        saves = rng.poisson(expected_saves(opp_goals) * np.minimum(weight, 1.0))
+        points = points + (saves // 3) * saves_rule
+    defcon_rule = rates.get("defcon_pts_rule", 0)
+    if defcon_rule and rates.get("position") is not None:
+        p_defcon = defcon_points_probability(rates.get("defcon_actions90", 0.0), rates["position"])
+        points = points + np.where(played_full & (rng.random(n_trials) < p_defcon), defcon_rule, 0.0)
+    return points
+
+
 def sample_player_trial_points(
     rng: np.random.Generator,
     rates: dict,
@@ -133,7 +157,8 @@ def sample_player_trial_points(
     clean_sheet_points = np.where(played_full & (opp_goals == 0), rates["clean_sheet_pts"], 0.0)
     conceded_points = (opp_goals // 2) * conceded_rate * np.minimum(weight, 1.0)
 
-    return appearance + goals_points + assists_points + bonus_points + cards_points + clean_sheet_points + conceded_points
+    extra = _saves_and_defcon_points(rng, rates, opp_goals, weight, played_full)
+    return appearance + goals_points + assists_points + bonus_points + cards_points + clean_sheet_points + conceded_points + extra
 
 
 def sample_team_group_trial_points(
@@ -249,5 +274,6 @@ def sample_team_group_trial_points(
         result[p["player_id"]] = (
             appearance + goals_points + assists_points + bonus_points + cards_points
             + clean_sheet_points + conceded_points
+            + _saves_and_defcon_points(rng, rates, opp_goals, weight, played_full)
         )
     return result

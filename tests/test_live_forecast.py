@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from fpl_agent.models import live_forecast as lf
+from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.models.live_forecast import live_increment, model_bias
 
 from test_news_source_matching import _seed_two_players_two_teams
@@ -122,8 +123,8 @@ def test_parse_minute_handles_added_time_and_half_time():
 def _outcomes(conn, n, predicted, actual):
     for k in range(n):
         conn.execute(
-            "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_at, actual_points) "
-            "VALUES (1, ?, '2026-27', ?, 't', ?)", (k + 1, predicted, actual),
+            "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_at, actual_points, model_version) "
+            "VALUES (1, ?, '2026-27', ?, 't', ?, ?)", (k + 1, predicted, actual, MODEL_VERSION),
         )
 
 
@@ -152,3 +153,37 @@ def test_the_livecone_builder_is_registered_without_the_dashboard_context():
 
     assert API_BUILDERS["livecone"] is build_livecone_payload
     assert build_livecone_payload.needs_context is False
+
+
+def _forecast(now=20.0, p10=40.0, p50=55.0, p90=70.0, left=5, live=2):
+    return lf.Forecast(
+        now_points=now, mean=p50, p10=p10, p50=p50, p90=p90, field_now=18.0, field_mean=52.0, edge={}, players=[],
+        fixtures_left=left, fixtures_live=live,
+    )
+
+
+def test_forecasts_are_logged_at_most_once_per_ten_minutes(db_conn):
+    assert lf.log_forecast(db_conn, 7, _forecast(), now_epoch=1_000)
+    assert not lf.log_forecast(db_conn, 7, _forecast(), now_epoch=1_000 + 599)
+    assert lf.log_forecast(db_conn, 7, _forecast(), now_epoch=1_000 + 600)
+    assert lf.log_forecast(db_conn, 8, _forecast(), now_epoch=1_000 + 601)
+
+
+def test_scorecard_counts_the_forecasts_whose_band_held_the_final(db_conn):
+    lf.log_forecast(db_conn, 7, _forecast(p10=40, p50=55, p90=70), now_epoch=1_000)
+    lf.log_forecast(db_conn, 7, _forecast(p10=50, p50=60, p90=62), now_epoch=2_000)
+    card = lf.forecast_scorecard(db_conn, 7, 65.0)
+    assert card["forecasts"] == 2
+    assert card["band_hit_rate"] == 0.5
+    assert card["median_error"] == pytest.approx(-7.5)
+    assert lf.forecast_scorecard(db_conn, 9, 65.0) is None
+
+
+def test_model_bias_ignores_predictions_from_an_older_model_version(db_conn):
+    _seed_two_players_two_teams(db_conn)
+    for k in range(45):
+        db_conn.execute(
+            "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_at, actual_points, model_version) "
+            "VALUES (1, ?, '2026-27', 3.0, 't', 9, 'calibrated-v2')", (k + 1,),
+        )
+    assert model_bias(db_conn) == (0.0, 0)

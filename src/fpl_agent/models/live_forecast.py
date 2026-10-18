@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from fpl_agent.models.expected_points import MODEL_VERSION
 from fpl_agent.models.rank_engine import FieldModel, edge_stats
 
 STAY_DECAY = 0.12
@@ -154,16 +155,18 @@ MIN_BIAS_SAMPLE = 40
 
 
 def model_bias(conn: sqlite3.Connection) -> tuple[float, int]:
-    """How far the model's own past predictions ran below what the players
-    scored, per player and gameweek (mean of actual minus predicted, clipped to
-    [0, 1.5]; zero below 40 settled predictions). The projections run cool by
-    this much: it shows up in 69 of their own past predictions for this squad
-    (+1.1, standard error 0.45) and independently in the gap between the model's
-    average for the field and a typical gameweek average. A forecast of what a
-    score will be, as opposed to which choice is better, has to add it back."""
+    """How far the current model's own past predictions ran below what the
+    players scored, per player and gameweek (mean of actual minus predicted,
+    clipped to [0, 1.5]; zero below 40 settled predictions). Only predictions
+    made by the current MODEL_VERSION count: calibrated-v2 ran about 1.1 cool
+    (goalkeeper saves were missing and assists were credited at the Understat
+    rate), calibrated-v3 fixed both, so the older predictions say nothing
+    about the model that is forecasting now. A forecast of what a score will
+    be, as opposed to which choice is better, adds back whatever shortfall
+    the current model has shown."""
     rows = conn.execute(
         "SELECT actual_points - predicted_median AS d FROM prediction_outcomes "
-        "WHERE actual_points IS NOT NULL AND predicted_median IS NOT NULL"
+        "WHERE actual_points IS NOT NULL AND predicted_median IS NOT NULL AND model_version = ?", (MODEL_VERSION,),
     ).fetchall()
     if len(rows) < MIN_BIAS_SAMPLE:
         return 0.0, len(rows)
@@ -292,3 +295,44 @@ def forecast_event(
         players=sorted(players, key=lambda p: -p["swing"]),
         fixtures_left=sum(1 for s in states if s.status != "done"), fixtures_live=sum(1 for s in states if s.status == "live"), bias=bias,
     )
+
+
+LOG_EVERY_SECONDS = 600
+
+
+def log_forecast(conn: sqlite3.Connection, event: int, f: "Forecast", now_epoch: float | None = None) -> bool:
+    """Stores a forecast at most once per ten minutes per gameweek, so the log
+    can later be scored against the final points without growing by a row per
+    page refresh."""
+    import time as _time
+
+    now = int(_time.time() if now_epoch is None else now_epoch)
+    last = conn.execute("SELECT MAX(logged_at) AS t FROM live_forecast_log WHERE event=?", (event,)).fetchone()["t"]
+    if last is not None and now - last < LOG_EVERY_SECONDS:
+        return False
+    conn.execute(
+        "INSERT INTO live_forecast_log (event, logged_at, now_points, mean, p10, p50, p90, field_now, field_mean, fixtures_left, fixtures_live) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (event, now, f.now_points, f.mean, f.p10, f.p50, f.p90, f.field_now, f.field_mean, f.fixtures_left, f.fixtures_live),
+    )
+    conn.commit()
+    return True
+
+
+def forecast_scorecard(conn: sqlite3.Connection, event: int, final_points: float, final_field: float | None = None) -> dict | None:
+    """How the logged forecasts for a settled gameweek compare with where it
+    ended: the share of forecasts whose 10-90 band held the final points, and
+    the mean error of the median, split by how much of the gameweek was left."""
+    rows = conn.execute(
+        "SELECT now_points, p10, p50, p90, fixtures_left FROM live_forecast_log WHERE event=? ORDER BY logged_at", (event,),
+    ).fetchall()
+    if not rows:
+        return None
+    inside = [r["p10"] <= final_points <= r["p90"] for r in rows]
+    errors = [r["p50"] - final_points for r in rows]
+    return {
+        "event": event, "final": final_points, "forecasts": len(rows),
+        "band_hit_rate": sum(inside) / len(rows), "median_error": sum(errors) / len(rows),
+        "mean_abs_error": sum(abs(e) for e in errors) / len(rows),
+        "first": {"now": rows[0]["now_points"], "p10": rows[0]["p10"], "p50": rows[0]["p50"], "p90": rows[0]["p90"]},
+    }

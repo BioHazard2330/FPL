@@ -349,6 +349,75 @@ def real_assisted_goal_rate(conn: sqlite3.Connection) -> float:
     return rate
 
 
+_FPL_ASSIST_CREDIT_FALLBACK = 0.90
+_fpl_assist_credit_cache: dict[int, tuple[sqlite3.Connection, float]] = {}
+
+
+def fpl_assisted_goal_rate(conn: sqlite3.Connection) -> float:
+    """Assists FPL credits per goal FPL records, from FPL's own player totals:
+    the completed seasons since 2022/23 (`player_season_history`) pooled with
+    the gameweeks played this season (`player_gw_stats`). It is about 0.90.
+    `real_assisted_goal_rate` (Understat assists per goal, 0.69) is the wrong
+    figure for FPL points: FPL credits an assist on about nine goals in ten,
+    Understat on about seven, so using the Understat rate understated every
+    assist point by about 30%. Falls back to 0.90 when FPL's totals are not
+    stored."""
+    cached = _fpl_assist_credit_cache.get(id(conn))
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    hist = conn.execute(
+        "SELECT SUM(assists) AS a, SUM(goals_scored) AS g FROM player_season_history WHERE season_name >= '2022/23'"
+    ).fetchone()
+    live = conn.execute("SELECT SUM(assists) AS a, SUM(goals) AS g FROM player_gw_stats").fetchone()
+    assists = (hist["a"] or 0) + (live["a"] or 0)
+    goals = (hist["g"] or 0) + (live["g"] or 0)
+    rate = assists / goals if goals >= 500 else _FPL_ASSIST_CREDIT_FALLBACK
+    _fpl_assist_credit_cache[id(conn)] = (conn, rate)
+    return rate
+
+
+_FPL_ASSIST_POSITION_FALLBACK = {"GKP": 1.0, "DEF": 0.875, "MID": 0.895, "FWD": 1.62}
+_assist_position_cache: dict[int, tuple[sqlite3.Connection, dict[str, float]]] = {}
+
+
+def fpl_assist_position_factors(conn: sqlite3.Connection) -> dict[str, float]:
+    """How much more (or less) FPL credits assists than expected assists, by
+    position, relative to the all-outfield ratio, so applying it to a player's
+    share of his team's expected assists leaves the team's total unchanged and
+    only moves it between positions. FPL's own season totals 2022/23 to 2025/26
+    (players over 450 minutes) and this season's gameweeks give assists per xA
+    of about 1.30 for defenders, 1.33 for midfielders and 2.4 for forwards in
+    every one of the five samples; forwards get assists on passes that never
+    register as chances. Falls back to the ratios measured on 2026-10-18 when
+    the stored totals are thin."""
+    cached = _assist_position_cache.get(id(conn))
+    if cached is not None and cached[0] is conn:
+        return cached[1]
+    rows = conn.execute(
+        "SELECT et.singular_name_short AS pos, SUM(s.assists) AS a, SUM(s.expected_assists) AS x "
+        "FROM player_season_history s JOIN players p ON p.id = s.player_id JOIN element_types et ON et.id = p.element_type "
+        "WHERE s.season_name >= '2022/23' AND s.minutes >= 450 GROUP BY et.singular_name_short"
+    ).fetchall()
+    live = conn.execute(
+        "SELECT et.singular_name_short AS pos, SUM(g.assists) AS a, SUM(g.xa) AS x "
+        "FROM player_gw_stats g JOIN players p ON p.id = g.player_id JOIN element_types et ON et.id = p.element_type "
+        "GROUP BY et.singular_name_short"
+    ).fetchall()
+    totals: dict[str, list[float]] = {}
+    for r in list(rows) + list(live):
+        t = totals.setdefault(r["pos"], [0.0, 0.0])
+        t[0] += r["a"] or 0
+        t[1] += r["x"] or 0
+    outfield = [totals.get(k) for k in ("DEF", "MID", "FWD")]
+    if any(t is None or t[1] < 50 for t in outfield):
+        factors = dict(_FPL_ASSIST_POSITION_FALLBACK)
+    else:
+        overall = sum(t[0] for t in outfield) / sum(t[1] for t in outfield)
+        factors = {"GKP": 1.0, **{k: (totals[k][0] / totals[k][1]) / overall for k in ("DEF", "MID", "FWD")}}
+    _assist_position_cache[id(conn)] = (conn, factors)
+    return factors
+
+
 def player_share_of_team_assists(
     conn: sqlite3.Connection, player_id: int, market_team_id: int, season: str, as_of_date: str | None = None
 ) -> float:

@@ -91,6 +91,7 @@ from fpl_agent.models.blend import (
 )
 from fpl_agent.models.bonus_regression import expected_bonus_per90
 from fpl_agent.models.defensive_contribution import defcon_points_probability, expected_defcon_actions_per90
+from fpl_agent.models.saves import expected_saves
 from fpl_agent.models.expected_minutes import expected_minutes
 from fpl_agent.models.fixtures import _reference_event
 from fpl_agent.models.minutes_distribution import (
@@ -106,6 +107,8 @@ from fpl_agent.models.player_regression import (
     player_share_of_team_assists,
     player_share_of_team_xg,
     player_shrunk_rates,
+    fpl_assisted_goal_rate,
+    fpl_assist_position_factors,
     real_assisted_goal_rate,
     season_shrunk_rate,
 )
@@ -116,7 +119,7 @@ from fpl_agent.models.squad_churn import prior_season, team_churn_ratio
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
 
-MODEL_VERSION = "calibrated-v2"
+MODEL_VERSION = "calibrated-v3"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -998,7 +1001,9 @@ def _player_match_rates(
         "shrunk_xa90": shrunk_xa90, "shrunk_cards90": shrunk["cards"].shrunk_per90,
         "yellow_card_rate": yellow_card_rate,
         "player_share": player_share, "player_share_per90": share_per90,
-        "assist_share_per90": assist_share_per90, "assisted_goal_rate": assisted_goal_rate,
+        "assist_share_per90": min(assist_share_per90 * fpl_assist_position_factors(conn).get(position, 1.0), 1.0),
+        "assisted_goal_rate": fpl_assisted_goal_rate(conn),
+        "saves_pts_rule": (get_rule(conn, rules_season, "scoring.saves", 0) or 0) if position == "GKP" else 0,
         "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs,
         "defcon_actions90": defcon_actions90, "defcon_pts_rule": defcon_pts_rule,
@@ -1024,12 +1029,13 @@ class ComponentBreakdown:
     cards: float
     conceded: float
     defcon: float
+    saves: float = 0.0
 
     @property
     def total(self) -> float:
         return (
             self.appearance + self.goals + self.assists + self.bonus
-            + self.clean_sheet + self.cards + self.conceded + self.defcon
+            + self.clean_sheet + self.cards + self.conceded + self.defcon + self.saves
         )
 
 
@@ -1047,6 +1053,7 @@ def _sum_breakdowns(breakdowns: list["ComponentBreakdown"]) -> "ComponentBreakdo
         cards=sum(b.cards for b in breakdowns),
         conceded=sum(b.conceded for b in breakdowns),
         defcon=sum(b.defcon for b in breakdowns),
+        saves=sum(b.saves for b in breakdowns),
     )
 
 
@@ -1094,9 +1101,11 @@ def _match_components(
     # plausibly reach, same reasoning already established there.
     defcon = defcon_points_probability(rates["defcon_actions90"], rates["position"]) * rates["defcon_pts_rule"] * p_sixty_plus
 
+    saves = float(expected_saves(opp_goals)) / 3 * rates.get("saves_pts_rule", 0) * min(effective_minutes_fraction, 1.0)
+
     return ComponentBreakdown(
         appearance=appearance, goals=goals, assists=assists, bonus=bonus,
-        clean_sheet=clean_sheet, cards=cards, conceded=conceded, defcon=defcon,
+        clean_sheet=clean_sheet, cards=cards, conceded=conceded, defcon=defcon, saves=saves,
     )
 
 
