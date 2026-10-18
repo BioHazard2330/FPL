@@ -31,9 +31,9 @@ export function SkelMasthead() {
  * and any similar readout row take. */
 export function SkelConsole({ cells = 4 }: { cells?: number }) {
   return (
-    <div className="flex border-b-2 border-divider">
+    <div className="flex border-b border-divider">
       {Array.from({ length: cells }, (_, i) => (
-        <div key={i} className="border-l-2 border-divider px-6 py-4 first:border-l-0 first:pl-10">
+        <div key={i} className="border-l border-divider px-6 py-4 first:border-l-0 first:pl-10">
           <Skel className="h-2 w-20" />
           <Skel className="mt-2 h-5 w-16" />
         </div>
@@ -58,7 +58,7 @@ export function SkelRail({ rows = 6, className = '' }: { rows?: number; classNam
 export function SkelTable({ rows = 10, cols = 6 }: { rows?: number; cols?: number }) {
   return (
     <div>
-      <div className="flex gap-6 border-b-2 border-divider pb-2">
+      <div className="flex gap-6 border-b border-divider pb-2">
         {Array.from({ length: cols }, (_, i) => (
           <Skel key={i} className="h-2 flex-1" />
         ))}
@@ -92,7 +92,7 @@ export function ScreenError({ title, description, message }: ScreenErrorProps) {
       <div className="border-l-4 border-alert-red bg-panel px-6 py-5" role="alert">
         <div className="font-display text-xl font-bold text-alert-red">{title}</div>
         <div className="mt-2 max-w-xl text-sm text-text-muted">{description}</div>
-        <p className="mt-2 font-mono text-[11px] text-text-faint">{message}</p>
+        <p className="mt-2 font-mono text-[13px] text-text-faint">{message}</p>
       </div>
     </div>
   )

@@ -27,7 +27,7 @@ function Toggle({ on, onClick, children, tone = 'text' }: { on: boolean; onClick
   const active = tone === 'gold' ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'bg-text text-void'
   return (
     <button type="button" onClick={onClick}
-      className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] transition-colors ${on ? active : 'bg-raised text-text-muted hover:text-text'}`}>
+      className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${on ? active : 'bg-raised text-text-muted hover:text-text'}`}>
       {children}
     </button>
   )
@@ -37,7 +37,7 @@ function Big({ v, label, tone = 'text-text' }: { v: string; label: string; tone?
   return (
     <div>
       <div className={`tabular font-display text-4xl font-bold leading-none ${tone}`}>{v}</div>
-      <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-text-faint">{label}</div>
+      <div className="mt-1 text-[12px] uppercase tracking-[0.1em] text-text-faint">{label}</div>
     </div>
   )
 }
@@ -56,11 +56,11 @@ function HeroBand({ shots, onClear }: { shots: AtlasShot[]; onClear: () => void 
   const shirt = shirtUrl(first.team_code, false, 110)
 
   return (
-    <div className="data-in flex flex-wrap items-center gap-x-10 gap-y-4 border-b-2 border-divider bg-panel px-10 py-6">
+    <div className="data-in flex flex-wrap items-center gap-x-10 gap-y-4 border-b border-divider bg-panel px-10 py-6">
       {shirt && <img src={shirt} alt="" className="h-16 w-auto" />}
       <div className="min-w-[220px]">
         <div className="font-display text-5xl font-bold uppercase leading-none tracking-tight text-text">{first.player}</div>
-        <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-text-faint">{first.team} · this season, every shot</div>
+        <div className="mt-1 text-[13px] uppercase tracking-[0.18em] text-text-faint">{first.team} · this season, every shot</div>
       </div>
       <Big v={String(shots.length)} label="shots" />
       <Big v={xg.toFixed(1)} label="xG" />
@@ -84,7 +84,7 @@ function HeroBand({ shots, onClear }: { shots: AtlasShot[]; onClear: () => void 
           </div>
         )}
       </div>
-      <button type="button" onClick={onClear} className="text-[10px] font-bold uppercase tracking-[0.14em] text-broadcast-gold hover:text-text">
+      <button type="button" onClick={onClear} className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold hover:text-text">
         × back to the league
       </button>
     </div>
@@ -181,11 +181,11 @@ export function AtlasScreen() {
       {hero !== null && heroShots.length > 0 ? (
         <HeroBand shots={heroShots} onClear={() => setHero(null)} />
       ) : (
-        <div className="flex flex-wrap items-baseline gap-x-10 gap-y-3 border-b-2 border-divider px-10 py-6">
+        <div className="flex flex-wrap items-baseline gap-x-10 gap-y-3 border-b border-divider px-10 py-6">
           <Big v={String(t.shots)} label={`shots · ${t.matches} matches`} />
           <Big v={String(t.goals)} label="goals" />
           <Big v={t.xg.toFixed(1)} label="xG" />
-          <div className="ml-auto flex items-baseline gap-3 border-l-2 border-broadcast-gold pl-5">
+          <div className="ml-auto flex items-baseline gap-3 border-l border-broadcast-gold pl-5">
             <Big v={String(t.mine_goals)} label="your goals" tone="text-broadcast-gold" />
             <Big v={t.mine_xg.toFixed(1)} label={`from xG · ${t.mine_shots} shots`} tone="text-broadcast-gold" />
             <Big v={`${t.mine_goals - t.mine_xg >= 0 ? '+' : ''}${(t.mine_goals - t.mine_xg).toFixed(1)}`} label="finishing" tone={t.mine_goals - t.mine_xg >= 0 ? 'text-pitch-green' : 'text-alert-red'} />
@@ -204,18 +204,18 @@ export function AtlasScreen() {
         ))}
         <span className="mx-2 h-4 w-px bg-divider" />
         <select value={situation ?? ''} onChange={(e) => setSituation(e.target.value || null)}
-          className="bg-raised px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-muted">
+          className="bg-raised px-2 py-1 text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted">
           <option value="">Any situation</option>
           {data.situations.map(([s, n]) => <option key={s} value={s}>{SITUATION_LABEL[s] ?? s} ({n})</option>)}
         </select>
         <select value={team ?? ''} onChange={(e) => setTeam(e.target.value ? Number(e.target.value) : null)}
-          className="bg-raised px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-muted">
+          className="bg-raised px-2 py-1 text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted">
           <option value="">Any club</option>
           {teamsSorted.map((tm) => <option key={tm.team_id} value={tm.team_id}>{tm.team} · {tm.shots}</option>)}
         </select>
         <span className="mx-2 h-4 w-px bg-divider" />
         <Toggle on={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat</Toggle>
-        <div className="ml-auto text-[10px] uppercase tracking-wide text-text-faint">
+        <div className="ml-auto text-[12px] uppercase tracking-wide text-text-faint">
           on the pitch <span className="tabular font-bold text-text">{sums.shots}</span> shots ·{' '}
           <span className="tabular font-bold text-text">{sums.goals}</span> goals ·{' '}
           <span className="tabular font-bold text-text">{sums.xg.toFixed(1)}</span> xG ·{' '}
@@ -228,7 +228,7 @@ export function AtlasScreen() {
           <div className="h-[68vh]">
             <ShotAtlas shots={data.shots} visible={visible} heroId={hero} showHeat={showHeat} onHover={setHover} />
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[10px] uppercase tracking-wide text-text-faint">
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[12px] uppercase tracking-wide text-text-faint">
             <span><span className="mr-1.5 inline-block size-2 rounded-full bg-broadcast-gold align-middle" />your player, goal</span>
             <span><span className="mr-1.5 inline-block size-2 rounded-full border border-broadcast-gold align-middle" />your player, no goal</span>
             <span><span className="mr-1.5 inline-block size-2 rounded-full bg-broadcast-blue align-middle" />league, goal</span>
@@ -239,7 +239,7 @@ export function AtlasScreen() {
           </div>
 
           {hover && (
-            <div className="pointer-events-none fixed z-50 border-l-2 bg-raised px-3 py-2 text-xs"
+            <div className="pointer-events-none fixed z-50 border-l bg-raised px-3 py-2 text-xs"
               style={{ left: hover.px + 14, top: hover.py + 14, borderColor: hover.shot.mine ? 'var(--broadcast-gold)' : 'var(--broadcast-blue)' }}>
               <div className="font-display text-base font-bold uppercase text-text">{hover.shot.player} <span className="text-text-faint">{hover.shot.team}</span></div>
               <div className="tabular text-text-muted">
@@ -247,7 +247,7 @@ export function AtlasScreen() {
                 <span className={hover.shot.outcome === 'Goal' ? 'font-bold text-pitch-green' : ''}>{OUTCOME_ONE[hover.shot.outcome] ?? hover.shot.outcome}</span>
                 {' · '}{hover.shot.xg !== null ? `${hover.shot.xg.toFixed(2)} xG` : 'no xG'}
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-text-faint">
+              <div className="text-[12px] uppercase tracking-wide text-text-faint">
                 {SITUATION_LABEL[hover.shot.situation ?? ''] ?? hover.shot.situation}{hover.shot.foot ? ` · ${hover.shot.foot}` : ''}
               </div>
             </div>
@@ -255,7 +255,7 @@ export function AtlasScreen() {
         </div>
 
         <div className="px-5 py-6">
-          <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">
+          <div className="mb-3 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">
             {hero === null ? 'Shooters on this pitch · by xG' : 'Pick another'}
           </div>
           {rail.map((p) => {
@@ -266,13 +266,13 @@ export function AtlasScreen() {
                 className={`grid w-full grid-cols-[1fr_auto_auto_auto] items-baseline gap-3 border-b border-divider py-2 text-left transition-colors hover:bg-raised/60 ${active ? 'bg-raised' : ''}`}>
                 <div className="truncate">
                   <span className={`text-sm font-semibold ${active ? 'text-text' : p.mine ? 'text-broadcast-gold' : 'text-text'}`}>{p.player}</span>
-                  <span className="ml-1.5 text-[10px] uppercase text-text-faint">{p.team}</span>
+                  <span className="ml-1.5 text-[12px] uppercase text-text-faint">{p.team}</span>
                 </div>
                 <div className="tabular text-xs text-text-muted">{p.shots}<span className="text-text-faint">sh</span></div>
                 <div className="tabular text-xs text-text-muted">{p.xg.toFixed(1)}<span className="text-text-faint">xG</span></div>
                 <div className={`tabular w-12 text-right text-xs font-bold ${diff > 0.5 ? 'text-pitch-green' : diff < -0.5 ? 'text-alert-red' : 'text-text-muted'}`}>
-                  {p.goals}<span className="text-[10px] font-normal text-text-faint">g</span>
-                  <span className="ml-1 text-[10px]">{diff >= 0 ? '+' : ''}{diff.toFixed(1)}</span>
+                  {p.goals}<span className="text-[12px] font-normal text-text-faint">g</span>
+                  <span className="ml-1 text-[12px]">{diff >= 0 ? '+' : ''}{diff.toFixed(1)}</span>
                 </div>
               </button>
             )
@@ -283,30 +283,30 @@ export function AtlasScreen() {
       {/* THE STORY - the same dots, sorted into the two lists football
           people actually argue about. */}
       {story && (
-        <div className="grid grid-cols-2 gap-10 border-t-2 border-divider px-10 py-8">
+        <div className="grid grid-cols-2 gap-10 border-t border-divider px-10 py-8">
           <div>
-            <div className="mb-3 text-[11px] font-bold uppercase tracking-wide text-alert-red">
+            <div className="mb-3 text-[13px] font-bold uppercase tracking-wide text-alert-red">
               Biggest chances not taken{scope === 'mine' ? ' · your squad' : ''}
             </div>
             {story.misses.map((s, i) => (
               <button key={i} type="button" onClick={() => s.player_id !== null && setHero(s.player_id)}
                 className="grid w-full grid-cols-[2.5rem_1fr_auto] items-baseline gap-3 border-b border-divider py-2 text-left hover:bg-raised/60">
                 <span className="tabular font-display text-xl font-bold text-alert-red">{(s.xg ?? 0).toFixed(2)}</span>
-                <span className="truncate"><span className="font-semibold text-text">{s.player}</span> <span className="text-[10px] uppercase text-text-faint">{s.team} · {s.minute}'</span></span>
-                <span className="text-[10px] uppercase tracking-wide text-text-faint">{OUTCOME_ONE[s.outcome] ?? s.outcome}</span>
+                <span className="truncate"><span className="font-semibold text-text">{s.player}</span> <span className="text-[12px] uppercase text-text-faint">{s.team} · {s.minute}'</span></span>
+                <span className="text-[12px] uppercase tracking-wide text-text-faint">{OUTCOME_ONE[s.outcome] ?? s.outcome}</span>
               </button>
             ))}
           </div>
           <div>
-            <div className="mb-3 text-[11px] font-bold uppercase tracking-wide text-pitch-green">
+            <div className="mb-3 text-[13px] font-bold uppercase tracking-wide text-pitch-green">
               Coldest finishes{scope === 'mine' ? ' · your squad' : ''}
             </div>
             {story.cold.map((s, i) => (
               <button key={i} type="button" onClick={() => s.player_id !== null && setHero(s.player_id)}
                 className="grid w-full grid-cols-[2.5rem_1fr_auto] items-baseline gap-3 border-b border-divider py-2 text-left hover:bg-raised/60">
                 <span className="tabular font-display text-xl font-bold text-pitch-green">{(s.xg ?? 0).toFixed(2)}</span>
-                <span className="truncate"><span className="font-semibold text-text">{s.player}</span> <span className="text-[10px] uppercase text-text-faint">{s.team} · {s.minute}'</span></span>
-                <span className="text-[10px] uppercase tracking-wide text-text-faint">{SITUATION_LABEL[s.situation ?? ''] ?? s.situation}</span>
+                <span className="truncate"><span className="font-semibold text-text">{s.player}</span> <span className="text-[12px] uppercase text-text-faint">{s.team} · {s.minute}'</span></span>
+                <span className="text-[12px] uppercase tracking-wide text-text-faint">{SITUATION_LABEL[s.situation ?? ''] ?? s.situation}</span>
               </button>
             ))}
           </div>
@@ -314,7 +314,7 @@ export function AtlasScreen() {
       )}
 
       <div className="border-t border-divider bg-raised/40 px-10 py-6">
-        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-broadcast-gold">What this is</div>
+        <div className="mb-2 text-[13px] font-bold uppercase tracking-wide text-broadcast-gold">What this is</div>
         <div className="max-w-3xl text-xs leading-relaxed text-text-muted">{data.method}</div>
       </div>
     </div>

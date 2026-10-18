@@ -37,14 +37,14 @@ export function AppSidebar() {
   const isFresh = ageMs !== null && ageMs < 5 * 60 * 1000
 
   return (
-    <Sidebar collapsible="icon" className="border-r-2 border-divider">
-      <SidebarHeader className="border-b-2 border-divider">
+    <Sidebar collapsible="icon" className="border-r border-divider">
+      <SidebarHeader className="border-b border-divider">
         <div className="px-3 py-3">
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-display text-lg font-bold tracking-tight text-pitch-green">FPL</span>
-            <span className="font-display text-lg font-bold tracking-tight text-text">AGENT</span>
+          <div className="flex items-center gap-2.5">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-pitch-green font-display text-base font-bold text-pitch-green-ink">F</span>
+            <span className="font-display text-xl font-semibold tracking-wide text-text">FPL AGENT</span>
           </div>
-          <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-faint">
+          <div className="mt-2 font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
             {gwLabel ?? '—'} &middot; 2026/27
           </div>
         </div>
@@ -52,11 +52,11 @@ export function AppSidebar() {
       <SidebarContent>
         {NAV_SECTIONS.map((section) => (
           <SidebarGroup key={section.label} className="px-0 py-1">
-            <SidebarGroupLabel className="px-4 text-[9px] font-bold uppercase tracking-[0.18em] text-text-faint">
+            <SidebarGroupLabel className="px-4 text-[11px] font-bold uppercase tracking-[0.18em] text-text-faint">
               {section.label}
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0">
+              <SidebarMenu className="gap-0.5 px-2">
                 {section.routes.map((route) => {
                   const d = DESTINATIONS.find((x) => x.to === route)
                   if (!d) return null
@@ -67,13 +67,13 @@ export function AppSidebar() {
                         tooltip={d.label}
                         className={
                           isActive
-                            ? 'rounded-none border-l-[3px] border-pitch-green bg-transparent pl-[13px] font-bold text-text hover:bg-raised/60 hover:text-text'
-                            : 'rounded-none border-l-[3px] border-transparent pl-[13px] text-text-muted hover:bg-raised/40 hover:text-text'
+                            ? 'rounded-lg bg-raised font-semibold text-text hover:bg-raised hover:text-text'
+                            : 'rounded-lg text-text-muted hover:bg-raised/50 hover:text-text'
                         }
                         render={
                           <NavLink to={d.to} end={'end' in d ? d.end : false}>
-                            <d.icon strokeWidth={2.25} className="size-4" />
-                            <span className="text-[13px] font-semibold uppercase tracking-wide">{d.label}</span>
+                            <d.icon strokeWidth={2} className={`size-4 ${isActive ? 'text-pitch-green' : ''}`} />
+                            <span className="text-[14px] font-medium">{d.label}</span>
                           </NavLink>
                         }
                       />
@@ -85,13 +85,13 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <SidebarFooter className="border-t-2 border-divider">
+      <SidebarFooter className="border-t border-divider">
         <div className="space-y-1 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-text-faint">
+          <div className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-text-faint">
             <span className={`size-1.5 rounded-full ${isFresh ? 'animate-pulse-live bg-pitch-green' : live ? 'bg-broadcast-gold' : 'bg-text-faint'}`} />
             {isFresh ? 'Synced' : live ? 'Synced (idle)' : 'Connecting'}
           </div>
-          {updated && <div className="text-[10px] text-text-faint">Updated {updated}</div>}
+          {updated && <div className="text-[12px] text-text-faint">Updated {updated}</div>}
         </div>
       </SidebarFooter>
     </Sidebar>

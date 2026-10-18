@@ -30,7 +30,7 @@ function Opposed({ label, home, away, decimals = 0 }: { label: string; home: num
     <div className="grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-3 py-1.5">
       <span className="tabular text-right text-sm font-bold text-text">{home !== null ? home.toFixed(decimals) : '—'}</span>
       <div>
-        <div className="text-center text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">{label}</div>
+        <div className="text-center text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
         <div className="mt-1 flex h-1.5 w-full gap-px">
           <div className="bar-draw bg-pitch-green" style={{ width: `${homePct}%` }} />
           <div className="flex-1 bg-broadcast-blue" />
@@ -47,8 +47,8 @@ function Opposed({ label, home, away, decimals = 0 }: { label: string; home: num
 function Storylines({ insights, home, away }: { insights: MatchInsight[]; home: number; away: number }) {
   if (insights.length === 0) return null
   return (
-    <div className="border-b-2 border-divider px-10 py-6">
-      <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Storylines</div>
+    <div className="border-b border-divider px-10 py-6">
+      <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Storylines</div>
       <div className="flex flex-wrap gap-x-8 gap-y-2">
         {insights.slice(0, 6).map((ins, i) => (
           <div key={i} className="flex items-baseline gap-2 text-sm">
@@ -59,7 +59,7 @@ function Storylines({ insights, home, away }: { insights: MatchInsight[]; home: 
             />
             <span className="text-text-muted">{ins.text}</span>
             {ins.team_id !== null && (
-              <span className="text-[10px] font-bold uppercase text-text-faint">
+              <span className="text-[12px] font-bold uppercase text-text-faint">
                 {ins.team_id === home ? '(home)' : ins.team_id === away ? '(away)' : ''}
               </span>
             )}
@@ -75,10 +75,10 @@ function Storylines({ insights, home, away }: { insights: MatchInsight[]; home: 
  * piece someone wrote. Never LLM-authored or paraphrased by this project. */
 function TheStory({ review }: { review: MatchReview }) {
   return (
-    <div className="border-b-2 border-divider">
+    <div className="border-b border-divider">
       <div className="grid grid-cols-1 gap-6 px-10 py-8 md:grid-cols-[1fr_auto]">
         <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
             {review.kind === 'post' ? 'The story' : 'Match preview'}
           </div>
           <div className="mt-2 font-display text-2xl font-bold leading-tight text-text">{review.title}</div>
@@ -88,7 +88,7 @@ function TheStory({ review }: { review: MatchReview }) {
               href={review.content_url}
               target="_blank"
               rel="noreferrer"
-              className="mt-3 inline-block text-[11px] font-bold uppercase tracking-wide text-broadcast-blue hover:underline"
+              className="mt-3 inline-block text-[13px] font-bold uppercase tracking-wide text-broadcast-blue hover:underline"
             >
               Read the full story &rarr;
             </a>
@@ -109,7 +109,7 @@ function TimelineRow({ e }: { e: MatchTimelineRow }) {
   const mark = EVENT_MARK[e.event_type] ?? { label: e.event_type, ink: 'text-text-muted', fill: 'bg-text-faint' }
   const body = (
     <div className={`min-w-0 ${e.is_home ? 'text-right' : 'text-left'}`}>
-      <div className={`text-[9px] font-bold uppercase tracking-[0.14em] ${mark.ink}`}>{mark.label}</div>
+      <div className={`text-[11px] font-bold uppercase tracking-[0.1em] ${mark.ink}`}>{mark.label}</div>
       <div className="truncate text-sm font-bold text-text">
         {e.player_id !== null ? (
           <Link to={`/player/${e.player_id}`} className="hover:text-pitch-green">{e.player_name ?? '—'}</Link>
@@ -118,7 +118,7 @@ function TimelineRow({ e }: { e: MatchTimelineRow }) {
         )}
         {e.is_mine && <span className="ml-1.5 bg-broadcast-gold px-1 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
       </div>
-      {e.description && <div className="truncate text-[11px] text-text-faint">{e.description}</div>}
+      {e.description && <div className="truncate text-[13px] text-text-faint">{e.description}</div>}
     </div>
   )
   return (
@@ -126,7 +126,7 @@ function TimelineRow({ e }: { e: MatchTimelineRow }) {
       {e.is_home ? body : <div />}
       <div className="flex flex-col items-center gap-1">
         <span className={`size-2 shrink-0 ${mark.fill}`} />
-        <span className="tabular text-[11px] font-bold text-text-muted">{e.minute !== null ? `${e.minute}'` : '—'}</span>
+        <span className="tabular text-[13px] font-bold text-text-muted">{e.minute !== null ? `${e.minute}'` : '—'}</span>
       </div>
       {e.is_home ? <div /> : body}
     </div>
@@ -149,7 +149,7 @@ function LineupTable({ rows, title }: { rows: MatchLineupRow[]; title: string })
         </span>
         {(r.goals ?? 0) > 0 && <span className="shrink-0 text-xs font-bold text-pitch-green">{r.goals}G</span>}
         {(r.assists ?? 0) > 0 && <span className="shrink-0 text-xs font-bold text-broadcast-gold">{r.assists}A</span>}
-        <span className="tabular shrink-0 text-[11px] text-text-faint">
+        <span className="tabular shrink-0 text-[13px] text-text-faint">
           {r.minutes !== null && r.minutes > 0 ? `${r.minutes}'` : '—'}
         </span>
         {r.rating !== null && (
@@ -166,9 +166,9 @@ function LineupTable({ rows, title }: { rows: MatchLineupRow[]; title: string })
   const anyDetail = rows.some((r) => r.rating !== null || (r.minutes ?? 0) > 0)
   return (
     <div>
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">{title}</div>
+      <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">{title}</div>
       {!anyDetail && (
-        <p className="mb-3 text-[11px] text-text-faint">
+        <p className="mb-3 text-[13px] text-text-faint">
           No per-player minutes or ratings were captured for this match &mdash; the lineup below is real, the detail
           simply was not recorded.
         </p>
@@ -176,7 +176,7 @@ function LineupTable({ rows, title }: { rows: MatchLineupRow[]; title: string })
       {render(starters)}
       {subs.length > 0 && (
         <>
-          <div className="mb-1 mt-4 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Substitutes</div>
+          <div className="mb-1 mt-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Substitutes</div>
           <div className="opacity-70">{render(subs)}</div>
         </>
       )}
@@ -230,14 +230,14 @@ function ShotQuality({ shots, homeTeamId, homeShort, awayShort }: {
     .map((s) => [s.minute, 0, Number((s.xg as number).toFixed(2))])
 
   return (
-    <div className="border-b-2 border-divider px-10 py-8">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Shot quality</div>
-      <div className="mb-4 flex flex-wrap items-center gap-4 text-[11px] text-text-muted">
+    <div className="border-b border-divider px-10 py-8">
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Shot quality</div>
+      <div className="mb-4 flex flex-wrap items-center gap-4 text-[13px] text-text-muted">
         <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-pitch-green" /> {homeShort}</span>
         <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-broadcast-blue" /> {awayShort}</span>
       </div>
 
-      <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Cumulative xG</div>
+      <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative xG</div>
       <Chart
         type="line"
         height={220}
@@ -255,7 +255,7 @@ function ShotQuality({ shots, homeTeamId, homeShort, awayShort }: {
         ]}
       />
 
-      <div className="mb-2 mt-8 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">
+      <div className="mb-2 mt-8 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
         Every chance, by minute &middot; bubble size = xG
       </div>
       <Chart
@@ -290,7 +290,7 @@ export function MatchScreen() {
     return (
       <div className="animate-pulse pb-16">
         <SkelMasthead />
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <Skel className="mx-auto h-14 w-56" />
         </div>
         <div className="space-y-2 px-10 py-8">
@@ -328,7 +328,7 @@ export function MatchScreen() {
       {p.review && <TheStory review={p.review} />}
 
       {/* THE SCORELINE */}
-      <div className="border-b-2 border-divider px-10 py-8">
+      <div className="border-b border-divider px-10 py-8">
         <div className="flex items-center justify-center gap-6">
           <Link to={`/club/${m.home.team_id}`} className="flex flex-1 items-center justify-end gap-3 hover:opacity-80">
             <span className="truncate font-display text-2xl font-bold uppercase text-text">{m.home.name}</span>
@@ -340,7 +340,7 @@ export function MatchScreen() {
             </div>
             <div className="mt-2 flex items-center justify-center gap-1.5">
               {live && <span className="size-1.5 animate-pulse-live rounded-full bg-alert-red" />}
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-muted">
+              <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted">
                 {live ? (m.live_minute !== null ? `${m.live_minute}'` : m.status) : 'Full time'}
               </span>
             </div>
@@ -351,7 +351,7 @@ export function MatchScreen() {
           </Link>
         </div>
         {(hs?.formation || as?.formation) && (
-          <div className="mt-4 flex items-center justify-center gap-6 text-[11px] font-bold uppercase tracking-[0.16em] text-text-faint">
+          <div className="mt-4 flex items-center justify-center gap-6 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
             <span>{hs?.formation ?? ''}</span>
             <span className="text-text-faint">formation</span>
             <span>{as?.formation ?? ''}</span>
@@ -363,7 +363,7 @@ export function MatchScreen() {
 
       {/* THE CONTEST */}
       {(hs || as) && (
-        <div className="border-b-2 border-divider px-10 py-6">
+        <div className="border-b border-divider px-10 py-6">
           <Opposed label="Possession" home={stat(hs, 'possession_pct')} away={stat(as, 'possession_pct')} />
           <Opposed label="xG" home={stat(hs, 'xg')} away={stat(as, 'xg')} decimals={2} />
           <Opposed label="Shots" home={stat(hs, 'shots')} away={stat(as, 'shots')} />
@@ -379,8 +379,8 @@ export function MatchScreen() {
           clearances/duels won), discipline, and - the real sleeper - who
           actually ran further. */}
       {(hs || as) && (
-        <div className="border-b-2 border-divider px-10 py-6">
-          <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Battle of the pitch</div>
+        <div className="border-b border-divider px-10 py-6">
+          <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Battle of the pitch</div>
           <Opposed label="Touches in box" home={stat(hs, 'touches_opp_box')} away={stat(as, 'touches_opp_box')} />
           <Opposed label="Accurate passes" home={stat(hs, 'accurate_passes')} away={stat(as, 'accurate_passes')} />
           <Opposed label="Pass accuracy %" home={stat(hs, 'pass_accuracy_pct')} away={stat(as, 'pass_accuracy_pct')} />
@@ -410,7 +410,7 @@ export function MatchScreen() {
           list below stays for the real player-level detail (who, what) a
           compact band can't carry. */}
       {p.momentum.length > 1 && (
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <MomentumBand
             points={p.momentum}
             maxMinuteOverride={Math.max(...p.momentum.map((pt) => pt.minute), 90)}
@@ -424,8 +424,8 @@ export function MatchScreen() {
 
       {/* THE TIMELINE */}
       {p.timeline.length > 0 && (
-        <div className="border-b-2 border-divider px-10 py-8">
-          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Timeline</div>
+        <div className="border-b border-divider px-10 py-8">
+          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Timeline</div>
           {p.timeline.map((e, i) => <TimelineRow key={i} e={e} />)}
         </div>
       )}

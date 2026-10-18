@@ -40,10 +40,10 @@ function ResultRow({ r }: { r: ClubResultRow }) {
   const outperformed = r.xg !== null && r.xga !== null ? r.gf - r.ga - (r.xg - r.xga) : null
   return (
     <div className="flex items-center gap-3 border-b border-divider py-2.5">
-      <span className={`flex size-6 shrink-0 items-center justify-center text-[11px] font-bold ${RESULT_FILL[r.result]}`}>
+      <span className={`flex size-6 shrink-0 items-center justify-center text-[13px] font-bold ${RESULT_FILL[r.result]}`}>
         {r.result}
       </span>
-      <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-text-faint">{r.is_home ? 'Home' : 'Away'}</span>
+      <span className="w-12 shrink-0 text-[12px] uppercase tracking-wide text-text-faint">{r.is_home ? 'Home' : 'Away'}</span>
       <span className="flex min-w-0 flex-1 items-center gap-2">
         {crest && <img src={crest} alt="" className="h-5 w-5 shrink-0" />}
         <span className="truncate text-sm font-bold text-text">{r.opponent_short}</span>
@@ -64,7 +64,7 @@ function ResultRow({ r }: { r: ClubResultRow }) {
           {outperformed > 0 ? '+' : ''}{outperformed.toFixed(1)}
         </span>
       )}
-      <span className="w-12 shrink-0 text-right text-[10px] text-text-faint">{shortDate(r.kickoff_time)}</span>
+      <span className="w-12 shrink-0 text-right text-[12px] text-text-faint">{shortDate(r.kickoff_time)}</span>
     </div>
   )
 }
@@ -77,7 +77,7 @@ export function ClubScreen() {
     return (
       <div className="animate-pulse pb-16">
         <SkelMasthead />
-        <div className="flex gap-6 border-b-2 border-divider px-10 py-8">
+        <div className="flex gap-6 border-b border-divider px-10 py-8">
           <Skel className="h-20 w-20" />
           <div className="flex-1 space-y-3">
             <Skel className="h-10 w-64" />
@@ -115,7 +115,7 @@ export function ClubScreen() {
     <div className="data-in pb-16">
       <Masthead edition="Club File" title={c.name} right={<span className="text-text-faint">{p.results.length} played</span>} />
 
-      <div className="relative overflow-hidden border-b-2 border-divider">
+      <div className="relative overflow-hidden border-b border-divider">
         <span className="ghost-watermark pointer-events-none absolute -top-14 right-4 select-none font-display text-[12rem] font-bold uppercase leading-none">
           {c.short}
         </span>
@@ -126,16 +126,16 @@ export function ClubScreen() {
             <div className="mt-3 flex items-center gap-2">
               {form.length > 0 && (
                 <>
-                  <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Form</span>
+                  <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Form</span>
                   {form.map((r, i) => (
-                    <span key={i} className={`flex size-5 items-center justify-center text-[10px] font-bold ${RESULT_FILL[r]}`}>
+                    <span key={i} className={`flex size-5 items-center justify-center text-[12px] font-bold ${RESULT_FILL[r]}`}>
                       {r}
                     </span>
                   ))}
                 </>
               )}
               {p.owned_count > 0 && (
-                <span className="ml-3 bg-broadcast-gold px-2 py-0.5 text-[10px] font-bold text-broadcast-gold-ink">
+                <span className="ml-3 bg-broadcast-gold px-2 py-0.5 text-[12px] font-bold text-broadcast-gold-ink">
                   {p.owned_count} in my squad
                 </span>
               )}
@@ -160,9 +160,9 @@ export function ClubScreen() {
           any club `HONOURS` doesn't cover - a future season's promoted/
           relegated club, never guessed at. */}
       {honours && (
-        <div className="border-b-2 border-divider bg-void px-10 py-7">
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Trophy shelf</div>
-          <div className="mb-3 text-[11px] text-text-faint">
+        <div className="border-b border-divider bg-void px-10 py-7">
+          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Trophy shelf</div>
+          <div className="mb-3 text-[13px] text-text-faint">
             real major honours &middot; league {honours.league} &middot; FA Cup {honours.faCup} &middot; League Cup {honours.leagueCup} &middot; European {honours.european}
           </div>
           <div className="h-72 w-full">
@@ -174,16 +174,16 @@ export function ClubScreen() {
       <StoriesRail stories={p.stories} subject={p.club.name} />
 
       {/* THE TWO PITCHES - where they shoot, where they concede. */}
-      <div className="border-b-2 border-divider">
+      <div className="border-b border-divider">
         <ClubPitches shotsFor={p.shots_for} shotsAgainst={p.shots_against} />
       </div>
 
       {(chronological.length > 0 || xgMatches.length > 0) && (
-        <div className="grid grid-cols-1 gap-px border-b-2 border-divider bg-divider lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-px border-b border-divider bg-divider lg:grid-cols-2">
           {chronological.length > 0 && (
             <div className="bg-void px-10 py-7">
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Season shape</div>
-              <div className="mb-3 text-[11px] text-text-faint">real results this season, oldest at the base</div>
+              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Season shape</div>
+              <div className="mb-3 text-[13px] text-text-faint">real results this season, oldest at the base</div>
               {chronological.length >= MIN_SPIRAL_MATCHES ? (
                 <div className="h-64 w-full">
                   <SeasonDnaHelix matches={chronological.map((r) => ({ result: r.result, opponent_short: r.opponent_short }))} />
@@ -206,7 +206,7 @@ export function ClubScreen() {
                       </span>
                     ))}
                   </div>
-                  <p className="max-w-xs text-center text-[11px] text-text-faint">
+                  <p className="max-w-xs text-center text-[13px] text-text-faint">
                     the 3D season spiral needs a few more real matches before it reads as a real shape
                   </p>
                 </div>
@@ -215,8 +215,8 @@ export function ClubScreen() {
           )}
           {xgMatches.length > 0 && (
             <div className="bg-void px-10 py-7">
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">xG range</div>
-              <div className="mb-3 text-[11px] text-text-faint">
+              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">xG range</div>
+              <div className="mb-3 text-[13px] text-text-faint">
                 <span className="text-pitch-green">real xG for</span> vs <span className="text-alert-red">real xG against</span>, per match
               </div>
               <div className="h-64 w-full">
@@ -232,8 +232,8 @@ export function ClubScreen() {
             0.3 xG and a 1-0 off 2.4 xG are different football. */}
         <div className="bg-void px-10 py-8">
           <div className="mb-3 flex flex-wrap items-baseline gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Results</span>
-            <span className="text-[11px] text-text-faint">score vs xG &middot; right column = how much the scoreline beat the xG</span>
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Results</span>
+            <span className="text-[13px] text-text-faint">score vs xG &middot; right column = how much the scoreline beat the xG</span>
           </div>
           {p.results.length === 0 ? (
             <p className="text-sm text-text-muted">No completed fixture yet this season.</p>
@@ -246,14 +246,14 @@ export function ClubScreen() {
             opens their real match log. */}
         <div className="bg-void px-10 py-8">
           <div className="mb-3 flex flex-wrap items-baseline gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Squad</span>
-            <span className="text-[11px] text-text-faint">real recorded season totals &middot; most productive first</span>
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Squad</span>
+            <span className="text-[13px] text-text-faint">real recorded season totals &middot; most productive first</span>
           </div>
           <div className="max-h-[36rem] overflow-y-auto">
             <table className="w-full text-left text-sm">
               <caption className="sr-only">{c.name} squad, FPL-registered players</caption>
               <thead className="sticky top-0 bg-void">
-                <tr className="border-b-2 border-divider text-[10px] uppercase tracking-[0.14em] text-text-faint">
+                <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
                   <th scope="col" className="py-2 pr-3 font-bold">Player</th>
                   <th scope="col" className="py-2 pr-3 font-bold">Pos</th>
                   <th scope="col" className="tabular py-2 pr-3 text-right font-bold">Price</th>
@@ -274,7 +274,7 @@ export function ClubScreen() {
                       </Link>
                     </th>
                     <td className="py-1.5 pr-3">
-                      <span className="bg-raised px-1.5 py-0.5 text-[9px] font-bold text-text-muted">{s.position}</span>
+                      <span className="bg-raised px-1.5 py-0.5 text-[11px] font-bold text-text-muted">{s.position}</span>
                     </td>
                     <td className="tabular py-1.5 pr-3 text-right text-text-muted">
                       {s.price_m !== null ? `£${s.price_m.toFixed(1)}m` : '—'}

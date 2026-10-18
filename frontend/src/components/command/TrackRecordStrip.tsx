@@ -34,20 +34,20 @@ export function TrackRecordStrip() {
       className="group block border-t border-divider bg-raised/40 px-10 py-4 transition-colors hover:bg-raised/70"
     >
       <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
-        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">
+        <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">
           {planned ? 'The week plan against you' : 'The old single-swap engine against you'}
         </div>
         <div className="flex items-baseline gap-2">
           <span className="tabular text-2xl font-bold text-pitch-green">{yours}</span>
-          <span className="text-[10px] uppercase tracking-wide text-text-faint">yours</span>
+          <span className="text-[12px] uppercase tracking-wide text-text-faint">yours</span>
         </div>
         <div className="flex items-baseline gap-2">
           <span className="tabular text-2xl font-bold text-broadcast-blue">{ours}</span>
-          <span className="text-[10px] uppercase tracking-wide text-text-faint">its</span>
+          <span className="text-[12px] uppercase tracking-wide text-text-faint">its</span>
         </div>
         <div className={`tabular text-2xl font-bold ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
           {delta > 0 ? '+' : ''}{delta}
-          <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-text-faint">
+          <span className="ml-1.5 text-[12px] font-normal uppercase tracking-wide text-text-faint">
             over {gws} GW
           </span>
         </div>
@@ -60,7 +60,7 @@ export function TrackRecordStrip() {
         {!planned && f?.followed_none && (
           <div className="text-xs text-text-muted">you have followed none of its {h.recommendations_logged} calls</div>
         )}
-        <div className="ml-auto text-[10px] font-bold uppercase tracking-wide text-text-faint group-hover:text-text">
+        <div className="ml-auto text-[12px] font-bold uppercase tracking-wide text-text-faint group-hover:text-text">
           every call, scored →
         </div>
       </div>

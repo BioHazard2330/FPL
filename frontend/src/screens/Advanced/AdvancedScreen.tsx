@@ -31,7 +31,7 @@ function AdvancedSkeleton() {
   return (
     <div className="animate-pulse pb-16">
       <div className="border-b border-divider px-10 py-3"><div className="h-3 w-64 bg-raised" /></div>
-      <div className="border-b-2 border-divider px-10 py-8">
+      <div className="border-b border-divider px-10 py-8">
         <div className="h-2 w-32 bg-raised" />
         <div className="mt-3 h-14 w-56 bg-raised" />
         <div className="mt-6 flex gap-8">
@@ -48,7 +48,7 @@ function AdvancedSkeleton() {
           </div>
         ))}
       </div>
-      <div className="flex gap-2 border-t-2 border-divider px-10 py-8">
+      <div className="flex gap-2 border-t border-divider px-10 py-8">
         {[0, 1, 2, 3, 4].map((i) => <div key={i} className="h-24 w-40 shrink-0 bg-raised" />)}
       </div>
     </div>
@@ -86,7 +86,7 @@ export function AdvancedScreen() {
       {p.week_plan_audit ? (
         <WeekPlanAudit audit={p.week_plan_audit} />
       ) : (
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <div className="font-display text-2xl font-bold text-text-faint">No week plan on file</div>
           <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
             Run <code className="font-mono text-text">fpl week-plan</code>, or use Sync now in the header. The plan, and the stress test of each
@@ -97,8 +97,8 @@ export function AdvancedScreen() {
 
       {p.decision_audit && !p.decision_audit.stale && <DecisionAudit audit={p.decision_audit} />}
       {p.decision_audit?.stale && (
-        <div className="border-b-2 border-divider bg-panel px-10 py-4 text-sm text-text-muted">
-          <span className="mr-3 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">Adversarial audit</span>
+        <div className="border-b border-divider bg-panel px-10 py-4 text-sm text-text-muted">
+          <span className="mr-3 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Adversarial audit</span>
           The last one is {p.decision_audit.age_days} days old and audits an earlier squad and an earlier recommendation, so it says nothing about
           this week. Run <code className="font-mono text-text">fpl decision-audit</code> to redo it.
         </div>
@@ -106,19 +106,19 @@ export function AdvancedScreen() {
 
       {/* MODEL PIPELINE - the dominant visual, each stage its own object */}
       {p.pipeline.length > 0 && (
-        <div className="relative overflow-hidden border-b-2 border-divider px-10 py-8">
+        <div className="relative overflow-hidden border-b border-divider px-10 py-8">
           <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
             ENGINE
           </span>
-          <div className="relative mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Model pipeline</div>
+          <div className="relative mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Model pipeline</div>
           <div className="flex items-stretch overflow-x-auto">
             {p.pipeline.map((stage, i) => (
               <div key={stage.stage} className="flex items-stretch">
                 <div className="flex min-w-[170px] flex-col gap-2 bg-panel px-5 py-4">
                   <div className={`h-1 w-full ${STATUS_COLOR[stage.status]?.split(' ')[0] ?? 'bg-text-faint'}`} />
-                  <div className="text-[10px] font-bold text-text-faint">0{i + 1}</div>
+                  <div className="text-[12px] font-bold text-text-faint">0{i + 1}</div>
                   <div className="font-display text-sm font-bold uppercase tracking-wide text-text">{stage.stage}</div>
-                  <div className="text-[11px] leading-snug text-text-faint" title={stage.detail}>
+                  <div className="text-[13px] leading-snug text-text-faint" title={stage.detail}>
                     {stage.detail.length > 70 ? stage.detail.slice(0, 67) + '…' : stage.detail}
                   </div>
                 </div>
@@ -133,10 +133,10 @@ export function AdvancedScreen() {
           MAJOR_OUTLIER earns visibly more weight than a routine divergence,
           the same lead/rest hierarchy Command's own EvidenceRail uses. */}
       {p.benchmark && (
-        <div className="border-t-2 border-divider bg-void px-10 py-8">
+        <div className="border-t border-divider bg-void px-10 py-8">
           <div className="mb-1 flex items-baseline gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Model vs market</span>
-            <span className="text-[11px] text-text-faint">Solio GW{p.benchmark.gameweek} · {p.benchmark.age_hours.toFixed(1)}h old</span>
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Model vs market</span>
+            <span className="text-[13px] text-text-faint">Solio GW{p.benchmark.gameweek} · {p.benchmark.age_hours.toFixed(1)}h old</span>
           </div>
           {p.benchmark.divergences.length === 0 ? (
             <div className="mt-3 text-sm text-text-muted">No material divergences from the independent model this snapshot.</div>
@@ -167,7 +167,7 @@ export function AdvancedScreen() {
                     </span>
                     {d.largest_driver && <span className="text-xs italic text-text-faint">driver: {d.largest_driver}</span>}
                     <span
-                      className={`ml-auto shrink-0 px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                      className={`ml-auto shrink-0 px-1.5 py-0.5 text-[11px] font-bold uppercase ${
                         major ? 'bg-alert-red text-alert-red-ink' : 'bg-broadcast-gold text-broadcast-gold-ink'
                       }`}
                     >
@@ -182,10 +182,10 @@ export function AdvancedScreen() {
       )}
 
       {p.player_odds.length > 0 && (
-        <div className="border-t-2 border-divider px-10 py-8">
+        <div className="border-t border-divider px-10 py-8">
           <div className="mb-1 flex flex-wrap items-baseline gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Market price on my squad</span>
-            <span className="text-[11px] text-text-faint">anytime goalscorer &middot; raw implied, not devigged</span>
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Market price on my squad</span>
+            <span className="text-[13px] text-text-faint">anytime goalscorer &middot; raw implied, not devigged</span>
           </div>
           <div className="mt-4 grid grid-cols-1 gap-x-10 md:grid-cols-2">
             {p.player_odds.map((o) => (
@@ -193,12 +193,12 @@ export function AdvancedScreen() {
                 <Link to={`/player/${o.player_id}`} className="w-28 shrink-0 truncate text-sm font-bold text-text hover:text-pitch-green">
                   {o.web_name ?? `#${o.player_id}`}
                 </Link>
-                <span className="w-10 shrink-0 text-[10px] font-bold uppercase text-text-faint">{o.team_short ?? ''}</span>
+                <span className="w-10 shrink-0 text-[12px] font-bold uppercase text-text-faint">{o.team_short ?? ''}</span>
                 <span className="tabular w-12 shrink-0 text-right text-sm font-bold text-text">
                   {(o.implied_probability_raw * 100).toFixed(0)}%
                 </span>
                 <span className="tabular w-12 shrink-0 text-right text-xs text-text-muted">{o.anytime_scorer_price.toFixed(2)}</span>
-                <span className="w-16 shrink-0 text-right text-[10px] text-text-faint">{relativeTime(o.retrieved_at) ?? ''}</span>
+                <span className="w-16 shrink-0 text-right text-[12px] text-text-faint">{relativeTime(o.retrieved_at) ?? ''}</span>
               </div>
             ))}
           </div>
@@ -210,12 +210,12 @@ export function AdvancedScreen() {
           detector ran and found nothing), not a placeholder - so it is
           stated as such rather than hiding the section. */}
       {p.points_revisions && (
-        <div className="border-t-2 border-divider bg-panel px-10 py-8">
+        <div className="border-t border-divider bg-panel px-10 py-8">
           <div className="flex flex-wrap items-baseline gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
               GW{p.points_revisions.event} points revisions
             </span>
-            <span className="text-[11px] uppercase tracking-wide text-text-faint">
+            <span className="text-[13px] uppercase tracking-wide text-text-faint">
               {p.points_revisions.locked ? 'gameweek locked' : 'still provisional'}
             </span>
           </div>
@@ -238,13 +238,13 @@ export function AdvancedScreen() {
                       <Link to={`/player/${r.player_id}`} className="text-sm font-bold text-text hover:text-pitch-green">
                         {r.web_name}
                       </Link>
-                      <span className="text-[10px] font-bold uppercase text-text-faint">{r.team_short} &middot; {r.position}</span>
-                      <span className="bg-raised px-1.5 py-0.5 text-[9px] font-bold uppercase text-text-muted">{r.category}</span>
+                      <span className="text-[12px] font-bold uppercase text-text-faint">{r.team_short} &middot; {r.position}</span>
+                      <span className="bg-raised px-1.5 py-0.5 text-[11px] font-bold uppercase text-text-muted">{r.category}</span>
                       <span className="tabular text-xs text-text-muted">{r.old_value} &rarr; {r.new_value}</span>
                       <span className={`tabular ml-auto font-display text-lg font-bold ${delta >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
                         {delta >= 0 ? '+' : ''}{delta}
                       </span>
-                      <span className="tabular w-20 shrink-0 text-right text-[10px] text-text-faint">
+                      <span className="tabular w-20 shrink-0 text-right text-[12px] text-text-faint">
                         {r.detected_gap_hours.toFixed(1)}h after
                       </span>
                     </div>
@@ -258,35 +258,35 @@ export function AdvancedScreen() {
 
       {/* SYSTEM READINESS - logical bento groups, each its own visual treatment */}
       <div className="px-10 py-8">
-        <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">System readiness</div>
+        <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">System readiness</div>
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
           {grouped.map((g) => (
-            <div key={g.label} className="border-t-2 border-pitch-green/40 pt-3">
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">{g.label}</div>
+            <div key={g.label} className="border-t border-pitch-green/40 pt-3">
+              <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">{g.label}</div>
               <div className="divide-y divide-divider">
                 {g.checks.map((c) => (
                   <div key={c.name} className="flex items-center justify-between gap-2 py-2">
                     <div>
                       <div className="text-sm font-semibold text-text">{c.name}</div>
-                      <div className="text-[11px] text-text-faint">{c.detail}</div>
+                      <div className="text-[13px] text-text-faint">{c.detail}</div>
                     </div>
-                    <span className={`shrink-0 px-1.5 py-0.5 text-[9px] font-bold ${STATUS_COLOR[c.status] ?? 'bg-raised text-text-muted'}`}>{c.status}</span>
+                    <span className={`shrink-0 px-1.5 py-0.5 text-[11px] font-bold ${STATUS_COLOR[c.status] ?? 'bg-raised text-text-muted'}`}>{c.status}</span>
                   </div>
                 ))}
               </div>
             </div>
           ))}
           {other.length > 0 && (
-            <div className="border-t-2 border-text-faint/30 pt-3">
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">Other</div>
+            <div className="border-t border-text-faint/30 pt-3">
+              <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">Other</div>
               <div className="divide-y divide-divider">
                 {other.map((c) => (
                   <div key={c.name} className="flex items-center justify-between gap-2 py-2">
                     <div>
                       <div className="text-sm font-semibold text-text">{c.name}</div>
-                      <div className="text-[11px] text-text-faint">{c.detail}</div>
+                      <div className="text-[13px] text-text-faint">{c.detail}</div>
                     </div>
-                    <span className={`shrink-0 px-1.5 py-0.5 text-[9px] font-bold ${STATUS_COLOR[c.status] ?? 'bg-raised text-text-muted'}`}>{c.status}</span>
+                    <span className={`shrink-0 px-1.5 py-0.5 text-[11px] font-bold ${STATUS_COLOR[c.status] ?? 'bg-raised text-text-muted'}`}>{c.status}</span>
                   </div>
                 ))}
               </div>
@@ -295,10 +295,10 @@ export function AdvancedScreen() {
         </div>
       </div>
 
-      <div className="border-t-2 border-divider px-10 py-8">
+      <div className="border-t border-divider px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Source health</span>
-          <span className="text-[11px] text-text-faint">
+          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Source health</span>
+          <span className="text-[13px] text-text-faint">
             {p.sources.filter((s) => s.active !== false).length} sources in use
             {p.sources.some((s) => s.active === false) &&
               ` · ${p.sources.filter((s) => s.active === false).length} dormant (one-off backfills and per-gameweek feeds, not fetched on a cycle)`}
@@ -311,7 +311,7 @@ export function AdvancedScreen() {
           <table className="w-full text-left text-sm">
             <caption className="sr-only">Per-source ingestion health</caption>
             <thead>
-              <tr className="border-b-2 border-divider text-[10px] uppercase tracking-[0.14em] text-text-faint">
+              <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
                 <th scope="col" className="py-2 pr-4 font-bold">Source</th>
                 <th scope="col" className="py-2 pr-4 font-bold">Last success</th>
                 <th scope="col" className="py-2 pr-4 font-bold">Failures</th>

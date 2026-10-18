@@ -21,7 +21,7 @@ function Form({ form }: { form: string[] }) {
       {form.map((r, i) => (
         <span
           key={i}
-          className={`flex size-4 items-center justify-center text-[9px] font-bold ${FORM_FILL[r] ?? 'bg-raised text-text-muted'}`}
+          className={`flex size-4 items-center justify-center text-[11px] font-bold ${FORM_FILL[r] ?? 'bg-raised text-text-muted'}`}
         >
           {r}
         </span>
@@ -45,7 +45,7 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
       <table className="w-full min-w-[54rem] text-left text-sm">
         <caption className="sr-only">Premier League table, computed from real played fixtures</caption>
         <thead>
-          <tr className="border-b-2 border-divider text-[10px] uppercase tracking-[0.14em] text-text-faint">
+          <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
             <th scope="col" className="w-10 py-2 pr-2 text-right font-bold">#</th>
             <th scope="col" className="py-2 pr-4 font-bold">Club</th>
             <th scope="col" className="tabular w-10 py-2 pr-2 text-right font-bold">P</th>
@@ -65,7 +65,7 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
           {rows.map((r) => {
             const crest = crestUrl(r.code)
             const zone =
-              r.position <= 4 ? 'border-l-2 border-broadcast-blue' : r.position >= 18 ? 'border-l-2 border-alert-red' : 'border-l-2 border-transparent'
+              r.position <= 4 ? 'border-l border-broadcast-blue' : r.position >= 18 ? 'border-l border-alert-red' : 'border-l border-transparent'
             return (
               <tr key={r.team_id} className={`border-b border-divider ${r.in_squad ? 'bg-panel' : ''}`}>
                 <td className={`tabular py-2 pr-2 pl-2 text-right font-bold text-text-faint ${zone}`}>{r.position}</td>
@@ -156,7 +156,7 @@ function FixtureLine({ f }: { f: MatchweekFixture }) {
         <span className={`truncate text-sm font-bold ${f.away.in_squad ? 'text-broadcast-gold' : 'text-text'}`}>{f.away.name}</span>
       </span>
 
-      {clickable && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-text-faint">report</span>}
+      {clickable && <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-text-faint">report</span>}
     </Wrapper>
   )
 }
@@ -175,13 +175,13 @@ function MatchweekBlockView({ block }: { block: MatchweekBlock }) {
     <div className="px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
         <span className="font-display text-2xl font-bold uppercase tracking-wide text-text">Gameweek {block.event}</span>
-        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint">
+        <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
           {block.complete ? 'complete' : block.is_next ? 'next up' : 'to come'}
         </span>
       </div>
       {[...byDay.entries()].map(([day, fixtures]) => (
         <div key={day} className="mt-4 first:mt-0">
-          <div className="border-b-2 border-divider pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">{day}</div>
+          <div className="border-b border-divider pb-1 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">{day}</div>
           {fixtures.map((f) => <FixtureLine key={f.fixture_id} f={f} />)}
         </div>
       ))}
@@ -202,8 +202,8 @@ function LeaderBoard({ title, sub, rows, metric }: {
   if (rows.length === 0) return null
   return (
     <div className="bg-void px-10 py-8">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{title}</div>
-      <div className="mb-3 text-[11px] text-text-faint">{sub}</div>
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">{title}</div>
+      <div className="mb-3 text-[13px] text-text-faint">{sub}</div>
       <div className="divide-y divide-divider">
         {rows.map((r, i) => {
           const crest = crestUrl(r.team_code)
@@ -218,7 +218,7 @@ function LeaderBoard({ title, sub, rows, metric }: {
                 {r.name}
               </Link>
               {r.is_mine && <span className="shrink-0 bg-broadcast-gold px-1 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
-              <span className="w-9 shrink-0 text-[10px] uppercase text-text-faint">{r.team_short}</span>
+              <span className="w-9 shrink-0 text-[12px] uppercase text-text-faint">{r.team_short}</span>
               <span className={`tabular w-12 shrink-0 text-right font-bold ${lead ? 'text-lg text-text' : 'text-sm text-text-muted'}`}>
                 {metric(r)}
               </span>
@@ -267,7 +267,7 @@ export function MatchweekScreen() {
       {/* THE LEADERS - a real standings hero. Football opens with who is top,
           not with a metric. */}
       {leader && leader.played > 0 && (
-        <div className="relative overflow-hidden border-b-2 border-divider px-10 py-8">
+        <div className="relative overflow-hidden border-b border-divider px-10 py-8">
           <span className="ghost-watermark pointer-events-none absolute -top-12 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
             TABLE
           </span>
@@ -311,8 +311,8 @@ export function MatchweekScreen() {
 
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">League table</span>
-          <span className="text-[11px] text-text-faint">
+          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">League table</span>
+          <span className="text-[13px] text-text-faint">
             computed from real results &middot; blue = top four &middot; red = relegation &middot; xG is per match
           </span>
         </div>
@@ -321,7 +321,7 @@ export function MatchweekScreen() {
 
       {/* THE BOARDS - who is scoring, who is creating, and who is about to. */}
       {(p.leaders.scorers.length > 0 || p.leaders.assists.length > 0) && (
-        <div className="grid grid-cols-1 gap-px border-t-2 border-divider bg-divider lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-px border-t border-divider bg-divider lg:grid-cols-3">
           <LeaderBoard
             title="Top scorers"
             sub="real recorded goals this season"
@@ -344,7 +344,7 @@ export function MatchweekScreen() {
       )}
 
       {/* THE CALENDAR - results behind, fixtures ahead. */}
-      <div className="border-t-2 border-divider">
+      <div className="border-t border-divider">
         <div className="grid grid-cols-1 gap-px bg-divider xl:grid-cols-2">
           {p.matchweeks.map((b: MatchweekBlock) => (
             <div key={b.event} className="bg-void">
@@ -355,7 +355,7 @@ export function MatchweekScreen() {
       </div>
 
       {p.results.length > 0 && (
-        <div className="border-t-2 border-divider px-10 py-6 text-sm text-text-muted">
+        <div className="border-t border-divider px-10 py-6 text-sm text-text-muted">
           Click any completed fixture above for its real match report &mdash; timeline, possession and xG contest, and both
           teams' player ratings. Real detail is held for {p.results.length} finished matches.
         </div>

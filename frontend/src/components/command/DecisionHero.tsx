@@ -34,7 +34,7 @@ export function DecisionHero({
       </span>
 
       <div className="relative">
-        <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-text-faint">{gwLabel} &middot; The decision</div>
+        <div className="font-mono text-[13px] uppercase tracking-[0.25em] text-text-faint">{gwLabel} &middot; The decision</div>
 
         <div className="verdict-block mt-5 inline-block bg-pitch-green py-5 pl-7 pr-16">
           <h1 className="font-display text-6xl font-bold uppercase leading-[0.88] text-pitch-green-ink md:text-7xl">{actionWord}</h1>
@@ -47,7 +47,7 @@ export function DecisionHero({
         )}
 
         {why.length > 0 && (
-          <div className="mt-6 max-w-xl space-y-2 border-l-2 border-pitch-green/40 pl-4">
+          <div className="mt-6 max-w-xl space-y-2 border-l border-pitch-green/40 pl-4">
             {why.map((w, i) => (
               <p key={i} className="text-sm leading-relaxed text-text-muted">
                 {w.tag && <span className={`mr-2 font-bold ${w.tag === 'FRAGILE' ? 'text-broadcast-gold' : 'text-pitch-green'}`}>{w.tag}</span>}
@@ -63,7 +63,7 @@ export function DecisionHero({
           </div>
         )}
 
-        <div className="mt-10 flex flex-wrap gap-x-7 gap-y-1.5 border-t-2 border-divider pt-5 font-mono text-[11px] uppercase tracking-wide text-text-faint">
+        <div className="mt-10 flex flex-wrap gap-x-7 gap-y-1.5 border-t border-divider pt-5 font-mono text-[13px] uppercase tracking-wide text-text-faint">
           <span>{freeTransfersValue} free transfer{freeTransfersValue === '1' ? '' : 's'}</span>
           <span>£{bankM.toFixed(1)}m bank</span>
           {chipsAvailable.length > 0 && <span className="text-broadcast-gold">{chipsAvailable.join(' · ')}</span>}

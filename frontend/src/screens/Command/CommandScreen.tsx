@@ -72,7 +72,7 @@ export function CommandScreen() {
     return (
       <div className="animate-pulse pb-16">
         <SkelMasthead />
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <Skel className="h-2 w-32" />
           <Skel className="mt-3 h-20 w-[26rem]" />
           <Skel className="mt-4 h-4 w-[34rem]" />
@@ -81,7 +81,7 @@ export function CommandScreen() {
             <Skel className="h-6 w-4/5" />
           </div>
         </div>
-        <div className="flex gap-4 border-b-2 border-divider px-10 py-8">
+        <div className="flex gap-4 border-b border-divider px-10 py-8">
           {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
             <Skel key={i} className="h-24 flex-1" />
           ))}
@@ -213,10 +213,10 @@ export function CommandScreen() {
           match was the app's single most misleading moment. */}
       {!phase.actionable && (
         <div className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 px-10 py-3 ${phase.fill}`}>
-          <span className="font-display text-sm font-bold uppercase tracking-[0.16em]">
+          <span className="font-display text-sm font-bold uppercase tracking-[0.1em]">
             {phase.live ? 'Matches are live' : 'Squad locked'}
           </span>
-          <span className="text-[11px] opacity-80">
+          <span className="text-[13px] opacity-80">
             {phase.live
               ? 'Nothing below can be acted on until the gameweek settles. This is what you are fielding.'
               : 'Transfers and the armband are closed for this gameweek. The decision below is the record of what was chosen.'}

@@ -74,7 +74,13 @@ def build_audit_payload(ctx: DashboardContext, params: dict | None = None) -> di
                 "WHERE mi.status='FULL_TIME' AND f.event = ? ORDER BY mi.kickoff_utc", (event,))]
             matches = [m for m in (rebuild_match(conn, i) for i in ids) if m is not None]
 
+        from fpl_agent.ingestion.my_team import get_my_team_entry_id
+        from fpl_agent.models.captain_autopsy import captain_autopsy
+
+        entry = get_my_team_entry_id(conn)
+        armband = captain_autopsy(conn, entry) if entry is not None else []
         payload = {
+            "armband": armband,
             "event": event, "events": events, "radar_season": radar(None), "radar_recent": radar(4),
             "squad": squad_rows, "matches": matches,
             "thresholds": {"min_minutes": _MIN_MINUTES, "recent_gameweeks": 4},

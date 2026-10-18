@@ -20,8 +20,8 @@ export function RoadAhead({ plan, compact = false }: { plan: WeekPlanPayload; co
   return (
     <section className={`bg-void ${compact ? 'px-10 py-10' : 'px-10 pb-10 pt-8'}`}>
       <div className="mb-1 flex flex-wrap items-baseline gap-x-5">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">The road ahead</span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint">
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">The road ahead</span>
+        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
           {road.horizon} gameweeks &middot; projected, re-solved every week
         </span>
       </div>
@@ -39,14 +39,14 @@ export function RoadAhead({ plan, compact = false }: { plan: WeekPlanPayload; co
           <div key={w.event} className="bg-panel px-3 pb-4 pt-3" style={{ minHeight: 56 + busiest * 34 }}>
             <div className="mb-2 font-display text-lg font-bold text-text-faint">GW{w.event}</div>
             {w.moves.length === 0 ? (
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint">Roll</div>
+              <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Roll</div>
             ) : (
               <div className="space-y-1.5">
                 {w.moves.map((m) => (
-                  <div key={`${m.out}-${m.into}`} className="border-l-2 border-pitch-green pl-2 text-[11px] leading-tight">
+                  <div key={`${m.out}-${m.into}`} className="border-l border-pitch-green pl-2 text-[13px] leading-tight">
                     <div className="truncate text-text-muted">{m.out}</div>
                     <div className="truncate font-semibold text-text">&rarr; {m.into}</div>
-                    {m.hit && <div className="text-[9px] font-bold uppercase text-alert-red">costs a hit</div>}
+                    {m.hit && <div className="text-[11px] font-bold uppercase text-alert-red">costs a hit</div>}
                   </div>
                 ))}
               </div>

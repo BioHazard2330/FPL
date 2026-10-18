@@ -171,17 +171,25 @@ def _build_previews_uncached() -> dict:
     try:
         state = light_squad_state(conn)
         mine = set(state["squad_ids"]) if state else set()
-        event_row = conn.execute("SELECT MIN(event) AS e FROM fixtures WHERE finished=0 AND event IS NOT NULL").fetchone()
-        if event_row is None or event_row["e"] is None:
+        upcoming = [
+            r["event"] for r in conn.execute(
+                "SELECT DISTINCT event FROM fixtures WHERE started=0 AND finished=0 AND event IS NOT NULL ORDER BY event LIMIT 2"
+            ).fetchall()
+        ]
+        if not upcoming:
             return {"event": None, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": []}
-        event = event_row["e"]
+        event = upcoming[0]
         teams = {r["id"]: dict(r) for r in conn.execute("SELECT id, code, name, short_name FROM teams")}
         squad_team = {r["id"]: r["team_id"] for r in conn.execute("SELECT id, team_id FROM players WHERE removed=0")}
 
+        from fpl_agent.models.matchup_lab import fixture_lens, league_means, source_takers, team_profiles
+
+        profiles = team_profiles(conn)
+        means = league_means(profiles)
         out = []
         for f in conn.execute(
             "SELECT id, event, kickoff_time, team_h, team_a, team_h_difficulty, team_a_difficulty FROM fixtures "
-            "WHERE event=? ORDER BY kickoff_time, id", (event,),
+            f"WHERE started=0 AND finished=0 AND event IN ({','.join('?' for _ in upcoming)}) ORDER BY kickoff_time, id", upcoming,
         ).fetchall():
             date = _fixture_date(f)
             home_goals, away_goals = _blended_fixture_goals(conn, f["id"], f["team_h"], f["team_a"], date)
@@ -194,12 +202,17 @@ def _build_previews_uncached() -> dict:
                     "team_id": tid, "code": t["code"], "name": t["name"], "short": t["short_name"],
                     "difficulty": f["team_h_difficulty"] if side == "home" else f["team_a_difficulty"],
                     "form": _form(conn, tid, f["kickoff_time"] or "9999"),
-                    "key_players": _key_players(conn, tid, event, mine),
+                    "key_players": _key_players(conn, tid, f["event"], mine),
                     "absentees": _absentees(conn, tid),
                     "yours": sorted(p for p, t in squad_team.items() if t == tid and p in mine),
                 }
+            lens = fixture_lens(profiles, means, f["team_h"], f["team_a"])
+            head = lens["headline"]
+            if head is not None:
+                shooter = f["team_h"] if head["side"] == "home" else f["team_a"]
+                lens["takers"] = source_takers(conn, shooter, head["source"])
             out.append({
-                "fixture_id": f["id"], "kickoff": f["kickoff_time"], "home": sides["home"], "away": sides["away"],
+                "fixture_id": f["id"], "kickoff": f["kickoff_time"], "home": sides["home"], "away": sides["away"], "lens": lens,
                 "xg": {"home": round(home_goals, 2), "away": round(away_goals, 2)},
                 "model": outcome_grid(home_goals, away_goals, rho),
                 "market": _market(conn, f["id"]),
@@ -212,7 +225,7 @@ def _build_previews_uncached() -> dict:
                     r["opponent"] = teams[r.pop("opponent_id")]["short_name"]
         ticker = _ticker(conn, event)
         return attach_photo_codes(conn, {
-            "event": event, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": out,
+            "event": event, "events": upcoming, "generated_at": datetime.now(timezone.utc).isoformat(), "fixtures": out,
             "ticker": {"first_event": event, "events": list(range(event, event + DEFAULT_WINDOW_GW)), "rows": ticker},
         })
     finally:

@@ -35,7 +35,7 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
   const bin = (v: number) => cuts.filter((c) => v >= c).length
 
   return (
-    <section className="border-b-2 border-divider px-10 py-7">
+    <section className="border-b border-divider px-10 py-7">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">The run of fixtures</h2>
@@ -51,7 +51,7 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${mode === m ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+              className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${mode === m ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
             >
               {m}
             </button>
@@ -59,11 +59,11 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
         </div>
       </div>
       <div className="grid gap-px bg-divider" style={{ gridTemplateColumns: `13rem repeat(${ticker.events.length}, minmax(0, 1fr)) 4.5rem` }}>
-        <div className="bg-void px-2 py-1.5 font-mono text-[10px] uppercase text-text-faint">Club</div>
+        <div className="bg-void px-2 py-1.5 font-mono text-[12px] uppercase text-text-faint">Club</div>
         {ticker.events.map((e) => (
-          <div key={e} className="bg-void px-2 py-1.5 text-center font-mono text-[10px] uppercase text-text-faint">GW{e}</div>
+          <div key={e} className="bg-void px-2 py-1.5 text-center font-mono text-[12px] uppercase text-text-faint">GW{e}</div>
         ))}
-        <div className="bg-void px-2 py-1.5 text-right font-mono text-[10px] uppercase text-text-faint">{mode === 'attack' ? 'xG' : 'CS'}</div>
+        <div className="bg-void px-2 py-1.5 text-right font-mono text-[12px] uppercase text-text-faint">{mode === 'attack' ? 'xG' : 'CS'}</div>
         {rows.map((r) => {
           const crest = crestUrl(r.code)
           return (
@@ -71,15 +71,15 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
               <Link to={`/club/${r.team_id}`} className={`flex items-center gap-2 bg-void px-2 py-1 text-sm font-semibold hover:text-pitch-green ${mine.has(r.team_id) ? 'text-text' : 'text-text-muted'}`}>
                 {crest && <img src={crest} alt="" className="h-5 w-5" />}
                 {r.name}
-                {mine.has(r.team_id) && <span className="ml-auto bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+                {mine.has(r.team_id) && <span className="ml-auto bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
               </Link>
               {ticker.events.map((e) => {
                 const list = r.events[String(e)] ?? []
                 return (
                   <div key={e} className="flex flex-col gap-px bg-void">
-                    {list.length === 0 && <div className="flex h-full min-h-[2rem] items-center justify-center bg-void text-[10px] text-text-faint">blank</div>}
+                    {list.length === 0 && <div className="flex h-full min-h-[2rem] items-center justify-center bg-void text-[12px] text-text-faint">blank</div>}
                     {list.map((f, i) => (
-                      <div key={i} className={`flex items-center justify-between px-2 py-1 text-[11px] font-bold ${BINS[bin(value(f))]}`} title={`${f.home ? 'vs' : 'at'} ${f.opponent}: ${f.xg_for.toFixed(2)} for, ${f.xg_against.toFixed(2)} against, clean sheet ${Math.round(f.cs * 100)}%`}>
+                      <div key={i} className={`flex items-center justify-between px-2 py-1 text-[13px] font-bold ${BINS[bin(value(f))]}`} title={`${f.home ? 'vs' : 'at'} ${f.opponent}: ${f.xg_for.toFixed(2)} for, ${f.xg_against.toFixed(2)} against, clean sheet ${Math.round(f.cs * 100)}%`}>
                         <span className="uppercase opacity-80">{f.opponent} {f.home ? 'H' : 'A'}{f.market ? ' ·' : ''}</span>
                         <span className="tabular">{fmt(value(f))}</span>
                       </div>

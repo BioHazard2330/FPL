@@ -14,7 +14,7 @@ function Row({ p, dir }: { p: WeekPlanLineupPlayer; dir: 'in' | 'out' }) {
         <Link to={`/player/${p.player_id}`} className="block truncate font-display text-xl font-bold uppercase leading-none text-text hover:text-pitch-green">
           {p.name}
         </Link>
-        <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-faint">
+        <div className="mt-0.5 text-[12px] font-semibold uppercase tracking-wide text-text-faint">
           {p.team_short} &middot; {p.position}
           {p.start_percent !== null && p.start_percent < 70 && <span className="ml-2 text-broadcast-gold">{p.start_percent}% to start</span>}
         </div>
@@ -41,8 +41,8 @@ export function LineupDoctor({ changes, event }: { changes: LineupChanges | null
   return (
     <section className="bg-void px-10 py-10">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-4">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Your lineup for GW{event}</span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint">before any transfer &middot; costs nothing</span>
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Your lineup for GW{event}</span>
+        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">before any transfer &middot; costs nothing</span>
       </div>
 
       {changes.worth_changing ? (
@@ -55,7 +55,7 @@ export function LineupDoctor({ changes, event }: { changes: LineupChanges | null
 
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div>
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-pitch-green">Start</div>
+              <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.1em] text-pitch-green">Start</div>
               <div className="space-y-px">
                 {changes.bring_in.map((p) => (
                   <Row key={p.player_id} p={p} dir="in" />
@@ -64,7 +64,7 @@ export function LineupDoctor({ changes, event }: { changes: LineupChanges | null
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-alert-red">To the bench</div>
+              <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.1em] text-alert-red">To the bench</div>
               <div className="space-y-px">
                 {changes.take_out.map((p) => (
                   <Row key={p.player_id} p={p} dir="out" />
@@ -75,7 +75,7 @@ export function LineupDoctor({ changes, event }: { changes: LineupChanges | null
           </div>
 
           {(armband || viceChange) && (
-            <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-2 border-t-2 border-divider pt-4 text-sm">
+            <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-2 border-t border-divider pt-4 text-sm">
               {armband && (
                 <span className="flex items-center gap-2">
                   <span className="flex h-5 w-5 items-center justify-center bg-broadcast-gold text-xs font-bold text-broadcast-gold-ink">C</span>
@@ -86,7 +86,7 @@ export function LineupDoctor({ changes, event }: { changes: LineupChanges | null
               )}
               {viceChange && (
                 <span className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center bg-raised text-[10px] font-bold text-text">V</span>
+                  <span className="flex h-5 w-5 items-center justify-center bg-raised text-[12px] font-bold text-text">V</span>
                   <span className="text-text-muted">{changes.vice_from!.name}</span>
                   <span aria-hidden className="text-text-faint">&rarr;</span>
                   <span className="font-semibold text-text">{changes.vice_to!.name}</span>

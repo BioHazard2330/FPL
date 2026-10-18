@@ -21,10 +21,10 @@ const CONFIDENCE_COLOR: Record<string, string> = {
 const POSITION_ROW_LABEL: Record<string, string> = { GKP: 'GK', DEF: 'DEF', MID: 'MID', FWD: 'FWD' }
 
 const OPP_KIND_ACCENT: Record<string, string> = {
-  Breakout: 'border-l-2 border-pitch-green',
-  Value: 'border-l-2 border-broadcast-blue',
-  Trap: 'border-l-2 border-alert-red bg-alert-red/[0.06]',
-  'Role change': 'border-l-2 border-broadcast-gold',
+  Breakout: 'border-l border-pitch-green',
+  Value: 'border-l border-broadcast-blue',
+  Trap: 'border-l border-alert-red bg-alert-red/[0.06]',
+  'Role change': 'border-l border-broadcast-gold',
 }
 
 /** Real per-category market-board row (art-direction pass, 2026-09-08 v2) -
@@ -36,15 +36,15 @@ function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
   const crest = crestUrl(r.team_code)
   const isTrap = kind === 'Trap'
   return (
-    <div className={`flex flex-wrap items-baseline gap-3 py-2.5 pl-3 text-sm ${OPP_KIND_ACCENT[kind] ?? 'border-l-2 border-divider'}`}>
+    <div className={`flex flex-wrap items-baseline gap-3 py-2.5 pl-3 text-sm ${OPP_KIND_ACCENT[kind] ?? 'border-l border-divider'}`}>
       {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
       <span className="font-bold text-text">{r.name}</span>
-      <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
+      <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{r.position}</span>
       {r.price_m !== null && <span className="tabular text-text-muted">£{r.price_m.toFixed(1)}m</span>}
       {r.xp !== null && <span className="tabular font-semibold text-pitch-green">{r.xp.toFixed(1)} xP</span>}
       <span className={isTrap ? 'font-semibold text-text' : 'text-text-muted'}>{isTrap ? r.risk ?? r.why_now : r.why_now}</span>
       {!isTrap && r.risk && <span className="italic text-broadcast-gold">{r.risk}</span>}
-      <span className={`ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wide ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
+      <span className={`ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
     </div>
   )
 }
@@ -75,7 +75,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
   if (!player) {
     return (
       <div className="sticky top-4 flex h-[70vh] w-80 shrink-0 flex-col items-center justify-center border-2 border-dashed border-divider text-center">
-        <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Scouting bench</div>
+        <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Scouting bench</div>
         <p className="mt-2 max-w-[16rem] text-sm text-text-muted">Select a player from the table to pull up their real scouting profile here.</p>
       </div>
     )
@@ -83,7 +83,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
 
   return (
     <div className="sticky top-4 w-80 shrink-0 border-2 border-divider bg-void">
-      <div className="relative overflow-hidden border-b-2 border-divider px-6 pb-6 pt-8">
+      <div className="relative overflow-hidden border-b border-divider px-6 pb-6 pt-8">
         {shirt && (
           <img src={shirt} alt="" className="pointer-events-none absolute -right-6 -top-4 h-40 w-40 object-contain opacity-90" />
         )}
@@ -94,8 +94,8 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
         </div>
       </div>
       {run && run.length > 0 && (
-        <div className="border-b-2 border-divider px-6 py-3">
-          <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Next five</div>
+        <div className="border-b border-divider px-6 py-3">
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Next five</div>
           <div className="flex items-center justify-between gap-3">
             <FixtureRun fixtures={run} max={5} showEvent />
             <RunPressure fixtures={run} max={5} />
@@ -105,7 +105,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
       <div className="grid grid-cols-3 gap-px bg-divider">
         {stats.map((s) => (
           <div key={s.label} className="bg-panel px-3 py-3">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
             <div className="tabular mt-0.5 text-lg font-bold text-text">{s.value ?? '—'}</div>
           </div>
         ))}
@@ -124,13 +124,13 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
 function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
   if (block.positions.length === 0) return null
   return (
-    <div className="border-b-2 border-divider px-10 py-8">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Template team</div>
+    <div className="border-b border-divider px-10 py-8">
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Template team</div>
       <div className="mb-5 text-xs text-text-faint">Highest real-owned pool per position - not a formation, a market read.</div>
       <div className="pitch-surface flex flex-col gap-6 px-6 py-8">
         {block.positions.map((pos) => (
           <div key={pos.position} className="relative flex items-start gap-4">
-            <span className="w-9 shrink-0 pt-4 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">
+            <span className="w-9 shrink-0 pt-4 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
               {POSITION_ROW_LABEL[pos.position] ?? pos.position}
             </span>
             <div className="flex flex-1 flex-wrap items-start justify-center gap-6">
@@ -140,7 +140,7 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
               return (
                 <div key={tp.player_id} className="relative flex w-24 flex-col items-center text-center">
                   {tp.is_mine && (
-                    <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[9px] font-bold text-broadcast-gold-ink">M</span>
+                    <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[11px] font-bold text-broadcast-gold-ink">M</span>
                   )}
                   <div className="relative h-14 w-14">
                     {shirt ? <img src={shirt} alt="" className="h-14 w-14 object-contain" /> : <div className="h-14 w-14 bg-raised" />}
@@ -151,7 +151,7 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
                     {tp.eo_percent !== null ? `${tp.eo_percent.toFixed(1)}%` : `${tp.ownership_pct.toFixed(1)}%`}
                   </div>
                   {tp.margin_of_error_pp !== null && (
-                    <div className="text-[9px] text-text-faint">&plusmn;{tp.margin_of_error_pp.toFixed(1)}pp</div>
+                    <div className="text-[11px] text-text-faint">&plusmn;{tp.margin_of_error_pp.toFixed(1)}pp</div>
                   )}
                 </div>
               )
@@ -189,13 +189,13 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
 function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
   if (rows.length === 0) return null
   return (
-    <div className="border-b-2 border-divider px-10 py-8">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Expected data</div>
+    <div className="border-b border-divider px-10 py-8">
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Expected data</div>
       <div className="mb-4 text-xs text-text-faint">Real current-season xG/xA, ranked by per-90 rate - not raw totals.</div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
+            <tr className="border-b border-divider text-[13px] uppercase tracking-wide text-text-faint">
               <th className="py-2 pr-4">Player</th>
               <th className="tabular py-2 pr-4">xG</th>
               <th className="tabular py-2 pr-4">xA</th>
@@ -209,7 +209,7 @@ function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
             {rows.map((r) => {
               const crest = crestUrl(r.team_code)
               return (
-                <tr key={r.player_id} className={`border-b-2 border-divider ${r.is_mine ? 'bg-raised' : ''}`}>
+                <tr key={r.player_id} className={`border-b border-divider ${r.is_mine ? 'bg-raised' : ''}`}>
                   <td className="py-2 pr-4">
                     <span className="flex items-center gap-2 font-bold text-text">
                       {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
@@ -266,7 +266,7 @@ export function ScoutScreen() {
     return (
       <div className="animate-pulse pb-16">
         <SkelMasthead />
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <Skel className="h-2 w-32" />
           <Skel className="mt-3 h-10 w-72" />
         </div>
@@ -306,7 +306,7 @@ export function ScoutScreen() {
 
       {/* MARKET OVERVIEW - real category counts as boards, not prose */}
       {opp && (
-        <div className="relative flex flex-wrap divide-x-2 divide-divider overflow-hidden border-b-2 border-divider">
+        <div className="relative flex flex-wrap divide-x divide-divider overflow-hidden border-b border-divider">
           <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
             MARKET
           </span>
@@ -319,17 +319,17 @@ export function ScoutScreen() {
           ].map((m) => (
             <div key={m.label} className="min-w-[140px] flex-1 px-8 py-5">
               <div className="tabular font-display text-3xl font-bold text-text">{m.n}</div>
-              <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">{m.label}</div>
+              <div className="text-[13px] font-bold uppercase tracking-wide text-text-faint">{m.label}</div>
             </div>
           ))}
         </div>
       )}
 
       {opp && (oppCategories.length > 0 || opp.fixture_swing.length > 0) && (
-        <div className="mt-6 grid grid-cols-1 gap-8 border-b-2 border-divider px-10 pb-8 lg:grid-cols-2">
+        <div className="mt-6 grid grid-cols-1 gap-8 border-b border-divider px-10 pb-8 lg:grid-cols-2">
           {oppCategories.map((c) => (
             <div key={c.label}>
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{c.label}</div>
+              <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">{c.label}</div>
               <div className="divide-y divide-divider">
                 {c.rows.map((r, i) => <OpportunityRowView key={i} r={r} kind={c.label} />)}
               </div>
@@ -337,11 +337,11 @@ export function ScoutScreen() {
           ))}
           {opp.fixture_swing.length > 0 && (
             <div>
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture swing</div>
+              <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture swing</div>
               {opp.fixture_swing.map((s, i) => {
                 const crest = crestUrl(s.team_code)
                 return (
-                  <div key={i} className="flex items-center gap-3 border-b-2 border-divider py-2.5 text-sm last:border-b-0">
+                  <div key={i} className="flex items-center gap-3 border-b border-divider py-2.5 text-sm last:border-b-0">
                     {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
                     <span className="font-bold text-text">{s.team_short}</span>
                     <span className="tabular text-text-muted">{s.avg_difficulty.toFixed(1)} avg difficulty</span>
@@ -355,11 +355,11 @@ export function ScoutScreen() {
             <div className="grid grid-cols-2 gap-6">
               {opp.transfers_in.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers in</div>
+                  <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers in</div>
                   {opp.transfers_in.map((t, i) => {
                     const crest = crestUrl(t.team_code)
                     return (
-                      <div key={i} className="flex items-center gap-2 border-b-2 border-divider py-2 text-sm last:border-b-0">
+                      <div key={i} className="flex items-center gap-2 border-b border-divider py-2 text-sm last:border-b-0">
                         {crest && <img src={crest} alt="" className="h-3.5 w-3.5 rounded-full" />}
                         <span className="font-bold text-text">{t.name}</span>
                         <span className="tabular ml-auto font-semibold text-pitch-green">+{t.count.toLocaleString()}</span>
@@ -370,11 +370,11 @@ export function ScoutScreen() {
               )}
               {opp.transfers_out.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers out</div>
+                  <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers out</div>
                   {opp.transfers_out.map((t, i) => {
                     const crest = crestUrl(t.team_code)
                     return (
-                      <div key={i} className="flex items-center gap-2 border-b-2 border-divider py-2 text-sm last:border-b-0">
+                      <div key={i} className="flex items-center gap-2 border-b border-divider py-2 text-sm last:border-b-0">
                         {crest && <img src={crest} alt="" className="h-3.5 w-3.5 rounded-full" />}
                         <span className="font-bold text-text">{t.name}</span>
                         <span className="tabular ml-auto font-semibold text-alert-red">-{t.count.toLocaleString()}</span>
@@ -446,10 +446,10 @@ export function ScoutScreen() {
           drawer that slides over the table it came from. */}
       <div className="mt-6 flex gap-6 px-10">
         <div className="min-w-0 flex-1 overflow-x-auto">
-          <div className="max-h-[70vh] overflow-y-auto border-t-2 border-divider">
+          <div className="max-h-[70vh] overflow-y-auto border-t border-divider">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-panel">
-                <tr className="border-b-2 border-divider text-[11px] uppercase tracking-wide text-text-faint">
+                <tr className="border-b border-divider text-[13px] uppercase tracking-wide text-text-faint">
                   <th className="py-2 pr-4">Player</th>
                   <th className="py-2 pr-4">Pos</th>
                   <th className="py-2 pr-4">Next 3</th>
@@ -472,9 +472,9 @@ export function ScoutScreen() {
                     <tr
                       key={r.player_id}
                       onClick={() => setSelectedId(r.player_id)}
-                      className={`cursor-pointer border-b-2 border-divider hover:bg-raised ${active ? 'bg-raised' : r.is_mine ? 'bg-panel' : ''}`}
+                      className={`cursor-pointer border-b border-divider hover:bg-raised ${active ? 'bg-raised' : r.is_mine ? 'bg-panel' : ''}`}
                     >
-                      <td className={`py-2 pr-4 ${active ? 'border-l-2 border-pitch-green' : ''}`}>
+                      <td className={`py-2 pr-4 ${active ? 'border-l border-pitch-green' : ''}`}>
                         <span className="flex items-center gap-2 font-bold text-text">
                           {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
                           <Link
@@ -485,11 +485,11 @@ export function ScoutScreen() {
                             {r.name}
                           </Link>
                           <span className="font-normal text-text-faint">{r.team_short}</span>
-                          {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MINE</span>}
+                          {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MINE</span>}
                         </span>
                       </td>
                       <td className="py-2 pr-4">
-                        <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{r.position}</span>
+                        <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{r.position}</span>
                       </td>
                       <td className="py-2 pr-4">
                         <FixtureRun fixtures={r.team_code !== null ? fixtures?.[String(r.team_code)] : undefined} max={3} />
@@ -515,13 +515,13 @@ export function ScoutScreen() {
 
       {/* PRICE MOVES - real rise/fall forecast + confirmed change ledger */}
       {state.status === 'ready' && (state.data.price_moves.forecast.length > 0 || state.data.price_moves.ledger.length > 0) && (
-        <div className="mt-10 border-t-2 border-divider px-10 pt-8">
-          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Price moves</div>
+        <div className="mt-10 border-t border-divider px-10 pt-8">
+          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Price moves</div>
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             {state.data.price_moves.forecast.length > 0 && (
               <div>
-                <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">Forecast (uncalibrated momentum heuristic)</div>
-                <div className="divide-y divide-divider border-t-2 border-divider">
+                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">Forecast (uncalibrated momentum heuristic)</div>
+                <div className="divide-y divide-divider border-t border-divider">
                   {state.data.price_moves.forecast.slice(0, 12).map((r) => {
                     const crest = crestUrl(r.team_code)
                     const rising = r.direction === 'RISE_LIKELY'
@@ -545,8 +545,8 @@ export function ScoutScreen() {
             )}
             {state.data.price_moves.ledger.length > 0 && (
               <div>
-                <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-text-faint">Confirmed changes</div>
-                <div className="divide-y divide-divider border-t-2 border-divider">
+                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">Confirmed changes</div>
+                <div className="divide-y divide-divider border-t border-divider">
                   {state.data.price_moves.ledger.map((r) => {
                     const crest = crestUrl(r.team_code)
                     const up = r.new_price_m > r.old_price_m

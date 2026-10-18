@@ -24,7 +24,7 @@ export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
         <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
           PLAN
         </span>
-        <div className="relative text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">
+        <div className="relative text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">
           GW{plan.event} &middot; the plan the exact solver found
         </div>
         <div className="verdict-block relative mt-4 inline-block bg-pitch-green py-4 pl-6 pr-14">
@@ -47,15 +47,15 @@ export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
       <RoadAhead plan={plan} />
 
       {chips && (
-        <section className="border-t-2 border-divider bg-panel px-10 py-8">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Chips</div>
+        <section className="border-t border-divider bg-panel px-10 py-8">
+          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Chips</div>
           <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3">
             <div className="flex flex-wrap gap-2">
               {chips.available.length === 0 ? (
                 <span className="text-sm text-text-muted">None left in this window.</span>
               ) : (
                 chips.available.map((c) => (
-                  <span key={c} className="bg-broadcast-gold px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-broadcast-gold-ink">
+                  <span key={c} className="bg-broadcast-gold px-2.5 py-1 text-[13px] font-bold uppercase tracking-[0.1em] text-broadcast-gold-ink">
                     {CHIP_NAME[c] ?? c}
                   </span>
                 ))

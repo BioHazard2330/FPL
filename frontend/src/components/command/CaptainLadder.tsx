@@ -14,7 +14,7 @@ export function CaptainLadder({ plan }: { plan: WeekPlanPayload }) {
   const lead = ladder.map((w) => w.picks[0]?.player_id)
   return (
     <section className="bg-panel px-10 py-10">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Armband ladder</div>
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Armband ladder</div>
       <p className="mb-6 max-w-3xl text-sm text-text-muted">
         Top three projected points per gameweek for the squad this plan leaves you with. Ranked by projection alone: this week the armband rule can prefer a close second.
       </p>
@@ -36,7 +36,7 @@ export function CaptainLadder({ plan }: { plan: WeekPlanPayload }) {
                     <div className={`bar-draw h-full ${i === 0 ? 'bg-pitch-green' : 'bg-text-faint'}`} style={{ width: `${(p.xp / top) * 100}%` }} />
                   </div>
                   {i === 0 && repeat > 1 && wi === lead.indexOf(p.player_id) && (
-                    <div className="mt-0.5 font-mono text-[9px] uppercase text-text-faint">leads {repeat} of {ladder.length}</div>
+                    <div className="mt-0.5 font-mono text-[11px] uppercase text-text-faint">leads {repeat} of {ladder.length}</div>
                   )}
                 </div>
               )

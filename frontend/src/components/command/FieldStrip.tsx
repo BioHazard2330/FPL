@@ -17,8 +17,8 @@ export function FieldStrip() {
   return (
     <section className="bg-panel px-10 py-8">
       <div className="mb-3 flex items-baseline justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Against the field</span>
-        <Link to="/field" className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint hover:text-text">The full picture &rarr;</Link>
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Against the field</span>
+        <Link to="/field" className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint hover:text-text">The full picture &rarr;</Link>
       </div>
       <div className="flex flex-wrap items-end gap-x-12 gap-y-4">
         <div>

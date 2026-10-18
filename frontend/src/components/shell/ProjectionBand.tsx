@@ -6,16 +6,16 @@ import type { ComparePlayer } from '@/lib/types'
 
 const PARTS: [keyof NonNullable<ComparePlayer['components']>, string][] = [
   ['appearance', 'Appearance'], ['goals', 'Goals'], ['assists', 'Assists'], ['bonus', 'Bonus'],
-  ['clean_sheet', 'Clean sheet'], ['defcon', 'Defensive actions'], ['conceded', 'Conceded'], ['cards', 'Cards'],
+  ['clean_sheet', 'Clean sheet'], ['defcon', 'Defensive actions'], ['saves', 'Saves'], ['conceded', 'Conceded'], ['cards', 'Cards'],
 ]
 const SHADE = ['bg-pitch-green', 'bg-broadcast-blue', 'bg-broadcast-gold', 'bg-text', 'bg-pitch-green-deep', 'bg-text-muted', 'bg-alert-red', 'bg-alert-red']
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div>
-      <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">{label}</div>
+      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
       <div className="tabular mt-0.5 font-display text-3xl font-bold leading-none text-text">{value}</div>
-      {sub && <div className="mt-1 text-[10px] text-text-faint">{sub}</div>}
+      {sub && <div className="mt-1 text-[12px] text-text-faint">{sub}</div>}
     </div>
   )
 }
@@ -29,7 +29,7 @@ export function ProjectionBand({ playerId }: { playerId: number }) {
   const state = useFetch(() => fetchProjection(playerId), [playerId])
   if (state.status === 'loading') {
     return (
-      <div className="animate-pulse border-b-2 border-divider px-10 py-8">
+      <div className="animate-pulse border-b border-divider px-10 py-8">
         <Skel className="h-3 w-48" />
         <Skel className="mt-4 h-16 w-full" />
       </div>
@@ -43,10 +43,10 @@ export function ProjectionBand({ playerId }: { playerId: number }) {
   const range = p.ceiling - p.floor || 1
   const medianAt = ((p.xp_next - p.floor) / range) * 100
   return (
-    <div className="border-b-2 border-divider px-10 py-8">
+    <div className="border-b border-divider px-10 py-8">
       <div className="mb-4 flex flex-wrap items-baseline gap-3">
         <span className="font-display text-2xl font-bold uppercase text-text">What the model expects</span>
-        <span className="text-[11px] text-text-faint">the same projection every screen uses</span>
+        <span className="text-[13px] text-text-faint">the same projection every screen uses</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-12">
         <div>
@@ -58,12 +58,12 @@ export function ProjectionBand({ playerId }: { playerId: number }) {
             {p.solio_next !== null && <Stat label="Solio's number" value={p.solio_next.toFixed(1)} sub="independent projection, never fed into ours" />}
           </div>
           <div className="mt-6">
-            <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Range for next gameweek</div>
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Range for next gameweek</div>
             <div className="relative h-3 bg-raised">
               <div className="absolute inset-y-0 left-0 right-0 bg-broadcast-blue/40" />
               <div className="absolute inset-y-[-3px] w-1 bg-pitch-green" style={{ left: `${Math.min(98, Math.max(0, medianAt))}%` }} />
             </div>
-            <div className="tabular mt-1 flex justify-between text-[10px] text-text-faint"><span>{p.floor.toFixed(1)}</span><span>median {p.xp_next.toFixed(1)}</span><span>{p.ceiling.toFixed(1)}</span></div>
+            <div className="tabular mt-1 flex justify-between text-[12px] text-text-faint"><span>{p.floor.toFixed(1)}</span><span>median {p.xp_next.toFixed(1)}</span><span>{p.ceiling.toFixed(1)}</span></div>
           </div>
           <div className="mt-5">
             <FixtureRun fixtures={p.fixtures} max={5} showEvent />
@@ -72,7 +72,7 @@ export function ProjectionBand({ playerId }: { playerId: number }) {
         <div>
           {parts.length > 0 && (
             <>
-              <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Where the next gameweek's points come from</div>
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Where the next gameweek's points come from</div>
               <div className="flex h-5 w-full overflow-hidden bg-raised">
                 {positive.map((x) => <div key={x.label} className={x.tone} style={{ width: `${(x.v / total) * 100}%` }} title={`${x.label} ${x.v.toFixed(2)}`} />)}
               </div>

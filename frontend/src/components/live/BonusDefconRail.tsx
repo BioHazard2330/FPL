@@ -30,14 +30,14 @@ export function BonusDefconRail({ rows }: { rows: BonusDefconRow[] }) {
 
               {bonus ? (
                 <span
-                  className={`shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                  className={`shrink-0 px-1.5 py-0.5 text-[12px] font-bold uppercase tracking-wide ${
                     confirmed ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'border border-broadcast-gold text-broadcast-gold'
                   }`}
                 >
                   +{bonus} {confirmed ? 'bonus' : 'prov.'}
                 </span>
               ) : (
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-text-faint">no bonus</span>
+                <span className="shrink-0 text-[12px] uppercase tracking-wide text-text-faint">no bonus</span>
               )}
 
               {hasDefcon ? (
@@ -58,7 +58,7 @@ export function BonusDefconRail({ rows }: { rows: BonusDefconRow[] }) {
                   </span>
                 </span>
               ) : (
-                <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-text-faint">no defcon rule</span>
+                <span className="ml-auto shrink-0 text-[12px] uppercase tracking-wide text-text-faint">no defcon rule</span>
               )}
             </div>
           )

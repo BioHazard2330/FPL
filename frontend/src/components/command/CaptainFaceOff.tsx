@@ -29,7 +29,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
 
   return (
     <section className="bg-void px-10 py-10">
-      <div className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain battle</div>
+      <div className="mb-6 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain battle</div>
 
       <div className="grid grid-cols-1 items-center gap-6 md:[perspective:1200px] md:grid-cols-[1fr_auto_1fr]">
         {/* best - right-aligned into the axis, real static Z-depth pushing
@@ -89,10 +89,10 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
         )}
       </div>
 
-      {block.note && <div className="mt-8 border-t-2 border-divider pt-4 text-center text-sm text-text-muted">{block.note}</div>}
+      {block.note && <div className="mt-8 border-t border-divider pt-4 text-center text-sm text-text-muted">{block.note}</div>}
 
       {block.edge_driver && (
-        <div className="mt-8 border-t-2 border-divider pt-4 text-center text-sm text-text-muted">
+        <div className="mt-8 border-t border-divider pt-4 text-center text-sm text-text-muted">
           Edge driven by <span className="font-semibold text-text">{block.edge_driver.label}</span>{' '}
           <span className="font-bold text-pitch-green">(+{block.edge_driver.value.toFixed(1)})</span>
           {block.robustness && <span className="ml-4 text-xs uppercase tracking-wide text-text-faint">{block.robustness}</span>}

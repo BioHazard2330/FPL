@@ -29,11 +29,11 @@ export function ConfidenceGraphic({ why, fragileCount, edge, robustness, isStale
 
   return (
     <section className="bg-void px-10 pb-20 pt-16">
-      <div className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Decision confidence</div>
+      <div className="mb-6 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Decision confidence</div>
       <div className="flex flex-col gap-8 md:flex-row md:items-end">
         <div className={`font-display text-7xl font-bold leading-none ${LABEL_COLOR[label] ?? 'text-text'}`}>{label}</div>
 
-        <div className="flex flex-1 flex-col gap-3 border-l-2 border-divider pl-8">
+        <div className="flex flex-1 flex-col gap-3 border-l border-divider pl-8">
           {edge && (
             <div className="flex items-baseline gap-3">
               <span className="tabular font-display text-2xl font-bold text-pitch-green">

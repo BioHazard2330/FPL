@@ -15,7 +15,7 @@ export function NextFixture({ fixtures, className = '' }: { fixtures: FixtureEnt
   const crest = crestUrl(next.opponent_code)
   return (
     <span
-      className={`inline-flex items-center gap-1 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide ${fdrFill(
+      className={`inline-flex items-center gap-1 px-1 py-px text-[11px] font-bold uppercase leading-none tracking-wide ${fdrFill(
         next.difficulty,
       )} ${className}`}
       title={`GW${next.event} ${next.is_home ? 'vs' : 'away to'} ${next.opponent_short} · FDR ${next.difficulty}`}
@@ -70,7 +70,7 @@ export function RunPressure({ fixtures, max = 5 }: { fixtures: FixtureEntry[] | 
   if (p === null) return null
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Avg FDR</span>
+      <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Avg FDR</span>
       <span className={`tabular font-display text-lg font-bold ${pressureInk(p)}`}>{p.toFixed(1)}</span>
     </span>
   )

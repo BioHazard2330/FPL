@@ -130,10 +130,10 @@ export function MarketPulse({ ownership, momentum, deadlines }: { ownership: Own
       <div className="space-y-5">
         {nowOwn && (
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">Owned by</div>
+            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Owned by</div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="tabular font-display text-4xl font-bold text-broadcast-gold">{nowOwn.v.toFixed(1)}%</span>
-              <span className="text-[10px] uppercase tracking-wide text-text-faint">of managers</span>
+              <span className="text-[12px] uppercase tracking-wide text-text-faint">of managers</span>
             </div>
             {ownAtDl && lastDl && (
               <div className={`tabular mt-1 text-xs font-semibold ${nowOwn.v - ownAtDl.v >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
@@ -144,12 +144,12 @@ export function MarketPulse({ ownership, momentum, deadlines }: { ownership: Own
         )}
         {nowMom && (
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">This gameweek so far</div>
+            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">This gameweek so far</div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="tabular font-display text-2xl font-bold text-pitch-green">{fmt(nowMom.i)}</span>
-              <span className="text-[10px] uppercase tracking-wide text-text-faint">in</span>
+              <span className="text-[12px] uppercase tracking-wide text-text-faint">in</span>
               <span className="tabular font-display text-2xl font-bold text-alert-red">{fmt(nowMom.o)}</span>
-              <span className="text-[10px] uppercase tracking-wide text-text-faint">out</span>
+              <span className="text-[12px] uppercase tracking-wide text-text-faint">out</span>
             </div>
             <div className={`tabular mt-1 text-xs font-semibold ${nowMom.i - nowMom.o >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
               net {nowMom.i - nowMom.o >= 0 ? '+' : '−'}{fmt(Math.abs(nowMom.i - nowMom.o))}
@@ -164,10 +164,10 @@ export function MarketPulse({ ownership, momentum, deadlines }: { ownership: Own
               {hMom && <div className="mt-0.5"><span className="font-semibold text-pitch-green">{fmt(hMom.i)}</span> in · <span className="font-semibold text-alert-red">{fmt(hMom.o)}</span> out that gameweek, to that point</div>}
             </div>
           ) : (
-            <div className="text-[10px] uppercase tracking-wide text-text-faint">hover the market</div>
+            <div className="text-[12px] uppercase tracking-wide text-text-faint">hover the market</div>
           )}
         </div>
-        <div className="text-[10px] leading-relaxed text-text-faint">
+        <div className="text-[12px] leading-relaxed text-text-faint">
           Sampled by this project's own syncs; a gap is a gap in sampling, never filled in. Counters reset at each deadline.
         </div>
       </div>

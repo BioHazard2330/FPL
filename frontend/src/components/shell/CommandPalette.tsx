@@ -116,7 +116,7 @@ export function CommandPalette() {
             }
           }}
           placeholder="Jump to a screen or a player..."
-          className="w-full border-b-2 border-divider bg-transparent px-4 py-3 text-text placeholder:text-text-faint focus:outline-none"
+          className="w-full border-b border-divider bg-transparent px-4 py-3 text-text placeholder:text-text-faint focus:outline-none"
         />
         <div className="max-h-96 overflow-y-auto">
           {filtered.map((item, i) => (
@@ -133,7 +133,7 @@ export function CommandPalette() {
           {filtered.length === 0 && <div className="px-4 py-3 text-sm text-text-faint">No match.</div>}
         </div>
         {filtered.some((i) => i.player) && (
-          <div className="border-t border-divider px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">Enter opens the file · Shift+Enter compares</div>
+          <div className="border-t border-divider px-4 py-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">Enter opens the file · Shift+Enter compares</div>
         )}
       </div>
     </div>

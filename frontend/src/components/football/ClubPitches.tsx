@@ -32,16 +32,16 @@ function Rail({ shots, title }: { shots: AtlasShot[]; title: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-x-2">
-        <div><div className="tabular font-display text-2xl font-bold text-text">{shots.length}</div><div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">shots</div></div>
-        <div><div className="tabular font-display text-2xl font-bold text-pitch-green">{xg.toFixed(1)}</div><div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">xG</div></div>
-        <div><div className="tabular font-display text-2xl font-bold text-text">{goals}</div><div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">goals</div></div>
-        <div><div className="tabular font-display text-2xl font-bold text-text">{shots.length ? Math.round((inBox / shots.length) * 100) : 0}%</div><div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">in the box</div></div>
+        <div><div className="tabular font-display text-2xl font-bold text-text">{shots.length}</div><div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">shots</div></div>
+        <div><div className="tabular font-display text-2xl font-bold text-pitch-green">{xg.toFixed(1)}</div><div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">xG</div></div>
+        <div><div className="tabular font-display text-2xl font-bold text-text">{goals}</div><div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">goals</div></div>
+        <div><div className="tabular font-display text-2xl font-bold text-text">{shots.length ? Math.round((inBox / shots.length) * 100) : 0}%</div><div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">in the box</div></div>
       </div>
       <div className={`tabular text-xs font-semibold ${goals - xg >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
         {goals - xg >= 0 ? '+' : ''}{(goals - xg).toFixed(1)} <span className="font-normal text-text-faint">goals minus xG · {shots.length ? (xg / shots.length).toFixed(2) : '—'} per shot</span>
       </div>
       <div className="border-t border-divider pt-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">{title}</div>
+        <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">{title}</div>
         {top.map((p) => (
           <Link key={p.id} to={`/player/${p.id}`} className="grid grid-cols-[1fr_auto_auto_auto] items-baseline gap-2 border-b border-divider py-1.5 text-xs hover:bg-raised/60">
             <span className="truncate text-text">{p.player} <span className="text-text-faint">{p.team}</span></span>
@@ -67,7 +67,7 @@ export function ClubPitches({ shotsFor, shotsAgainst }: { shotsFor: AtlasShot[];
       <div className="bg-void px-8 py-6">
         <div className="mb-3 flex items-baseline gap-3">
           <span className="font-display text-2xl font-bold uppercase text-text">Where they shoot</span>
-          <span className="text-[11px] text-text-faint">every shot this season</span>
+          <span className="text-[13px] text-text-faint">every shot this season</span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_200px] gap-5">
           <div className="h-[380px]"><ShotAtlas shots={shotsFor} visible={all} heroId={null} showHeat={false} onHover={setHover} /></div>
@@ -77,7 +77,7 @@ export function ClubPitches({ shotsFor, shotsAgainst }: { shotsFor: AtlasShot[];
       <div className="bg-void px-8 py-6">
         <div className="mb-3 flex items-baseline gap-3">
           <span className="font-display text-2xl font-bold uppercase text-text">Where they concede</span>
-          <span className="text-[11px] text-text-faint">every shot faced, from the opponent's end</span>
+          <span className="text-[13px] text-text-faint">every shot faced, from the opponent's end</span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_200px] gap-5">
           <div className="h-[380px]"><ShotAtlas shots={against} visible={all} heroId={null} showHeat={false} onHover={setHover} /></div>
@@ -85,7 +85,7 @@ export function ClubPitches({ shotsFor, shotsAgainst }: { shotsFor: AtlasShot[];
         </div>
       </div>
       {hover && (
-        <div className="pointer-events-none fixed z-50 border-l-2 bg-raised px-3 py-2 text-xs"
+        <div className="pointer-events-none fixed z-50 border-l bg-raised px-3 py-2 text-xs"
              style={{ left: hover.px + 14, top: hover.py + 14, borderColor: hover.shot.mine ? 'var(--broadcast-gold)' : 'var(--broadcast-blue)' }}>
           <div className="font-display text-base font-bold uppercase text-text">{hover.shot.player} <span className="text-text-faint">{hover.shot.team}</span></div>
           <div className="tabular mt-0.5 text-text-muted">

@@ -47,10 +47,10 @@ function Row({ r, scale }: { r: LuckRow; scale: number }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <Link to={`/player/${r.player_id}`} className="truncate text-sm font-bold text-text hover:text-pitch-green">{r.name}</Link>
-          {r.mine && <span className="bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
-          <span className="font-mono text-[10px] uppercase text-text-faint">{r.team_short} · {r.position}{r.owned !== null ? ` · ${r.owned.toFixed(0)}%` : ''}</span>
+          {r.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+          <span className="font-mono text-[12px] uppercase text-text-faint">{r.team_short} · {r.position}{r.owned !== null ? ` · ${r.owned.toFixed(0)}%` : ''}</span>
         </div>
-        <div className="truncate text-[11px] text-text-muted">{why(r)}</div>
+        <div className="truncate text-[13px] text-text-muted">{why(r)}</div>
       </div>
       <div className="tabular text-right text-xs text-text-muted">
         <span className="font-bold text-text">{r.actual}</span> got
@@ -99,9 +99,9 @@ function MatchCard({ m }: { m: MatchRebuild }) {
       </div>
       <XgRace match={m} />
       <div className="mt-2 flex h-4 w-full">
-        <div className="flex items-center justify-center bg-pitch-green text-[9px] font-bold text-pitch-green-ink" style={{ width: `${d.home_win * 100}%` }}>{d.home_win >= 0.12 ? pct(d.home_win) : ''}</div>
-        <div className="flex items-center justify-center bg-raised text-[9px] font-bold text-text-muted" style={{ width: `${d.draw * 100}%` }}>{d.draw >= 0.12 ? pct(d.draw) : ''}</div>
-        <div className="flex items-center justify-center bg-broadcast-blue text-[9px] font-bold text-broadcast-blue-ink" style={{ width: `${d.away_win * 100}%` }}>{d.away_win >= 0.12 ? pct(d.away_win) : ''}</div>
+        <div className="flex items-center justify-center bg-pitch-green text-[11px] font-bold text-pitch-green-ink" style={{ width: `${d.home_win * 100}%` }}>{d.home_win >= 0.12 ? pct(d.home_win) : ''}</div>
+        <div className="flex items-center justify-center bg-raised text-[11px] font-bold text-text-muted" style={{ width: `${d.draw * 100}%` }}>{d.draw >= 0.12 ? pct(d.draw) : ''}</div>
+        <div className="flex items-center justify-center bg-broadcast-blue text-[11px] font-bold text-broadcast-blue-ink" style={{ width: `${d.away_win * 100}%` }}>{d.away_win >= 0.12 ? pct(d.away_win) : ''}</div>
       </div>
       <div className="mt-1.5 text-xs text-text-muted">
         {verdict}. Deserved score {d.likely_score[0]}–{d.likely_score[1]}.{' '}
@@ -143,7 +143,7 @@ export function AuditScreen() {
         right={<span className="text-text-muted">through GW{d.events[d.events.length - 1] ?? '—'}</span>}
       />
 
-      <section className="border-b-2 border-divider bg-panel px-10 py-6">
+      <section className="border-b border-divider bg-panel px-10 py-6">
         <div className="max-w-4xl text-base leading-relaxed text-text-muted">
           Across your fifteen, <span className="tabular font-bold text-text">{luckTotal >= 0 ? '+' : ''}{luckTotal.toFixed(0)}</span> points this season are luck on the chances behind them
           {hotMine.length > 0 && <>; the ones riding it are <span className="font-bold text-broadcast-gold">{hotMine.map((r) => r.name).join(', ')}</span></>}
@@ -152,18 +152,53 @@ export function AuditScreen() {
         </div>
       </section>
 
-      <section className="border-b-2 border-divider px-10 py-7">
+      <section className="border-b border-divider px-10 py-7">
         <h2 className="mb-3 font-display text-2xl font-bold uppercase tracking-wide text-text">Your squad</h2>
         {d.squad.map((r) => <Row key={r.player_id} r={r} scale={scale} />)}
-        <p className="mt-2 text-[11px] text-text-faint">Bar: gold is luck in your favour, blue is points owed. z is the luck over its own standard error; beyond ±2 is unusual.</p>
+        <p className="mt-2 text-[13px] text-text-faint">Bar: gold is luck in your favour, blue is points owed. z is the luck over its own standard error; beyond ±2 is unusual.</p>
       </section>
 
-      <section className="border-b-2 border-divider px-10 py-7">
+      {d.armband.length > 0 && (
+        <section className="border-b border-divider px-10 py-7">
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-4">
+            <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Your armband</h2>
+            <span className="text-[13px] text-text-muted">
+              the armband has cost <span className="tabular font-bold text-text">{d.armband.reduce((s, r) => s + r.cost, 0).toFixed(0)}</span> points against the best in each eleven;{' '}
+              <span className="tabular font-bold text-broadcast-blue">{d.armband.reduce((s, r) => s + r.owed, 0).toFixed(0)}</span> of the captains' own returns were owed by their chances
+            </span>
+          </div>
+          <p className="mb-3 max-w-3xl text-[13px] text-text-faint">
+            Cost is what the armband left on the table against the highest scorer of that gameweek's eleven, the extra a captain earns, so it is nearly always positive. Owed is the same armband's points the captain's own chances said he should have had.
+          </p>
+          <div className="grid grid-cols-[3.5rem_minmax(0,1.2fr)_5rem_5rem_minmax(0,1.2fr)_5rem_5rem] gap-3 border-b border-divider pb-1.5 font-mono text-[12px] uppercase tracking-[0.06em] text-text-faint">
+            <span>GW</span><span>Captain</span><span className="text-right">Scored</span><span className="text-right">Chances</span><span>Best in the eleven</span><span className="text-right">Cost</span><span className="text-right">Owed</span>
+          </div>
+          {d.armband.map((r) => (
+            <div key={r.event} className="grid grid-cols-[3.5rem_minmax(0,1.2fr)_5rem_5rem_minmax(0,1.2fr)_5rem_5rem] items-center gap-3 border-b border-divider py-2 text-sm last:border-b-0">
+              <span className="font-mono text-[13px] text-text-faint">GW{r.event}</span>
+              <span className="min-w-0 truncate font-semibold text-text">
+                <Link to={`/player/${r.captain.player_id}`} className="hover:text-pitch-green">{r.captain.name}</Link>
+                {r.chip === '3xc' && <span className="ml-2 rounded bg-broadcast-gold px-1 text-[11px] font-bold uppercase text-broadcast-gold-ink">TC</span>}
+              </span>
+              <span className="tabular text-right font-bold text-text">{r.captain.actual}</span>
+              <span className="tabular text-right text-text-muted">{r.captain.deserved.toFixed(1)}</span>
+              <span className="min-w-0 truncate text-text-muted">
+                <Link to={`/player/${r.best_actual.player_id}`} className="hover:text-pitch-green">{r.best_actual.name}</Link>{' '}
+                <span className="tabular text-text-faint">{r.best_actual.actual}</span>
+              </span>
+              <span className={`tabular text-right font-bold ${r.cost > 0 ? 'text-alert-red' : 'text-pitch-green'}`}>{r.cost > 0 ? `−${r.cost.toFixed(0)}` : '0'}</span>
+              <span className={`tabular text-right ${r.owed > 1 ? 'text-broadcast-blue' : r.owed < -1 ? 'text-broadcast-gold' : 'text-text-faint'}`}>{r.owed > 0 ? '+' : ''}{r.owed.toFixed(1)}</span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="border-b border-divider px-10 py-7">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
           <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Regression radar</h2>
           <div className="flex gap-1">
             {(['season', 'recent'] as const).map((w) => (
-              <button key={w} type="button" onClick={() => setWindow(w)} className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${window === w ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+              <button key={w} type="button" onClick={() => setWindow(w)} className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${window === w ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
                 {w === 'season' ? 'Whole season' : `Last ${d.thresholds.recent_gameweeks} gameweeks`}
               </button>
             ))}
@@ -180,7 +215,7 @@ export function AuditScreen() {
           <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Match rebuilds</h2>
           <div className="flex gap-1">
             {d.events.map((e) => (
-              <button key={e} type="button" onClick={() => setEvent(e)} className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${d.event === e ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+              <button key={e} type="button" onClick={() => setEvent(e)} className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${d.event === e ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
                 GW{e}
               </button>
             ))}

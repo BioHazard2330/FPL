@@ -90,7 +90,7 @@ export function SyncButton() {
       type="button"
       onClick={start}
       disabled={phase === 'starting'}
-      className="bg-raised px-2 py-1 text-[10px] font-bold tracking-[0.12em] text-text-muted hover:text-text"
+      className="bg-raised px-2 py-1 text-[12px] font-bold tracking-[0.1em] text-text-muted hover:text-text"
       title="Run the full sync now: FPL data, news, lineups, odds, then rebuild the plan"
     >
       Sync now

@@ -27,7 +27,7 @@ function Chip({ c }: { c: DeskPlayerChip }) {
   const tone = c.mine ? 'bg-pitch-green text-pitch-green-ink' : c.target ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'bg-raised text-text-muted'
   const crest = crestUrl(c.team_code)
   return (
-    <Link to={`/player/${c.player_id}`} className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${tone}`}>
+    <Link to={`/player/${c.player_id}`} className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[12px] font-semibold uppercase tracking-[0.04em] ${tone}`}>
       {crest && <img src={crest} alt="" className="h-3 w-3" />}
       {c.name}
       {c.mine && <span className="opacity-70">· yours</span>}
@@ -59,12 +59,12 @@ function Picture({ src, className, label }: { src: string | null; className: str
 }
 
 function Kicker({ children }: { children: React.ReactNode }) {
-  return <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{children}</div>
+  return <div className="font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{children}</div>
 }
 
 function Section({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="border-b-2 border-divider px-10 py-7">
+    <section className="border-b border-divider px-10 py-7">
       <div className="mb-4 flex items-baseline justify-between gap-6">
         <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">{title}</h2>
         {aside && <div className="text-xs text-text-muted">{aside}</div>}
@@ -76,7 +76,7 @@ function Section({ title, aside, children }: { title: string; aside?: React.Reac
 
 function Lead({ a }: { a: DeskArticle }) {
   return (
-    <a href={a.link} target="_blank" rel="noreferrer" className="group grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] items-stretch border-b-2 border-divider bg-panel">
+    <a href={a.link} target="_blank" rel="noreferrer" className="group grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] items-stretch border-b border-divider bg-panel">
       <Picture src={a.image} label={a.source} className="h-full min-h-[300px] w-full" />
       <div className="flex flex-col justify-center gap-3 px-8 py-6">
         <Kicker>
@@ -120,9 +120,9 @@ function InjuryRow({ i }: { i: DeskInjury }) {
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4" />}
         <Link to={`/player/${i.player_id}`} className="text-sm font-bold text-text hover:text-pitch-green">{i.name}</Link>
-        {i.mine && <span className="bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
-        {!i.mine && i.target && <span className="bg-broadcast-gold px-1 text-[9px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
-        <span className="ml-auto font-mono text-[10px] uppercase text-text-faint">{i.team_short}{i.owned !== null ? ` · ${i.owned.toFixed(1)}% owned` : ''}</span>
+        {i.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+        {!i.mine && i.target && <span className="bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
+        <span className="ml-auto font-mono text-[12px] uppercase text-text-faint">{i.team_short}{i.owned !== null ? ` · ${i.owned.toFixed(1)}% owned` : ''}</span>
       </div>
       <div className="mt-1 flex items-center gap-3">
         <div className="h-1.5 w-20 shrink-0 bg-raised">
@@ -131,7 +131,7 @@ function InjuryRow({ i }: { i: DeskInjury }) {
         <span className="tabular w-9 shrink-0 text-xs font-bold text-text">{chance !== null ? `${chance}%` : '—'}</span>
         <span className="min-w-0 truncate text-xs text-text-muted" title={i.news}>{i.news}</span>
       </div>
-      <div className="mt-0.5 font-mono text-[10px] text-text-faint">official FPL note · {relativeTime(i.added_at) ?? ''}</div>
+      <div className="mt-0.5 font-mono text-[12px] text-text-faint">official FPL note · {relativeTime(i.added_at) ?? ''}</div>
       </div>
     </div>
   )
@@ -183,8 +183,8 @@ function MoveCell({ m, rise }: { m: DeskPriceMove; rise: boolean }) {
     <div className="flex items-center gap-2 border-b border-divider py-1.5 text-sm">
       {crest && <img src={crest} alt="" className="h-4 w-4" />}
       <Link to={`/player/${m.player_id}`} className="font-semibold text-text hover:text-pitch-green">{m.name}</Link>
-      {m.mine && <span className="bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
-      {!m.mine && m.target && <span className="bg-broadcast-gold px-1 text-[9px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
+      {m.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+      {!m.mine && m.target && <span className="bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
       <span className={`tabular ml-auto text-xs font-bold ${rise ? 'text-pitch-green' : 'text-alert-red'}`}>
         {Number(m.old).toFixed(1)} → {Number(m.new).toFixed(1)}
       </span>
@@ -199,9 +199,9 @@ function LeanCell({ l }: { l: DeskPriceLean }) {
     <div className="flex items-center gap-2 border-b border-divider py-1.5 text-sm">
       {crest && <img src={crest} alt="" className="h-4 w-4" />}
       <Link to={`/player/${l.player_id}`} className="font-semibold text-text hover:text-pitch-green">{l.name}</Link>
-      {l.mine && <span className="bg-pitch-green px-1 text-[9px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
-      {!l.mine && l.target && <span className="bg-broadcast-gold px-1 text-[9px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
-      <span className={`ml-auto font-mono text-[10px] font-bold uppercase ${rise ? 'text-pitch-green' : 'text-alert-red'}`}>{rise ? 'rise lean' : 'fall lean'}</span>
+      {l.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+      {!l.mine && l.target && <span className="bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
+      <span className={`ml-auto font-mono text-[12px] font-bold uppercase ${rise ? 'text-pitch-green' : 'text-alert-red'}`}>{rise ? 'rise lean' : 'fall lean'}</span>
     </div>
   )
 }
@@ -283,7 +283,7 @@ export function DeskScreen() {
 
       {d.lead && <Lead a={d.lead} />}
 
-      <div className="grid grid-cols-[minmax(0,1fr)_420px] border-b-2 border-divider">
+      <div className="grid grid-cols-[minmax(0,1fr)_420px] border-b border-divider">
         <div className="border-r border-divider px-10 py-7">
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4">
             <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">The wire</h2>
@@ -293,7 +293,7 @@ export function DeskScreen() {
                   key={f.key}
                   type="button"
                   onClick={() => setFilter(f.key)}
-                  className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${filter === f.key ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+                  className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${filter === f.key ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
                 >
                   {f.label} <span className="tabular opacity-60">{f.n}</span>
                 </button>
@@ -321,7 +321,7 @@ export function DeskScreen() {
                 key={c}
                 type="button"
                 onClick={() => setChannel(c)}
-                className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.05em] ${channel === c ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+                className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${channel === c ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
               >
                 {c}
               </button>

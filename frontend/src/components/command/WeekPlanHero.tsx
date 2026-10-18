@@ -10,7 +10,7 @@ const money = (tenths: number) => `£${(tenths / 10).toFixed(1)}m`
 function Tag({ tone, children, title }: { tone: 'gold' | 'red' | 'blue'; children: React.ReactNode; title?: string }) {
   const fill = { gold: 'bg-broadcast-gold text-broadcast-gold-ink', red: 'bg-alert-red text-alert-red-ink', blue: 'bg-broadcast-blue text-text' }[tone]
   return (
-    <span title={title} className={`px-1.5 py-px text-[9px] font-bold uppercase leading-4 tracking-[0.1em] ${fill}`}>
+    <span title={title} className={`px-1.5 py-px text-[11px] font-bold uppercase leading-4 tracking-[0.1em] ${fill}`}>
       {children}
     </span>
   )
@@ -29,7 +29,7 @@ function ClubLine({ outlook, side }: { outlook?: NonNullable<WeekPlanPayload['te
   const next = outlook.next[0]
   const good = (rank: number) => (rank <= 6 ? 'text-pitch-green' : rank >= outlook.clubs - 5 ? 'text-alert-red' : 'text-text-muted')
   return (
-    <div className={`mt-1 text-[11px] leading-snug text-text-faint ${side === 'out' ? 'text-right' : ''}`}>
+    <div className={`mt-1 text-[13px] leading-snug text-text-faint ${side === 'out' ? 'text-right' : ''}`}>
       {outlook.short} attack <span className={`font-bold ${good(outlook.attack_rank)}`}>{ordinal(outlook.attack_rank)}</span>, defence{' '}
       <span className={`font-bold ${good(outlook.defence_rank)}`}>{ordinal(outlook.defence_rank)}</span> of {outlook.clubs} over six gameweeks
       {next && (
@@ -64,7 +64,7 @@ function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: '
         >
           {p.name}
         </Link>
-        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-text-faint">
+        <div className="mt-1 text-[13px] font-semibold uppercase tracking-wide text-text-faint">
           {p.team_short} &middot; {p.position} &middot; <span className="tabular">{money(p.price_tenths)}</span>
         </div>
         <ClubLine outlook={outlook?.[String(p.team_id)]} side={side} />
@@ -72,7 +72,7 @@ function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: '
           <span className={`tabular font-bold ${side === 'into' ? 'text-2xl text-pitch-green' : 'text-xl text-text-muted'}`}>
             {p.xp_next.toFixed(1)}
           </span>
-          <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">xP next GW</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">xP next GW</span>
         </div>
         <div className={`mt-1.5 flex flex-wrap items-center gap-1.5 ${mirrored ? 'justify-end' : ''}`}>
           {rotation && (
@@ -133,7 +133,7 @@ function MoveRow({ m, horizon, maxGain, fixtures, outlook }: { m: WeekPlanMove; 
       <PlayerSide p={m.out} side="out" fixtures={fixtures} outlook={outlook} />
       <div className="flex flex-col items-center">
         <div className="tabular font-display text-5xl font-bold leading-none text-pitch-green">+{m.gain.toFixed(1)}</div>
-        <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">pts over {horizon} GW</div>
+        <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">pts over {horizon} GW</div>
         <div className="mt-2 h-1.5 w-full bg-raised">
           <div className="bar-draw h-full bg-pitch-green" style={{ width: `${Math.max(6, (m.gain / maxGain) * 100)}%` }} />
         </div>
@@ -141,7 +141,7 @@ function MoveRow({ m, horizon, maxGain, fixtures, outlook }: { m: WeekPlanMove; 
           <span className="h-px w-8 bg-divider" />
           <span aria-hidden>&#9654;</span>
         </div>
-        <div className="tabular mt-1 text-[10px] font-semibold text-text-faint">
+        <div className="tabular mt-1 text-[12px] font-semibold text-text-faint">
           {m.cost_tenths > 0 ? `costs ${money(m.cost_tenths)}` : m.cost_tenths < 0 ? `frees ${money(-m.cost_tenths)}` : 'like for like'}
         </div>
         {m.timing && m.timing !== 'any' && (
@@ -149,16 +149,16 @@ function MoveRow({ m, horizon, maxGain, fixtures, outlook }: { m: WeekPlanMove; 
             <Tag tone={m.timing === 'early' ? 'gold' : m.timing === 'late' ? 'blue' : 'red'} title={m.timing_note}>
               {m.timing === 'early' ? 'do early' : m.timing === 'late' ? 'wait for team news' : 'price vs news'}
             </Tag>
-            <div className="mt-1 text-[10px] leading-snug text-text-faint">{m.timing_note}</div>
+            <div className="mt-1 text-[12px] leading-snug text-text-faint">{m.timing_note}</div>
           </div>
         )}
       </div>
       <PlayerSide p={m.into} side="into" fixtures={fixtures} outlook={outlook} />
       <div className="border-t border-divider pt-3 lg:col-span-3">
-        <Link to={`/compare?a=${m.out.player_id}&b=${m.into.player_id}`} className="float-right text-[10px] font-bold uppercase tracking-[0.14em] text-text-faint hover:text-text">Compare {m.out.name} and {m.into.name} &rarr;</Link>
+        <Link to={`/compare?a=${m.out.player_id}&b=${m.into.player_id}`} className="float-right text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint hover:text-text">Compare {m.out.name} and {m.into.name} &rarr;</Link>
         {(m.alternatives ?? []).length > 0 && (
           <>
-            <span className="mr-4 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">If not {m.into.name}</span>
+            <span className="mr-4 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">If not {m.into.name}</span>
             {m.alternatives!.map((a) => (
               <span key={a.into.player_id} className="mr-6 inline-block text-sm text-text-muted">
                 <span className="font-semibold text-text">{a.into.name}</span>{' '}
@@ -177,7 +177,7 @@ function MoveRow({ m, horizon, maxGain, fixtures, outlook }: { m: WeekPlanMove; 
 function Stat({ label, value, tone = 'text-text' }: { label: string; value: React.ReactNode; tone?: string }) {
   return (
     <div>
-      <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">{label}</div>
+      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
       <div className={`tabular mt-0.5 font-display text-2xl font-bold leading-none ${tone}`}>{value}</div>
     </div>
   )
@@ -195,7 +195,7 @@ function ChecklistActions({ plan }: { plan: WeekPlanPayload }) {
     ...moves.map((m, i) => `${i + 1}. ${m.out.name} (${money(m.out.price_tenths)}) -> ${m.into.name} (${money(m.into.price_tenths)})`),
   ].join('\n')
   return (
-    <div className="flex flex-wrap items-center gap-4 text-[11px] font-bold uppercase tracking-[0.12em]">
+    <div className="flex flex-wrap items-center gap-4 text-[13px] font-bold uppercase tracking-[0.1em]">
       <button
         type="button"
         onClick={() => {
@@ -252,9 +252,9 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
 
       <div className="relative px-10">
         <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
-          <span className="font-mono text-[11px] uppercase tracking-[0.25em] text-text-faint">{gw} &middot; This week&apos;s transfers</span>
+          <span className="font-mono text-[13px] uppercase tracking-[0.25em] text-text-faint">{gw} &middot; This week&apos;s transfers</span>
           {plan.computed_at && (
-            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint">
+            <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
               solved {ago(plan.age_hours ?? 0)} &middot; {plan.proven_optimal ? 'proven best plan' : 'best plan found, not proven'}
             </span>
           )}
@@ -262,7 +262,7 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
 
         {stale && (
           <div className="mt-4 max-w-2xl border-l-4 border-alert-red bg-panel px-4 py-3">
-            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-alert-red">This plan is out of date</div>
+            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-alert-red">This plan is out of date</div>
             <ul className="mt-1 space-y-0.5 text-sm text-text-muted">
               {(plan.stale_reasons ?? []).map((r) => (
                 <li key={r}>{r}</li>
@@ -302,7 +302,7 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
           </div>
         )}
 
-        <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4 border-t-2 border-divider pt-5">
+        <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4 border-t border-divider pt-5">
           <Stat label="Free transfers now" value={ft} />
           <Stat label="After this plan" value={plan.ft_after ?? '—'} tone="text-pitch-green" />
           <Stat label="Bank now" value={money(plan.bank_tenths ?? 0)} />
@@ -323,7 +323,7 @@ export function WeekPlanHero({ plan, chips }: { plan: WeekPlanPayload; chips: st
         <div className="relative mt-4 px-10">
           {declined.map((m) => (
             <div key={m.into.player_id} className="flex flex-wrap items-baseline gap-x-3 border-l-4 border-divider bg-panel/60 px-6 py-3 text-sm text-text-muted">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">Left out</span>
+              <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Left out</span>
               <span className="font-semibold text-text">
                 {m.out.name} &rarr; {m.into.name}
               </span>

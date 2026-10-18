@@ -2,18 +2,18 @@
 name: FPL Agent
 description: A personal FPL decision terminal built as a live football broadcast package - a match-graphics truck, not a SaaS dashboard.
 colors:
-  canvas-void: "#0A0E14"
-  surface-panel: "#12171F"
-  surface-raised: "#1A2029"
-  pitch-green: "#1FCE6B"
-  pitch-green-deep: "#12A552"
-  broadcast-gold: "#F0A93E"
-  broadcast-blue: "#2D6CDF"
-  alert-red: "#E3452F"
-  text-primary: "#F5F3EE"
-  text-muted: "#9099A8"
-  text-faint: "#5B6472"
-  divider: "#232B36"
+  canvas-void: "#0B0E13"
+  surface-panel: "#12161D"
+  surface-raised: "#1A1F28"
+  pitch-green: "#3ECF8E"
+  pitch-green-deep: "#2AA974"
+  broadcast-gold: "#E8B65A"
+  broadcast-blue: "#4A7BE8"
+  alert-red: "#F0594A"
+  text-primary: "#EDF0F5"
+  text-muted: "#A3ADBB"
+  text-faint: "#6E7A8A"
+  divider: "#262D38"
 typography:
   display:
     fontFamily: "Oswald, 'Arial Narrow', sans-serif"
@@ -53,7 +53,9 @@ typography:
     letterSpacing: "0.1em"
 rounded:
   none: "0px"
-  sm: "2px"
+  sm: "4px"
+  md: "8px"
+  lg: "14px"
   pill: "999px"
 spacing:
   xs: "4px"
@@ -134,20 +136,28 @@ at once rather than trading one for the other.
 
 ## 2. Colour
 
-Flat and saturated. Colour groups information; it is never an accent
-sprinkled on a neutral field, and it is never decorative.
+Restrained and saturated in the right places. Neutrals carry the page; colour
+marks meaning and is never decoration. (2026-10-18 rebuild: the first palette
+was a hot orange-red and neon green on blue-black, and read as a toy next to
+the analytical sites it is meant to rival. The hues below are the same four
+meanings, pulled toward the calmer end: a mint, a champagne, an azure and a
+coral, on a graphite canvas.)
 
 | Role | Token | Hex | Meaning |
 |---|---|---|---|
-| Verdict | `pitch-green` | `#1FCE6B` | the recommended action, positive delta, healthy, easy fixture |
-| Standout | `broadcast-gold` | `#F0A93E` | captaincy, premium pick, provisional/watch, "my squad" marker |
-| Neutral analytical | `broadcast-blue` | `#2D6CDF` | informational, the away side, non-verdict data |
-| Danger | `alert-red` | `#E3452F` | risk, fragile, unavailable, hard fixture, live |
-| Canvas | `void` | `#0A0E14` | base; cool near-black, never `#000` |
-| Surface | `panel` | `#12171F` | first layer — section bands |
-| Surface | `raised` | `#1A2029` | second layer — tags, hover, nested cells |
-| Rule | `divider` | `#232B36` | separation, in place of borders and shadows |
-| Ink | `text` / `muted` / `faint` | `#F5F3EE` / `#9099A8` / `#5B6472` | warm off-white, never `#fff` |
+| Verdict | `pitch-green` | `#3ECF8E` | the recommended action, positive delta, healthy, easy fixture |
+| Standout | `broadcast-gold` | `#E8B65A` | captaincy, premium pick, provisional/watch, "my squad" marker |
+| Neutral analytical | `broadcast-blue` | `#4A7BE8` | informational, the away side, non-verdict data |
+| Danger | `alert-red` | `#F0594A` | risk, fragile, unavailable, hard fixture, live |
+| Canvas | `void` | `#0B0E13` | base; graphite, never `#000` |
+| Surface | `panel` | `#12161D` | first layer - the framed bands of a screen |
+| Surface | `raised` | `#1A1F28` | second layer - tags, hover, nested cells |
+| Rule | `divider` | `#262D38` | separation: the 1px edge of every frame and row |
+| Ink | `text` / `muted` / `faint` | `#EDF0F5` / `#A3ADBB` / `#6E7A8A` | cool off-white, never `#fff` |
+
+Status chips and phase labels are a tint of their colour (`bg-alert-red/15
+text-alert-red`), not a solid block; a solid fill is reserved for the one
+verdict per screen and for small filled tags.
 
 **Semantic discipline.** A colour means one thing per context and keeps
 meaning across screens. Green is the recommendation on Command, the home
@@ -193,23 +203,36 @@ one the code actually follows, and it is the right one.
 
 ## 4. Elevation and separation
 
-**Flat. No shadows anywhere.** Not on cards, not on modals, not under
-shirts. Layering is:
+**Frames, not slabs.** Every top-level band of a screen sits in one frame
+(`.screen-frame` in `index.css`): a centred column no wider than 1400px, a
+20px gap, and each band a `panel` surface with a 1px `divider` edge and a 14px
+corner. Screens still compose their own bands; the frame gives them the same
+edge, rhythm and width. Small filled blocks (tags, chips, cells) take a 6px
+corner by default; `rounded-full` is for pills and `rounded-none` is still
+available where a block must meet a neighbour square.
 
-1. surface colour (`void` → `panel` → `raised`),
-2. a thick rule (`border-y-2 border-divider`) between full-width bands,
+Layering is:
+
+1. surface colour (`void` -> `panel` -> `raised`),
+2. a 1px rule (`border-b border-divider`) between rows and inside a frame,
 3. a `gap-px` grid over a `bg-divider` parent, which draws hairline rules
    between cells with no borders at all,
 4. a left accent rule (`border-l-4`) to mark a row's category or severity.
 
-**The `gap-px` grid has one failure mode, and it is now a rule:** an empty
-grid track renders as a solid grey block. Column counts must follow the
-number of children that genuinely have data. This shipped as a visible
-defect twice before it was written down.
+No drop shadows on content, and no glow. Overlays (menus, popovers) may
+carry a soft shadow because they float. The pitch (`.pitch-surface`) has two
+quiet turf tones and a soft vignette so the tiles on it carry the contrast.
 
-**`clip-path` is used exactly once**, on `.verdict-block` — the angled cut
-under the hero verdict. It is a signature, not a system: one screen, one
-element. Do not add a second.
+**The `gap-px` grid has one failure mode, and it is a rule:** an empty grid
+track renders as a solid grey block. Column counts must follow the number of
+children that genuinely have data.
+
+**`clip-path` is used exactly once**, on `.verdict-block` - the angled cut
+under the hero verdict. One screen, one element.
+
+**Type sizes.** The floor is 11px for uppercase mono/label text and 12-13px for
+everything a person reads; `text-xs` is 13px and `text-sm` 15px in the theme.
+The first version ran labels at 9-10px, which was unreadable at a desk.
 
 ---
 

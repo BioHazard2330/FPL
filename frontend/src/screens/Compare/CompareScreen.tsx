@@ -20,7 +20,7 @@ import type { ComparePayload, ComparePlayer, PlayerIndexRow } from '@/lib/types'
 
 const COMPONENT_LABELS: [keyof NonNullable<ComparePlayer['components']>, string][] = [
   ['appearance', 'Appearance'], ['goals', 'Goals'], ['assists', 'Assists'], ['bonus', 'Bonus'],
-  ['clean_sheet', 'Clean sheet'], ['conceded', 'Goals conceded'], ['cards', 'Cards'], ['defcon', 'Defensive actions'],
+  ['clean_sheet', 'Clean sheet'], ['conceded', 'Goals conceded'], ['cards', 'Cards'], ['defcon', 'Defensive actions'], ['saves', 'Saves'],
 ]
 
 function Picker({ label, selected, index, onPick, exclude }: {
@@ -41,12 +41,12 @@ function Picker({ label, selected, index, onPick, exclude }: {
   }, [q, index, exclude])
   return (
     <div className="relative">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
+      <div className="mb-1 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
       {selected && !open ? (
         <button type="button" onClick={() => { setOpen(true); setQ('') }} className="flex w-full items-center gap-2 bg-raised px-3 py-2 text-left">
           <span className="font-bold text-text">{selected.name}</span>
           <span className="text-xs text-text-muted">{selected.team_short} · {selected.position}</span>
-          <span className="ml-auto text-[10px] uppercase tracking-wide text-text-faint">change</span>
+          <span className="ml-auto text-[12px] uppercase tracking-wide text-text-faint">change</span>
         </button>
       ) : (
         <input
@@ -70,7 +70,7 @@ function Picker({ label, selected, index, onPick, exclude }: {
               <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className="h-9 w-7" />
               <span className="text-sm font-semibold text-text">{p.name}</span>
               <span className="text-xs text-text-muted">{p.team_short} · {p.position}{p.price !== null ? ` · £${p.price.toFixed(1)}m` : ''}</span>
-              {p.owned !== null && <span className="tabular ml-auto text-[10px] text-text-faint">{p.owned.toFixed(1)}%</span>}
+              {p.owned !== null && <span className="tabular ml-auto text-[12px] text-text-faint">{p.owned.toFixed(1)}%</span>}
             </button>
           ))}
         </div>
@@ -94,22 +94,22 @@ function Hero({ p, align }: { p: ComparePlayer; align: 'left' | 'right' }) {
           {p.team_name} · {p.position}{p.price !== null ? ` · £${p.price.toFixed(1)}m` : ''}
         </div>
         <div className={`mt-2 flex flex-wrap gap-1.5 ${right ? 'justify-end' : ''}`}>
-          {p.is_mine && <span className="bg-pitch-green px-1.5 text-[10px] font-bold uppercase leading-5 text-pitch-green-ink">in your squad</span>}
+          {p.is_mine && <span className="bg-pitch-green px-1.5 text-[12px] font-bold uppercase leading-5 text-pitch-green-ink">in your squad</span>}
           {p.status !== 'a' && p.news && (
-            <span className="bg-broadcast-gold px-1.5 text-[10px] font-bold uppercase leading-5 text-broadcast-gold-ink" title={p.news}>
+            <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold uppercase leading-5 text-broadcast-gold-ink" title={p.news}>
               {p.chance !== null ? `${p.chance}% to play` : 'flagged'}
             </span>
           )}
           {p.start_percent !== null && p.start_percent < 70 && (
-            <span className="bg-alert-red px-1.5 text-[10px] font-bold uppercase leading-5 text-alert-red-ink">{p.start_percent}% to start</span>
+            <span className="bg-alert-red px-1.5 text-[12px] font-bold uppercase leading-5 text-alert-red-ink">{p.start_percent}% to start</span>
           )}
-          {p.price_trend === 'RISE_LIKELY' && <span className="bg-broadcast-gold px-1.5 text-[10px] font-bold uppercase leading-5 text-broadcast-gold-ink">price rising</span>}
-          {p.price_trend === 'FALL_LIKELY' && <span className="bg-alert-red px-1.5 text-[10px] font-bold uppercase leading-5 text-alert-red-ink">price falling</span>}
-          {p.duties.length > 0 && <span className="bg-raised px-1.5 text-[10px] font-bold uppercase leading-5 text-text-muted">{p.duties.join(' · ')}</span>}
+          {p.price_trend === 'RISE_LIKELY' && <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold uppercase leading-5 text-broadcast-gold-ink">price rising</span>}
+          {p.price_trend === 'FALL_LIKELY' && <span className="bg-alert-red px-1.5 text-[12px] font-bold uppercase leading-5 text-alert-red-ink">price falling</span>}
+          {p.duties.length > 0 && <span className="bg-raised px-1.5 text-[12px] font-bold uppercase leading-5 text-text-muted">{p.duties.join(' · ')}</span>}
         </div>
         <div className={`mt-4 flex items-baseline gap-2 ${right ? 'justify-end' : ''}`}>
           <span className="tabular font-display text-6xl font-bold leading-none text-pitch-green">{p.xp_window.toFixed(1)}</span>
-          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-faint">xP next {p.fixture_count || 5} fixtures</span>
+          <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">xP next {p.fixture_count || 5} fixtures</span>
         </div>
       </div>
     </div>
@@ -128,7 +128,7 @@ function Row({ r }: { r: ComparePayload['rows'][number] }) {
         <span className={`tabular text-lg font-bold ${txt('a')}`}>{r.a_text ?? '—'}</span>
         <div className="flex h-3 w-48 justify-end bg-raised"><div className={`bar-draw-right h-full ${tone('a')}`} style={{ width: w(r.a) }} /></div>
       </div>
-      <div className="text-center font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{r.label}</div>
+      <div className="text-center font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{r.label}</div>
       <div className="flex items-center gap-3">
         <div className="flex h-3 w-48 bg-raised"><div className={`bar-draw h-full ${tone('b')}`} style={{ width: w(r.b) }} /></div>
         <span className={`tabular text-lg font-bold ${txt('b')}`}>{r.b_text ?? '—'}</span>
@@ -142,7 +142,7 @@ function Components({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   const ca = a.components, cb = b.components
   const hi = Math.max(...COMPONENT_LABELS.flatMap(([k]) => [Math.abs(ca[k]), Math.abs(cb[k])]), 0.5)
   return (
-    <section className="border-b-2 border-divider px-10 py-7">
+    <section className="border-b border-divider px-10 py-7">
       <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Where the next gameweek's points come from</h2>
       <p className="mb-4 mt-1 text-xs text-text-muted">The model's own breakdown of the one-gameweek projection. Negative parts are deductions.</p>
       {COMPONENT_LABELS.map(([k, label]) => {
@@ -155,7 +155,7 @@ function Components({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
               <span className="tabular text-sm font-bold text-text">{va.toFixed(2)}</span>
               <div className="flex h-2.5 w-48 justify-end bg-raised"><div className={`h-full ${va >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: bar(va) }} /></div>
             </div>
-            <div className="text-center font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
+            <div className="text-center font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
             <div className="flex items-center gap-3">
               <div className="flex h-2.5 w-48 bg-raised"><div className={`h-full ${vb >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: bar(vb) }} /></div>
               <span className="tabular text-sm font-bold text-text">{vb.toFixed(2)}</span>
@@ -175,7 +175,7 @@ function Verdict({ d }: { d: ComparePayload }) {
   const gap = Math.abs(d.gap_window)
   const dearer = d.price_gap === null || d.price_gap === 0 ? null : d.price_gap > 0 ? d.a : d.b
   return (
-    <section className="border-b-2 border-divider bg-panel px-10 py-6">
+    <section className="border-b border-divider bg-panel px-10 py-6">
       <div className="max-w-4xl text-base leading-relaxed text-text-muted">
         Over the next {d.window} gameweeks the model has <span className="font-bold text-text">{lead.name}</span> ahead of{' '}
         <span className="font-bold text-text">{trail.name}</span> by <span className="tabular font-bold text-pitch-green">{gap.toFixed(1)}</span> points
@@ -202,7 +202,7 @@ function AsTransfer({ d }: { d: ComparePayload }) {
     { ok: t.affordable, text: t.affordable ? `Bank after: £${bank.toFixed(1)}m at current sale prices` : `£${Math.abs(bank).toFixed(1)}m short at current sale prices` },
   ]
   return (
-    <section className="border-b-2 border-divider bg-void px-10 py-6">
+    <section className="border-b border-divider bg-void px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
         <span className="font-display text-xl font-bold uppercase tracking-wide text-text">As a transfer</span>
         <span className="text-sm text-text-muted">
@@ -214,12 +214,12 @@ function AsTransfer({ d }: { d: ComparePayload }) {
       <div className="flex flex-wrap gap-x-8 gap-y-1">
         {checks.map((c) => (
           <span key={c.text} className="flex items-center gap-2 text-xs text-text-muted">
-            <span className={`px-1.5 text-[9px] font-bold uppercase leading-4 ${c.ok ? 'bg-pitch-green text-pitch-green-ink' : 'bg-alert-red text-alert-red-ink'}`}>{c.ok ? 'ok' : 'check'}</span>
+            <span className={`px-1.5 text-[11px] font-bold uppercase leading-4 ${c.ok ? 'bg-pitch-green text-pitch-green-ink' : 'bg-alert-red text-alert-red-ink'}`}>{c.ok ? 'ok' : 'check'}</span>
             {c.text}
           </span>
         ))}
       </div>
-      <p className="mt-2 text-[11px] text-text-faint">The xP gap is the two players on their own; the week plan prices the same move inside your whole squad, so its figure can differ. Sale price is today's price; FPL pays purchase price plus half the rise, so confirm the bank on the transfers page.</p>
+      <p className="mt-2 text-[13px] text-text-faint">The xP gap is the two players on their own; the week plan prices the same move inside your whole squad, so its figure can differ. Sale price is today's price; FPL pays purchase price plus half the rise, so confirm the bank on the transfers page.</p>
     </section>
   )
 }
@@ -231,7 +231,7 @@ function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
   if (pairs.length === 0) return null
   return (
     <div className="mt-6">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">From your week plan</div>
+      <div className="mb-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">From your week plan</div>
       <div className="flex flex-wrap gap-2">
         {pairs.map((m) => (
           <button key={m.into.player_id} type="button" onClick={() => onPick(m.out.player_id, m.into.player_id)} className="bg-raised px-3 py-1.5 text-sm text-text hover:bg-divider">
@@ -261,7 +261,7 @@ export function CompareScreen() {
   return (
     <div className="data-in pb-16">
       <Masthead edition="Compare" title="Two players, on the numbers that decide a transfer" />
-      <div className="grid grid-cols-2 gap-10 border-b-2 border-divider px-10 py-5">
+      <div className="grid grid-cols-2 gap-10 border-b border-divider px-10 py-5">
         <Picker label="Player A" selected={find(a)} index={rows} onPick={(id) => set('a', id)} exclude={b} />
         <Picker label="Player B" selected={find(b)} index={rows} onPick={(id) => set('b', id)} exclude={a} />
       </div>
@@ -285,20 +285,20 @@ export function CompareScreen() {
       )}
       {a && b && compare.status === 'ready' && compare.data && (
         <>
-          <section className="grid grid-cols-2 gap-10 border-b-2 border-divider px-10 py-8">
+          <section className="grid grid-cols-2 gap-10 border-b border-divider px-10 py-8">
             <Hero p={compare.data.a} align="left" />
             <Hero p={compare.data.b} align="right" />
           </section>
           <Verdict d={compare.data} />
           <AsTransfer d={compare.data} />
-          <section className="border-b-2 border-divider px-10 py-7">
+          <section className="border-b border-divider px-10 py-7">
             {compare.data.rows.map((r) => <Row key={r.key} r={r} />)}
           </section>
           <Components a={compare.data.a} b={compare.data.b} />
           <section className="grid grid-cols-2 gap-10 px-10 py-7">
             {[compare.data.a, compare.data.b].map((p) => (
               <div key={p.player_id}>
-                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{p.name} · next fixtures</div>
+                <div className="mb-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{p.name} · next fixtures</div>
                 <FixtureRun fixtures={p.fixtures} max={5} showEvent />
                 {p.news && <p className="mt-3 text-xs text-text-muted">Official note: {p.news}</p>}
                 <p className="tabular mt-3 text-xs text-text-muted">

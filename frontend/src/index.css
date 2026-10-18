@@ -15,23 +15,23 @@
    registers). The old dashboard (`data/dashboard.html`) keeps its own
    original CSS untouched - this file only ever governed the React app. */
 :root {
-  --void: #0a0e14;
-  --panel: #12171f;
-  --raised: #1a2029;
-  --divider: #232b36;
-  --text: #f5f3ee;
-  --text-muted: #9099a8;
-  --text-faint: #5b6472;
+  --void: #0b0e13;
+  --panel: #12161d;
+  --raised: #1a1f28;
+  --divider: #262d38;
+  --text: #edf0f5;
+  --text-muted: #a3adbb;
+  --text-faint: #6e7a8a;
 
-  --pitch-green: #1fce6b;
-  --pitch-green-deep: #12a552;
-  --pitch-green-ink: #04150c;
-  --broadcast-gold: #f0a93e;
-  --broadcast-gold-ink: #1a1100;
-  --broadcast-blue: #2d6cdf;
-  --broadcast-blue-ink: #f5f3ee;
-  --alert-red: #e3452f;
-  --alert-red-ink: #f5f3ee;
+  --pitch-green: #3ecf8e;
+  --pitch-green-deep: #2aa974;
+  --pitch-green-ink: #04140d;
+  --broadcast-gold: #e8b65a;
+  --broadcast-gold-ink: #1a1204;
+  --broadcast-blue: #4a7be8;
+  --broadcast-blue-ink: #f5f7fb;
+  --alert-red: #f0594a;
+  --alert-red-ink: #fff7f6;
 
   --fs-label: 0.6875rem;
   --fs-body: 0.9375rem;
@@ -76,8 +76,8 @@
   --sidebar-accent-foreground: var(--text);
   --sidebar-border: var(--divider);
   --sidebar-ring: var(--pitch-green);
-  --radius: 0px;
-  --radius-md: 2px; /* shadcn button.tsx references this directly - keep it sharp, not undefined */
+  --radius: 10px;
+  --radius-md: 8px; /* shadcn button.tsx references this directly - keep it sharp, not undefined */
 }
 
 /* Deliberately no `prefers-color-scheme: light` branch (2026-09-08 redesign
@@ -148,8 +148,14 @@
   --text-display: var(--fs-display);
 
   --radius-none: 0px;
-  --radius-sm: 2px;
+  --radius-sm: 4px;
+  --radius-lg: 12px;
   --radius-pill: 999px;
+
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.25;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.45;
 }
 
 /* Real, self-hosted variable-weight files (2026-09-08 - a real, confirmed
@@ -198,20 +204,6 @@ body,
     @apply bg-background text-foreground font-sans;
     margin: 0;
     position: relative;
-  }
-  /* Real broadcast-truck grain (full redesign pass, richness follow-up) -
-     a fixed, low-opacity noise overlay so the void/panel surfaces read as
-     material rather than flat vector fills. Pure CSS (inline SVG feTurbulence
-     data URI), zero network request, effectively free to paint. */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    pointer-events: none;
-    opacity: 0.035;
-    mix-blend-mode: overlay;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
 
@@ -368,14 +360,18 @@ body,
    Part 6's own "keep the pitch, make it the dominant visual object." */
 .pitch-surface {
   position: relative;
-  background: repeating-linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--pitch-green) 9%, var(--void)) 0,
-    color-mix(in srgb, var(--pitch-green) 9%, var(--void)) 64px,
-    color-mix(in srgb, var(--pitch-green) 4%, var(--void)) 64px,
-    color-mix(in srgb, var(--pitch-green) 4%, var(--void)) 128px
-  );
-  border: 2px solid var(--divider);
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 40%, transparent 55%, color-mix(in srgb, var(--void) 55%, transparent) 100%),
+    repeating-linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--pitch-green) 11%, var(--void)) 0,
+      color-mix(in srgb, var(--pitch-green) 11%, var(--void)) 56px,
+      color-mix(in srgb, var(--pitch-green) 7%, var(--void)) 56px,
+      color-mix(in srgb, var(--pitch-green) 7%, var(--void)) 112px
+    );
+  border: 1px solid color-mix(in srgb, var(--pitch-green) 18%, var(--divider));
 }
 .pitch-surface::before {
   content: "";
@@ -396,4 +392,46 @@ body,
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
   border-radius: 999px;
   transform: translate(-50%, -50%);
+}
+
+/* ===================================================================
+   SCREEN FRAME (2026-10-18 visual rebuild)
+   A centred column, a calm gap, and every top-level band of a screen set
+   as one bordered, softly rounded surface. The screens still compose
+   their own bands; this is the one place that gives them the same edge,
+   the same rhythm and the same width.
+   =================================================================== */
+.screen-frame {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px 32px 72px;
+}
+.screen-frame > * {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 0 !important;
+}
+.screen-frame > * > * {
+  background-color: var(--panel);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.screen-frame > * > *:empty {
+  display: none;
+}
+
+/* Small filled blocks (tags, chips, tiles, cells) get a soft corner; the
+   utility classes (rounded-full, rounded-none) still win over this base rule. */
+@layer base {
+  [class*="bg-raised"],
+  [class*="bg-pitch-green"],
+  [class*="bg-broadcast-gold"],
+  [class*="bg-broadcast-blue"],
+  [class*="bg-alert-red"],
+  [class*="bg-panel"] {
+    border-radius: 6px;
+  }
 }

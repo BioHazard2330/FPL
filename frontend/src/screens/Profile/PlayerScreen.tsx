@@ -52,7 +52,7 @@ export function PlayerScreen() {
     return (
       <div className="animate-pulse pb-16">
         <SkelMasthead />
-        <div className="flex gap-8 border-b-2 border-divider px-10 py-8">
+        <div className="flex gap-8 border-b border-divider px-10 py-8">
           <Skel className="h-32 w-32" />
           <div className="flex-1 space-y-3">
             <Skel className="h-10 w-72" />
@@ -91,7 +91,7 @@ export function PlayerScreen() {
 
       {/* THE FILE HEAD - kit at real scale, identity, and the one thing that
           changes whether any of the rest matters: availability. */}
-      <div className="relative overflow-hidden border-b-2 border-divider">
+      <div className="relative overflow-hidden border-b border-divider">
         <span className="ghost-watermark pointer-events-none absolute -top-14 right-4 select-none font-display text-[12rem] font-bold uppercase leading-none">
           {pl.position}
         </span>
@@ -105,9 +105,9 @@ export function PlayerScreen() {
                 <div className="flex h-44 w-36 flex-col items-center justify-center gap-1 border-2 border-divider bg-panel text-center">
                   <span className="text-[8px] font-bold uppercase tracking-wide text-text-faint">This season</span>
                   <span className="tabular font-display text-2xl font-bold text-pitch-green">{totals?.total_points ?? '—'}</span>
-                  <span className="text-[9px] uppercase tracking-wide text-text-faint">points</span>
+                  <span className="text-[11px] uppercase tracking-wide text-text-faint">points</span>
                   {totals && (
-                    <span className="tabular mt-1 text-[10px] text-text-muted">
+                    <span className="tabular mt-1 text-[12px] text-text-muted">
                       {totals.goals_scored}G &middot; {totals.assists}A
                     </span>
                   )}
@@ -121,9 +121,9 @@ export function PlayerScreen() {
               <Link to={`/club/${pl.team_id}`} className="text-sm font-bold uppercase tracking-wide text-text-muted hover:text-text">
                 {pl.team_name}
               </Link>
-              <span className="bg-raised px-1.5 py-0.5 text-[10px] font-bold text-text-muted">{pl.position}</span>
-              {pl.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[10px] font-bold text-broadcast-gold-ink">IN MY SQUAD</span>}
-              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[10px] font-bold uppercase text-text-muted hover:text-text">Compare</Link>
+              <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{pl.position}</span>
+              {pl.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[12px] font-bold text-broadcast-gold-ink">IN MY SQUAD</span>}
+              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[12px] font-bold uppercase text-text-muted hover:text-text">Compare</Link>
             </div>
             <div className="mt-1 font-display text-5xl font-bold uppercase leading-none text-text">{pl.name}</div>
             <div className="mt-3 flex flex-wrap items-center gap-4">
@@ -131,7 +131,7 @@ export function PlayerScreen() {
                 <span className="tabular font-display text-2xl font-bold text-text">£{pl.price_m.toFixed(1)}m</span>
               )}
               {status && (
-                <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${status.fill}`}>{status.label}</span>
+                <span className={`px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide ${status.fill}`}>{status.label}</span>
               )}
             </div>
             {pl.news && <p className="mt-2 max-w-2xl text-sm text-broadcast-gold">{pl.news}</p>}
@@ -145,7 +145,7 @@ export function PlayerScreen() {
 
       {/* SEASON TOTALS - real recorded totals, never a projection. */}
       {totals && (
-        <div className="grid grid-cols-2 gap-px border-b-2 border-divider bg-divider sm:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-px border-b border-divider bg-divider sm:grid-cols-4 lg:grid-cols-7">
           {(
             [
               ['Points', totals.total_points],
@@ -158,7 +158,7 @@ export function PlayerScreen() {
             ] as const
           ).map(([label, value]) => (
             <div key={label} className="bg-void px-5 py-4">
-              <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">{label}</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
               <div className="tabular mt-1 font-display text-2xl font-bold text-text">
                 {value === null || value === undefined ? '—' : typeof value === 'number' ? value : value}
               </div>
@@ -170,20 +170,20 @@ export function PlayerScreen() {
       <ProjectionBand playerId={pl.player_id} />
 
       {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
-      <div className="border-b-2 border-divider px-10 py-8">
+      <div className="border-b border-divider px-10 py-8">
         <div className="mb-4 flex flex-wrap items-baseline gap-3">
           <span className="font-display text-2xl font-bold uppercase text-text">Where he shoots</span>
-          <span className="text-[11px] text-text-faint">every shot FotMob recorded for him this season · dot area is xG · filled only for a goal</span>
+          <span className="text-[13px] text-text-faint">every shot FotMob recorded for him this season · dot area is xG · filled only for a goal</span>
         </div>
         <PlayerShots playerId={pl.player_id} name={pl.name} teamShort={pl.team_short} shots={p.shots} mine={pl.is_mine} />
       </div>
 
       {/* THE RACE - cumulative goals against cumulative xG, every match on record. */}
       {p.career.length > 1 && (
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
             <span className="font-display text-2xl font-bold uppercase text-text">The race</span>
-            <span className="text-[11px] text-text-faint">what his chances were worth against what he made of them, every match this database holds</span>
+            <span className="text-[13px] text-text-faint">what his chances were worth against what he made of them, every match this database holds</span>
           </div>
           <XgRace career={p.career} thisSeason={p.match_log[0]?.season ?? null} />
         </div>
@@ -191,10 +191,10 @@ export function PlayerScreen() {
 
       {/* THE MARKET - the crowd's read on him. */}
       {(p.ownership.length > 1 || p.momentum.length > 1) && (
-        <div className="border-b-2 border-divider px-10 py-8">
+        <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
             <span className="font-display text-2xl font-bold uppercase text-text">The market</span>
-            <span className="text-[11px] text-text-faint">ownership as it moved, and the transfer counters each gameweek, as sampled</span>
+            <span className="text-[13px] text-text-faint">ownership as it moved, and the transfer counters each gameweek, as sampled</span>
           </div>
           <MarketPulse ownership={p.ownership} momentum={p.momentum} deadlines={p.deadlines} />
         </div>
@@ -205,8 +205,8 @@ export function PlayerScreen() {
           every rate it showed was a season aggregate. */}
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Match log</span>
-          <span className="text-[11px] text-text-faint">real per-match record, most recent first</span>
+          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Match log</span>
+          <span className="text-[13px] text-text-faint">real per-match record, most recent first</span>
         </div>
         {p.match_log.length === 0 ? (
           <p className="max-w-2xl text-sm text-text-muted">
@@ -218,7 +218,7 @@ export function PlayerScreen() {
             <table className="w-full min-w-[44rem] text-left text-sm">
               <caption className="sr-only">Per-match record</caption>
               <thead>
-                <tr className="border-b-2 border-divider text-[10px] uppercase tracking-[0.14em] text-text-faint">
+                <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
                   <th scope="col" className="py-2 pr-4 font-bold">Date</th>
                   <th scope="col" className="py-2 pr-4 font-bold">Returns</th>
                   <th scope="col" className="tabular py-2 pr-4 text-right font-bold">Min</th>
@@ -239,8 +239,8 @@ export function PlayerScreen() {
                   return (
                     <Fragment key={i}>
                     {newSeason && (
-                      <tr className="border-b-2 border-divider">
-                        <td colSpan={8} className="bg-panel py-1.5 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">
+                      <tr className="border-b border-divider">
+                        <td colSpan={8} className="bg-panel py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
                           {m.season} season
                         </td>
                       </tr>
@@ -272,8 +272,8 @@ export function PlayerScreen() {
 
       {/* PRICE - the FPL market's own read on this player over time. */}
       {p.price_history.length > 1 && (
-        <div className="border-t-2 border-divider px-10 py-8">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Price</div>
+        <div className="border-t border-divider px-10 py-8">
+          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Price</div>
           <Chart
             type="line"
             height={180}

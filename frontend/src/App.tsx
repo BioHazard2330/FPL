@@ -33,6 +33,7 @@ function App() {
         <ContextHeader />
         <MatchdayBar />
         <main className="flex-1 overflow-auto">
+          <div className="screen-frame">
           <Routes>
             <Route path="/" element={<CommandScreen />} />
             <Route path="/my-team" element={<MyTeamScreen />} />
@@ -54,6 +55,7 @@ function App() {
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />
           </Routes>
+          </div>
         </main>
       </SidebarInset>
       <CommandPalette />

@@ -165,5 +165,5 @@ export function AwayDaysMap({ legs }: { legs: TravelLeg[] }) {
   }, [legs])
 
   if (legs.length === 0) return null
-  return <div ref={containerRef} className="h-full w-full [&_.leaflet-control-attribution]:bg-transparent [&_.leaflet-control-attribution]:text-[9px] [&_.leaflet-control-attribution]:text-text-faint" />
+  return <div ref={containerRef} className="h-full w-full [&_.leaflet-control-attribution]:bg-transparent [&_.leaflet-control-attribution]:text-[11px] [&_.leaflet-control-attribution]:text-text-faint" />
 }

@@ -133,8 +133,8 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
   return (
     <section className="bg-void px-10 py-10">
       <div className="mb-1 flex items-baseline gap-4">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">Before the deadline</span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint">
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Before the deadline</span>
+        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
           {open === 0 ? 'nothing open' : `${open} thing${open === 1 ? '' : 's'} to look at`}
         </span>
       </div>
@@ -142,7 +142,7 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
         {items.map((it) => (
           <div key={it.title} className={`border-l-4 bg-panel px-5 py-3.5 ${TONE[it.tone].rail}`}>
             <div className="flex items-center gap-3">
-              <span className={`px-1.5 text-[9px] font-bold uppercase leading-4 tracking-[0.12em] ${TONE[it.tone].chip}`}>{TONE[it.tone].label}</span>
+              <span className={`px-1.5 text-[11px] font-bold uppercase leading-4 tracking-[0.1em] ${TONE[it.tone].chip}`}>{TONE[it.tone].label}</span>
               <span className="text-sm font-bold text-text">{it.title}</span>
             </div>
             <div className="mt-1 text-xs leading-relaxed text-text-muted">{it.detail}</div>

@@ -15,8 +15,8 @@ export function StoriesRail({ stories, subject }: { stories: Story[] | undefined
   const videos = stories.filter((s) => s.kind === 'video').slice(0, 3)
   const rest = stories.filter((s) => s.kind !== 'video').slice(0, 8)
   return (
-    <div className="border-t-2 border-divider px-10 py-8">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">In the news</div>
+    <div className="border-t border-divider px-10 py-8">
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">In the news</div>
       <p className="mb-4 text-xs text-text-muted">Stories that name {subject}, newest first. Matched on names in the text.</p>
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-10">
         <div>
@@ -28,7 +28,7 @@ export function StoriesRail({ stories, subject }: { stories: Story[] | undefined
                 <div className="flex h-14 w-24 shrink-0 items-end bg-raised p-1.5 font-display text-xs font-bold uppercase leading-none text-text-faint">{s.kind === 'post' ? 'r/FantasyPL' : s.source}</div>
               )}
               <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{s.source} · {relativeTime(s.published_at) ?? ''}</div>
+                <div className="font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{s.source} · {relativeTime(s.published_at) ?? ''}</div>
                 <div className="text-sm font-semibold leading-snug text-text hover:text-pitch-green">{s.title}</div>
               </div>
             </a>
@@ -55,7 +55,7 @@ export function StoriesRail({ stories, subject }: { stories: Story[] | undefined
                   </button>
                 )}
               </div>
-              <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">{v.source} · {relativeTime(v.published_at) ?? ''}</div>
+              <div className="mt-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{v.source} · {relativeTime(v.published_at) ?? ''}</div>
               <div className="text-sm font-semibold leading-snug text-text">{v.title}</div>
             </div>
           ))}

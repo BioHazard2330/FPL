@@ -15,14 +15,14 @@ export function DeskStrip({ desk: d }: { desk: DeskPayload | null }) {
   return (
     <section className="bg-void px-10 py-10">
       <div className="mb-4 flex items-baseline justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">From the desk</span>
-        <Link to="/desk" className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint hover:text-text">Open the desk &rarr;</Link>
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">From the desk</span>
+        <Link to="/desk" className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint hover:text-text">Open the desk &rarr;</Link>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_22rem] gap-10">
         <div>
           {items.map((a) => (
             <a key={a.id} href={a.link} target="_blank" rel="noreferrer" className="block border-b border-divider py-2.5 first:pt-0">
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">
+              <div className="font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">
                 {a.source} · {relativeTime(a.published_at) ?? ''} · {a.players.filter((p) => p.mine || p.target).map((p) => `${p.name}${p.mine ? ' (yours)' : ' (plan)'}`).join(', ')}
               </div>
               <div className="text-[15px] font-semibold leading-snug text-text hover:text-pitch-green">{a.title}</div>
@@ -30,7 +30,7 @@ export function DeskStrip({ desk: d }: { desk: DeskPayload | null }) {
           ))}
         </div>
         <div>
-          {flagged.length > 0 && <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint">Official injury notes</div>}
+          {flagged.length > 0 && <div className="mb-1 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">Official injury notes</div>}
           {flagged.map((i) => (
             <div key={i.player_id} className="border-b border-divider py-1.5 text-sm">
               <Link to={`/player/${i.player_id}`} className="font-bold text-text hover:text-pitch-green">{i.name}</Link>{' '}

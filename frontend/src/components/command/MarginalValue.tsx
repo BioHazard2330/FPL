@@ -27,7 +27,7 @@ export function MarginalValue({ plan }: { plan: WeekPlanPayload }) {
 
   return (
     <section className="bg-panel px-10 py-10">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">What each extra transfer buys</div>
+      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">What each extra transfer buys</div>
       <p className="mb-8 max-w-2xl text-sm text-text-muted">
         Points added over {plan.horizon} gameweeks by the next transfer, on top of the ones before it.
         {ft >= 5 && ' You hold five free transfers, so using one costs nothing and rolling wastes one.'}
@@ -36,7 +36,7 @@ export function MarginalValue({ plan }: { plan: WeekPlanPayload }) {
       <div className="relative max-w-3xl" style={{ height: BAR_AREA + FOOT + 44 }}>
         <div className="absolute inset-x-0 border-t border-dashed border-broadcast-gold/70" style={{ bottom: lineBottom }} />
         <span
-          className="absolute right-0 bg-panel pl-2 text-[9px] font-bold uppercase tracking-[0.12em] text-broadcast-gold"
+          className="absolute right-0 bg-panel pl-2 text-[11px] font-bold uppercase tracking-[0.1em] text-broadcast-gold"
           style={{ bottom: lineBottom + 4 }}
         >
           {bar} points &mdash; the least a transfer has to earn
@@ -54,7 +54,7 @@ export function MarginalValue({ plan }: { plan: WeekPlanPayload }) {
                 </div>
                 <div className={`bar-draw-up w-14 ${taken ? 'bg-pitch-green' : 'bg-raised'}`} style={{ height: h }} />
                 <div
-                  className="flex items-center text-[10px] font-bold uppercase tracking-[0.12em] text-text-faint"
+                  className="flex items-center text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint"
                   style={{ height: FOOT }}
                 >
                   {ORDINAL[s.k - 1] ?? `${s.k}th`} transfer

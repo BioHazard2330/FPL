@@ -41,18 +41,18 @@ export function MatchdayBar() {
   if (!live) return null
 
   return (
-    <div className="flex flex-wrap items-stretch border-b-2 border-divider bg-panel">
+    <div className="flex flex-wrap items-stretch border-b border-divider bg-panel">
       {/* PHASE - the strip's identity, and the loudest thing on it when it
           matters. A flat block, so the colour reads at a glance. */}
-      <div className={`flex shrink-0 items-center gap-2.5 px-6 py-3 ${info.fill}`}>
+      <div className={`my-2 ml-6 mr-2 flex shrink-0 items-center gap-2.5 rounded-full px-4 py-1.5 ${info.fill}`}>
         {info.live && <span className="size-2 animate-pulse-live rounded-full bg-current" />}
-        <span className="font-display text-base font-bold uppercase tracking-[0.16em]">{info.label}</span>
+        <span className="font-display text-sm font-semibold uppercase tracking-[0.12em]">{info.label}</span>
       </div>
 
       {/* THE CLOCK - the single number this bar exists for. */}
       {countdown && !countdown.expired && (
-        <div className="flex shrink-0 items-baseline gap-3 border-r-2 border-divider px-6 py-1.5">
-          <span className="text-[9px] font-bold uppercase leading-tight tracking-[0.16em] text-text-faint">
+        <div className="flex shrink-0 items-baseline gap-3 border-r border-divider px-6 py-1.5">
+          <span className="text-[11px] font-bold uppercase leading-tight tracking-[0.1em] text-text-faint">
             {live.gw?.next_deadline_name ? `${live.gw.next_deadline_name.replace('Gameweek', 'GW')} deadline` : 'Deadline'}
           </span>
           <span className={`tabular font-display text-4xl font-bold leading-none ${info.ink}`}>
@@ -63,12 +63,12 @@ export function MatchdayBar() {
 
       {/* WHAT IT MEANS - one line, so a phase word is never just decoration. */}
       <div className="flex min-w-0 flex-1 items-center px-5 py-2">
-        <span className="truncate text-[11px] text-text-faint">{info.sub}</span>
+        <span className="truncate text-[13px] text-text-faint">{info.sub}</span>
       </div>
 
       {/* LIVE FOOTBALL - only ever rendered when football is genuinely on. */}
       {matches.length > 0 && (
-        <div className="flex shrink-0 items-center gap-4 border-l-2 border-divider px-5 py-1.5">
+        <div className="flex shrink-0 items-center gap-4 border-l border-divider px-5 py-1.5">
           <div className="flex items-center gap-2">
             {matches.slice(0, 6).map((m) => {
               const home = crestUrl(m.home_code)
@@ -76,7 +76,7 @@ export function MatchdayBar() {
               return (
                 <span
                   key={m.match_id}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 ${m.is_squad_match ? 'bg-broadcast-gold/20' : ''}`}
+                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${m.is_squad_match ? 'bg-broadcast-gold/15 ring-1 ring-broadcast-gold/30' : 'bg-raised'}`}
                   title={`${m.home_short} ${m.home_score ?? 0}-${m.away_score ?? 0} ${m.away_short}`}
                 >
                   {home && <img src={home} alt="" className="h-3.5 w-3.5" />}
@@ -89,7 +89,7 @@ export function MatchdayBar() {
             })}
           </div>
           {playingNow > 0 && (
-            <span className="text-[10px] font-bold uppercase tracking-wide text-text-faint">
+            <span className="text-[12px] font-bold uppercase tracking-wide text-text-faint">
               <span className="tabular text-sm text-text">{playingNow}</span> of mine playing
             </span>
           )}

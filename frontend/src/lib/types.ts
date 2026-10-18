@@ -1728,6 +1728,24 @@ export interface PreviewFixture {
     likely_score_p: number
   }
   market: { home_win: number; draw: number; away_win: number; bookmakers: number; retrieved_at: string } | null
+  lens: PreviewLens
+}
+
+export interface PreviewLensRow {
+  source: string
+  league: number
+  attack: number
+  defence: number
+  expected: number
+  shift: number
+}
+
+export interface PreviewLens {
+  home: PreviewLensRow[]
+  away: PreviewLensRow[]
+  matches: { home: number; away: number }
+  headline: (PreviewLensRow & { side: 'home' | 'away' }) | null
+  takers?: { player_id: number; name: string; xg: number; shots: number }[]
 }
 
 export interface TickerEntry {
@@ -1742,6 +1760,7 @@ export interface TickerEntry {
 
 export interface PreviewsPayload {
   event: number | null
+  events?: number[]
   generated_at: string
   fixtures: PreviewFixture[]
   ticker?: {
@@ -1797,7 +1816,7 @@ export interface ComparePlayer {
   expected_minutes: number
   p_blank: number | null
   p_5plus: number | null
-  components: Record<'appearance' | 'goals' | 'assists' | 'bonus' | 'clean_sheet' | 'cards' | 'conceded' | 'defcon', number> | null
+  components: Record<'appearance' | 'goals' | 'assists' | 'bonus' | 'clean_sheet' | 'cards' | 'conceded' | 'defcon' | 'saves', number> | null
   points_per_pound: number | null
   form: number | null
   ppg: number | null
@@ -1899,7 +1918,19 @@ export interface MatchRebuild {
   own_goals_or_unshot: { home: number; away: number }
 }
 
+export interface ArmbandRow {
+  event: number
+  multiplier: number
+  chip: string | null
+  captain: { player_id: number; name: string; actual: number; deserved: number }
+  best_actual: { player_id: number; name: string; actual: number }
+  best_deserved: { player_id: number; name: string; deserved: number }
+  cost: number
+  owed: number
+}
+
 export interface AuditPayload {
+  armband: ArmbandRow[]
   event: number | null
   events: number[]
   radar_season: { hot: LuckRow[]; cold: LuckRow[] }

@@ -29,13 +29,13 @@ export function ContextHeader() {
   const isFresh = ageMs !== null && ageMs < 5 * 60 * 1000
 
   return (
-    <header className="border-b-2 border-divider">
-      <div className="flex items-center gap-3 px-4 py-2">
+    <header className="border-b border-divider bg-panel/60 backdrop-blur">
+      <div className="flex items-center gap-3 px-5 py-2.5">
         <SidebarTrigger />
-        <dest.icon strokeWidth={2.25} className="size-3.5 text-text-faint" />
-        <span className="text-xs font-bold uppercase tracking-[0.12em] text-text-muted">{dest.label}</span>
+        <dest.icon strokeWidth={2} className="size-4 text-pitch-green" />
+        <span className="font-display text-lg font-semibold uppercase tracking-[0.06em] text-text">{dest.label}</span>
 
-        <div className="mx-auto hidden items-center gap-2 font-mono text-[11px] uppercase tracking-[0.1em] text-text-faint md:flex">
+        <div className="mx-auto hidden items-center gap-2 font-mono text-[13px] uppercase tracking-[0.1em] text-text-faint md:flex">
           {gwLabel && (
             <>
               <span className="font-bold text-text">{gwLabel}</span>
@@ -44,7 +44,7 @@ export function ContextHeader() {
           )}
         </div>
 
-        <div className="ml-auto flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.08em]">
+        <div className="ml-auto flex items-center gap-3 font-mono text-[13px] uppercase tracking-[0.08em]">
           {matches > 0 && (
             <span className="flex items-center gap-1.5 text-alert-red">
               <span className="size-1.5 animate-pulse-live rounded-full bg-alert-red" />

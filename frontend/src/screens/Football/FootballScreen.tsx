@@ -38,10 +38,10 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
   const width = Math.max(...rows.map((r) => r.fixtures.length), 1)
 
   return (
-    <div className="border-b-2 border-divider py-6">
+    <div className="border-b border-divider py-6">
       <div className="mb-4 flex flex-wrap items-baseline gap-3 px-10">
-        <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture ticker</span>
-        <span className="text-[11px] text-text-faint">my clubs &middot; easiest run first &middot; next {width} gameweeks</span>
+        <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture ticker</span>
+        <span className="text-[13px] text-text-faint">my clubs &middot; easiest run first &middot; next {width} gameweeks</span>
       </div>
       <div>
         {ordered.map((r) => {
@@ -59,7 +59,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
                     key={f.event}
                     className={`flex w-[4.5rem] flex-col items-center justify-center gap-0.5 px-1 py-1.5 ${FDR_COLOR[f.difficulty] ?? 'bg-raised text-text-muted'}`}
                   >
-                    <span className="text-[9px] font-bold uppercase opacity-80">GW{f.event}</span>
+                    <span className="text-[11px] font-bold uppercase opacity-80">GW{f.event}</span>
                     <span className="text-xs font-bold">
                       {f.opponent_short} {f.is_home ? '(H)' : '(A)'}
                     </span>
@@ -68,7 +68,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
               </div>
               {p !== null && (
                 <div className="ml-auto flex shrink-0 items-baseline gap-2 self-center">
-                  <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-faint">Avg FDR</span>
+                  <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Avg FDR</span>
                   <span
                     className={`tabular font-display text-xl font-bold ${
                       p <= 2.4 ? 'text-pitch-green' : p >= 3.6 ? 'text-alert-red' : 'text-text-muted'
@@ -118,7 +118,7 @@ function ChangeFeedRail({ rows }: { rows: ChangeFeedRow[] }) {
                 )}
               </div>
             </div>
-            <span className="shrink-0 text-[10px] text-text-faint">{relativeTime(r.detected_at)}</span>
+            <span className="shrink-0 text-[12px] text-text-faint">{relativeTime(r.detected_at)}</span>
           </div>
         )
       })}
@@ -167,10 +167,10 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
 
   if (isTimeline) {
     return (
-      <div className="flex min-w-[260px] max-w-[300px] items-start gap-3 border-l-2 border-broadcast-blue bg-void px-5 py-4">
+      <div className="flex min-w-[260px] max-w-[300px] items-start gap-3 border-l border-broadcast-blue bg-void px-5 py-4">
         <span className="mt-1 size-2 shrink-0 rounded-full bg-broadcast-blue" />
         <div>
-          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-broadcast-blue">
+          <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-broadcast-blue">
             {crest && <img src={crest} alt="" className="h-3.5 w-3.5 rounded-full" />}
             {s.category.replace(/_/g, ' ')}
           </div>
@@ -188,7 +188,7 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
     >
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-        <span className="text-[10px] font-bold uppercase tracking-wide text-text-faint">{s.category.replace(/_/g, ' ')}</span>
+        <span className="text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.category.replace(/_/g, ' ')}</span>
       </div>
       <div className={`mt-1.5 font-display font-bold text-text ${large ? 'text-4xl' : 'text-2xl'}`}>{s.entity_name}</div>
       <p className={`mt-2 leading-relaxed text-text-muted ${large ? 'max-w-2xl text-base' : 'text-sm'}`}>{s.evidence}</p>
@@ -218,25 +218,25 @@ function SignalRow({ s }: { s: FootballSignal }) {
   const isTimeline = TIMELINE_CATEGORIES.includes(s.category)
   if (isTimeline) {
     return (
-      <div className="flex items-baseline gap-2.5 border-b-2 border-divider py-2.5 text-sm last:border-b-0">
+      <div className="flex items-baseline gap-2.5 border-b border-divider py-2.5 text-sm last:border-b-0">
         <span className="size-1.5 shrink-0 rounded-full bg-broadcast-blue" />
         {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
         <span className="font-bold text-text">{s.entity_name}</span>
-        {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
+        {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
         <span className="text-broadcast-blue">{s.evidence}</span>
-        <span className="ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
+        <span className="ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
       </div>
     )
   }
   return (
-    <div className="flex flex-wrap items-baseline gap-2 border-b-2 border-divider py-2.5 text-sm last:border-b-0">
+    <div className="flex flex-wrap items-baseline gap-2 border-b border-divider py-2.5 text-sm last:border-b-0">
       {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
       <span className="font-bold text-text">{s.entity_name}</span>
-      {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[9px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
+      {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
       <span className="text-text-muted">{s.evidence}</span>
       {s.interpretation && <span className="italic text-text-faint">{s.interpretation}</span>}
       {s.fpl_effect && <span className={`font-semibold ${DIRECTION_COLOR[s.direction] ?? 'text-text'}`}>{s.fpl_effect}</span>}
-      <span className="ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
+      <span className="ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
     </div>
   )
 }
@@ -256,13 +256,13 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
 
   return (
     <div>
-      <div className="flex items-center gap-4 border-b-2 border-divider px-10 pb-2">
+      <div className="flex items-center gap-4 border-b border-divider px-10 pb-2">
         <span className="w-40 shrink-0" />
-        <span className="w-20 shrink-0 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint">Next</span>
-        <span className="flex-1 text-right text-[9px] font-bold uppercase tracking-[0.16em] text-alert-red">xGA conceded</span>
+        <span className="w-20 shrink-0 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Next</span>
+        <span className="flex-1 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-alert-red">xGA conceded</span>
         <span className="w-px" />
-        <span className="flex-1 text-[9px] font-bold uppercase tracking-[0.16em] text-pitch-green">xG created</span>
-        <span className="hidden w-[26rem] shrink-0 text-[9px] font-bold uppercase tracking-[0.16em] text-text-faint xl:block">
+        <span className="flex-1 text-[11px] font-bold uppercase tracking-[0.1em] text-pitch-green">xG created</span>
+        <span className="hidden w-[26rem] shrink-0 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint xl:block">
           Shape &amp; FPL implication
         </span>
       </div>
@@ -305,7 +305,7 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
               <span className="tabular text-xs text-text-muted">{xg !== null ? xg.toFixed(2) : '—'}</span>
             </div>
 
-            <div className="hidden w-[26rem] shrink-0 text-[11px] leading-snug xl:block">
+            <div className="hidden w-[26rem] shrink-0 text-[13px] leading-snug xl:block">
               {(t.formation || t.tactical) && (
                 <span className="text-text-faint">{[t.formation, t.tactical].filter(Boolean).join(' · ')} </span>
               )}
@@ -329,11 +329,11 @@ function FootballSkeleton() {
       <div className="px-10 pb-6 pt-7">
         <div className="h-2 w-40 bg-raised" />
         <div className="mt-2 h-9 w-56 bg-raised" />
-        <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">
+        <div className="mt-3 font-mono text-[13px] uppercase tracking-[0.15em] text-text-faint">
           Loading football intelligence &mdash; a league-wide scan, can take up to 30s on a cold cache
         </div>
       </div>
-      <div className="border-y-2 border-divider py-6">
+      <div className="border-y border-divider py-6">
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="flex items-center gap-4 border-t border-divider px-10 py-2 first:border-t-0">
             <div className="h-6 w-28 shrink-0 bg-raised" />
@@ -423,7 +423,7 @@ export function FootballScreen() {
         <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
           MATCH
         </span>
-        <div className="relative font-mono text-[11px] uppercase tracking-[0.15em] text-text-faint">Football intelligence</div>
+        <div className="relative font-mono text-[13px] uppercase tracking-[0.15em] text-text-faint">Football intelligence</div>
         <div className="relative mt-1 flex flex-wrap items-baseline gap-x-3">
           <span className="tabular font-display text-4xl font-bold text-text">{p.signal_count}</span>
           <span className="text-sm text-text-faint">signals tracked</span>
@@ -442,8 +442,8 @@ export function FootballScreen() {
           memoized above (see its own comment) so the map doesn't tear
           down and rebuild on every 60s poll tick. */}
       {travelLegs.length > 0 && (
-        <div className="border-b-2 border-divider px-10 py-8">
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Away days</div>
+        <div className="border-b border-divider px-10 py-8">
+          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Away days</div>
           <div className="mb-4 text-xs text-text-faint">
             real upcoming away trips for your clubs &middot; {travelLegs.length} legs
           </div>
@@ -463,11 +463,11 @@ export function FootballScreen() {
           narrow MANAGER/XI/AVAILABILITY newsroom ticker runs alongside,
           never a fourth equal-width card. */}
       {(p.squad_changes.length > 0 || p.change_feed.length > 0) && (
-        <div className="mt-6 grid grid-cols-1 gap-8 border-y-2 border-divider px-10 py-6 lg:grid-cols-[7fr_3fr]">
+        <div className="mt-6 grid grid-cols-1 gap-8 border-y border-divider px-10 py-6 lg:grid-cols-[7fr_3fr]">
           <div>
             {p.squad_changes.length > 0 && (
               <>
-                <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Featured squad signals</div>
+                <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Featured squad signals</div>
                 <div className="flex flex-wrap gap-4">
                   {featuredGroups.slice(0, 4).map((g, i) => (
                     <FeaturedSignalCard key={g[0].entity_id} s={g[0]} large={i === 0} extra={g.slice(1, 4)} />
@@ -482,8 +482,8 @@ export function FootballScreen() {
             )}
           </div>
           {p.change_feed.length > 0 && (
-            <div className="border-t-2 border-divider pt-4 lg:border-l-2 lg:border-t-0 lg:pl-6 lg:pt-0">
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Change wire</div>
+            <div className="border-t border-divider pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Change wire</div>
               <ChangeFeedRail rows={p.change_feed} />
             </div>
           )}
@@ -499,11 +499,11 @@ export function FootballScreen() {
           inside their band; trend categories render as prose rows. */}
       <div className="mt-8">
         {boardRows.map((c) => (
-          <div key={c.category} className="grid grid-cols-1 gap-x-8 border-t-2 border-divider px-10 py-6 lg:grid-cols-[13rem_1fr]">
+          <div key={c.category} className="grid grid-cols-1 gap-x-8 border-t border-divider px-10 py-6 lg:grid-cols-[13rem_1fr]">
             <div className="mb-3 lg:mb-0">
               <div className={`border-l-4 pl-3 ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
                 <div className="font-display text-xl font-bold uppercase leading-tight tracking-wide text-text">{c.label}</div>
-                <div className="tabular mt-0.5 text-[11px] text-text-faint">{c.count} tracked</div>
+                <div className="tabular mt-0.5 text-[13px] text-text-faint">{c.count} tracked</div>
               </div>
             </div>
             <div>
@@ -514,10 +514,10 @@ export function FootballScreen() {
       </div>
 
       {p.team_state.length > 0 && (
-        <div className="mt-10 border-t-2 border-divider pt-8">
+        <div className="mt-10 border-t border-divider pt-8">
           <div className="mb-3 flex flex-wrap items-baseline gap-3 px-10">
-            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</span>
-            <span className="text-[11px] text-text-faint">real rolling xG / xGA, opposed on one shared scale</span>
+            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</span>
+            <span className="text-[13px] text-text-faint">real rolling xG / xGA, opposed on one shared scale</span>
           </div>
           <TeamStateGrid rows={p.team_state} fixtures={p.fixtures} />
         </div>
@@ -525,8 +525,8 @@ export function FootballScreen() {
 
       {/* TEAM ODDS - real next-fixture clean-sheet ranking, bar composition not a table */}
       {p.team_odds.length > 0 && (
-        <div className="mt-10 border-t-2 border-divider px-10 pt-8">
-          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Team odds — next fixture</div>
+        <div className="mt-10 border-t border-divider px-10 pt-8">
+          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Team odds — next fixture</div>
           <div className="grid grid-cols-1 gap-x-10 gap-y-1 md:grid-cols-2">
             {p.team_odds.map((t) => {
               const crest = crestUrl(t.team_code)
@@ -536,7 +536,7 @@ export function FootballScreen() {
                   <Link to={`/club/${t.team_id}`} className="w-12 shrink-0 font-bold text-text hover:text-pitch-green">
                     {t.team_short}
                   </Link>
-                  <span className="w-24 shrink-0 text-[11px] text-text-faint">vs {t.opponent_short} {t.is_home ? '(H)' : '(A)'}</span>
+                  <span className="w-24 shrink-0 text-[13px] text-text-faint">vs {t.opponent_short} {t.is_home ? '(H)' : '(A)'}</span>
                   <span className="relative h-4 flex-1 border border-divider bg-void">
                     <span className="bar-draw absolute inset-y-0 left-0 bg-pitch-green" style={{ width: `${t.clean_sheet_pct}%` }} />
                   </span>

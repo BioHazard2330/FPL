@@ -18,10 +18,10 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
   const maxGain = Math.max(...audit.moves.map((m) => m.stress?.gain_with_others ?? m.gain), 1)
 
   return (
-    <section className="border-b-2 border-divider bg-void px-10 py-8">
+    <section className="border-b border-divider bg-void px-10 py-8">
       <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
-        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-faint">GW{audit.event} week plan, checked</span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-faint">
+        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">GW{audit.event} week plan, checked</span>
+        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
           decision #{audit.decision_id} &middot; solved {relativeTime(audit.computed_at) ?? '—'}
           {audit.solver && (
             <>
@@ -46,7 +46,7 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
           <table className="w-full min-w-[56rem] text-left text-sm">
             <caption className="sr-only">Each planned move and what it is worth if the player coming in disappoints</caption>
             <thead>
-              <tr className="border-b-2 border-divider text-[10px] uppercase tracking-[0.14em] text-text-faint">
+              <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
                 <th scope="col" className="py-2 pr-4 font-bold">Move</th>
                 <th scope="col" className="py-2 pr-4 text-right font-bold">xP next GW</th>
                 <th scope="col" className="py-2 pr-4 text-right font-bold">Solio</th>
@@ -66,7 +66,7 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
                         {m.into}
                       </Link>
                       {m.start_percent_out !== null && m.start_percent_out < 70 && (
-                        <span className="ml-2 text-[10px] font-bold uppercase text-broadcast-gold">{m.out} {m.start_percent_out}% to start</span>
+                        <span className="ml-2 text-[12px] font-bold uppercase text-broadcast-gold">{m.out} {m.start_percent_out}% to start</span>
                       )}
                     </th>
                     <td className="tabular py-3 pr-4 text-right text-text-muted">
@@ -114,8 +114,8 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
         solves, not a third one.
       </p>
 
-      <div className="mt-6 border-t-2 border-divider pt-4">
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-text-faint">What the plan assumes</div>
+      <div className="mt-6 border-t border-divider pt-4">
+        <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">What the plan assumes</div>
         <ul className="max-w-3xl list-disc space-y-1.5 pl-5 text-sm text-text-muted">
           {audit.assumptions.map((a) => (
             <li key={a}>{a}</li>
