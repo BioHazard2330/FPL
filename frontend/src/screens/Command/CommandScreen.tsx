@@ -14,6 +14,7 @@ import { LineupDoctor } from '@/components/command/LineupDoctor'
 import { MarginalValue } from '@/components/command/MarginalValue'
 import { RoadAhead } from '@/components/command/RoadAhead'
 import { WeekPlanHero } from '@/components/command/WeekPlanHero'
+import { LiveCone } from '@/components/live/LiveCone'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
@@ -223,6 +224,7 @@ export function CommandScreen() {
           </span>
         </div>
       )}
+      {phase.live && <LiveCone />}
 
       {sections.map((s) => (
         <div key={s.key}>{s.node}</div>

@@ -51,7 +51,7 @@ export function ExplorerScreen() {
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 }>({ key: 'xp_five', dir: -1 })
   const [shown, setShown] = useState(PAGE)
 
-  const rows = state.status === 'ready' ? state.data.players : []
+  const rows = useMemo(() => (state.status === 'ready' ? state.data.players : []), [state])
   const teams = useMemo(() => [...new Set(rows.map((p) => p.team_short))].sort(), [rows])
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()

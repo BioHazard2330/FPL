@@ -443,7 +443,8 @@ def _shared_dc_key(conn: sqlite3.Connection, as_of_date: str):
             return None
         results = conn.execute("SELECT COUNT(*), MAX(match_date) FROM match_results_history").fetchone()
         stats = conn.execute("SELECT COUNT(*), MAX(match_date) FROM player_match_stats_history").fetchone()
-        return (files[0], as_of_date, current_season(conn), tuple(results), tuple(stats))
+        secondary = conn.execute("SELECT COUNT(*) FROM secondary_division_match_results").fetchone()
+        return (files[0], as_of_date, current_season(conn), tuple(results), tuple(stats), tuple(secondary))
     except sqlite3.Error:
         return None
 
