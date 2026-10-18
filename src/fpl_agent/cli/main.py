@@ -3031,8 +3031,7 @@ def live_watch_cmd(squad_arg: str | None, interval: int, max_hours: float, deliv
 @click.option("--max-hours", default=3.0, type=float, help="safety cap on total watch duration")
 @click.option(
     "--gated", is_flag=True,
-    help="Power-gated: stop as soon as the pre-deadline active window closes "
-    "(unless live_matchday_polling is enabled in config/power.yaml).",
+    help="Power-gated: stop as soon as the active window (deadline run-up and the gameweek's matches) closes.",
 )
 def live_match_poll_cmd(interval: int, max_hours: float, gated: bool):
     """Fast, real live-match polling for Match Intelligence Core (2026-08-21,
@@ -3102,12 +3101,12 @@ def live_match_poll_cmd(interval: int, max_hours: float, gated: bool):
     from fpl_agent.config import load_power_config
     from fpl_agent.scheduler.power_window import gate_says_active
 
-    stop_outside_window = gated and load_power_config().enabled and not load_power_config().live_matchday_polling
+    stop_outside_window = gated and load_power_config().enabled
 
     try:
         while time.monotonic() < stop_at:
             if stop_outside_window and gate_says_active() is False:
-                click.echo("live-match-poll: the pre-deadline active window has closed - stopping")
+                click.echo("live-match-poll: the active window has closed - stopping")
                 break
             # Auto-discovery (matchday-autonomy pass, 2026-08-22) - closes
             # the real remaining manual step: this used to require a human

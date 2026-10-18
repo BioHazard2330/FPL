@@ -10,6 +10,8 @@ from fpl_agent.live.sse_server import ActivityTracker, Broadcaster, LiveServer
 from fpl_agent.models.fixtures import current_live_event
 from fpl_agent.scheduler import power_window as pw
 
+from test_news_source_matching import _seed_two_players_two_teams
+
 HOUR = 3600
 CFG = PowerConfig(window_lead_hours=24, post_deadline_grace_hours=3)
 
@@ -197,3 +199,52 @@ def test_a_gate_that_cannot_say_never_lets_the_server_exit(tmp_path, monkeypatch
     server.activity._last -= 5 * 3600
     assert not server.should_exit_idle(30)
     assert server.refresh_allowed()
+
+
+# --------------------------------------------------------- the gameweek's matches
+
+
+def _fixture(conn, fixture_id, event, kickoff_epoch):
+    _seed_two_players_two_teams(conn)
+    conn.execute(
+        "INSERT INTO fixtures (id, code, event, kickoff_time, team_h, team_a, finished, started, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, 2, 0, 0, 't0')",
+        (fixture_id, fixture_id, event, datetime.utcfromtimestamp(kickoff_epoch).strftime("%Y-%m-%dT%H:%M:%SZ")),
+    )
+    conn.commit()
+
+
+def test_window_stays_open_through_a_friday_to_monday_gameweek(db_conn):
+    deadline = 1_800_000_000
+    _event(db_conn, 7, deadline)
+    _event(db_conn, 8, deadline + 7 * 24 * HOUR)
+    for i, offset in enumerate([2, 5, 29, 31, 53, 76, 100]):
+        _fixture(db_conn, i + 1, 7, deadline + offset * HOUR)
+    _fixture(db_conn, 20, 8, deadline + 7 * 24 * HOUR + 2 * HOUR)
+
+    for hours in (4, 20, 28, 60, 90, 100.5, 102.5):
+        window = pw.compute_window(db_conn, deadline + hours * HOUR, CFG)
+        assert window.active, hours
+    after = pw.compute_window(db_conn, deadline + 104.5 * HOUR, CFG)
+    assert not after.active
+    assert after.start_epoch == deadline + 7 * 24 * HOUR - 24 * HOUR
+
+
+def test_a_postponed_fixture_weeks_later_does_not_hold_the_window_open(db_conn):
+    deadline = 1_800_000_000
+    _event(db_conn, 7, deadline)
+    _fixture(db_conn, 1, 7, deadline + 2 * HOUR)
+    _fixture(db_conn, 2, 7, deadline + 40 * 24 * HOUR)
+
+    assert not pw.compute_window(db_conn, deadline + 10 * HOUR, CFG).active
+    assert pw.compute_window(db_conn, deadline + 40 * 24 * HOUR, CFG).active
+
+
+def test_window_covers_the_hour_before_kickoff_and_three_after(db_conn):
+    kickoff = 1_800_000_000
+    _event(db_conn, 7, kickoff + 90 * 24 * HOUR)
+    _fixture(db_conn, 1, 7, kickoff)
+    assert pw.compute_window(db_conn, kickoff - 59 * 60, CFG).active
+    assert pw.compute_window(db_conn, kickoff + 2.9 * HOUR, CFG).active
+    assert not pw.compute_window(db_conn, kickoff + 3.1 * HOUR, CFG).active
+    assert not pw.compute_window(db_conn, kickoff - 2 * HOUR, CFG).active

@@ -8,10 +8,13 @@ now:
 - OUTSIDE the active window, nothing stays resident. The first launch of each
   day does one full gather and exits; the rest of the day's launches are
   no-ops that never start Python.
-- INSIDE the active window - from `window_lead_hours` before the next FPL
-  deadline until `post_deadline_grace_hours` after it - the sync, the live
-  poll and the dashboard server run continuously, because team news or an
-  injury can land at any moment and is what the deadline decision turns on.
+- INSIDE the active window the sync, the live poll and the dashboard server
+  run continuously. The window is the run-up to a deadline (`window_lead_hours`
+  before it until `post_deadline_grace_hours` after) merged with the matches
+  of the gameweek (each fixture from `pre_kickoff_minutes` before kickoff to
+  `post_match_hours` after, fixtures within `matchday_bridge_hours` of each
+  other joined), because team news can land at any moment before a deadline
+  and a gameweek's matches span days, not hours.
 
 Task Scheduler cannot conditionally fire a trigger, and starting Python
 every 15 minutes just to find out it should do nothing costs more than the
@@ -32,7 +35,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fpl_agent import config as _config
@@ -51,33 +54,77 @@ class Window:
     reason: str
 
 
+def _kickoff_epochs(conn: sqlite3.Connection, since_epoch: int) -> list[int]:
+    out: list[int] = []
+    rows = conn.execute(
+        "SELECT kickoff_time FROM fixtures WHERE event IS NOT NULL AND kickoff_time IS NOT NULL AND kickoff_time >= ? "
+        "ORDER BY kickoff_time",
+        (datetime.fromtimestamp(since_epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),),
+    ).fetchall()
+    for row in rows:
+        try:
+            out.append(int(datetime.fromisoformat(row["kickoff_time"].replace("Z", "+00:00")).timestamp()))
+        except (ValueError, AttributeError):
+            continue
+    return out
+
+
+def _merge(spans: list[tuple[int, int]], tolerance: int = 0) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start - merged[-1][1] <= tolerance:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def compute_window(
     conn: sqlite3.Connection, now_epoch: float | None = None, cfg: PowerConfig | None = None,
 ) -> Window:
-    """The window around the next deadline whose post-deadline grace has not
-    yet run out. `active` is whether `now` is inside it."""
+    """The first stretch that has not yet ended, and whether `now` is inside
+    it. Two kinds of stretch, merged: the run-up to a deadline (`window_lead_hours`
+    before it until `post_deadline_grace_hours` after) and the matches themselves
+    (each fixture from `pre_kickoff_minutes` before kickoff to `post_match_hours`
+    after, with fixtures less than `matchday_bridge_hours` apart joined, so a
+    gameweek that runs Friday to Monday is one stretch, not a deadline plus a
+    gap). A gameweek is not one day; the deadline-only window closed hours into
+    a Saturday that was still being played."""
     cfg = cfg or load_power_config()
-    now = time.time() if now_epoch is None else now_epoch
+    now = int(time.time() if now_epoch is None else now_epoch)
     if not cfg.enabled:
         return Window(True, None, None, None, "power gating disabled in config/power.yaml")
     grace = int(cfg.post_deadline_grace_hours * 3600)
-    row = conn.execute(
-        "SELECT deadline_time_epoch FROM events WHERE deadline_time_epoch IS NOT NULL "
-        "AND deadline_time_epoch + ? >= ? ORDER BY deadline_time_epoch LIMIT 1",
-        (grace, int(now)),
-    ).fetchone()
-    if row is None:
-        return Window(False, None, None, None, "no upcoming deadline on record")
-    deadline = int(row["deadline_time_epoch"])
-    start = deadline - int(cfg.window_lead_hours * 3600)
-    until = deadline + grace
-    active = start <= now <= until
-    hours = (deadline - now) / 3600
-    reason = (
-        f"deadline in {hours:.1f}h - inside the {cfg.window_lead_hours:g}h window" if active and hours >= 0
-        else f"{-hours:.1f}h past the deadline - inside the post-deadline grace" if active
-        else f"deadline in {hours:.1f}h - window opens in {(start - now) / 3600:.1f}h"
+    lead = int(cfg.window_lead_hours * 3600)
+    deadlines = [
+        int(r["deadline_time_epoch"])
+        for r in conn.execute(
+            "SELECT deadline_time_epoch FROM events WHERE deadline_time_epoch IS NOT NULL AND deadline_time_epoch + ? >= ? "
+            "ORDER BY deadline_time_epoch", (grace, now - 7 * 86400),
+        ).fetchall()
+    ]
+    pre, post = int(cfg.pre_kickoff_minutes * 60), int(cfg.post_match_hours * 3600)
+    match_spans = _merge(
+        [(k - pre, k + post) for k in _kickoff_epochs(conn, now - 7 * 86400 - post)],
+        int(cfg.matchday_bridge_hours * 3600),
     )
+    deadline_spans = [(d - lead, d + grace) for d in deadlines]
+    spans = _merge(match_spans + deadline_spans)
+    current = next(((s0, s1) for s0, s1 in spans if s1 >= now), None)
+    if current is None:
+        return Window(False, None, None, None, "no upcoming deadline or match on record")
+    start, until = current
+    upcoming = [d for d in deadlines if d + grace >= now]
+    deadline = upcoming[0] if upcoming else None
+    active = start <= now <= until
+    if not active:
+        reason = f"nothing on for {(start - now) / 3600:.1f}h - next window opens then"
+    elif any(m0 <= now <= m1 for m0, m1 in match_spans):
+        reason = f"matches in play until {datetime.fromtimestamp(until, timezone.utc):%a %H:%M} UTC"
+    elif deadline is not None and now <= deadline:
+        reason = f"deadline in {(deadline - now) / 3600:.1f}h - inside the {cfg.window_lead_hours:g}h window"
+    else:
+        reason = "inside the post-deadline grace"
     return Window(active, start, until, deadline, reason)
 
 

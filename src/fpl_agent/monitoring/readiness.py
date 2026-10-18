@@ -158,14 +158,14 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
     except Exception:
         window = None
     if window is not None and not window.active:
-        # Outside the pre-deadline window the live poll and the dashboard server
+        # Outside the active window the live poll and the dashboard server
         # are meant to be down (power gating). A task that is correctly idle is
         # not stale, and reporting it as such sent a standing DEGRADED to the
         # one screen meant for spotting real faults.
         from dataclasses import replace
 
         task_healths = [
-            replace(h, status="OK", detail=f"idle by design outside the pre-deadline window ({window.reason})")
+            replace(h, status="OK", detail=f"idle by design outside the active window ({window.reason})")
             if h.task_name in ("FPLAgentLiveServer", "FPLAgentLivePoll") and h.status in ("STALE", "UNKNOWN")
             else h
             for h in task_healths

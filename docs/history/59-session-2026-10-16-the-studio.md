@@ -48,3 +48,8 @@ User, verbatim: *"upgrade every single thing to the maximum ... my own insane fp
 - **Where GW7 ends** (LIVE screen): the rest of the gameweek simulated from each match's minute and score; your final and the average manager's over the same endings. Not testable against a real live gameweek yet (GW7 has not kicked off): the live path is unit-tested and was exercised on a synthetic mid-gameweek state built from GW6's finished matches, and the pre-gameweek path was checked against GW6 (forecast 63, interval 46-82, actual 73).
 - **Measured, not fixed:** the projections run cool by about 1.1 points per player per gameweek (see CLAUDE.md). The live forecast adds it back; the projections themselves are unchanged.
 - Luck tags on every transfer card (`+15 lucky` on Cherki, `+12 lucky` on Palmer) and a one-line field strip on COMMAND.
+
+## 2026-10-18: live was off while GW7 was being played
+
+- Report: live poll, live server and sync not running with matches live. Cause: the power-gating window (2026-10-13) was the 24h before a deadline until 3h after it, so it closed at 14:00 BST on Saturday while the gameweek ran to Monday night; `live_matchday_polling: false` made the live poll stop with it.
+- Fix: `scheduler/power_window.py::compute_window` merges the deadline run-up with the matches (each fixture from 60 minutes before kickoff to 3 hours after; fixtures within 36 hours of each other joined; a fixture rescheduled weeks away does not join). `live_matchday_polling` removed; new keys `pre_kickoff_minutes`, `post_match_hours`, `matchday_bridge_hours`. GW7's window now runs to Mon 22:00 UTC. Tests in `tests/test_power_window.py`.
