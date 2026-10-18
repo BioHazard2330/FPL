@@ -11,7 +11,7 @@ type Phase = 'idle' | 'starting' | 'running' | 'failed'
 
 /** SYNC NOW - runs the full scheduled cycle once, on demand.
  *
- * Outside the pre-deadline window nothing runs on a schedule (that is what
+ * Outside the active window nothing runs on a schedule (that is what
  * power gating is for), so the data on screen can be most of a day old at the
  * very moment a manager sits down to decide. This is the same cycle the
  * scheduler would have run - sync, change detection, the week plan rebuild,

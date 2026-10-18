@@ -133,7 +133,7 @@ export function LiveScreen() {
         <div className="border-b border-divider bg-panel px-10 py-3">
           <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold">This is an old snapshot</span>
           <span className="ml-3 text-sm text-text-muted">
-            Written {relativeTime(p.generated_at)}. Nothing polls outside the pre-deadline window, so everything below is how things stood
+            Written {relativeTime(p.generated_at)}. Nothing polls outside the active window (a deadline's run-up and a gameweek's matches), so everything below is how things stood
             then. &ldquo;Sync now&rdquo; in the header brings it up to date.
           </span>
         </div>
@@ -501,10 +501,17 @@ export function LiveScreen() {
                           {c.event_type?.replace(/_/g, ' ') ?? ''}
                         </span>
                       </div>
-                      {(c.old_value !== null || c.new_value !== null) && (
+                      {c.event_type === 'early_withdrawal' || c.event_type === 'lineup_confirmed' ? (
                         <div className="text-xs text-text-muted">
-                          {c.old_value ?? '—'} &rarr; <span className="text-text">{c.new_value ?? '—'}</span>
+                          {c.event_type === 'early_withdrawal' ? 'taken off, no reason given: ' : ''}
+                          <span className="text-text">{c.new_value?.replace(/_/g, ' ') ?? '—'}</span>
                         </div>
+                      ) : (
+                        (c.old_value !== null || c.new_value !== null) && (
+                          <div className="text-xs text-text-muted">
+                            {c.old_value ?? '—'} &rarr; <span className="text-text">{c.new_value ?? '—'}</span>
+                          </div>
+                        )
                       )}
                     </div>
                     <span className="shrink-0 text-[12px] text-text-faint">{relativeTime(c.detected_at) ?? ''}</span>

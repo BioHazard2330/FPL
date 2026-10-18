@@ -79,7 +79,7 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
                   <div key={e} className="flex flex-col gap-px bg-void">
                     {list.length === 0 && <div className="flex h-full min-h-[2rem] items-center justify-center bg-void text-[12px] text-text-faint">blank</div>}
                     {list.map((f, i) => (
-                      <div key={i} className={`flex items-center justify-between px-2 py-1 text-[13px] font-bold ${BINS[bin(value(f))]}`} title={`${f.home ? 'vs' : 'at'} ${f.opponent}: ${f.xg_for.toFixed(2)} for, ${f.xg_against.toFixed(2)} against, clean sheet ${Math.round(f.cs * 100)}%`}>
+                      <div key={i} className={`flex items-center justify-between gap-1 whitespace-nowrap px-1.5 py-1 text-[12px] font-bold ${BINS[bin(value(f))]}`} title={`${f.home ? 'vs' : 'at'} ${f.opponent}: ${f.xg_for.toFixed(2)} for, ${f.xg_against.toFixed(2)} against, clean sheet ${Math.round(f.cs * 100)}%`}>
                         <span className="uppercase opacity-80">{f.opponent} {f.home ? 'H' : 'A'}{f.market ? ' ·' : ''}</span>
                         <span className="tabular">{fmt(value(f))}</span>
                       </div>

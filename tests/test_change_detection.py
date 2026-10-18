@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fpl_agent.ingestion.change_detection import (
+    detect_early_withdrawals,
     detect_lineup_confirmations,
     detect_player_lifecycle_changes,
     detect_predicted_lineup_status_changes,
@@ -513,3 +514,41 @@ def test_lineup_confirmed_ignores_players_outside_tracked_squad(db_conn):
 
     fired_untracked = detect_lineup_confirmations(db_conn, {999}, match_id=1, now="t1")
     assert fired_untracked == 0
+
+
+def _withdrawal_match(db_conn, minute, started=1, owned=None):
+    bootstrap = make_bootstrap()
+    _seed_two_teams(db_conn, bootstrap, "t0")
+    _insert_fixture_row(db_conn, 1, 1, 2, "2026-08-22T14:00:00Z")
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2)
+    db_conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, minutes, "
+        "substituted_off_minute, source, retrieved_at, confidence) VALUES (1, 1, '1', 1, ?, ?, ?, 'fotmob', 't0', 'medium')",
+        (started, minute, minute),
+    )
+    if owned is not None:
+        db_conn.execute("INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from) VALUES (1, ?, 't')", (owned,))
+    db_conn.commit()
+
+
+def test_a_squad_starter_withdrawn_in_the_first_hour_raises_a_high_event_once(db_conn):
+    _withdrawal_match(db_conn, 38)
+    assert detect_early_withdrawals(db_conn, {1}, match_id=1, now="t1") == 1
+    events = [e for e in _events(db_conn) if e["event_type"] == "early_withdrawal"]
+    assert len(events) == 1 and events[0]["severity"] == "HIGH"
+    assert detect_early_withdrawals(db_conn, {1}, match_id=1, now="t2") == 0
+
+
+def test_an_unowned_player_withdrawn_early_raises_nothing(db_conn):
+    _withdrawal_match(db_conn, 38, owned=0.4)
+    assert detect_early_withdrawals(db_conn, set(), match_id=1, now="t1") == 0
+
+
+def test_an_owned_player_withdrawn_late_in_the_hour_is_medium_and_after_it_is_ignored(db_conn):
+    _withdrawal_match(db_conn, 55, owned=12.0)
+    assert detect_early_withdrawals(db_conn, set(), match_id=1, now="t1") == 1
+    assert [e["severity"] for e in _events(db_conn) if e["event_type"] == "early_withdrawal"] == ["MEDIUM"]
+    db_conn.execute("UPDATE player_match_state SET substituted_off_minute = 71, minutes = 71")
+    db_conn.execute("DELETE FROM change_events")
+    db_conn.commit()
+    assert detect_early_withdrawals(db_conn, set(), match_id=1, now="t2") == 0

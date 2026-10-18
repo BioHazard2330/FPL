@@ -2076,6 +2076,8 @@ export interface ExplorerPlayer {
   xgi_90: number | null
   luck: number | null
   luck_z: number | null
+  deserved_ppg: number | null
+  actual_ppg: number | null
   status: string
   chance: number | null
   news: string | null

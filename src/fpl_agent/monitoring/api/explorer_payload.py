@@ -92,6 +92,8 @@ def _build() -> dict:
                 "g_a_90": round((r["goals_scored"] + r["assists"]) / minutes * 90, 2) if minutes >= 180 and r["goals_scored"] is not None else None,
                 "xgi_90": round(((r["expected_goals"] or 0) + (r["expected_assists"] or 0)) / minutes * 90, 2) if minutes >= 180 else None,
                 "luck": lk["luck"] if lk else None, "luck_z": lk["z"] if lk else None,
+                "deserved_ppg": round(lk["deserved"] / lk["gws"], 2) if lk and lk["gws"] else None,
+                "actual_ppg": round(lk["actual"] / lk["gws"], 2) if lk and lk["gws"] else None,
                 "status": r["status"], "chance": r["chance"], "news": r["news"] or None,
                 "fixtures": [
                     {"opponent": f["opponent_short"], "home": f["is_home"], "difficulty": f["difficulty"]}

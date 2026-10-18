@@ -16,7 +16,7 @@ import type { ExplorerPlayer } from '@/lib/types'
  * chances imply, in standard errors, from the audit; it is a reading of the
  * past. Fixtures are the next three, coloured by FPL's own difficulty. */
 
-type Key = 'xp_next' | 'xp_five' | 'xp_per_m' | 'price' | 'owned' | 'form' | 'minutes_share' | 'xgi_90' | 'luck_z' | 'points'
+type Key = 'xp_next' | 'xp_five' | 'xp_per_m' | 'price' | 'owned' | 'form' | 'minutes_share' | 'xgi_90' | 'luck_z' | 'points' | 'deserved_ppg'
 
 const COLUMNS: { key: Key; label: string; title: string; fmt: (p: ExplorerPlayer) => string }[] = [
   { key: 'price', label: 'Price', title: 'Current price', fmt: (p) => (p.price === null ? '' : `£${p.price.toFixed(1)}`) },
@@ -28,6 +28,7 @@ const COLUMNS: { key: Key; label: string; title: string; fmt: (p: ExplorerPlayer
   { key: 'points', label: 'Pts', title: 'Total points this season', fmt: (p) => (p.points === null ? '' : String(p.points)) },
   { key: 'minutes_share', label: 'Mins', title: 'Minutes played as a share of the minutes available', fmt: (p) => `${Math.round(p.minutes_share * 100)}%` },
   { key: 'xgi_90', label: 'xGI/90', title: 'Expected goals plus expected assists per 90 minutes', fmt: (p) => (p.xgi_90 === null ? '' : p.xgi_90.toFixed(2)) },
+  { key: 'deserved_ppg', label: 'Und/GW', title: 'Points per appearance the chances behind them support: actual points less the luck from the audit', fmt: (p) => (p.deserved_ppg === null ? '' : p.deserved_ppg.toFixed(1)) },
   { key: 'luck_z', label: 'Luck', title: 'Points above (+) or below (−) what his chances imply, in standard errors', fmt: (p) => (p.luck_z === null ? '' : `${p.luck_z > 0 ? '+' : ''}${p.luck_z.toFixed(1)}`) },
 ]
 
@@ -137,6 +138,8 @@ export function ExplorerScreen() {
       </section>
 
       <section className="px-10 py-4">
+        <div className="overflow-x-auto">
+        <div className="min-w-[66rem]">
         <div className={`${grid} border-b border-divider pb-2`}>
           <span className="font-mono text-[12px] uppercase tracking-[0.04em] text-text-faint">Player</span>
           {COLUMNS.map(header)}
@@ -172,6 +175,8 @@ export function ExplorerScreen() {
             </div>
           </div>
         ))}
+        </div>
+        </div>
         {filtered.length === 0 && <p className="py-8 text-sm text-text-muted">No player matches those filters.</p>}
         {filtered.length > shown && (
           <button type="button" onClick={() => setShown((n) => n + PAGE)} className="mt-4 rounded-md bg-raised px-4 py-2 text-[13px] font-semibold text-text-muted hover:text-text">

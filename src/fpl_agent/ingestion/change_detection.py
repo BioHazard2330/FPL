@@ -356,6 +356,50 @@ def detect_lineup_confirmations(
     return fired
 
 
+EARLY_WITHDRAWAL_MAX_MINUTE = 60
+INJURY_LIKELY_MINUTE = 45
+EARLY_WITHDRAWAL_MIN_OWNED = 2.0
+
+
+def detect_early_withdrawals(
+    conn: sqlite3.Connection, tracked_squad_ids: set[int], match_id: int, now: str, source: str = "fotmob",
+) -> int:
+    """A starter taken off inside the first hour, for players an FPL manager
+    owns: the squad's own, and anyone at 2% ownership or more. The feed states no
+    reason, so the event says only what is known (withdrawn at minute N, in a match
+    with no red card for him) and leaves the cause open; before the interval ends an
+    injury is by far the most common one, and FPL's own status lags it by hours, to
+    the press conference. HIGH for a squad player or any withdrawal by the 45th
+    minute, MEDIUM otherwise. Once per (player, match)."""
+    rows = conn.execute(
+        "SELECT pms.player_id, pms.substituted_off_minute AS minute, p.web_name, "
+        "       COALESCE((SELECT selected_by_percent FROM player_ownership_history WHERE player_id = p.id AND valid_until IS NULL), 0) AS owned "
+        "FROM player_match_state pms JOIN players p ON p.id = pms.player_id "
+        "WHERE pms.match_id = ? AND pms.started = 1 AND pms.substituted_off_minute IS NOT NULL "
+        "AND pms.substituted_off_minute > 0 AND pms.substituted_off_minute <= ?",
+        (match_id, EARLY_WITHDRAWAL_MAX_MINUTE),
+    ).fetchall()
+    fired = 0
+    for r in rows:
+        mine = r["player_id"] in tracked_squad_ids
+        if not mine and r["owned"] < EARLY_WITHDRAWAL_MIN_OWNED:
+            continue
+        already = conn.execute(
+            "SELECT 1 FROM change_events WHERE event_type='early_withdrawal' AND entity_id=? AND old_value=?",
+            (r["player_id"], str(match_id)),
+        ).fetchone()
+        if already:
+            continue
+        severity = "HIGH" if mine or r["minute"] <= INJURY_LIKELY_MINUTE else "MEDIUM"
+        record_event(
+            conn, "early_withdrawal", "player", r["player_id"], str(match_id), f"off at {r['minute']}'",
+            now, source, "CONFIRMED", severity,
+            fpl_impact=f"{r['web_name']} was taken off after {r['minute']} minutes; the feed gives no reason, so check his status before the next deadline.",
+        )
+        fired += 1
+    return fired
+
+
 _KICKOFF_REMINDER_WINDOW_MINUTES = 90  # comfortably wider than the Windows
 # Task Scheduler's default fixed 60min interval (scripts/setup_scheduler.ps1)
 # - the scheduler is NOT adaptive (Phase 7's own disclosed limitation: "OS

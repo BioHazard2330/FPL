@@ -63,6 +63,16 @@ class Alert:
     old_value: str | None
     new_value: str | None
     detected_at: str
+    name: str | None = None
+    detail: str | None = None
+
+    @property
+    def subject(self) -> str:
+        return self.name or f"{self.entity}#{self.entity_id}"
+
+    @property
+    def summary(self) -> str:
+        return self.detail or f"{self.old_value} -> {self.new_value}"
 
 
 class Notifier(ABC):
@@ -139,7 +149,7 @@ class WindowsToastNotifier(Notifier):
         import base64
 
         title = f"[{alert.severity}] {alert.event_type}"
-        body = f"{alert.entity}#{alert.entity_id}: {alert.old_value} -> {alert.new_value}"
+        body = f"{alert.subject}: {alert.summary}"
         script = _build_toast_script(title, body)
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         try:
@@ -165,8 +175,8 @@ class WindowsToastNotifier(Notifier):
 
 def _alert_text(alert: Alert) -> str:
     return (
-        f"[{alert.severity}] {alert.event_type} {alert.entity}#{alert.entity_id}: "
-        f"{alert.old_value} -> {alert.new_value} ({alert.detected_at})"
+        f"[{alert.severity}] {alert.event_type} {alert.subject}: "
+        f"{alert.summary} ({alert.detected_at})"
     )
 
 
@@ -275,9 +285,10 @@ def configured_notifiers(conn: sqlite3.Connection) -> CompositeNotifier:
 def pending_alerts(conn: sqlite3.Connection) -> list[Alert]:
     placeholders = ",".join("?" * len(_ALERT_SEVERITIES))
     rows = conn.execute(
-        f"SELECT id, event_type, entity, entity_id, severity, old_value, new_value, detected_at "
-        f"FROM change_events WHERE alerted_at IS NULL AND severity IN ({placeholders}) "
-        f"ORDER BY detected_at",
+        f"SELECT c.id, c.event_type, c.entity, c.entity_id, c.severity, c.old_value, c.new_value, c.detected_at, "
+        f"       c.fpl_impact, CASE WHEN c.entity = 'player' THEN (SELECT web_name FROM players WHERE id = c.entity_id) END AS name "
+        f"FROM change_events c WHERE c.alerted_at IS NULL AND c.severity IN ({placeholders}) "
+        f"ORDER BY c.detected_at",
         _ALERT_SEVERITIES,
     ).fetchall()
     return [
@@ -285,6 +296,7 @@ def pending_alerts(conn: sqlite3.Connection) -> list[Alert]:
             change_event_id=r["id"], event_type=r["event_type"], entity=r["entity"],
             entity_id=r["entity_id"], severity=r["severity"],
             old_value=r["old_value"], new_value=r["new_value"], detected_at=r["detected_at"],
+            name=r["name"], detail=r["fpl_impact"],
         )
         for r in rows
     ]

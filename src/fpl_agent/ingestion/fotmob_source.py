@@ -615,5 +615,9 @@ def sync_match(
         from fpl_agent.ingestion.change_detection import detect_lineup_confirmations
         detect_lineup_confirmations(conn, tracked_squad_ids, match_id, now)
         conn.commit()
+    if player_states:
+        from fpl_agent.ingestion.change_detection import detect_early_withdrawals
+        detect_early_withdrawals(conn, tracked_squad_ids or set(), match_id, now)
+        conn.commit()
 
     return result
