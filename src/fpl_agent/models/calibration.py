@@ -66,6 +66,25 @@ def _predicted_availability(conn: sqlite3.Connection, player_id: int) -> str | N
     return classify(player["status"], chance_this, chance_next)
 
 
+LEDGER_MIN_OWNED_PERCENT = 0.5
+
+
+def ledger_player_ids(conn: sqlite3.Connection, squad_ids: list[int] | set[int] | tuple[int, ...] = ()) -> list[int]:
+    """Who gets a frozen prediction: the squad, plus every player with minutes this
+    season or at least 0.5% ownership (about 470). Recording the squad alone gave
+    15 rows a gameweek, too few to say anything about where the model is wrong;
+    the whole relevant pool gives a calibration study that grows by about 470 rows
+    every gameweek."""
+    rows = conn.execute(
+        "SELECT p.id FROM players p LEFT JOIN player_stats_snapshot s ON s.id = "
+        "(SELECT MAX(id) FROM player_stats_snapshot WHERE player_id = p.id) "
+        "WHERE p.removed = 0 AND (COALESCE(s.minutes, 0) > 0 OR COALESCE((SELECT selected_by_percent FROM "
+        "player_ownership_history WHERE player_id = p.id AND valid_until IS NULL), 0) >= ?)",
+        (LEDGER_MIN_OWNED_PERCENT,),
+    ).fetchall()
+    return sorted({r["id"] for r in rows} | {int(i) for i in squad_ids})
+
+
 def record_predictions_for_locked_squad(conn: sqlite3.Connection, event: int, squad_ids: list[int]) -> int:
     """Real, one-time-per-(player,event) snapshot - a genuine no-op (0 rows
     written) if predictions for this event were already recorded, so calling

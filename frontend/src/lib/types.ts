@@ -1323,6 +1323,7 @@ export interface CalibrationPoint {
 }
 
 export interface CalibrationBlock {
+  version?: string
   n: number
   mae: number
   bias: number

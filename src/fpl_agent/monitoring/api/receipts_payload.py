@@ -72,15 +72,20 @@ def _calibration_block(conn) -> dict | None:
     """
     import statistics
 
-    rows = conn.execute(
+    from fpl_agent.models.expected_points import MODEL_VERSION
+
+    query = (
         "SELECT po.player_id, p.web_name, po.event, po.predicted_median, po.predicted_floor, "
-        "       po.predicted_ceiling, po.predicted_confidence, po.actual_points, po.actual_minutes "
+        "       po.predicted_ceiling, po.predicted_confidence, po.actual_points, po.actual_minutes, po.model_version "
         "FROM prediction_outcomes po JOIN players p ON p.id = po.player_id "
-        "WHERE po.predicted_median IS NOT NULL AND po.actual_points IS NOT NULL "
+        "WHERE po.predicted_median IS NOT NULL AND po.actual_points IS NOT NULL {extra} "
         "ORDER BY po.event, po.player_id"
-    ).fetchall()
+    )
+    current = conn.execute(query.format(extra="AND po.model_version = ?"), (MODEL_VERSION,)).fetchall()
+    rows = current if len(current) >= _MIN_MEANINGFUL_SAMPLE * 5 else conn.execute(query.format(extra="")).fetchall()
     if not rows:
         return None
+    version = MODEL_VERSION if rows is current else "all versions"
 
     points = [{
         "player_id": r["player_id"], "player": r["web_name"], "event": r["event"],
@@ -105,6 +110,7 @@ def _calibration_block(conn) -> dict | None:
     inside = sum(1 for pt in banded if pt["inside_band"])
 
     return {
+        "version": version,
         "n": len(points),
         "mae": round(mae, 2),
         "bias": round(bias, 2),

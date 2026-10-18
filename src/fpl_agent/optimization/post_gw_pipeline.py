@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from fpl_agent.database.decisions import log_decision
 from fpl_agent.ingestion.analysis_queue import enqueue_analysis_job
 from fpl_agent.ingestion.fotmob_source import refresh_in_progress_matches
-from fpl_agent.models.calibration import record_outcomes_for_finished_event
+from fpl_agent.models.calibration import ledger_player_ids, record_outcomes_for_finished_event
 from fpl_agent.models.decision_calibration import reveal_decision_outcomes
 from fpl_agent.models.gw_lifecycle import compute_gw_lifecycle_state, needs_post_gw_pipeline
 from fpl_agent.optimization.chips import (
@@ -175,7 +175,7 @@ def run_post_gw_pipeline(conn: sqlite3.Connection, event: int) -> PostGwPipeline
     # still correctly reflect it (they get overwritten once the NEXT
     # gameweek starts generating points) - this is the real, time-sensitive
     # moment to capture it, not something safely deferrable.
-    record_outcomes_for_finished_event(conn, event, squad_list)
+    record_outcomes_for_finished_event(conn, event, ledger_player_ids(conn, squad_list))
     # Real decision-outcome reveal (2026-08-28) - same real, time-sensitive
     # moment as the player-level outcome capture above (player_stats_snapshot
     # still correctly reflects this event, before the next one overwrites

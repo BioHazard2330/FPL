@@ -300,3 +300,20 @@ def test_no_network_call_when_the_squad_has_no_snapshot_rows(db_conn, monkeypatc
     n = calibration_mod.record_outcomes_for_finished_event(db_conn, event=4, squad_ids=[1])
     assert n == 0
     assert called == [], "fetched the live endpoint despite having nothing to record"
+
+
+def test_ledger_ids_are_the_squad_plus_everyone_with_minutes_or_ownership(db_conn):
+    from fpl_agent.models.calibration import ledger_player_ids
+
+    _seed_players(db_conn, [1, 2])
+    assert ledger_player_ids(db_conn) == []
+    db_conn.execute(
+        "INSERT INTO player_stats_snapshot (player_id, retrieved_at, event_points, minutes, stats_hash) VALUES (1, 't1', 0, 450, 'h1')"
+    )
+    db_conn.execute("INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from) VALUES (2, 0.2, 't')")
+    db_conn.commit()
+    assert ledger_player_ids(db_conn) == [1]
+    db_conn.execute("UPDATE player_ownership_history SET selected_by_percent = 0.7 WHERE player_id = 2")
+    db_conn.commit()
+    assert ledger_player_ids(db_conn) == [1, 2]
+    assert ledger_player_ids(db_conn, squad_ids=[2, 99]) == [1, 2, 99]

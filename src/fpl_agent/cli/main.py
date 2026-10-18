@@ -1969,8 +1969,10 @@ def run_scheduled(gated: bool):
         if lifecycle is not None and lifecycle.state == "LOCKED":
             locked_for_pred = _get_locked(conn6)
             if locked_for_pred is not None:
+                from fpl_agent.models.calibration import ledger_player_ids
+
                 n_written = record_predictions_for_locked_squad(
-                    conn6, lifecycle.event, sorted(locked_for_pred.squad_ids)
+                    conn6, lifecycle.event, ledger_player_ids(conn6, locked_for_pred.squad_ids)
                 )
                 if n_written:
                     logger.info("run-scheduled prediction capture: %d player(s) recorded for event %s",

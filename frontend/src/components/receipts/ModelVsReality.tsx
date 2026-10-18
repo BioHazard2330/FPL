@@ -36,6 +36,20 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
     return out
   }, [max])
 
+  // Calibration by predicted tier: the same predictions cut into quartiles, said against got.
+  const tiers = useMemo(() => {
+    if (block.points.length < 40) return []
+    const sorted = [...block.points].sort((a, b) => a.predicted - b.predicted)
+    const size = Math.ceil(sorted.length / 4)
+    return [0, 1, 2, 3].map((k) => {
+      const part = sorted.slice(k * size, (k + 1) * size)
+      if (part.length === 0) return null
+      const said = part.reduce((s, p) => s + p.predicted, 0) / part.length
+      const got = part.reduce((s, p) => s + p.actual, 0) / part.length
+      return { k, n: part.length, said, got }
+    }).filter((t): t is { k: number; n: number; said: number; got: number } => t !== null)
+  }, [block.points])
+
   // The band polygon: y = x ± stdev, clipped to the plot.
   const sd = block.error_stdev
   const band = [
@@ -125,6 +139,23 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
             <div className="mt-1 text-xs text-text-muted">
               how often the real score fell inside the floor-to-ceiling range it stated. Hover a dot to see that range.
             </div>
+          </div>
+        )}
+
+        {tiers.length > 0 && (
+          <div>
+            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">By predicted tier</div>
+            <div className="mt-2 space-y-1">
+              {tiers.map((t) => (
+                <div key={t.k} className="grid grid-cols-[2.2rem_1fr_1fr_2.4rem] items-baseline gap-2 text-xs">
+                  <span className="font-mono text-text-faint">{['low', 'mid', 'high', 'top'][t.k]}</span>
+                  <span className="tabular text-text-muted">said <span className="font-semibold text-text">{t.said.toFixed(1)}</span></span>
+                  <span className="tabular text-text-muted">got <span className={`font-semibold ${t.got - t.said > 0.3 ? 'text-pitch-green' : t.got - t.said < -0.3 ? 'text-alert-red' : 'text-text'}`}>{t.got.toFixed(1)}</span></span>
+                  <span className="tabular text-right text-text-faint">{t.n}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-1 text-[12px] text-text-faint">{block.version ? `${block.version}. ` : ''}Quartiles of the predictions; every player counts, benched or not.</div>
           </div>
         )}
 
