@@ -18,7 +18,8 @@ import { LiveCone } from '@/components/live/LiveCone'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
-import { derivePhase, useCountdown } from '@/lib/clock'
+import { derivePhase, PHASES, useCountdown } from '@/lib/clock'
+import type { Phase } from '@/lib/clock'
 import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
 
 /** COMMAND — visual composition rebuild (2026-09-08, v4). Previous passes
@@ -115,7 +116,10 @@ export function CommandScreen() {
   }
 
   const p = state.status === 'ready' ? state.data : null
-  const phase = derivePhase(live?.gw?.state, countdown?.totalMs ?? null, live?.active_matches?.length ?? 0)
+  // Development only: ?phase=IMMINENT (or BUILD_UP, FINAL_CALL, REVIEW) renders the screen as it reads before a deadline.
+  const forced = import.meta.env.DEV ? new URLSearchParams(window.location.search).get('phase') : null
+  const derived = derivePhase(live?.gw?.state, countdown?.totalMs ?? null, live?.active_matches?.length ?? 0)
+  const phase = forced && forced in PHASES ? { phase: forced as Phase, ...PHASES[forced as Phase] } : derived
   const fragileCount = p
     ? p.why.filter((w) => w.tag === 'FRAGILE').length + (p.trajectory?.future_legs.filter((l) => l.fragile_dependency).length ?? 0)
     : 0

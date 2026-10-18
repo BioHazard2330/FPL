@@ -476,3 +476,10 @@ body,
   outline: 2px solid color-mix(in srgb, var(--pitch-green) 70%, transparent);
   outline-offset: 2px;
 }
+
+/* Section titles read as titles, not shouting: sentence case in the display face. */
+.screen-frame h2.font-display {
+  text-transform: none;
+  letter-spacing: -0.005em;
+  font-weight: 600;
+}

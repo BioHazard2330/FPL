@@ -248,3 +248,30 @@ def test_window_covers_the_hour_before_kickoff_and_three_after(db_conn):
     assert pw.compute_window(db_conn, kickoff + 2.9 * HOUR, CFG).active
     assert not pw.compute_window(db_conn, kickoff + 3.1 * HOUR, CFG).active
     assert not pw.compute_window(db_conn, kickoff - 2 * HOUR, CFG).active
+
+
+def test_a_match_the_feed_reports_live_keeps_the_window_open_whatever_the_kickoff_times_say(db_conn):
+    now = 1_800_000_000
+    _event(db_conn, 9, now + 20 * 24 * HOUR)
+    assert not pw.compute_window(db_conn, now, CFG).active
+    _seed_two_players_two_teams(db_conn)
+    db_conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, kickoff_utc, home_team_id, away_team_id, status, retrieved_at) "
+        "VALUES (1, 'f', 'k', 1, 2, 'LIVE', ?)", (datetime.utcfromtimestamp(now - 600).isoformat() + "+00:00",),
+    )
+    db_conn.commit()
+    window = pw.compute_window(db_conn, now, CFG)
+    assert window.active and "matches in play" in window.reason
+    assert window.until_epoch >= now + 3 * HOUR
+
+
+def test_a_live_row_from_yesterday_does_not_hold_the_window_open(db_conn):
+    now = 1_800_000_000
+    _event(db_conn, 9, now + 20 * 24 * HOUR)
+    _seed_two_players_two_teams(db_conn)
+    db_conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, kickoff_utc, home_team_id, away_team_id, status, retrieved_at) "
+        "VALUES (1, 'f', 'k', 1, 2, 'LIVE', ?)", (datetime.utcfromtimestamp(now - 30 * HOUR).isoformat() + "+00:00",),
+    )
+    db_conn.commit()
+    assert not pw.compute_window(db_conn, now, CFG).active

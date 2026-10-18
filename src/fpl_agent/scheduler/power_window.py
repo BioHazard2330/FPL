@@ -79,6 +79,20 @@ def _merge(spans: list[tuple[int, int]], tolerance: int = 0) -> list[tuple[int, 
     return merged
 
 
+def _a_match_is_live_now(conn: sqlite3.Connection, now: int) -> bool:
+    """A match the live feed itself reports as in play, seen in the last four
+    hours, keeps the window open whatever the stored kickoff times say: FPL
+    moves a fixture's kickoff, and a live match is never worth missing."""
+    since = datetime.fromtimestamp(now - 4 * 3600, timezone.utc).isoformat()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM match_intelligence WHERE status IN ('LIVE', 'HALFTIME') AND retrieved_at >= ? LIMIT 1", (since,),
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
 def compute_window(
     conn: sqlite3.Connection, now_epoch: float | None = None, cfg: PowerConfig | None = None,
 ) -> Window:
@@ -110,6 +124,9 @@ def compute_window(
     )
     deadline_spans = [(d - lead, d + grace) for d in deadlines]
     spans = _merge(match_spans + deadline_spans)
+    live_now = _a_match_is_live_now(conn, now)
+    if live_now:
+        spans = _merge(spans + [(now - 60, now + post)])
     current = next(((s0, s1) for s0, s1 in spans if s1 >= now), None)
     if current is None:
         return Window(False, None, None, None, "no upcoming deadline or match on record")
@@ -119,7 +136,7 @@ def compute_window(
     active = start <= now <= until
     if not active:
         reason = f"nothing on for {(start - now) / 3600:.1f}h - next window opens then"
-    elif any(m0 <= now <= m1 for m0, m1 in match_spans):
+    elif live_now or any(m0 <= now <= m1 for m0, m1 in match_spans):
         reason = f"matches in play until {datetime.fromtimestamp(until, timezone.utc):%a %H:%M} UTC"
     elif deadline is not None and now <= deadline:
         reason = f"deadline in {(deadline - now) / 3600:.1f}h - inside the {cfg.window_lead_hours:g}h window"
