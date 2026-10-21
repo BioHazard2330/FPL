@@ -324,6 +324,36 @@ clamped to 0-100, radius scaled to real xG, filled only for a goal.
 FotMob's raw -100..100, home above the line, away below. No smoothing, no
 interpolation across minutes the feed never sent.
 
+### The replay (2026-10-21)
+`components/match/MatchReplay.tsx`. One full pitch in metres (105 x 68, the
+viewBox *is* the pitch) with both sides' shots on it: the home side as
+recorded, the away side mirrored (`x -> 105 - x`, `y -> 68 - y`) so each side
+attacks its own end. Dot area is xG, filled only for a goal, a ring on the
+last two minutes' shots. Under it the match's spine: cumulative xG for both
+sides, the game state as a band (who led, when), every goal, substitution and
+card at its minute, and a cursor that *is* the minute (drag, arrow keys,
+Home/End, space, or play at 11 minutes a second). Everything above the cursor
+is what had happened by then; nothing is projected. The slider is an
+`svg role="slider"`, keyboard-operable, and does not autoplay.
+
+### The deserved-result bar
+A single full-width bar of win / draw / loss probabilities from the shots
+replayed as independent chances, with a triangle under what actually happened.
+Home is green, away blue, the draw is the raised surface. It is the one place
+luck is drawn as a distance between a bar and a marker, not as a number.
+
+### Persistence whiskers
+`components/football/SignalLedger.tsx`. A diamond for the measured correlation,
+a rule for its 90% interval, a gold line at the 0.10 a signal must clear. Green
+persistent, gold unclear, red does not carry. A finding that rests on a measured
+signal carries its verdict as a small tint chip, never as a confidence colour.
+
+### The style quadrant
+`components/football/StyleQuadrant.tsx`. Every club on two measured dimensions
+of style (dead balls, counters, volume v quality, where from), one dimension at
+a time, the dashed lines the league average. A corner is a way of playing, not a
+rank; the corner captions name it.
+
 ---
 
 ## 5A. The season clock — the app knows what time it is
@@ -544,6 +574,13 @@ make a claim the data does not support.
 - **One authoritative recommendation.** No panel may show a verdict that
   could contradict Command. A panel answering a *different* question must
   say which question.
+- **A finding states what it measured, not what it feels like.** Analyst text
+  is a number with its context; an adjective that adds nothing is deleted. A
+  finding about something measured not to persist says so in the same
+  sentence, and its confidence is capped.
+- **Every route but Command is its own chunk.** Screens are `React.lazy`
+  imports behind one `Suspense` fallback; a heavy library (three.js, leaflet,
+  ApexCharts) must load only on the screen that uses it.
 
 ---
 
@@ -584,7 +621,11 @@ Shared, in dependency order:
   `Masthead` (per-screen edition line), `ScreenStates` (skeleton primitives
   + `ScreenError`), `CommandPalette`, `MetricNumber`.
 - `components/football/` — `PitchMarkings`, `FixtureRun` /
-  `NextFixture` / `RunPressure` / `FixtureLine`.
+  `NextFixture` / `RunPressure` / `FixtureLine`, `SignalLedger`,
+  `StyleQuadrant`.
+- `components/match/` — `MatchAnalyst` (composition), `MatchReplay`,
+  `AnalystPanels` (deserved result, game state, situation mix, substitutions,
+  findings).
 - `components/command/` — `DecisionHero`, `ComparisonGraphic`,
   `PlayerGallery` (the formation), `CaptainFaceOff`, `DecisionHorizon`,
   `StrategyRail`, `EvidenceRail`, `ConfidenceGraphic`.

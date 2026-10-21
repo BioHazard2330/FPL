@@ -20,6 +20,12 @@ Things it found that the hand-written versions missed: Robertson (69'), Tosin (7
 
 **Frontend.** Match page: the analyst's read, a deserved-result bar, a scrubbable shot replay (both sides on one pitch, cumulative xG, game-state band, goals, substitutions, cards, play and arrow keys), game state, situation mix, substitutions read against the score, findings with persistence tags. Table: xPts and luck columns, sortable. Football: the signal ledger. Player file: what the analyst saw. Previews: the read. Command, Desk, Scout: price probabilities. Every screen except Command is now its own chunk: first load fell from 2.5 MB to 473 KB of JavaScript.
 
+## Later the same session
+- **Injury follow-up base rate** (`signal_reliability.injury_followup`): of 26 injury-linked substitutions with a later club match, 13 played in it, 8 played 60 minutes (mean 33), and none of the 6 taken off by half-time played. Each injury-linked finding carries the sentence. FPL's own "75% chance of playing" on the same players is not that.
+- **Unreviewed matches** get the analyst's own FULL_TIME analysis 8 hours after kickoff (`auto_analyse_unreviewed`, confidence capped at medium); recent stories are rebuilt every cycle for three days because FPL posts injury news hours after the whistle.
+- **My Team** (latest finding per squad player), **Command** (the analyst's latest note under each player in a transfer), **Table** (a style quadrant: dead balls, counters, volume v quality, where from), **Previews** (the read of the form), **Player file**.
+- The week plan carries a `calibration` stamp (projection model version + qualitative adjustment sizes); a stored plan made under another stamp is stale and is rebuilt. Readiness gate gained "Match analyst" and "Price model" lines.
+
 ## Defects found on the way
 - **Overturned goals were stored as goals (7 matches).** FotMob reuses an event id when VAR rules a goal out: the incident first arrives as type "Goal", then as type "VAR". `sync_match`'s upsert updated the description and not `event_type`, so the match report timeline, the live charts and the new analyst all showed a phantom goal in seven matches (found because the analyst's timeline disagreed with the final score in exactly those seven). Fixed in the upsert, repaired in place by migration 0050, covered by a test that syncs a goal and then the VAR event with the same id.
 - **A "Goal ruled out" is still a VAR event the analyst does not describe**: the decision text is not stored, only the player's name.
