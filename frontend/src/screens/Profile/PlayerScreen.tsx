@@ -270,6 +270,36 @@ export function PlayerScreen() {
 
       <StoriesRail stories={p.stories} subject={pl.name} />
 
+      {(p.analyst ?? []).length > 0 && (
+        <div className="border-t border-divider px-10 py-8">
+          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">What the analyst saw</div>
+          <p className="mb-4 max-w-3xl text-[13px] text-text-faint">Measured from each match&rsquo;s shots, goals and substitutions. Where a finding rests on a signal, the tag says whether that signal carries to the next match.</p>
+          <div className="space-y-5">
+            {(p.analyst ?? []).map((m) => (
+              <div key={m.match_id}>
+                <Link to={`/match/${m.match_id}`} className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted hover:text-pitch-green">
+                  {m.home} {m.score[0]}-{m.score[1]} {m.away}
+                </Link>
+                <div className="mt-1.5 space-y-px bg-divider">
+                  {m.findings.map((f, i) => (
+                    <div key={i} className={`border-l-4 bg-panel px-4 py-2.5 ${f.fpl_direction === 'POSITIVE' ? 'border-pitch-green' : f.fpl_direction === 'NEGATIVE' ? 'border-alert-red' : f.fpl_direction === 'WATCH' ? 'border-broadcast-gold' : 'border-divider'}`}>
+                      <p className="text-sm text-text">{f.observed}</p>
+                      {f.inferred && <p className="mt-0.5 text-[13px] text-text-muted">{f.inferred}</p>}
+                      {f.reliability && (
+                        <p className="mt-1 text-[12px] text-text-faint">
+                          <span className="font-bold uppercase tracking-[0.1em]">{f.reliability.verdict}</span> · {f.reliability.label}
+                          {f.reliability.r !== null ? ` (r ${f.reliability.r >= 0 ? '+' : ''}${f.reliability.r.toFixed(2)})` : ''} · {f.confidence} confidence
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* PRICE - the FPL market's own read on this player over time. */}
       {p.price_history.length > 1 && (
         <div className="border-t border-divider px-10 py-8">

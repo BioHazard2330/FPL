@@ -1,30 +1,46 @@
-import type { CSSProperties } from 'react'
+import { lazy, Suspense, type CSSProperties } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { AppSidebar } from '@/components/shell/AppSidebar'
 import { ContextHeader } from '@/components/shell/ContextHeader'
 import { MatchdayBar } from '@/components/shell/MatchdayBar'
-import { MatchweekScreen } from '@/screens/Matchweek/MatchweekScreen'
-import { ClubScreen } from '@/screens/Profile/ClubScreen'
-import { MatchScreen } from '@/screens/Profile/MatchScreen'
-import { PlayerScreen } from '@/screens/Profile/PlayerScreen'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { CommandScreen } from '@/screens/Command/CommandScreen'
-import { MyTeamScreen } from '@/screens/MyTeam/MyTeamScreen'
-import { PlanScreen } from '@/screens/Plan/PlanScreen'
-import { ReceiptsScreen } from '@/screens/Receipts/ReceiptsScreen'
-import { AtlasScreen } from '@/screens/Atlas/AtlasScreen'
-import { TableScreen } from '@/screens/Table/TableScreen'
-import { FootballScreen } from '@/screens/Football/FootballScreen'
-import { AuditScreen } from '@/screens/Audit/AuditScreen'
-import { FieldScreen } from '@/screens/Field/FieldScreen'
-import { CompareScreen } from '@/screens/Compare/CompareScreen'
-import { ExplorerScreen } from '@/screens/Explorer/ExplorerScreen'
-import { PreviewsScreen } from '@/screens/Previews/PreviewsScreen'
-import { DeskScreen } from '@/screens/Desk/DeskScreen'
-import { ScoutScreen } from '@/screens/Scout/ScoutScreen'
-import { AdvancedScreen } from '@/screens/Advanced/AdvancedScreen'
-import { LiveScreen } from '@/screens/Live/LiveScreen'
 import { CommandPalette } from '@/components/shell/CommandPalette'
+import { Skel, SkelMasthead } from '@/components/shell/ScreenStates'
+
+// Every screen but Command is its own chunk: the three.js, leaflet and chart
+// libraries only download when the screen that needs them is opened.
+const MatchweekScreen = lazy(() => import('@/screens/Matchweek/MatchweekScreen').then((m) => ({ default: m.MatchweekScreen })))
+const ClubScreen = lazy(() => import('@/screens/Profile/ClubScreen').then((m) => ({ default: m.ClubScreen })))
+const MatchScreen = lazy(() => import('@/screens/Profile/MatchScreen').then((m) => ({ default: m.MatchScreen })))
+const PlayerScreen = lazy(() => import('@/screens/Profile/PlayerScreen').then((m) => ({ default: m.PlayerScreen })))
+const MyTeamScreen = lazy(() => import('@/screens/MyTeam/MyTeamScreen').then((m) => ({ default: m.MyTeamScreen })))
+const PlanScreen = lazy(() => import('@/screens/Plan/PlanScreen').then((m) => ({ default: m.PlanScreen })))
+const ReceiptsScreen = lazy(() => import('@/screens/Receipts/ReceiptsScreen').then((m) => ({ default: m.ReceiptsScreen })))
+const AtlasScreen = lazy(() => import('@/screens/Atlas/AtlasScreen').then((m) => ({ default: m.AtlasScreen })))
+const TableScreen = lazy(() => import('@/screens/Table/TableScreen').then((m) => ({ default: m.TableScreen })))
+const FootballScreen = lazy(() => import('@/screens/Football/FootballScreen').then((m) => ({ default: m.FootballScreen })))
+const AuditScreen = lazy(() => import('@/screens/Audit/AuditScreen').then((m) => ({ default: m.AuditScreen })))
+const FieldScreen = lazy(() => import('@/screens/Field/FieldScreen').then((m) => ({ default: m.FieldScreen })))
+const CompareScreen = lazy(() => import('@/screens/Compare/CompareScreen').then((m) => ({ default: m.CompareScreen })))
+const ExplorerScreen = lazy(() => import('@/screens/Explorer/ExplorerScreen').then((m) => ({ default: m.ExplorerScreen })))
+const PreviewsScreen = lazy(() => import('@/screens/Previews/PreviewsScreen').then((m) => ({ default: m.PreviewsScreen })))
+const DeskScreen = lazy(() => import('@/screens/Desk/DeskScreen').then((m) => ({ default: m.DeskScreen })))
+const ScoutScreen = lazy(() => import('@/screens/Scout/ScoutScreen').then((m) => ({ default: m.ScoutScreen })))
+const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').then((m) => ({ default: m.AdvancedScreen })))
+const LiveScreen = lazy(() => import('@/screens/Live/LiveScreen').then((m) => ({ default: m.LiveScreen })))
+
+function RouteFallback() {
+  return (
+    <div className="animate-pulse pb-16">
+      <SkelMasthead />
+      <div className="space-y-3 px-10 py-8">
+        <Skel className="h-40 w-full" />
+        <Skel className="h-64 w-full" />
+      </div>
+    </div>
+  )
+}
 
 function App() {
   return (
@@ -35,6 +51,7 @@ function App() {
         <MatchdayBar />
         <main className="flex-1 overflow-auto">
           <div className="screen-frame">
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<CommandScreen />} />
             <Route path="/my-team" element={<MyTeamScreen />} />
@@ -57,6 +74,7 @@ function App() {
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />
           </Routes>
+          </Suspense>
           </div>
         </main>
       </SidebarInset>

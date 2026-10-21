@@ -1056,7 +1056,17 @@ export interface PlayerMatchRow {
   season: string | null
 }
 
+export interface AnalystMatchFindings {
+  match_id: number
+  kickoff: string | null
+  home: string
+  away: string
+  score: [number | null, number | null]
+  findings: Pick<StoryFinding, 'observation_type' | 'observed' | 'inferred' | 'fpl_direction' | 'fpl_signal' | 'confidence' | 'reliability'>[]
+}
+
 export interface PlayerProfilePayload {
+  analyst?: AnalystMatchFindings[]
   stories?: Story[]
   player: {
     player_id: number
@@ -1869,8 +1879,20 @@ export interface PreviewSide {
   yours: { player_id: number; name: string }[]
 }
 
+export interface ReadingStatement {
+  kind: 'chances' | 'luck' | 'availability' | 'set_pieces' | 'form'
+  text: string
+  weight: string | null
+  tone: 'neutral' | 'caution' | 'opportunity'
+}
+
+export interface FixtureReading {
+  statements: ReadingStatement[]
+}
+
 export interface PreviewFixture {
   fixture_id: number
+  reading?: FixtureReading | null
   kickoff: string | null
   home: PreviewSide
   away: PreviewSide

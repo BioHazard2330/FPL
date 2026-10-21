@@ -1019,6 +1019,33 @@ def load_story(conn: sqlite3.Connection, match_id: int) -> dict | None:
     return json.loads(row["story_json"]) if row else None
 
 
+def analyst_for_player(conn: sqlite3.Connection, player_id: int, limit: int = 6) -> list[dict]:
+    """What the analyst found about one player, newest match first. The LIKE keeps the scan to stories that mention him."""
+    rows = conn.execute(
+        "SELECT ms.story_json, mi.kickoff_utc, th.short_name AS home_short, ta.short_name AS away_short, mi.home_score, mi.away_score "
+        "FROM match_story ms JOIN match_intelligence mi ON mi.id = ms.match_id "
+        "JOIN teams th ON th.id = mi.home_team_id JOIN teams ta ON ta.id = mi.away_team_id "
+        "WHERE ms.story_json LIKE ? ORDER BY mi.kickoff_utc DESC",
+        (f'%"subject_id":{int(player_id)},%',),
+    ).fetchall()
+    out = []
+    for r in rows:
+        story = json.loads(r["story_json"])
+        mine = [
+            {k: f.get(k) for k in ("observation_type", "observed", "inferred", "fpl_direction", "fpl_signal", "confidence", "reliability")}
+            for f in story["findings"] if f["subject_type"] == "player" and f["subject_id"] == player_id
+        ][:3]
+        if not mine:
+            continue
+        out.append({
+            "match_id": story["match_id"], "kickoff": r["kickoff_utc"], "home": r["home_short"], "away": r["away_short"],
+            "score": [r["home_score"], r["away_score"]], "findings": mine,
+        })
+        if len(out) == limit:
+            break
+    return out
+
+
 def refresh_stories(conn: sqlite3.Connection, force: bool = False) -> int:
     """Build or rebuild the story of every FULL_TIME match whose stored story is missing, from an older engine, or older than its shots."""
     rows = conn.execute(

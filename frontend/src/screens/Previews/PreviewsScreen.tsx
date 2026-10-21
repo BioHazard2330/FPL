@@ -157,6 +157,34 @@ function LensPanel({ lens, home, away }: { lens: PreviewLens; home: PreviewSide;
   )
 }
 
+const READING_RULE: Record<string, string> = {
+  neutral: 'border-divider',
+  caution: 'border-broadcast-gold',
+  opportunity: 'border-pitch-green',
+}
+
+/** THE ANALYST'S READ OF THE FORM - each club's last matches set against each
+ * other, in numbers: chances for and against, results against the chances they
+ * deserved, dead-ball dependence, and who came off hurt. A statement about
+ * something measured not to persist says so in the same sentence. */
+function Reading({ f }: { f: PreviewFixture }) {
+  const items = f.reading?.statements ?? []
+  if (items.length === 0) return null
+  return (
+    <div className="mt-5">
+      <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">The analyst&rsquo;s read of the form</div>
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        {items.map((s, i) => (
+          <div key={i} className={`border-l-4 bg-panel px-3 py-2 ${READING_RULE[s.tone]}`}>
+            <p className="text-[13px] leading-snug text-text-muted">{s.text}</p>
+            {s.weight && <p className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{s.weight}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Card({ f }: { f: PreviewFixture }) {
   const yours = f.home.yours.length + f.away.yours.length
   const gap = f.market ? Math.round((f.model.home_win - f.market.home_win) * 100) : null
@@ -193,6 +221,7 @@ function Card({ f }: { f: PreviewFixture }) {
             : `${f.home.short} / draw / ${f.away.short}. No odds stored for this fixture, so there is no market line to compare.`}
         </div>
       </div>
+      <Reading f={f} />
       {f.lens && <LensPanel lens={f.lens} home={f.home} away={f.away} />}
     </article>
   )

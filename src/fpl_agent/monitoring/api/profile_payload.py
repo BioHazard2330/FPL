@@ -184,6 +184,7 @@ def build_club_profile(ctx: DashboardContext, params: dict | None = None) -> dic
 
 def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> dict:
     from fpl_agent.database.connection import get_connection
+    from fpl_agent.models.match_analyst import analyst_for_player
 
     player_id = _int_param(params or {}, "id")
     conn = get_connection()
@@ -322,6 +323,7 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "momentum": momentum,
             "deadlines": deadlines,
             "stories": stories_for_player(conn, p["id"]),
+            "analyst": analyst_for_player(conn, p["id"]),
         }
     finally:
         conn.close()

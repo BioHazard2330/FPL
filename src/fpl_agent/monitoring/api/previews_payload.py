@@ -188,8 +188,11 @@ def _build_previews_uncached() -> dict:
 
         from fpl_agent.models.matchup_lab import fixture_lens, league_means, source_takers, team_profiles
 
+        from fpl_agent.models.team_reading import fixture_reading, reading_context
+
         profiles = team_profiles(conn)
         means = league_means(profiles)
+        reading_ctx = reading_context(conn)
         out = []
         for f in conn.execute(
             "SELECT id, event, kickoff_time, team_h, team_a, team_h_difficulty, team_a_difficulty FROM fixtures "
@@ -217,6 +220,7 @@ def _build_previews_uncached() -> dict:
                 lens["takers"] = source_takers(conn, shooter, head["source"])
             out.append({
                 "fixture_id": f["id"], "kickoff": f["kickoff_time"], "home": sides["home"], "away": sides["away"], "lens": lens,
+                "reading": fixture_reading(conn, f["team_h"], f["team_a"], sides["home"]["short"], sides["away"]["short"], reading_ctx),
                 "xg": {"home": round(home_goals, 2), "away": round(away_goals, 2)},
                 "model": outcome_grid(home_goals, away_goals, rho),
                 "market": _market(conn, f["id"]),
