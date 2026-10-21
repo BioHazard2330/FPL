@@ -82,7 +82,7 @@ def test_a_real_persistent_trend_produces_a_bounded_targeted_adjustment(db_conn)
     assert adjustment.direction == "POSITIVE"
     assert adjustment.delta > 0  # real, positive, evidence-earned
     # Bounded: never more than 35% of the real goals component it targets.
-    assert adjustment.delta == round(2.0 * 0.35, 4)
+    assert adjustment.delta == round(2.0 * 0.05, 4)
 
 
 def test_expected_points_integration_folds_the_adjustment_into_median(db_conn):
@@ -105,7 +105,7 @@ def test_expected_points_integration_folds_the_adjustment_into_median(db_conn):
     ep = expected_points(db_conn, 1)
 
     assert ep.qualitative_note is not None and "GOAL_THREAT" in ep.qualitative_note
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.05, 4)
     # The new rule: median now genuinely includes the real adjustment -
     # components (the pure quant baseline) stays separately inspectable.
     # (This fixture's player is a GKP with a real, near-zero goals
@@ -135,7 +135,7 @@ def test_expected_points_window_also_folds_the_adjustment_in(db_conn):
     w = expected_points_window(db_conn, 1, n_gw=3)
 
     assert w.qualitative_note is not None and "GOAL_THREAT" in w.qualitative_note
-    assert w.qualitative_adjustment == round(w.components.goals * 0.35, 4)
+    assert w.qualitative_adjustment == round(w.components.goals * 0.05, 4)
     assert round(w.total_median - w.qualitative_adjustment, 2) == round(w.components.total, 2)
 
 
@@ -160,7 +160,7 @@ def test_role_change_persistent_trend_produces_a_bounded_goals_adjustment(db_con
     assert adjustment is not None
     assert adjustment.component == "goals"
     assert adjustment.signal == "ROLE_CHANGE"
-    assert adjustment.delta == round(2.0 * 0.35, 4)
+    assert adjustment.delta == round(2.0 * 0.05, 4)
 
 
 def test_set_piece_change_persistent_trend_produces_a_bounded_goals_adjustment(db_conn):
@@ -199,7 +199,7 @@ def test_role_change_expected_points_integration_surfaces_the_adjustment(db_conn
     ep = expected_points(db_conn, 1)
 
     assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.05, 4)
     assert round(ep.median - ep.qualitative_adjustment, 2) == round(ep.components.total, 2)
 
 
@@ -229,7 +229,7 @@ def test_role_change_adjustment_scales_down_with_lower_minutes_never_an_independ
 
     assert ep.qualitative_note is not None and "ROLE_CHANGE" in ep.qualitative_note
     # Same real 15% proportion as the high-minutes case - the RULE never changes...
-    assert ep.qualitative_adjustment == round(ep.components.goals * 0.35, 4)
+    assert ep.qualitative_adjustment == round(ep.components.goals * 0.05, 4)
     # ...but the ABSOLUTE adjustment is real and small here, scaled by this player's
     # own genuinely low minutes-adjusted goals baseline - not the same absolute size
     # a nailed 90-minute starter with an identical signal would get (see

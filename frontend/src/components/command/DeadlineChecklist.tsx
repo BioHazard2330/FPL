@@ -107,12 +107,19 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
       title: 'A price is about to move',
       detail:
         [
-          ...rising.map((m) => `${m.into.name} is leaning up before you buy him`),
-          ...falling.map((m) => `${m.out.name} is leaning down, so selling later costs the drop`),
-        ].join('; ') + '. A lean only: the heuristic is uncalibrated.',
+          ...rising.map((m) => `${m.into.name} is ${m.into.price_p_rise != null ? `${Math.round(m.into.price_p_rise * 100)}% likely` : 'leaning'} to rise before you buy him`),
+          ...falling.map((m) => `${m.out.name} is ${m.out.price_p_fall != null ? `${Math.round(m.out.price_p_fall * 100)}% likely` : 'leaning'} to fall, so selling later costs the drop`),
+        ].join('; ') + '. The probability is the fitted price model\'s reading for tonight\'s run.',
     })
   } else if (moves.length) {
-    items.push({ tone: 'ok', title: 'No price pressure on the moves', detail: 'Nobody in or out is leaning either way on transfers.' })
+    const strongest = Math.max(0, ...moves.flatMap((m) => [m.into.price_p_rise ?? 0, m.out.price_p_fall ?? 0]))
+    items.push({
+      tone: 'ok',
+      title: 'No price pressure on the moves',
+      detail: strongest > 0
+        ? `The fitted price model puts the likeliest price change on any of these players at ${Math.round(strongest * 100)}% tonight, so there is no price reason to rush.`
+        : 'Nobody in or out is leaning either way on transfers.',
+    })
   }
 
   const risky = moves.filter((m) => m.into.start_percent !== null && m.into.start_percent < 70)

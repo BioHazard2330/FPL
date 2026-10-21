@@ -81,10 +81,10 @@ function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: '
             </Tag>
           )}
           {side === 'out' && p.price_trend === 'FALL_LIKELY' && (
-            <Tag tone="red" title="Net transfers out suggest the price is about to drop">price falling</Tag>
+            <Tag tone="red" title="Probability the price drops at tonight's overnight run, from the fitted price model">price falling{p.price_p_fall != null ? ` ${Math.round(p.price_p_fall * 100)}%` : ''}</Tag>
           )}
           {side === 'into' && p.price_trend === 'RISE_LIKELY' && (
-            <Tag tone="gold" title="Net transfers in suggest the price is about to rise">price rising</Tag>
+            <Tag tone="gold" title="Probability the price rises at tonight's overnight run, from the fitted price model">price rising{p.price_p_rise != null ? ` ${Math.round(p.price_p_rise * 100)}%` : ''}</Tag>
           )}
           {(p.duties ?? []).length > 0 && (
             <Tag

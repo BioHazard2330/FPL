@@ -90,3 +90,22 @@ def test_fixture_fpl_has_not_finished_counts_when_fotmob_confirms_full_time(db_c
     out = build_table_payload(_Ctx())
     assert out["matches"] == 1
     assert out["rows"][0]["team_id"] == 1 and out["rows"][0]["points"] == 3
+
+
+def test_expected_points_come_from_the_stored_stories_and_luck_is_points_minus_them(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _fixture(db_conn, 1, 1, 1, 2, 1, 0)
+    _xg(db_conn, 1, 0.4, 1.6)
+    mid = db_conn.execute("SELECT id FROM match_intelligence WHERE fpl_fixture_id=1").fetchone()[0]
+    story = {
+        "match": {"home": {"team_id": 1}, "away": {"team_id": 2}},
+        "deserved": {"home_points": 0.7, "away_points": 2.1, "actual_home_points": 3, "actual_away_points": 0},
+    }
+    db_conn.execute("INSERT INTO match_story (match_id, engine_version, story_json, generated_at) VALUES (?, 'analyst-v1', ?, 't0')", (mid, json.dumps(story)))
+    db_conn.commit()
+
+    rows = {r["team_id"]: r for r in build_table_payload(_Ctx())["rows"]}
+    assert rows[1]["xpts"] == 0.7 and rows[1]["luck"] == 2.3 and rows[1]["xpts_matches"] == 1
+    assert rows[2]["xpts"] == 2.1 and rows[2]["luck"] == -2.1
+    assert rows[2]["xpts_position"] == 1 and rows[1]["xpts_position"] == 2
+    assert rows[3]["xpts"] is None and rows[3]["luck"] is None and rows[3]["xpts_position"] is None

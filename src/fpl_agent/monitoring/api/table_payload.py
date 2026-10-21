@@ -75,9 +75,25 @@ def build_table_payload(ctx: DashboardContext) -> dict:
                 a["xg"] += xg[f["team_a"]]; a["xga"] += xg[f["team_h"]]; a["xg_matches"] += 1
                 a["gf_xg"] += as_; a["ga_xg"] += hs
 
+        import json
+
+        deserved: dict[int, dict] = {tid: {"xpts": 0.0, "pts": 0, "n": 0} for tid in teams}
+        for r in conn.execute("SELECT story_json FROM match_story"):
+            story = json.loads(r["story_json"])
+            d = story.get("deserved")
+            if not d:
+                continue
+            for side, key in (("home", "home_points"), ("away", "away_points")):
+                tid = story["match"][side]["team_id"]
+                if tid in deserved:
+                    deserved[tid]["xpts"] += d[key]
+                    deserved[tid]["pts"] += d["actual_home_points" if side == "home" else "actual_away_points"]
+                    deserved[tid]["n"] += 1
+
         rows = []
         for t in teams.values():
             n = t["xg_matches"]
+            dv = deserved.get(t["team_id"], {"xpts": 0.0, "pts": 0, "n": 0})
             rows.append({
                 **t,
                 "gd": t["gf"] - t["ga"],
@@ -90,10 +106,18 @@ def build_table_payload(ctx: DashboardContext) -> dict:
                 # Positive = conceded fewer than the chances allowed were worth.
                 "keeping": round(t["xga"] - t["ga_xg"], 2) if n else None,
                 "form": t["form"][-5:],
+                "xpts": round(dv["xpts"], 1) if dv["n"] else None,
+                "xpts_matches": dv["n"],
+                "luck": round(dv["pts"] - dv["xpts"], 1) if dv["n"] else None,
             })
         rows.sort(key=lambda r: (-r["points"], -r["gd"], -r["gf"], r["name"]))
         for i, r in enumerate(rows, 1):
             r["position"] = i
+        by_xpts = sorted((r for r in rows if r["xpts"] is not None), key=lambda r: (-r["xpts"], r["name"]))
+        for i, r in enumerate(by_xpts, 1):
+            r["xpts_position"] = i
+        for r in rows:
+            r.setdefault("xpts_position", None)
 
         events = sorted({f["event"] for f in fixtures if f["event"] is not None})
         return {
@@ -107,6 +131,7 @@ def build_table_payload(ctx: DashboardContext) -> dict:
                 "are the sums of FotMob's per-team match xG over the matches that carry one; per-match rates "
                 "divide by that count. Finishing is goals minus xG and keeping is xG allowed minus goals conceded, both over the "
                 "matches that carry xG. "
+                "Expected points (xPts) replay every stored shot of a finished match as independent chances (a Poisson-binomial per side, convolved) and take 3 x P(win) + P(draw); luck is points won minus those, over the same matches. "
                 "Nothing is projected."
             ),
         }

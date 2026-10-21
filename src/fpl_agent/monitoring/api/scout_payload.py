@@ -476,17 +476,27 @@ def _price_moves_block(conn, squad_ids: set[int]) -> dict:
         "WHERE p.removed = 0"
     ).fetchall()
     entries = [(r, classify_price_change(conn, r["id"])) for r in rows]
-    entries = [(r, f) for r, f in entries if f.direction != "STABLE"]
-    entries.sort(key=lambda e: -abs(e[1].momentum_ratio))
+    calibrated = any(f.calibrated for _, f in entries)
+    if calibrated:
+        # The fitted model's own ranking: tonight's probability, whether or not it clears "likely".
+        entries = [(r, f) for r, f in entries if (f.p_rise or 0) >= 0.01 or (f.p_fall or 0) >= 0.01]
+        entries.sort(key=lambda e: -max(e[1].p_rise or 0, e[1].p_fall or 0))
+    else:
+        entries = [(r, f) for r, f in entries if f.direction != "STABLE"]
+        entries.sort(key=lambda e: -abs(e[1].momentum_ratio))
 
     forecast = []
     for r, f in entries[:24]:
         progress_pct = min(100.0, abs(f.momentum_ratio) / RISE_THRESHOLD * 100.0) if RISE_THRESHOLD else 0.0
+        rise_side = (f.p_rise or 0) >= (f.p_fall or 0) if f.calibrated else f.direction != "FALL_LIKELY"
         forecast.append({
             "player_id": r["id"], "name": r["web_name"], "team_short": r["team_short"], "team_code": r["team_code"],
             "position": r["position"], "price_m": round(r["value_tenths"] / 10, 1) if r["value_tenths"] is not None else None,
             "net_transfers": (r["transfers_in_event"] or 0) - (r["transfers_out_event"] or 0),
-            "direction": f.direction, "progress_pct": round(progress_pct, 0), "is_mine": r["id"] in squad_ids,
+            "direction": f.direction if f.direction != "STABLE" else ("RISE_LIKELY" if rise_side else "FALL_LIKELY"),
+            "likely": f.direction != "STABLE", "calibrated": f.calibrated,
+            "probability": (f.p_rise if rise_side else f.p_fall) if f.calibrated else None,
+            "progress_pct": round(progress_pct, 0), "is_mine": r["id"] in squad_ids,
         })
 
     ledger_rows = conn.execute(
@@ -509,4 +519,6 @@ def _price_moves_block(conn, squad_ids: set[int]) -> dict:
         if len(ledger) == 20:
             break
 
-    return {"forecast": forecast, "ledger": ledger}
+    from fpl_agent.models import price_model
+
+    return {"forecast": forecast, "ledger": ledger, "model": price_model.summary(conn)}

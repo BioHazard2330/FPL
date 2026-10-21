@@ -201,7 +201,9 @@ function LeanCell({ l }: { l: DeskPriceLean }) {
       <Link to={`/player/${l.player_id}`} className="font-semibold text-text hover:text-pitch-green">{l.name}</Link>
       {l.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
       {!l.mine && l.target && <span className="bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan</span>}
-      <span className={`ml-auto font-mono text-[12px] font-bold uppercase ${rise ? 'text-pitch-green' : 'text-alert-red'}`}>{rise ? 'rise lean' : 'fall lean'}</span>
+      <span className={`ml-auto font-mono text-[12px] font-bold uppercase ${rise ? 'text-pitch-green' : 'text-alert-red'}`}>
+        {l.probability != null ? `${rise ? 'rise' : 'fall'} ${Math.round(l.probability * 100)}%` : rise ? 'rise lean' : 'fall lean'}
+      </span>
     </div>
   )
 }
@@ -309,7 +311,7 @@ export function DeskScreen() {
         </div>
       </div>
 
-      <Section title="Price board" aside="Rises and falls are FPL's own changes. A lean is the project's transfer-momentum heuristic - uncalibrated, low confidence, a direction and not a forecast.">
+      <Section title="Price board" aside="Rises and falls are FPL's own changes. A lean is net transfers pointing one way; the percentage is the fitted price model's probability of the move at tonight's run. Most leans are below 10%: heavy net transfers alone rarely move a price.">
         <PriceBoard price={d.price} />
       </Section>
 

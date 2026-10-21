@@ -520,7 +520,7 @@ export function ScoutScreen() {
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             {state.data.price_moves.forecast.length > 0 && (
               <div>
-                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">Forecast (uncalibrated momentum heuristic)</div>
+                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">{state.data.price_moves.forecast.some((r) => r.calibrated) ? 'Tonight (fitted price model)' : 'Forecast (uncalibrated momentum heuristic)'}</div>
                 <div className="divide-y divide-divider border-t border-divider">
                   {state.data.price_moves.forecast.slice(0, 12).map((r) => {
                     const crest = crestUrl(r.team_code)
@@ -534,8 +534,8 @@ export function ScoutScreen() {
                         <span className="relative ml-auto h-2 w-16 shrink-0 border border-divider bg-void">
                           <span className={`absolute inset-y-0 left-0 ${rising ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${r.progress_pct}%` }} />
                         </span>
-                        <span className={`w-16 shrink-0 text-right text-xs font-bold uppercase ${rising ? 'text-pitch-green' : 'text-alert-red'}`}>
-                          {rising ? '▲ rise' : '▼ fall'}
+                        <span className={`w-20 shrink-0 text-right text-xs font-bold uppercase ${rising ? 'text-pitch-green' : 'text-alert-red'}`}>
+                          {rising ? '▲ rise' : '▼ fall'}{r.probability != null ? ` ${Math.round(r.probability * 100)}%` : ''}
                         </span>
                       </div>
                     )

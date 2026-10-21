@@ -196,7 +196,11 @@ def _price_board(conn, mine: set[int], targets: set[int]) -> dict:
     """Moves in the last 36 hours, and who is likely to move at the next price
     change by the project's own transfer-momentum heuristic (uncalibrated, low
     confidence by its own docstring - labelled as a lean, not a forecast)."""
+    from fpl_agent.models import price_model
     from fpl_agent.models.price_forecast import RISE_THRESHOLD
+
+    model_ok = price_model.usable(price_model.model(conn), "rise")
+    tonight = price_model.cached_tonight(conn) if model_ok else {}
 
     moved = conn.execute(
         "SELECT e.entity_id AS player_id, e.old_value, e.new_value, e.detected_at, p.web_name, t.code AS team_code, "
@@ -231,10 +235,12 @@ def _price_board(conn, mine: set[int], targets: set[int]) -> dict:
                 continue
             if (c["owned"] or 0) < 3.0 and c["id"] not in mine and c["id"] not in targets:
                 continue
+            odds = tonight.get(c["id"], {})
             leaning.append({
                 "player_id": c["id"], "name": c["web_name"], "team_code": c["team_code"],
                 "direction": "RISE_LIKELY" if ratio > 0 else "FALL_LIKELY", "net_ratio": round(ratio, 6),
                 "owned": c["owned"], "mine": c["id"] in mine, "target": c["id"] in targets,
+                "probability": odds.get("p_rise" if ratio > 0 else "p_fall"),
             })
     leaning.sort(key=lambda x: (not (x["mine"] or x["target"]), -abs(x["net_ratio"])))
     return {"rises": rises[:10], "falls": falls[:10], "leaning": leaning[:16]}

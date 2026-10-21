@@ -103,7 +103,7 @@ def test_scout_payload_lists_every_real_non_removed_player(db_conn):
     json.dumps(payload)
     real_count = db_conn.execute("SELECT COUNT(*) AS n FROM players WHERE removed = 0 AND status != 'u'").fetchone()["n"]
     assert len(payload["players"]) == real_count
-    assert payload["price_moves"] == {"forecast": [], "ledger": []}
+    assert payload["price_moves"] == {"forecast": [], "ledger": [], "model": None}
     assert payload["template_team"] == {"positions": [], "overlap": None}  # no ownership synced yet - honest empty
 
 

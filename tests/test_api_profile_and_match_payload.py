@@ -344,3 +344,30 @@ def test_club_profile_splits_shots_by_who_took_them(db_conn):
     assert [s["player_id"] for s in out["shots_against"]] == [12] and out["shots_against"][0]["mine"] is False
     other = build_club_profile(_Ctx(), {"id": "2"})
     assert [s["player_id"] for s in other["shots_for"]] == [12] and [s["player_id"] for s in other["shots_against"]] == [10]
+
+
+def test_match_report_carries_the_stored_analyst_story_only_for_a_finished_match(db_conn):
+    from fpl_agent.models.match_analyst import build_story, store_story
+
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _match(db_conn, match_id=1, hs=1, a_s=0)
+    db_conn.execute(
+        "INSERT INTO match_shots (match_id, fotmob_shot_id, team_id, player_id, minute, x, y, xg, is_on_target, outcome, shot_type, situation, source, retrieved_at) "
+        "VALUES (1, 's1', 1, NULL, 20, 94.0, 34.0, 0.3, 1, 'Goal', 'RightFoot', 'RegularPlay', 'fotmob', 't0')"
+    )
+    db_conn.commit()
+    story = build_story({
+        "match": {"id": 1, "kickoff": "2026-09-05T14:00:00Z", "home_id": 1, "away_id": 2, "home_name": "A", "away_name": "B", "home_score": 1, "away_score": 0},
+        "shots": [{"minute": 20, "team_id": 1, "player_id": None, "player_name": "x", "x": 94.0, "y": 34.0, "xg": 0.3, "xgot": 0.3, "on_target": True,
+                   "outcome": "Goal", "situation": "RegularPlay", "shot_type": "RightFoot"}],
+        "events": [{"id": 1, "minute": 20, "type": "Goal", "team_id": 1, "player_id": None, "description": "Goal - x"}], "pms": [], "players": {},
+    })
+    store_story(db_conn, story)
+    db_conn.commit()
+    out = build_match_report(_Ctx(), {"id": "1"})
+    json.dumps(out)
+    assert out["story"]["version"] == "analyst-v1" and out["story"]["deserved"]["actual_home_points"] == 3
+
+    db_conn.execute("UPDATE match_intelligence SET status = 'LIVE' WHERE id = 1")
+    db_conn.commit()
+    assert build_match_report(_Ctx(), {"id": "1"})["story"] is None

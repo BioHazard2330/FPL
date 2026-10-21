@@ -6,6 +6,7 @@ import { crestUrl, fetchMatchReport } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
 import { MomentumBand, type MomentumMarker } from '@/components/football/MomentumBand'
+import { MatchAnalyst } from '@/components/match/MatchAnalyst'
 import type { LiveShot, MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
 
 const EVENT_MARK: Record<string, { label: string; ink: string; fill: string }> = {
@@ -360,6 +361,8 @@ export function MatchScreen() {
       </div>
 
       <Storylines insights={p.insights} home={m.home.team_id} away={m.away.team_id} />
+
+      {p.story && <MatchAnalyst story={p.story} homeShort={m.home.short} awayShort={m.away.short} homeId={m.home.team_id} />}
 
       {/* THE CONTEST */}
       {(hs || as) && (

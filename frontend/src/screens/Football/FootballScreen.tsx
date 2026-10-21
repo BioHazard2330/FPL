@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { SignalLedger } from '@/components/football/SignalLedger'
 import { Masthead } from '@/components/shell/Masthead'
 import { crestUrl, fetchFootballPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -522,6 +523,8 @@ export function FootballScreen() {
           <TeamStateGrid rows={p.team_state} fixtures={p.fixtures} />
         </div>
       )}
+
+      <SignalLedger />
 
       {/* TEAM ODDS - real next-fixture clean-sheet ranking, bar composition not a table */}
       {p.team_odds.length > 0 && (

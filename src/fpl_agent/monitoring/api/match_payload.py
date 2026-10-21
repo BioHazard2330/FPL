@@ -182,7 +182,11 @@ def build_match_report(ctx: DashboardContext, params: dict | None = None) -> dic
             if review_row is not None else None
         )
 
+        from fpl_agent.models.match_analyst import load_story
+
+        story = load_story(conn, match_id) if m["status"] == "FULL_TIME" else None
         return {
+            "story": story,
             "match": {
                 "match_id": m["id"], "status": m["status"], "kickoff_utc": m["kickoff_utc"],
                 "live_minute": m["live_minute"], "fpl_fixture_id": m["fpl_fixture_id"],

@@ -6,6 +6,7 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
+  SignalsPayload,
   ExplorerPayload,
   WhatIfPayload,
   DeskPayload,
@@ -106,6 +107,10 @@ export function fetchAtlasPayload(): Promise<AtlasPayload> {
 
 export function fetchTablePayload(): Promise<TablePayload> {
   return getJson<TablePayload>('/api/table')
+}
+
+export function fetchSignalsPayload(): Promise<SignalsPayload> {
+  return getJson<SignalsPayload>('/api/signals')
 }
 
 export function fetchFootballPayload(): Promise<FootballPayload> {

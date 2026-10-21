@@ -692,6 +692,22 @@ def match_report_cmd(fotmob_match_id: str):
         click.echo(f"  team_id={t['team_id']} formation={t['formation']} possession={t['possession_pct']} "
                    f"shots={t['shots']} xg={t['xg']}")
 
+    if match["status"] == "FULL_TIME":
+        try:
+            from fpl_agent.models.match_analyst import analyse_match
+
+            story = analyse_match(conn, match["id"])
+        except Exception:
+            story = None
+        if story is not None:
+            click.echo(f"\nMATCH ANALYST ({story['version']}) - measured from the shots below; `fpl match-story {fotmob_match_id} --draft FILE` writes these as a payload")
+            click.echo(f"  {story['headline']}")
+            for f in story["findings"][:10]:
+                click.echo(f"  [{f['subject_type']}:{f['name']} {f['observation_type']} {f['confidence']}] {f['observed']}")
+            for sub in story["subs"]:
+                if sub["kind"] in ("INJURY_LINKED", "EARLY_UNEXPLAINED"):
+                    click.echo(f"  SUB {sub['minute']}' {sub['off']} off: {sub['kind']} - {sub['note']}")
+
     player_states = conn.execute(
         "SELECT * FROM player_match_state WHERE match_id=? ORDER BY started DESC, team_id", (match["id"],)
     ).fetchall()
@@ -780,6 +796,143 @@ def match_report_cmd(fotmob_match_id: str):
         click.echo(f"  [{u['subject_type']}:{u['subject_id']}] {u['sentiment'] or ''} {u['note']}")
 
     conn.close()
+
+
+@cli.command("match-story")
+@click.argument("fotmob_match_id")
+@click.option("--json", "as_json", is_flag=True, help="print the whole story as JSON")
+@click.option("--draft", "draft_path", type=click.Path(), default=None, help="write the findings as a match-analyze payload to this file")
+def match_story_cmd(fotmob_match_id: str, as_json: bool, draft_path: str | None):
+    """The Match Analyst's reading of a finished match (models/match_analyst.py):
+    score timeline, deserved result, chances by situation and game state,
+    classified substitutions, and ranked findings, all from stored rows. Use it
+    as the scaffold for the match-intelligence-analysis skill: what it cannot
+    see (why a manager did something) is what the skill adds."""
+    import json
+
+    from fpl_agent.models.match_analyst import analyse_match, draft_payload, store_story
+
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM match_intelligence WHERE fotmob_match_id = ?", (fotmob_match_id,)).fetchone()
+        if row is None:
+            click.echo(f"no match intelligence found for fotmob match id {fotmob_match_id}", err=True)
+            raise SystemExit(1)
+        story = analyse_match(conn, row["id"])
+        if story is None:
+            click.echo("match is not FULL_TIME or has no score yet", err=True)
+            raise SystemExit(1)
+        store_story(conn, story)
+        conn.commit()
+    finally:
+        conn.close()
+    if draft_path:
+        with open(draft_path, "w", encoding="utf-8") as f:
+            json.dump(draft_payload(story), f, ensure_ascii=False, indent=2)
+        click.echo(f"draft written to {draft_path}")
+    if as_json:
+        click.echo(json.dumps(story, ensure_ascii=False, indent=2))
+        return
+    click.echo(story["headline"])
+    d = story["deserved"]
+    if d:
+        click.echo(f"deserved: home {d['home_win']:.0%} / draw {d['draw']:.0%} / away {d['away_win']:.0%}  (xPts {d['home_points']:.1f} - {d['away_points']:.1f}, actual {d['actual_home_points']} - {d['actual_away_points']})")
+    for g in story["timeline"]:
+        tag = " (own goal)" if g["own_goal"] else " (penalty)" if g["penalty"] else ""
+        click.echo(f"  {g['minute']:>3}' {g['side']:<4} {g['score'][0]}-{g['score'][1]}{tag}")
+    click.echo("substitutions")
+    for s in story["subs"]:
+        click.echo(f"  {s['minute']:>3}' {s['side']:<4} {s['on']} for {s['off']}  [{s['kind']}] {s['note']}")
+    click.echo("findings")
+    for f in story["findings"]:
+        click.echo(f"  [{f['subject_type']}:{f['subject_id']} {f['observation_type']} {f['confidence']}] {f['observed']}")
+        if f["inferred"]:
+            click.echo(f"      -> {f['inferred']}")
+    click.echo(f"uncertain: {story['uncertainties']}")
+
+
+@cli.command("backfill-stories")
+@click.option("--force", is_flag=True, help="rebuild every story, not only missing or stale ones")
+def backfill_stories_cmd(force: bool):
+    """Build the Match Analyst story for every finished match that lacks a current one."""
+    from fpl_agent.models.match_analyst import refresh_stories
+
+    conn = get_connection()
+    try:
+        click.echo(f"stories built: {refresh_stories(conn, force=force)}")
+    finally:
+        conn.close()
+
+
+@cli.command("streak-study")
+def streak_study_cmd():
+    """How much a two-match streak moves the next match, from the Understat history.
+    The qualitative adjustment fractions in models/qualitative_feed.py come from this."""
+    from fpl_agent.backtesting.streak_calibration import streak_table, suggested_fraction
+
+    conn = get_connection()
+    try:
+        table = streak_table(conn)
+    finally:
+        conn.close()
+    click.echo(f"player-match pairs: {table['pairs']}; shrink m: {table['shrink']}")
+    for r in table["rows"]:
+        if r["ratio"] is None:
+            click.echo(f"  {r['signal']:<12} {r['direction']:<9} n={r['n']:<5} too few  ({r['streak']})")
+            continue
+        click.echo(
+            f"  {r['signal']:<12} {r['direction']:<9} n={r['n']:<5} realised/baseline {r['ratio']:.3f}  90% [{r['ci'][0]:.3f}, {r['ci'][1]:.3f}]  "
+            f"data-supported adjustment {suggested_fraction(r):.2f}  ({r['streak']})"
+        )
+
+
+@cli.command("signal-reliability")
+def signal_reliability_cmd():
+    """Which football signals persist from one match to the next (models/signal_reliability.py)."""
+    from fpl_agent.models.signal_reliability import reliability
+
+    conn = get_connection()
+    try:
+        rel = reliability(conn)
+    finally:
+        conn.close()
+    for name, m in sorted(rel["metrics"].items(), key=lambda kv: -(kv[1]["r"] or -9)):
+        r = "   n/a" if m["r"] is None else f"{m['r']:+.3f}"
+        ci = "" if m["ci"] is None else f"[{m['ci'][0]:+.2f}, {m['ci'][1]:+.2f}]"
+        click.echo(f"  {m['label']:<42} r={r} {ci:<16} n={m['n']:<6} {m['verdict']:<10} {m['source']}")
+
+
+@cli.command("price-model")
+@click.option("--refit", is_flag=True, help="refit on the stored history now instead of reading the stored fit")
+@click.option("--top", default=8, help="players shown for tonight's likeliest rises and falls")
+def price_model_cmd(refit: bool, top: int):
+    """Tonight's price-change probabilities (models/price_model.py), fitted on this database's own transfer and price history."""
+    from fpl_agent.models import price_model
+
+    conn = get_connection()
+    try:
+        if refit or price_model.model(conn) is None:
+            price_model.fit_and_store(conn)
+        summary = price_model.summary(conn)
+        if summary is None:
+            click.echo("not enough stored history to fit a price model")
+            return
+        click.echo(f"fitted {summary['fitted_at']} on {summary['rows']} player-nights; features {', '.join(summary['features'])}")
+        for name, m in summary["models"].items():
+            if m is None:
+                click.echo(f"  {name}: too few events to fit")
+                continue
+            auc = f"{m['auc']:.3f}" if m["auc"] is not None else "n/a"
+            skill = f"{m['skill']:+.3f}" if m["skill"] is not None else "n/a"
+            click.echo(f"  {name}: {m['events']} nights with a move in the history; held out {m['nights']} player-nights with {m['holdout_events']} moves: AUC {auc}, Brier skill {skill} -> {'used' if m['usable'] else 'not used'}")
+        names = {r["id"]: r["web_name"] for r in conn.execute("SELECT id, web_name FROM players")}
+        tonight = price_model.tonight(conn)
+        for key in ("p_rise", "p_fall"):
+            ranked = sorted(((pid, v[key]) for pid, v in tonight.items() if v.get(key) is not None), key=lambda kv: -kv[1])[:top]
+            if ranked:
+                click.echo(f"  {key}: " + ", ".join(f"{names.get(pid, pid)} {p:.0%}" for pid, p in ranked))
+    finally:
+        conn.close()
 
 
 @cli.command("analysis-queue")
@@ -1862,6 +2015,23 @@ def run_scheduled(gated: bool):
             )
     except Exception:
         logger.exception("run-scheduled FULL_TIME settle re-sync failed - not fatal to the sync itself")
+
+    try:
+        from fpl_agent.models.price_model import refresh_if_stale
+
+        if refresh_if_stale(conn):
+            logger.info("run-scheduled price model refitted")
+    except Exception:
+        logger.exception("run-scheduled price model refit failed - not fatal to the sync itself")
+
+    try:
+        from fpl_agent.models.match_analyst import refresh_stories
+
+        built = refresh_stories(conn)
+        if built:
+            logger.info("run-scheduled match analyst: %d stories built", built)
+    except Exception:
+        logger.exception("run-scheduled match analyst failed - not fatal to the sync itself")
 
     # Post-GW pipeline (automation-lifecycle pass, 2026-08-22) - a cheap,
     # idempotent no-op unless the real lifecycle state says a gameweek has

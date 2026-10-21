@@ -18,7 +18,7 @@ import type { TableRow } from '@/lib/types'
  * Below: the table itself, with real goals beside the xG that produced
  * them, so finishing luck and keeping luck sit in their own columns. */
 
-type SortKey = 'points' | 'gd' | 'xgd' | 'finishing' | 'keeping' | 'xg' | 'xga'
+type SortKey = 'points' | 'gd' | 'xgd' | 'finishing' | 'keeping' | 'xg' | 'xga' | 'xpts' | 'luck'
 
 const VW = 900
 const VH = 560
@@ -41,7 +41,7 @@ function Diverge({ v, scale }: { v: number | null; scale: number }) {
   const w = Math.min(1, Math.abs(v) / scale) * 50
   const num = `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
   return (
-    <span className="inline-grid grid-cols-[2.4rem_100px_2.4rem] items-center gap-1 align-middle">
+    <span className="inline-grid grid-cols-[2rem_56px_2rem] items-center gap-1 align-middle">
       <span className={`tabular text-right text-[12px] font-semibold ${v < 0 ? 'text-alert-red' : 'text-transparent'}`}>{v < 0 ? num : ''}</span>
       <span className="relative h-3">
         <span className="absolute left-1/2 top-0 h-full w-px bg-divider" />
@@ -198,6 +198,14 @@ export function TableScreen() {
                   <span className={`tabular font-semibold ${(h.keeping ?? 0) >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{(h.keeping ?? 0) >= 0 ? '+' : ''}{(h.keeping ?? 0).toFixed(1)} <span className="font-normal text-text-faint">fewer conceded than allowed</span></span>
                 </div>
                 <div className="flex items-baseline justify-between">
+                  <span className="text-text-faint">deserved points</span>
+                  <span className="tabular font-semibold text-broadcast-gold">{h.xpts !== null ? h.xpts.toFixed(1) : '—'} <span className="font-normal text-text-faint">{h.xpts_position ? `${h.xpts_position}${ordinal(h.xpts_position)} on shots` : ''}</span></span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-text-faint">luck</span>
+                  <span className={`tabular font-semibold ${(h.luck ?? 0) >= 0 ? 'text-broadcast-gold' : 'text-text-muted'}`}>{h.luck !== null ? `${h.luck >= 0 ? '+' : ''}${h.luck.toFixed(1)}` : '—'} <span className="font-normal text-text-faint">points over the chances</span></span>
+                </div>
+                <div className="flex items-baseline justify-between">
                   <span className="text-text-faint">form</span>
                   <FormDots form={h.form} />
                 </div>
@@ -224,7 +232,7 @@ export function TableScreen() {
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-center gap-4">
           <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Sort by</span>
-          {([['points', 'Points'], ['gd', 'Goal difference'], ['xgd', 'xG difference'], ['xg', 'xG'], ['xga', 'xG allowed'], ['finishing', 'Finishing'], ['keeping', 'Keeping']] as [SortKey, string][]).map(([k, label]) => (
+          {([['points', 'Points'], ['xpts', 'Deserved points'], ['luck', 'Luck'], ['gd', 'Goal difference'], ['xgd', 'xG difference'], ['xg', 'xG'], ['xga', 'xG allowed'], ['finishing', 'Finishing'], ['keeping', 'Keeping']] as [SortKey, string][]).map(([k, label]) => (
             <button key={k} type="button" onClick={() => setSort(k)}
               className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${sort === k ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
               {label}
@@ -232,7 +240,7 @@ export function TableScreen() {
           ))}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[64rem] text-left text-sm">
+          <table className="w-full min-w-[68rem] text-left text-sm">
             <thead>
               <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
                 <th className="py-2 pr-3 font-bold">#</th>
@@ -244,8 +252,10 @@ export function TableScreen() {
                 <th className="tabular py-2 pr-3 text-right font-bold">GF</th>
                 <th className="tabular py-2 pr-3 text-right font-bold">GA</th>
                 <th className="tabular py-2 pr-3 text-right font-bold">GD</th>
-                <th className="tabular py-2 pr-4 text-right font-bold text-text">Pts</th>
-                <th className="py-2 pr-4 font-bold">Form</th>
+                <th className="tabular py-2 pr-3 text-right font-bold text-text">Pts</th>
+                <th className="tabular py-2 pr-3 text-right font-bold text-broadcast-gold">xPts</th>
+                <th className="py-2 pr-4 font-bold">Luck</th>
+                <th className="py-2 pr-3 font-bold">Form</th>
                 <th className="tabular py-2 pr-3 text-right font-bold text-pitch-green">xG</th>
                 <th className="tabular py-2 pr-3 text-right font-bold text-alert-red">xGA</th>
                 <th className="tabular py-2 pr-4 text-right font-bold">xGD</th>
@@ -272,7 +282,9 @@ export function TableScreen() {
                   <td className="tabular py-2 pr-3 text-right text-text">{r.gf}</td>
                   <td className="tabular py-2 pr-3 text-right text-text">{r.ga}</td>
                   <td className={`tabular py-2 pr-3 text-right ${r.gd > 0 ? 'text-pitch-green' : r.gd < 0 ? 'text-alert-red' : 'text-text-muted'}`}>{r.gd > 0 ? '+' : ''}{r.gd}</td>
-                  <td className="tabular py-2 pr-4 text-right font-display text-lg font-bold text-text">{r.points}</td>
+                  <td className="tabular py-2 pr-3 text-right font-display text-lg font-bold text-text">{r.points}</td>
+                  <td className="tabular py-2 pr-3 text-right text-broadcast-gold" title={r.xpts_position ? `${r.xpts_position}${ordinal(r.xpts_position)} on deserved points` : undefined}>{r.xpts !== null ? r.xpts.toFixed(1) : '—'}</td>
+                  <td className="py-2 pr-4"><Diverge v={r.luck} scale={Math.max(2, ...rows.map((x) => Math.abs(x.luck ?? 0)))} /></td>
                   <td className="py-2 pr-4"><FormDots form={r.form} /></td>
                   <td className="tabular py-2 pr-3 text-right text-pitch-green">{r.xg.toFixed(1)}</td>
                   <td className="tabular py-2 pr-3 text-right text-alert-red">{r.xga.toFixed(1)}</td>

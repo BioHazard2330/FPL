@@ -393,6 +393,10 @@ export interface PriceForecastRow {
   price_m: number | null
   net_transfers: number
   direction: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
+  likely?: boolean
+  calibrated?: boolean
+  /** Tonight's probability from the fitted price model; null when the old momentum heuristic ran. */
+  probability?: number | null
   progress_pct: number
   is_mine: boolean
 }
@@ -407,9 +411,16 @@ export interface PriceLedgerRow {
   valid_from: string
 }
 
+export interface PriceModelSummary {
+  fitted_at: string
+  rows: number
+  models: Record<'rise' | 'fall', { events: number; usable: boolean; holdout_events: number; nights: number; auc: number | null; skill: number | null } | null>
+}
+
 export interface PriceMovesBlock {
   forecast: PriceForecastRow[]
   ledger: PriceLedgerRow[]
+  model?: PriceModelSummary | null
 }
 
 export interface TemplateTeamPlayer {
@@ -1262,7 +1273,144 @@ export interface MatchSide {
   score: number | null
 }
 
+export type StorySide = 'home' | 'away'
+
+export interface StoryShot {
+  m: number | null
+  side: StorySide
+  x: number | null
+  y: number | null
+  xg: number
+  xgot: number | null
+  o: string | null
+  sit: string | null
+  type: string | null
+  pid: number | null
+  name: string | null
+  zone: string | null
+}
+
+export interface StoryGoal {
+  minute: number
+  side: StorySide
+  player_id: number | null
+  player_name: string | null
+  own_goal: boolean
+  penalty: boolean
+  assist_id: number | null
+  assist_name: string | null
+  score: [number, number]
+}
+
+export interface StorySub {
+  minute: number
+  side: StorySide
+  team_id: number
+  on_id: number | null
+  on: string
+  off_id: number | null
+  off: string
+  on_position: string | null
+  off_position: string | null
+  margin: number
+  kind: string
+  note: string
+  simultaneous_changes: number
+}
+
+export interface StoryStateRow {
+  minutes: number
+  xg_for: number
+  shots_for: number
+  xg_against: number
+  shots_against: number
+  per90_for: number | null
+  per90_against: number | null
+}
+
+export interface StoryReliability {
+  metric: string
+  label: string
+  r: number | null
+  n: number
+  verdict: 'persistent' | 'unclear' | 'none' | 'too few'
+  source: string
+}
+
+export interface StoryFinding {
+  subject_type: 'player' | 'team'
+  subject_id: number
+  name: string | null
+  observation_type: string
+  observed: string
+  inferred: string | null
+  fpl_direction: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WATCH' | null
+  fpl_signal: string | null
+  fpl_reason: string | null
+  confidence: 'low' | 'medium' | 'high'
+  evidence_ref: string | null
+  rank: number
+  short: string | null
+  metric: string | null
+  reliability?: StoryReliability
+}
+
+export interface StorySideMetrics {
+  shots: number
+  xg: number
+  xg_per_shot: number | null
+  shots_on_target: number
+  xgot: number
+  xg_against: number
+  shots_against: number
+  xgot_against: number
+  goals: number
+  own_goals_for: number
+  goals_conceded_excl_og: number
+  goals_minus_xg: number
+  xg_by_situation: Record<'open_play' | 'fast_break' | 'dead_ball' | 'penalty', number>
+  xga_by_situation: Record<'open_play' | 'fast_break' | 'dead_ball' | 'penalty', number>
+  dead_ball_xg_share: number | null
+  big_chances: number
+  woodwork: number
+}
+
+export interface MatchStory {
+  version: string
+  match_id: number
+  consistent: boolean
+  length: number
+  headline: string
+  uncertainties: string
+  match: {
+    home: { team_id: number; name: string; score: number }
+    away: { team_id: number; name: string; score: number }
+    kickoff: string | null
+  }
+  metrics: { home: StorySideMetrics; away: StorySideMetrics }
+  deserved: {
+    home_win: number
+    draw: number
+    away_win: number
+    home_points: number
+    away_points: number
+    likely_score: [number, number]
+    actual_home_points: number
+    actual_away_points: number
+  } | null
+  state_profile: Record<StorySide, Record<'leading' | 'level' | 'trailing', StoryStateRow>> | null
+  spells: Record<StorySide, { start: number; end: number; xg: number; share: number; shots: number } | null>
+  timeline: StoryGoal[]
+  subs: StorySub[]
+  cards: { minute: number; side: StorySide; player_id: number | null; name: string | null }[]
+  shots: StoryShot[]
+  findings: StoryFinding[]
+  duplicate_events_dropped: number
+  league: { group_share: Record<'open_play' | 'fast_break' | 'dead_ball' | 'penalty', number | null> | null; xg_per_shot: number | null; team_matches: number | null }
+}
+
 export interface MatchReportPayload {
+  story: MatchStory | null
   match: {
     match_id: number
     status: string
@@ -1451,6 +1599,12 @@ export interface TableRow {
   keeping: number | null
   form: ('W' | 'D' | 'L')[]
   mine: boolean
+  /** Points the shots deserved over the matches that have a story; null if none. */
+  xpts: number | null
+  xpts_matches: number
+  xpts_position: number | null
+  /** Points won minus xPts over the same matches. */
+  luck: number | null
 }
 
 export interface TablePayload {
@@ -1480,6 +1634,8 @@ export interface WeekPlanPlayer {
   xp_horizon: number
   start_percent: number | null
   price_trend: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
+  price_p_rise?: number | null
+  price_p_fall?: number | null
   solio_next: number | null
   /** First-choice set-piece duties: any of penalties, free kicks, corners. */
   duties?: string[]
@@ -1672,6 +1828,7 @@ export interface DeskPriceLean {
   team_code: number | null
   direction: 'RISE_LIKELY' | 'FALL_LIKELY'
   net_ratio: number
+  probability?: number | null
   owned: number | null
   mine: boolean
   target: boolean
@@ -2090,4 +2247,39 @@ export interface ExplorerPayload {
   generated_at: string
   window: number
   players: ExplorerPlayer[]
+}
+
+
+export interface SignalMetric {
+  key: string
+  label: string
+  n: number
+  r: number | null
+  slope: number | null
+  ci: [number, number] | null
+  verdict: 'persistent' | 'unclear' | 'none' | 'too few'
+  source: string
+  implication: string
+  season_sample?: { n: number; r: number | null; ci: [number, number] | null; verdict: string }
+}
+
+export interface StreakRow {
+  signal: string
+  direction: 'POSITIVE' | 'NEGATIVE'
+  streak: string
+  metric: string
+  n: number
+  ratio: number | null
+  ci: [number, number] | null
+  applied_fraction: number
+  data_supported: number | null
+}
+
+export interface SignalsPayload {
+  stories: number
+  metrics: SignalMetric[]
+  streaks: StreakRow[]
+  streak_pairs: number
+  default_fraction: number
+  method: string
 }

@@ -97,7 +97,7 @@ def _quantify_qualitative_gap(conn, qual_id: int, qual_signal: str | None, qual_
     from fpl_agent.models.expected_points import expected_points
     from fpl_agent.models.qualitative_feed import (
         _COMPONENT_SIGNAL_MAP,
-        MAX_ADJUSTMENT_FRACTION,
+        adjustment_fraction,
         compute_qualitative_adjustment,
     )
 
@@ -119,7 +119,7 @@ def _quantify_qualitative_gap(conn, qual_id: int, qual_signal: str | None, qual_
     component_base = getattr(ep.components, adjustment.component)
     return (
         f"already added {adjustment.delta:+.2f} xP to this player's own {adjustment.component} component "
-        f"(bounded to {MAX_ADJUSTMENT_FRACTION:.0%} of that component's real {component_base:.2f}pt value) - "
+        f"(bounded to {adjustment_fraction(adjustment.signal, adjustment.direction):.0%} of that component's real {component_base:.2f}pt value, sized from measured streak outcomes) - "
         f"folded directly into the model's own median (2026-09-12), so this has already moved the real pick, "
         f"not just an annotation next to it"
     )

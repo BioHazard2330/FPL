@@ -108,6 +108,8 @@ class PlayerRef:
     solio_next: float | None
     duties: list[str] = field(default_factory=list)
     match_analysis_xp: float = 0.0
+    price_p_rise: float | None = None
+    price_p_fall: float | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,17 @@ def _price_trends(conn: sqlite3.Connection, ids: set[int]) -> dict[int, str]:
     from fpl_agent.models.price_forecast import classify_price_change
 
     return {pid: classify_price_change(conn, pid).direction for pid in ids}
+
+
+def _price_probabilities(conn: sqlite3.Connection, ids: set[int]) -> dict[int, tuple[float | None, float | None]]:
+    from fpl_agent.models.price_forecast import classify_price_change
+
+    out = {}
+    for pid in ids:
+        f = classify_price_change(conn, pid)
+        if f.calibrated:
+            out[pid] = (f.p_rise, f.p_fall)
+    return out
 
 
 def pick_captains(starting: list[PlayerCandidate], xp_cache: dict, event: int):
@@ -406,7 +419,9 @@ def move_timing(out: "PlayerRef", into: "PlayerRef") -> tuple[str, str]:
     if price_moving:
         mover = into.name if into.price_trend == "RISE_LIKELY" else out.name
         direction = "rise" if into.price_trend == "RISE_LIKELY" else "fall"
-        return "early", f"{mover} is likely to {direction} in price. Make this before the next overnight price change."
+        p = into.price_p_rise if into.price_trend == "RISE_LIKELY" else out.price_p_fall
+        odds = f" ({round(100 * p)}% tonight)" if p is not None else ""
+        return "early", f"{mover} is likely to {direction} in price{odds}. Make this before the next overnight price change."
     if doubts:
         return "late", (
             f"{doubts[0].name}'s start is in doubt ({doubts[0].start_percent}%). "
@@ -417,8 +432,11 @@ def move_timing(out: "PlayerRef", into: "PlayerRef") -> tuple[str, str]:
 
 def _ref(
     c: PlayerCandidate, xp_next: float, starts: dict, trends: dict, solio: dict, duties: dict, match_xp: dict,
+    price_probs: dict | None = None,
 ) -> PlayerRef:
+    p_rise, p_fall = (price_probs or {}).get(c.player_id, (None, None))
     return PlayerRef(
+        price_p_rise=p_rise, price_p_fall=p_fall,
         duties=duties.get(c.player_id, []), match_analysis_xp=round(match_xp.get(c.player_id, 0.0), 2),
         player_id=c.player_id, name=c.web_name, position=c.position, team_short=c.team_short, team_id=c.team_id,
         price_tenths=c.price_tenths, xp_next=round(xp_next, 2), xp_horizon=round(c.xp, 2),
@@ -719,6 +737,7 @@ def build_week_plan(
     involved |= {p for alts in found_alternatives for o, i, _ in alts for p in (o, i)}
     starts = _start_percents(conn, set(squad_ids) | squad_after | involved)
     trends = _price_trends(conn, involved)
+    price_probs = _price_probabilities(conn, involved)
     solio = _solio_next(conn, set(squad_ids) | involved)
     duties = _set_piece_duties(conn, involved)
     next_xp_cache: dict = {}
@@ -744,8 +763,8 @@ def build_week_plan(
     def make_move(o: int, i: int, gain: float) -> PlannedMove:
         out_c, in_c = candidate(o), candidate(i)
         next_xp(o), next_xp(i)
-        out_ref = _ref(out_c, next_xp(o), starts, trends, solio, duties, match_xp)
-        in_ref = _ref(in_c, next_xp(i), starts, trends, solio, duties, match_xp)
+        out_ref = _ref(out_c, next_xp(o), starts, trends, solio, duties, match_xp, price_probs)
+        in_ref = _ref(in_c, next_xp(i), starts, trends, solio, duties, match_xp, price_probs)
         timing, note = move_timing(out_ref, in_ref)
         return PlannedMove(
             out=out_ref, into=in_ref, gain=gain, cost_tenths=in_c.price_tenths - out_c.price_tenths,

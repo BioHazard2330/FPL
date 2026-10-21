@@ -68,6 +68,26 @@ _COMPONENT_SIGNAL_MAP = {
 # never fully replace the component it targets on its own.
 MAX_ADJUSTMENT_FRACTION = 0.35
 
+# Measured sizes (2026-10-21, `backtesting/streak_calibration.py`, `fpl streak-study`):
+# 22,083 Understat player-matches, each streak scored against a flat
+# empirical-Bayes season rate that already contains the streak. Realised/
+# baseline: goal-threat streak of two matches with 3+ shots or 0.30+ xG 1.066
+# (90% interval 0.99-1.14); two 60+ minute matches with no shot 0.777 (0.68-
+# 0.87); creation streak (2+ key passes or 0.15+ xA twice) 1.192 on assists
+# (1.09-1.29); two 60+ minute matches with no key pass 0.797 (0.72-0.87). The
+# flat 0.35 over-stated a positive goal-threat trend about five-fold and the
+# negative ones about two-fold. SET_PIECES and SET_PIECE_CHANGE are not
+# measurable from this history (no taker data) and keep the old bound.
+CALIBRATED_FRACTIONS: dict[tuple[str, str], float] = {
+    ("GOAL_THREAT", "POSITIVE"): 0.05, ("GOAL_THREAT", "NEGATIVE"): 0.20,
+    ("ROLE_CHANGE", "POSITIVE"): 0.05, ("ROLE_CHANGE", "NEGATIVE"): 0.20,
+    ("CREATION", "POSITIVE"): 0.20, ("CREATION", "NEGATIVE"): 0.20,
+}
+
+
+def adjustment_fraction(signal: str, direction: str) -> float:
+    return CALIBRATED_FRACTIONS.get((signal, direction), MAX_ADJUSTMENT_FRACTION)
+
 
 @dataclass(frozen=True)
 class QualitativeAdjustment:
@@ -108,7 +128,7 @@ def compute_qualitative_adjustment(conn: sqlite3.Connection, player_id: int, com
     component_name = _COMPONENT_SIGNAL_MAP[row["signal"]]
     base_value = getattr(components, component_name)
     sign = 1.0 if row["direction"] == "POSITIVE" else -1.0
-    delta = round(sign * abs(base_value) * MAX_ADJUSTMENT_FRACTION, 4)
+    delta = round(sign * abs(base_value) * adjustment_fraction(row["signal"], row["direction"]), 4)
 
     from fpl_agent.models.text_cleanup import clean_display_text
 

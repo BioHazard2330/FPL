@@ -31,6 +31,26 @@ it, stop - that's fabrication, not analysis.
      plainly, analyze only what's genuinely there, and keep everything
      explicitly provisional (see step 5).
 
+### Start from the Match Analyst, then add what it cannot see (2026-10-21)
+
+`fpl match-report <id>` now opens with a MATCH ANALYST block, and
+`fpl match-story <id>` prints the full reading: score timeline, the result the
+shots deserved, chances by situation and game state, every substitution
+classified (injury-linked only when FPL changed the player's status after the
+match), and ranked findings with their measured persistence
+(`models/signal_reliability.py`). `fpl match-story <id> --draft FILE` writes
+those findings as a `match-analyze` payload. Everything in it is a number
+computed from stored rows; none of it is interpretation.
+
+Your job is what code cannot do: read the draft against the evidence, delete
+anything that does not hold, and add (1) the reason a manager did something
+when a real source states it, (2) cross-match context the analyst does not
+have, (3) the `player_states`/`team_states` blocks a FULL_TIME write needs. Keep
+the analyst's confidence caps: a finding whose reliability verdict is "none" or
+"too few" stays low confidence however it reads. Never raise a `high` unless
+the evidence is a plain fact (an own goal, a suspension, an injury-linked
+substitution).
+
 ### Shot & event detail is mandatory, not optional (2026-09-12, closes a real gap)
 
 Direct user finding: production analysis was reading "1 goal, 2 shots, 0.72
