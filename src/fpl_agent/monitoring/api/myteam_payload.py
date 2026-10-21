@@ -130,8 +130,25 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
         # above. Same `team_fixture_ticker` the FOOTBALL screen's ticker
         # uses, so a difficulty can never disagree between two screens.
         "fixtures": _fixture_block(ctx),
+        "analyst": _analyst_block(ctx),
     }
     return _with_photo_codes(payload)
+
+
+def _analyst_block(ctx: DashboardContext) -> list[dict]:
+    """The Match Analyst's latest finding for each squad player. Decoration: degrades to an empty list on any failure."""
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.models.match_analyst import analyst_for_players
+
+    conn = get_connection()
+    try:
+        return analyst_for_players(conn, set(ctx.squad_ids or set()))
+    except Exception:
+        import logging
+        logging.getLogger("fpl_agent.dashboard").exception("analyst notes failed - omitting this cycle")
+        return []
+    finally:
+        conn.close()
 
 
 def _with_photo_codes(payload: dict) -> dict:

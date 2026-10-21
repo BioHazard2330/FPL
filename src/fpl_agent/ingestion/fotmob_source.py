@@ -479,7 +479,7 @@ def sync_match(
             "(match_id, source, source_event_id, minute, event_type, team_id, player_id, description, retrieved_at) "
             "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(match_id, source, source_event_id) DO UPDATE SET "
-            "minute=excluded.minute, team_id=excluded.team_id, player_id=excluded.player_id, "
+            "minute=excluded.minute, event_type=excluded.event_type, team_id=excluded.team_id, player_id=excluded.player_id, "
             "description=excluded.description, retrieved_at=excluded.retrieved_at",
             (match_id, _SOURCE_NAME, me.source_event_id, me.minute, me.event_type,
              event_team_id, event_player_id, me.description, now),

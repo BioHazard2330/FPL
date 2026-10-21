@@ -981,7 +981,8 @@ def analysis_queue_cmd(pending: bool):
         )
         click.echo(
             f"           -> fpl match-report {j.fotmob_match_id}   "
-            f"then write the skill's JSON and run: fpl match-analyze {j.fotmob_match_id} "
+            + (f"(full time: `fpl match-story {j.fotmob_match_id} --draft <path.json>` writes the analyst's findings as the payload to review)   " if j.phase.upper() == "FULL_TIME" else "")
+            + f"then write the skill's JSON and run: fpl match-analyze {j.fotmob_match_id} "
             f"--phase {j.phase.lower()} --file <path.json>"
         )
 
@@ -2030,6 +2031,11 @@ def run_scheduled(gated: bool):
         built = refresh_stories(conn)
         if built:
             logger.info("run-scheduled match analyst: %d stories built", built)
+        from fpl_agent.models.match_analyst import auto_analyse_unreviewed
+
+        auto = auto_analyse_unreviewed(conn)
+        if auto:
+            logger.info("run-scheduled match analyst: %d unreviewed full-time analyses written", auto)
     except Exception:
         logger.exception("run-scheduled match analyst failed - not fatal to the sync itself")
 

@@ -105,6 +105,8 @@ def story_series(conn: sqlite3.Connection) -> dict[str, dict]:
     ).fetchall()
     for row in rows:
         story = json.loads(row["story_json"])
+        if "match" not in story or "metrics" not in story:
+            continue
         for side in ("home", "away"):
             tid = story["match"][side]["team_id"]
             metrics = dict(story["metrics"][side])
@@ -186,7 +188,7 @@ FINDING_METRIC = {
 def annotate_story(story: dict, rel: dict) -> dict:
     """Attach each finding's measured persistence and cap its confidence where the signal does not carry."""
     metrics = rel["metrics"]
-    for f in story["findings"]:
+    for f in story.get("findings", []):
         key = f.get("metric")
         stat = metrics.get(key) if key else None
         if not stat:

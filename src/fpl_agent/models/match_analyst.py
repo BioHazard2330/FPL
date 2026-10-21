@@ -91,6 +91,10 @@ def _poss(name: str) -> str:
     return f"{name}'" if name.endswith("s") else f"{name}'s"
 
 
+def _pl(n: int, singular: str, plural: str | None = None) -> str:
+    return f"{n} {singular if n == 1 else (plural or singular + 's')}"
+
+
 def _ordinal_minutes(start: int, end: int) -> str:
     return f"minute {start}" if start == end else f"minutes {start}-{end}"
 
@@ -341,6 +345,10 @@ def classify_subs(
     for row in pms:
         if row["player_id"] is not None and row["off_min"] is not None:
             off_candidates.setdefault((row["team_id"], row["off_min"]), []).append(row["player_id"])
+    on_candidates: dict[tuple[int, int], list[int]] = {}
+    for row in pms:
+        if row["player_id"] is not None and row["on_min"] is not None:
+            on_candidates.setdefault((row["team_id"], row["on_min"]), []).append(row["player_id"])
     by_minute_count: dict[tuple[int, int], int] = {}
     for e in sub_events:
         by_minute_count[(e["team_id"], e["minute"])] = by_minute_count.get((e["team_id"], e["minute"]), 0) + 1
@@ -352,6 +360,9 @@ def classify_subs(
             continue
         side = _side_of(e["team_id"], home_id)
         on_id = e["player_id"]
+        if on_id is None:
+            pool = on_candidates.get((e["team_id"], e["minute"]), [])
+            on_id = pool[0] if len(pool) == 1 else None
         off_id = resolve_name(m.group("off"), index, team_of, e["team_id"])
         if off_id is None:
             pool = off_candidates.get((e["team_id"], e["minute"]), [])
@@ -616,11 +627,11 @@ def _team_findings(ctx: dict) -> list[dict]:
                 verb = "ran ahead of" if gap > 0 else "fell short of"
                 out.append(_finding(
                     "team", tid, "TEAM_PATTERN",
-                    f"{name} {score_for}-{score_against} {oname}: {actual_pts} points against {_fmt(xpts, 1)} deserved from the shots ({_fmt(me['xg'])} xG for, {_fmt(me['xg_against'])} against; replayed, {name} win {_pct(win_p)})",
+                    f"{name} {score_for}-{score_against} {oname}: {_pl(actual_pts, 'point')} against {_fmt(xpts, 1)} deserved from the shots ({_fmt(me['xg'])} xG for, {_fmt(me['xg_against'])} against; replayed, {name} win {_pct(win_p)})",
                     f"The result {verb} the chances by {_fmt(abs(gap), 1)} points.",
                     direction, "TEAM_ATTACK" if score_for else "FIXTURES", f"{_fmt(me['xg'])} xG for and {_fmt(me['xg_against'])} against is the repeatable measure; the score is not",
                     "medium", "deserved_result over shot xG", 0.5 + abs(gap) / 3,
-                    short=f"{actual_pts} points from {_fmt(xpts, 1)} deserved ({_fmt(me['xg'])} xG to {_fmt(me['xg_against'])})" if abs(gap) >= 1.2 else None,
+                    short=f"{_pl(actual_pts, 'point')} from {_fmt(xpts, 1)} deserved ({_fmt(me['xg'])} xG to {_fmt(me['xg_against'])})" if abs(gap) >= 1.2 else None,
                 ))
         gap = me["goals"] - me["xg"]
         if abs(gap) >= 1.2 and me["shots"] >= 5:
@@ -631,12 +642,12 @@ def _team_findings(ctx: dict) -> list[dict]:
                 inferred = f"Scoring ran {_fmt(gap, 1)} goals above the chances created."
                 direction, reason = "NEUTRAL", "finishing above xG does not project forward in one match"
             else:
-                text = f"{name} scored {me['goals']} from {_fmt(me['xg'])} xG over {me['shots']} shots ({me['big_chances']} chances of {_fmt(BIG_CHANCE, 1)} xG or more, {me['big_chances_scored']} scored)"
+                text = f"{name} scored {me['goals']} from {_fmt(me['xg'])} xG over {me['shots']} shots ({_pl(me['big_chances'], 'chance')} of {_fmt(BIG_CHANCE, 1)} xG or more, {me['big_chances_scored']} scored)"
                 inferred = f"Scoring ran {_fmt(-gap, 1)} goals below the chances created" + (f", with {me['woodwork']} shots off the woodwork ({_fmt(me['woodwork_xg'])} xG)." if me["woodwork"] else ".")
                 direction, reason = "WATCH", "chances were created; the finishing shortfall is the variable part"
             out.append(_finding(
                 "team", tid, "TEAM_PATTERN", text, inferred, direction, "TEAM_ATTACK", reason, "medium", "goals vs xG", 0.5 + abs(gap) / 3,
-                short=f"{name} {me['goals']} goals from {_fmt(me['xg'])} xG", metric="goals_minus_xg",
+                short=f"{name} {_pl(me['goals'], 'goal')} from {_fmt(me['xg'])} xG", metric="goals_minus_xg",
             ))
         if me["shots_against"] <= 4 and me["xg_against"] <= 0.35 and me["shots"] >= 8:
             out.append(_finding(
@@ -1046,11 +1057,80 @@ def analyst_for_player(conn: sqlite3.Connection, player_id: int, limit: int = 6)
     return out
 
 
+_DIRECTION_ORDER = {"NEGATIVE": 0, "WATCH": 1, "POSITIVE": 2, "NEUTRAL": 3, None: 4}
+
+
+def analyst_for_players(conn: sqlite3.Connection, player_ids: set[int], limit: int = 8) -> list[dict]:
+    """The latest finding about each of these players, most worrying first. One pass over the stories, newest match first."""
+    if not player_ids:
+        return []
+    rows = conn.execute(
+        "SELECT ms.story_json, mi.kickoff_utc, th.short_name AS home_short, ta.short_name AS away_short, mi.home_score, mi.away_score "
+        "FROM match_story ms JOIN match_intelligence mi ON mi.id = ms.match_id "
+        "JOIN teams th ON th.id = mi.home_team_id JOIN teams ta ON ta.id = mi.away_team_id ORDER BY mi.kickoff_utc DESC"
+    ).fetchall()
+    seen: dict[int, dict] = {}
+    for r in rows:
+        if len(seen) == len(player_ids):
+            break
+        story = json.loads(r["story_json"])
+        for f in story["findings"]:
+            pid = f["subject_id"]
+            if f["subject_type"] != "player" or pid not in player_ids or pid in seen:
+                continue
+            seen[pid] = {
+                "player_id": pid, "name": f.get("name"), "observed": f["observed"], "direction": f["fpl_direction"], "confidence": f["confidence"],
+                "signal": f["fpl_signal"], "match_id": story["match_id"], "kickoff": r["kickoff_utc"],
+                "match": f"{r['home_short']} {r['home_score']}-{r['away_score']} {r['away_short']}",
+            }
+    newest_first = sorted(seen.values(), key=lambda n: n["kickoff"] or "", reverse=True)
+    return sorted(newest_first, key=lambda n: _DIRECTION_ORDER.get(n["direction"], 4))[:limit]
+
+
+AUTO_AFTER_HOURS = 8
+
+
+def auto_analyse_unreviewed(conn: sqlite3.Connection, after_hours: float = AUTO_AFTER_HOURS) -> int:
+    """Write the analyst's own FULL_TIME analysis for a finished match nobody has analysed, once it is `after_hours` past kickoff.
+
+    The reasoning step stays a human session's (`fpl match-analyze` replaces whatever is here for the same match and phase), but the
+    findings no longer wait for one: injury-linked substitutions, game-state reads and finishing flags reach the football feed the same
+    evening. Confidence is capped at medium so nothing here raises a high-severity change event on its own."""
+    from fpl_agent.ingestion.qualitative_analysis import apply_match_analysis
+
+    rows = conn.execute(
+        "SELECT mi.id FROM match_intelligence mi JOIN match_story ms ON ms.match_id = mi.id "
+        "WHERE mi.status = 'FULL_TIME' AND mi.kickoff_utc < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) "
+        "AND NOT EXISTS (SELECT 1 FROM match_analysis_summary s WHERE s.match_id = mi.id AND s.phase = 'FULL_TIME') ORDER BY mi.kickoff_utc",
+        (f"-{after_hours} hours",),
+    ).fetchall()
+    written = 0
+    for r in rows:
+        story = load_story(conn, r["id"])
+        if not story or not story.get("findings"):
+            continue
+        payload = draft_payload(story)
+        for o in payload["observations"]:
+            if o.get("confidence") == "high":
+                o["confidence"] = "medium"
+        for block in ("player_states", "team_states"):
+            for o in payload.get(block, []):
+                if o.get("confidence") == "high":
+                    o["confidence"] = "medium"
+        apply_match_analysis(conn, r["id"], "FULL_TIME", payload, analysis_version=ENGINE_VERSION)
+        written += 1
+    conn.commit()
+    return written
+
+
 def refresh_stories(conn: sqlite3.Connection, force: bool = False) -> int:
-    """Build or rebuild the story of every FULL_TIME match whose stored story is missing, from an older engine, or older than its shots."""
+    """Build or rebuild the story of every FULL_TIME match whose stored story is missing, from an older engine, or older than its shots.
+    A match from the last three days is also rebuilt when its story is over 30 minutes old, because FPL posts injury news for the players who
+    came off hours after the whistle and the injury-linked reading depends on it."""
     rows = conn.execute(
         "SELECT mi.id FROM match_intelligence mi LEFT JOIN match_story ms ON ms.match_id = mi.id WHERE mi.status = 'FULL_TIME' "
-        "AND (? = 1 OR ms.match_id IS NULL OR ms.engine_version != ? OR ms.generated_at < COALESCE((SELECT MAX(retrieved_at) FROM match_shots s WHERE s.match_id = mi.id), ''))",
+        "AND (? = 1 OR ms.match_id IS NULL OR ms.engine_version != ? OR ms.generated_at < COALESCE((SELECT MAX(retrieved_at) FROM match_shots s WHERE s.match_id = mi.id), '') "
+        "OR (mi.kickoff_utc >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3 days') AND ms.generated_at < strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-30 minutes')))",
         (1 if force else 0, ENGINE_VERSION),
     ).fetchall()
     from fpl_agent.models.signal_reliability import annotate_story, reliability
@@ -1066,7 +1146,8 @@ def refresh_stories(conn: sqlite3.Connection, force: bool = False) -> int:
         rel = reliability(conn)
         for r in conn.execute("SELECT match_id FROM match_story").fetchall():
             story = load_story(conn, r["match_id"])
-            store_story(conn, annotate_story(story, rel))
+            if story and "match_id" in story:
+                store_story(conn, annotate_story(story, rel))
         conn.commit()
     return built
 

@@ -74,6 +74,27 @@ def run_readiness_checks(conn: sqlite3.Connection) -> list[ReadinessCheck]:
         "Player projections", "OK", f"{MODEL_VERSION} model, {n_history} season-history row(s)",
     ))
 
+    finished = conn.execute("SELECT COUNT(*) FROM match_intelligence WHERE status = 'FULL_TIME'").fetchone()[0]
+    stories = conn.execute("SELECT COUNT(*) FROM match_story ms JOIN match_intelligence mi ON mi.id = ms.match_id WHERE mi.status = 'FULL_TIME'").fetchone()[0]
+    if not finished:
+        checks.append(ReadinessCheck("Match analyst", "OK", "no finished match yet"))
+    elif stories >= finished:
+        checks.append(ReadinessCheck("Match analyst", "OK", f"{stories} of {finished} finished matches analysed"))
+    else:
+        checks.append(ReadinessCheck("Match analyst", "DEGRADED", f"{stories} of {finished} finished matches analysed - run `fpl backfill-stories`"))
+
+    from fpl_agent.models import price_model
+
+    pm = price_model.summary(conn)
+    if pm is None:
+        checks.append(ReadinessCheck("Price model", "DEGRADED", "not fitted - `fpl price-model --refit`; price flags fall back to the momentum heuristic"))
+    else:
+        used = [name for name, m in pm["models"].items() if m and m["usable"]]
+        checks.append(ReadinessCheck(
+            "Price model", "OK" if used else "DEGRADED",
+            f"fitted {pm['fitted_at'][:10]} on {pm['rows']} player-nights; " + (f"{', '.join(used)} model(s) beat the base rate" if used else "no model beat the base rate, momentum heuristic in use"),
+        ))
+
     squad_result = optimise_squad(conn, n_gw=1)
     if squad_result.status == "Optimal":
         checks.append(ReadinessCheck("Squad optimizer", "OK", f"solved, total_xp={squad_result.total_xp}"))

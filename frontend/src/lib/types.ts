@@ -133,6 +133,17 @@ export interface MyTeamPayload {
   positions?: { position: string; label: string; players: SquadPlayer[] }[]
   bench?: SquadPlayer[]
   fixtures?: FixtureContext
+  analyst?: {
+    player_id: number
+    name: string | null
+    observed: string
+    direction: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WATCH' | null
+    confidence: 'low' | 'medium' | 'high'
+    signal: string | null
+    match_id: number
+    kickoff: string | null
+    match: string
+  }[]
   weak_links?: { name: string; team_short: string; median: number; expected_minutes: number | null }[]
   strong_link?: { name: string; team_short: string; median: number; expected_minutes: number | null } | null
 }

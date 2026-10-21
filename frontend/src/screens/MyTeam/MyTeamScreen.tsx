@@ -550,6 +550,21 @@ export function MyTeamScreen() {
             </div>
           )}
 
+          {p.analyst && p.analyst.length > 0 && (
+            <div className="mt-6 border-t border-divider pt-4">
+              <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">What the analyst saw</div>
+              <div className="mt-0.5 text-[12px] text-text-faint">latest finding per player, most worrying first</div>
+              <div className="mt-3 space-y-3">
+                {p.analyst.map((n) => (
+                  <Link key={n.player_id} to={`/match/${n.match_id}`} className={`block border-l-2 pl-3 hover:bg-raised/40 ${n.direction === 'NEGATIVE' ? 'border-alert-red' : n.direction === 'WATCH' ? 'border-broadcast-gold' : n.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
+                    <div className="text-sm font-bold text-text">{n.name ?? 'Player'} <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{n.match}</span></div>
+                    <p className="text-[13px] leading-snug text-text-muted">{n.observed}</p>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
           {p.risks && p.risks.length > 0 && (
             <div className="mt-6 border-t border-divider pt-4">
               <div className="text-[12px] font-bold uppercase tracking-wide text-broadcast-gold">Squad risks</div>

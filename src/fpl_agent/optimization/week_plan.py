@@ -199,6 +199,17 @@ class WeekPlan:
     notes: list[str] = field(default_factory=list)
     captain_ladder: list[dict] = field(default_factory=list)
     team_outlook: dict = field(default_factory=dict)
+    calibration: str = ""
+
+
+def calibration_id() -> str:
+    """Identifies the constants that change a projection without changing any input row: the qualitative adjustment sizes and the
+    projection model version. A stored plan made under a different id is rebuilt rather than served."""
+    from fpl_agent.models.expected_points import MODEL_VERSION
+    from fpl_agent.models.qualitative_feed import CALIBRATED_FRACTIONS, MAX_ADJUSTMENT_FRACTION
+
+    sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
+    return f"{MODEL_VERSION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
 
 
 def _start_percents(conn: sqlite3.Connection, ids: set[int]) -> dict[int, int]:
@@ -856,7 +867,7 @@ def build_week_plan(
         },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
-        team_outlook=team_outlook,
+        team_outlook=team_outlook, calibration=calibration_id(),
     )
 
 
@@ -973,6 +984,8 @@ def week_plan_staleness(conn: sqlite3.Connection, detail: dict, created_at: str)
         reasons.append("a new gameweek has started")
     if state["free_transfers"] != detail.get("free_transfers"):
         reasons.append("your free transfers have changed")
+    if detail.get("calibration") != calibration_id():
+        reasons.append("the projection model's calibration has changed")
     watch = set(ids) | {m["into"]["player_id"] for m in detail.get("moves", [])} | {
         m["into"]["player_id"] for m in detail.get("declined", [])
     }

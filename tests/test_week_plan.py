@@ -197,9 +197,11 @@ def test_chip_outlook_reports_double_gameweeks_by_team(db_conn):
 
 
 def _detail(**over):
+    from fpl_agent.optimization import week_plan
+
     base = {
         "squad_ids": [1, 2, 3], "bank_tenths": 3, "event": 7, "free_transfers": 5,
-        "moves": [{"into": {"player_id": 9}}], "declined": [],
+        "moves": [{"into": {"player_id": 9}}], "declined": [], "calibration": week_plan.calibration_id(),
     }
     base.update(over)
     return base
@@ -453,3 +455,14 @@ def test_fresh_odds_after_the_plan_trigger_a_rebuild_only_in_the_final_day(db_co
     assert _odds_newer_than(db_conn, (now - timedelta(minutes=30)).isoformat()) is False
     _deadline_in(db_conn, 70)
     assert _odds_newer_than(db_conn, made) is False
+
+
+def test_a_plan_made_under_a_different_calibration_is_stale(db_conn, monkeypatch):
+    from fpl_agent.optimization import week_plan
+
+    monkeypatch.setattr(week_plan, "light_squad_state", lambda conn: _state())
+    reasons = week_plan.week_plan_staleness(db_conn, _detail(calibration="calibrated-v2|old"), "2026-10-15T00:00:00+00:00")
+    assert reasons == ["the projection model's calibration has changed"]
+    missing = _detail()
+    del missing["calibration"]
+    assert week_plan.week_plan_staleness(db_conn, missing, "2026-10-15T00:00:00+00:00") == ["the projection model's calibration has changed"]

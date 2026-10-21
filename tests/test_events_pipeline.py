@@ -169,3 +169,19 @@ def test_full_pipeline_goal_substitution_full_time(monkeypatch, db_conn):
     # (the SUBSTITUTION lock, then the FULL_TIME lock) - a real, versioned
     # canonical fact, never silently overwritten without a version bump.
     assert fast_engine.get_live_player_state(db_conn, 12)["state_version"] == 2
+
+
+def test_a_goal_that_var_overturns_is_retyped_on_the_next_sync(monkeypatch, db_conn):
+    """FotMob reuses the event id: the same incident arrives as "Goal", then as "VAR". The upsert used to keep the old type, so an overturned goal stayed a goal."""
+    _seed_match_players(db_conn)
+    _sync(monkeypatch, db_conn, _payload_tick1_goal())
+    assert db_conn.execute("SELECT event_type FROM match_events WHERE source_event_id = 'fact-1'").fetchone()[0] == "Goal"
+
+    overturned = _payload_tick1_goal()
+    overturned["content"]["matchFacts"]["events"]["events"] = [{
+        "reactKey": "g1", "eventId": 1, "type": "VAR", "time": 30, "isHome": True, "player": {"id": 10, "name": "Scorer"},
+        "VAR": {"pendingDecision": False, "decision": {"key": ["var_goal_cancelled", "offside"], "value": ["Goal ruled out", "offside"]}},
+    }]
+    _sync(monkeypatch, db_conn, overturned)
+    row = db_conn.execute("SELECT event_type, description FROM match_events WHERE source_event_id = 'fact-1'").fetchone()
+    assert row["event_type"] == "VAR" and row["description"].startswith("VAR")

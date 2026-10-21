@@ -255,3 +255,93 @@ def test_story_round_trips_through_the_database(db_conn):
     back = load_story(db_conn, 1)
     assert back["headline"] == story["headline"]
     assert db_conn.execute("SELECT COUNT(*) FROM match_story").fetchone()[0] == 1
+
+
+def _seed_story_rows(conn):
+    from fpl_agent.models.match_analyst import store_story
+
+    for tid in (HOME, AWAY):
+        conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?, ?, ?, ?, 't0')", (tid, tid, f"T{tid}", f"T{tid}"))
+    for mid, kickoff, direction, subject in ((1, "2026-09-01T12:00:00Z", "POSITIVE", 1), (2, "2026-09-08T12:00:00Z", "NEGATIVE", 1), (3, "2026-09-08T12:00:00Z", "WATCH", 2)):
+        conn.execute(
+            "INSERT INTO match_intelligence (id, fotmob_match_id, status, home_team_id, away_team_id, home_score, away_score, kickoff_utc, source, retrieved_at) "
+            "VALUES (?, ?, 'FULL_TIME', ?, ?, 1, 0, ?, 'fotmob', 't0')", (mid, f"f{mid}", HOME, AWAY, kickoff),
+        )
+        story = {"version": "analyst-v1", "match_id": mid, "findings": [{
+            "subject_type": "player", "subject_id": subject, "name": f"P{subject}", "observation_type": "MINUTES", "observed": f"finding {mid}", "inferred": None,
+            "fpl_direction": direction, "fpl_signal": "MINUTES", "confidence": "high", "reliability": None}]}
+        store_story(conn, story)
+    conn.commit()
+
+
+def test_analyst_for_players_returns_each_players_latest_finding_most_worrying_first(db_conn):
+    from fpl_agent.models.match_analyst import analyst_for_players
+
+    _seed_story_rows(db_conn)
+    notes = analyst_for_players(db_conn, {1, 2})
+    assert [(n["player_id"], n["direction"], n["observed"]) for n in notes] == [(1, "NEGATIVE", "finding 2"), (2, "WATCH", "finding 3")]
+    assert analyst_for_players(db_conn, set()) == []
+
+
+def test_analyst_for_player_lists_matches_newest_first_and_skips_matches_without_him(db_conn):
+    from fpl_agent.models.match_analyst import analyst_for_player
+
+    _seed_story_rows(db_conn)
+    rows = analyst_for_player(db_conn, 1)
+    assert [r["match_id"] for r in rows] == [2, 1]
+    assert rows[0]["findings"][0]["observed"] == "finding 2" and rows[0]["home"] == f"T{HOME}"
+    assert [r["match_id"] for r in analyst_for_player(db_conn, 2)] == [3]
+
+
+def test_a_recent_match_is_rebuilt_when_its_story_is_stale_but_an_old_one_is_not(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.models.match_analyst import ENGINE_VERSION, refresh_stories
+
+    for tid in (HOME, AWAY):
+        db_conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?, ?, ?, ?, 't0')", (tid, tid, f"T{tid}", f"T{tid}"))
+    now = datetime.now(timezone.utc)
+    for mid, kickoff in ((1, now - timedelta(days=1)), (2, now - timedelta(days=20))):
+        db_conn.execute(
+            "INSERT INTO match_intelligence (id, fotmob_match_id, status, home_team_id, away_team_id, home_score, away_score, kickoff_utc, source, retrieved_at) "
+            "VALUES (?, ?, 'FULL_TIME', ?, ?, 0, 0, ?, 'fotmob', 't0')", (mid, f"f{mid}", HOME, AWAY, kickoff.strftime("%Y-%m-%dT%H:%M:%S.000Z")),
+        )
+        db_conn.execute(
+            "INSERT INTO match_story (match_id, engine_version, story_json, generated_at) VALUES (?, ?, '{}', ?)",
+            (mid, ENGINE_VERSION, (now - timedelta(hours=2)).isoformat()),
+        )
+    db_conn.commit()
+    assert refresh_stories(db_conn) == 1
+    fresh = {r["match_id"]: r["generated_at"] for r in db_conn.execute("SELECT match_id, generated_at FROM match_story")}
+    assert fresh[1] > (now - timedelta(minutes=5)).isoformat() and fresh[2] < (now - timedelta(hours=1)).isoformat()
+
+
+def test_an_unreviewed_finished_match_gets_the_analysts_analysis_after_the_wait_and_a_reviewed_one_is_left_alone(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.models.match_analyst import auto_analyse_unreviewed, store_story
+
+    for tid in (HOME, AWAY):
+        db_conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?, ?, ?, ?, 't0')", (tid, tid, f"T{tid}", f"T{tid}"))
+    now = datetime.now(timezone.utc)
+    shots = [_shot(10 + 8 * i, HOME, None, 0.1, situation="FromCorner", shot_type="Header") for i in range(5)] + [_shot(30, HOME, None, 0.04), _shot(50, HOME, None, 0.03)]
+    for mid, hours_ago in ((1, 12), (2, 12), (3, 2)):
+        db_conn.execute(
+            "INSERT INTO match_intelligence (id, fotmob_match_id, status, home_team_id, away_team_id, home_score, away_score, kickoff_utc, source, retrieved_at) "
+            "VALUES (?, ?, 'FULL_TIME', ?, ?, 0, 0, ?, 'fotmob', 't0')", (mid, f"f{mid}", HOME, AWAY, (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")),
+        )
+        story = build_story(
+            {"match": {**_match(0, 0), "id": mid}, "shots": shots, "events": [], "pms": [], "players": {}},
+            {"dead_ball_share": 0.24, "dead_ball_shares_sorted": [0.1, 0.2, 0.3], "xg_totals_sorted": [], "team_matches": 3},
+        )
+        story["match_id"] = mid
+        store_story(db_conn, story)
+    db_conn.execute("INSERT INTO match_analysis_summary (match_id, phase, headline, uncertainties, analysis_version, generated_at) VALUES (2, 'FULL_TIME', 'human', '', 'qual-v1', 't0')")
+    db_conn.commit()
+
+    assert auto_analyse_unreviewed(db_conn) == 1
+    rows = db_conn.execute("SELECT match_id, analysis_version FROM match_analysis_summary ORDER BY match_id").fetchall()
+    assert [(r["match_id"], r["analysis_version"]) for r in rows] == [(1, "analyst-v1"), (2, "qual-v1")]
+    assert db_conn.execute("SELECT COUNT(*) FROM match_observations WHERE match_id = 1").fetchone()[0] > 0
+    assert not db_conn.execute("SELECT 1 FROM match_observations WHERE match_id = 1 AND confidence = 'high'").fetchone()
+    assert auto_analyse_unreviewed(db_conn) == 0

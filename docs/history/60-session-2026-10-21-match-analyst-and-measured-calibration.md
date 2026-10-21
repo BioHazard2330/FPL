@@ -20,6 +20,11 @@ Things it found that the hand-written versions missed: Robertson (69'), Tosin (7
 
 **Frontend.** Match page: the analyst's read, a deserved-result bar, a scrubbable shot replay (both sides on one pitch, cumulative xG, game-state band, goals, substitutions, cards, play and arrow keys), game state, situation mix, substitutions read against the score, findings with persistence tags. Table: xPts and luck columns, sortable. Football: the signal ledger. Player file: what the analyst saw. Previews: the read. Command, Desk, Scout: price probabilities. Every screen except Command is now its own chunk: first load fell from 2.5 MB to 473 KB of JavaScript.
 
+## Defects found on the way
+- **Overturned goals were stored as goals (7 matches).** FotMob reuses an event id when VAR rules a goal out: the incident first arrives as type "Goal", then as type "VAR". `sync_match`'s upsert updated the description and not `event_type`, so the match report timeline, the live charts and the new analyst all showed a phantom goal in seven matches (found because the analyst's timeline disagreed with the final score in exactly those seven). Fixed in the upsert, repaired in place by migration 0050, covered by a test that syncs a goal and then the VAR event with the same id.
+- **A "Goal ruled out" is still a VAR event the analyst does not describe**: the decision text is not stored, only the player's name.
+- Two substitutions in the history still resolve no position for the player coming on (a player FPL now lists at another club).
+
 ## Assumptions and limits to keep disclosing
 - Shot coordinates are metres on a 105 x 68 pitch (FotMob). Game state is read at minute resolution; stoppage time is folded into 45 and 90.
 - Deserved result treats shots as independent. Shot-sum xG differs from FotMob's team xG by up to 0.2 (Brighton 2.20 v 1.98); the story says so.
@@ -27,7 +32,7 @@ Things it found that the hand-written versions missed: Robertson (69'), Tosin (7
 - The reliability table is one season of shots (80 pairs) beside the multi-season history for the metrics Understat has; the intervals say how much that is worth.
 - The streak study scores a flat shrunk rate, not the full projection; players with no 45-minute matches are absent from the history table.
 - The price model has 28 rises in its held-out window; skill is measured there. Falls are not modelled.
-- Not done: `SET_PIECES`/`SET_PIECE_CHANGE` fractions are untested; the analyst does not write `match_observations` on its own (it would feed projections through `qualitative_feed`); the analyst is post-match only for live matches.
+- Not done: `SET_PIECES`/`SET_PIECE_CHANGE` fractions are untested; the analyst writes `match_observations` on its own only for a finished match nobody has analysed 8 hours after kickoff (confidence capped at medium; `fpl match-analyze` replaces it), because those rows feed projections through `qualitative_feed`; it is post-match only, with no live reading.
 
 ## Verification
 Full suite 2111 passed before the price model; the affected files re-run green after (price model 7, match analyst 20, streak 4, team reading 5, payloads). Real data: `fpl backfill-stories --force` built 70 stories; `fpl streak-study`, `fpl signal-reliability`, `fpl price-model` run against `data/fpl.db`. Production build served from `data/` and checked in Chrome at 1440px (match page, table, football, previews).
