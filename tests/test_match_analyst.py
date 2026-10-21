@@ -345,3 +345,43 @@ def test_an_unreviewed_finished_match_gets_the_analysts_analysis_after_the_wait_
     assert db_conn.execute("SELECT COUNT(*) FROM match_observations WHERE match_id = 1").fetchone()[0] > 0
     assert not db_conn.execute("SELECT 1 FROM match_observations WHERE match_id = 1 AND confidence = 'high'").fetchone()
     assert auto_analyse_unreviewed(db_conn) == 0
+
+
+def test_injury_followup_counts_who_played_in_the_clubs_next_match(db_conn):
+    from fpl_agent.models.match_analyst import store_story
+    from fpl_agent.models.signal_reliability import injury_followup, injury_sentence
+
+    db_conn.execute("INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) VALUES (3, 'Midfielder', 'MID', 'Midfielders', 't0')")
+    for tid in (HOME, AWAY):
+        db_conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (?, ?, ?, ?, 't0')", (tid, tid, f"T{tid}", f"T{tid}"))
+    for pid in range(1, 7):
+        db_conn.execute("INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) VALUES (?, ?, ?, ?, 3, 'a', 0, 't0')", (pid, pid, f"P{pid}", HOME))
+    for mid, kickoff in ((1, "2026-09-01T12:00:00.000Z"), (2, "2026-09-08T12:00:00.000Z")):
+        db_conn.execute(
+            "INSERT INTO match_intelligence (id, fotmob_match_id, status, home_team_id, away_team_id, home_score, away_score, kickoff_utc, source, retrieved_at) "
+            "VALUES (?, ?, 'FULL_TIME', ?, ?, 0, 0, ?, 'fotmob', 't0')", (mid, f"f{mid}", HOME, AWAY, kickoff),
+        )
+    subs = [{"kind": "INJURY_LINKED", "team_id": HOME, "off_id": pid, "minute": 30 if pid <= 2 else 70} for pid in range(1, 7)]
+    store_story(db_conn, {"version": "analyst-v1", "match_id": 1, "findings": [], "subs": subs})
+    for pid, minutes in ((1, 0), (2, 0), (3, 90), (4, 20), (5, 90), (6, 75)):
+        db_conn.execute(
+            "INSERT INTO player_match_state (match_id, player_id, team_id, started, minutes, source, retrieved_at) VALUES (2, ?, ?, 1, ?, 'fotmob', 't0')", (pid, HOME, minutes)
+        )
+    db_conn.commit()
+    rate = injury_followup(db_conn)
+    assert rate["n"] == 6 and rate["played"] == 4 and rate["played_60"] == 3
+    assert rate["off_by_45"] == {"n": 2, "played": 0}
+    assert "4 of 6" in injury_sentence(rate) and "60 minutes" in injury_sentence(rate)
+    assert injury_sentence({"n": 3, "played": 1, "played_60": 0, "mean_minutes": 10, "off_by_45": {"n": 0, "played": 0}}) is None
+
+
+def test_plan_players_get_the_analysts_latest_note_and_others_are_untouched(db_conn):
+    from fpl_agent.monitoring.api.weekplan_payload import _attach_analyst
+
+    _seed_story_rows(db_conn)
+    payload = {"moves": [{"out": {"player_id": 1}, "into": {"player_id": 9}, "alternatives": [{"into": {"player_id": 2}}]}], "declined": []}
+    _attach_analyst(db_conn, payload)
+    move = payload["moves"][0]
+    assert move["out"]["analyst"]["observed"] == "finding 2" and move["out"]["analyst"]["direction"] == "NEGATIVE"
+    assert "analyst" not in move["into"]
+    assert move["alternatives"][0]["into"]["analyst"]["direction"] == "WATCH"

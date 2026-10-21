@@ -117,6 +117,11 @@ function PlayerSide({ p, side, fixtures, outlook }: { p: WeekPlanPlayer; side: '
             </Tag>
           )}
         </div>
+        {p.analyst && (
+          <Link to={`/match/${p.analyst.match_id}`} className={`mt-2 block max-w-xs border-l-2 pl-2 text-[12px] leading-snug text-text-muted hover:text-text ${mirrored ? 'ml-auto text-right' : ''} ${p.analyst.direction === 'NEGATIVE' ? 'border-alert-red' : p.analyst.direction === 'WATCH' ? 'border-broadcast-gold' : p.analyst.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
+            <span className="font-bold uppercase tracking-[0.08em] text-text-faint">{p.analyst.match}</span> {p.analyst.observed}
+          </Link>
+        )}
         {side === 'into' && run && (
           <div className="mt-2">
             <FixtureRun fixtures={run} max={4} showEvent />

@@ -167,6 +167,49 @@ def history_reliability(conn: sqlite3.Connection) -> dict[str, dict]:
     return out
 
 
+def injury_followup(conn: sqlite3.Connection) -> dict:
+    """What happened next to players taken off injured: of every stored injury-linked substitution with a later match for his club, how
+    many played in it and how many played 60 minutes. A base rate from this season's own stories, not a prediction for one player."""
+    matches = {r["id"]: (r["home_team_id"], r["away_team_id"], r["kickoff_utc"]) for r in conn.execute(
+        "SELECT id, home_team_id, away_team_id, kickoff_utc FROM match_intelligence WHERE status = 'FULL_TIME'")}
+    team_seq: dict[int, list] = {}
+    for mid, (h, a, k) in matches.items():
+        team_seq.setdefault(h, []).append((k, mid))
+        team_seq.setdefault(a, []).append((k, mid))
+    for seq in team_seq.values():
+        seq.sort()
+    minutes = {(r["match_id"], r["player_id"]): (r["minutes"] or 0) for r in conn.execute(
+        "SELECT match_id, player_id, minutes FROM player_match_state WHERE player_id IS NOT NULL")}
+    outcomes: list[tuple[int, int]] = []
+    for r in conn.execute("SELECT match_id, story_json FROM match_story"):
+        story = json.loads(r["story_json"])
+        for sub in story.get("subs", []):
+            if sub.get("kind") != "INJURY_LINKED" or sub.get("off_id") is None:
+                continue
+            seq = team_seq.get(sub["team_id"], [])
+            pos = next((i for i, (_, mid) in enumerate(seq) if mid == r["match_id"]), None)
+            if pos is None or pos + 1 >= len(seq):
+                continue
+            outcomes.append((sub["minute"], minutes.get((seq[pos + 1][1], sub["off_id"]), 0)))
+    n = len(outcomes)
+    return {
+        "n": n, "played": sum(1 for _, m in outcomes if m >= 1), "played_60": sum(1 for _, m in outcomes if m >= 60),
+        "mean_minutes": (sum(m for _, m in outcomes) / n) if n else None,
+        "off_by_45": {"n": sum(1 for o, _ in outcomes if o <= 45), "played": sum(1 for o, m in outcomes if o <= 45 and m >= 1)},
+    }
+
+
+def injury_sentence(rate: dict) -> str | None:
+    if not rate or rate["n"] < 5:
+        return None
+    text = (f"Earlier this season {rate['played']} of {rate['n']} players taken off like this played in their club's next match and {rate['played_60']} "
+            f"played 60 minutes (mean {rate['mean_minutes']:.0f}).")
+    early = rate["off_by_45"]
+    if early["n"] >= 4:
+        text += f" Of the {early['n']} taken off by half-time, {early['played']} played next."
+    return text
+
+
 def reliability(conn: sqlite3.Connection) -> dict:
     stats = story_reliability(conn)
     for name, stat in history_reliability(conn).items():
@@ -176,7 +219,7 @@ def reliability(conn: sqlite3.Connection) -> dict:
     for name, stat in stats.items():
         stat["label"] = LABELS.get(name, name)
         stat["implication"] = IMPLICATION[stat["verdict"]]
-    return {"metrics": stats, "min_prior_matches": MIN_PRIOR, "min_pairs": MIN_PAIRS}
+    return {"metrics": stats, "min_prior_matches": MIN_PRIOR, "min_pairs": MIN_PAIRS, "injury_followup": injury_followup(conn)}
 
 
 FINDING_METRIC = {
@@ -188,7 +231,12 @@ FINDING_METRIC = {
 def annotate_story(story: dict, rel: dict) -> dict:
     """Attach each finding's measured persistence and cap its confidence where the signal does not carry."""
     metrics = rel["metrics"]
+    sentence = injury_sentence(rel.get("injury_followup") or {})
     for f in story.get("findings", []):
+        if f.get("metric") == "injury_linked":
+            if sentence and f.get("inferred") and "Earlier this season" not in f["inferred"]:
+                f["inferred"] = f"{f['inferred']} {sentence}"
+            continue
         key = f.get("metric")
         stat = metrics.get(key) if key else None
         if not stat:

@@ -109,3 +109,25 @@ def test_expected_points_come_from_the_stored_stories_and_luck_is_points_minus_t
     assert rows[2]["xpts"] == 2.1 and rows[2]["luck"] == -2.1
     assert rows[2]["xpts_position"] == 1 and rows[1]["xpts_position"] == 2
     assert rows[3]["xpts"] is None and rows[3]["luck"] is None and rows[3]["xpts_position"] is None
+
+
+def test_style_shares_are_weighted_by_the_chances_in_them(db_conn):
+    _seed(db_conn, budget_tenths=950, club_limit=4)
+    _fixture(db_conn, 1, 1, 1, 2, 1, 0)
+    _xg(db_conn, 1, 1.0, 1.0)
+    mid = db_conn.execute("SELECT id FROM match_intelligence WHERE fpl_fixture_id=1").fetchone()[0]
+
+    def side(xg, dead, shots, box):
+        return {
+            "xg": xg, "xg_against": 1.0, "shots": shots, "xg_by_situation": {"dead_ball": dead, "fast_break": 0.0, "open_play": xg - dead, "penalty": 0.0},
+            "xga_by_situation": {"dead_ball": 0.2, "fast_break": 0.1, "open_play": 0.7, "penalty": 0.0}, "box_xg_share": box, "outside_box_shot_share": 0.25,
+        }
+
+    story = {"match": {"home": {"team_id": 1}, "away": {"team_id": 2}}, "metrics": {"home": side(2.0, 1.0, 10, 0.8), "away": side(1.0, 0.1, 6, 0.5)}, "deserved": None}
+    db_conn.execute("INSERT INTO match_story (match_id, engine_version, story_json, generated_at) VALUES (?, 'analyst-v1', ?, 't0')", (mid, json.dumps(story)))
+    db_conn.commit()
+    rows = {r["team_id"]: r for r in build_table_payload(_Ctx())["rows"]}
+    s1, s2 = rows[1]["style"], rows[2]["style"]
+    assert s1["dead_for"] == 0.5 and s1["dead_against"] == 0.2 and s1["shots_per_match"] == 10 and s1["xg_per_shot"] == 0.2
+    assert s2["dead_for"] == 0.1 and s2["box_share"] == 0.5
+    assert rows[3]["style"] is None

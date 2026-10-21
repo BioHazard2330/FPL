@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { StyleQuadrant } from '@/components/football/StyleQuadrant'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchTablePayload } from '@/lib/api'
@@ -227,6 +228,8 @@ export function TableScreen() {
           )}
         </div>
       </div>
+
+      <StyleQuadrant rows={rows} />
 
       {/* THE TABLE */}
       <div className="px-10 py-8">

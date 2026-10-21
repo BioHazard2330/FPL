@@ -414,8 +414,8 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
 
             {/* the cursor */}
             <line x1={sx(cur)} x2={sx(cur)} y1={BAND_Y - 2} y2={CHART_B + 4} stroke="var(--text)" strokeWidth={1.4} />
-            <rect x={sx(cur) - 17} y={CHART_B + 4} width={34} height={17} fill="var(--text)" />
-            <text x={sx(cur)} y={CHART_B + 16.5} textAnchor="middle" fontSize={12} fontWeight={800} fill="var(--void)" className="tabular">{cur}'</text>
+            <rect x={sx(cur) - 17} y={BAND_Y + 9} width={34} height={17} fill="var(--text)" />
+            <text x={sx(cur)} y={BAND_Y + 21.5} textAnchor="middle" fontSize={12} fontWeight={800} fill="var(--void)" className="tabular">{cur}'</text>
           </svg>
         </div>
 

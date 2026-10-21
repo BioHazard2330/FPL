@@ -833,6 +833,7 @@ def _sub_findings(ctx: dict) -> list[dict]:
                 f"Substituted off at minute {sub['minute']} (score margin {sub['margin']:+d}); {sub['note']}",
                 "FPL changed his status after this match, so the substitution is read as fitness-related.", "NEGATIVE", "MINUTES",
                 "injury-linked substitution after an FPL status change", "high", "match_events substitution + change_events status_change", 0.9,
+                metric="injury_linked",
             ))
     for flag in ctx["status_flags"]:
         if flag["status"] == "s":

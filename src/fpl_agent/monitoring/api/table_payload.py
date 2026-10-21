@@ -90,6 +90,8 @@ def build_table_payload(ctx: DashboardContext) -> dict:
                     deserved[tid]["pts"] += d["actual_home_points" if side == "home" else "actual_away_points"]
                     deserved[tid]["n"] += 1
 
+        style = _style_by_team(conn, teams)
+
         rows = []
         for t in teams.values():
             n = t["xg_matches"]
@@ -109,6 +111,7 @@ def build_table_payload(ctx: DashboardContext) -> dict:
                 "xpts": round(dv["xpts"], 1) if dv["n"] else None,
                 "xpts_matches": dv["n"],
                 "luck": round(dv["pts"] - dv["xpts"], 1) if dv["n"] else None,
+                "style": style.get(t["team_id"]),
             })
         rows.sort(key=lambda r: (-r["points"], -r["gd"], -r["gf"], r["name"]))
         for i, r in enumerate(rows, 1):
@@ -137,6 +140,45 @@ def build_table_payload(ctx: DashboardContext) -> dict:
         }
     finally:
         conn.close()
+
+
+def _style_by_team(conn, teams: dict) -> dict[int, dict]:
+    """How each club creates and concedes chances, from the stored match stories: shares of xG by situation, volume and quality, and where
+    the shots come from. Sums over each club's matches, so a share is weighted by the chances in it, not an average of match percentages."""
+    import json
+
+    acc: dict[int, dict] = {}
+    for r in conn.execute("SELECT story_json FROM match_story"):
+        story = json.loads(r["story_json"])
+        if "metrics" not in story or "match" not in story:
+            continue
+        for side in ("home", "away"):
+            tid = story["match"][side]["team_id"]
+            m = story["metrics"][side]
+            if tid not in teams:
+                continue
+            a = acc.setdefault(tid, {"n": 0, "xg": 0.0, "xga": 0.0, "shots": 0, "dead": 0.0, "dead_a": 0.0, "fast": 0.0, "fast_a": 0.0, "box": 0.0, "outside_shots": 0.0})
+            a["n"] += 1
+            a["xg"] += m["xg"]
+            a["xga"] += m["xg_against"]
+            a["shots"] += m["shots"]
+            a["dead"] += m["xg_by_situation"]["dead_ball"]
+            a["dead_a"] += m["xga_by_situation"]["dead_ball"]
+            a["fast"] += m["xg_by_situation"]["fast_break"]
+            a["fast_a"] += m["xga_by_situation"]["fast_break"]
+            a["box"] += (m["box_xg_share"] or 0.0) * m["xg"]
+            a["outside_shots"] += (m["outside_box_shot_share"] or 0.0) * m["shots"]
+    out: dict[int, dict] = {}
+    for tid, a in acc.items():
+        xg, xga, shots = a["xg"], a["xga"], a["shots"]
+        out[tid] = {
+            "matches": a["n"],
+            "dead_for": a["dead"] / xg if xg else None, "dead_against": a["dead_a"] / xga if xga else None,
+            "fast_for": a["fast"] / xg if xg else None, "fast_against": a["fast_a"] / xga if xga else None,
+            "shots_per_match": shots / a["n"], "xg_per_shot": xg / shots if shots else None,
+            "box_share": a["box"] / xg if xg else None, "outside_shot_share": a["outside_shots"] / shots if shots else None,
+        }
+    return out
 
 
 build_table_payload.needs_context = False  # type: ignore[attr-defined]

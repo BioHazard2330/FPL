@@ -1626,6 +1626,19 @@ export interface TableRow {
   xpts_position: number | null
   /** Points won minus xPts over the same matches. */
   luck: number | null
+  style?: TableStyle | null
+}
+
+export interface TableStyle {
+  matches: number
+  dead_for: number | null
+  dead_against: number | null
+  fast_for: number | null
+  fast_against: number | null
+  shots_per_match: number
+  xg_per_shot: number | null
+  box_share: number | null
+  outside_shot_share: number | null
 }
 
 export interface TablePayload {
@@ -1645,6 +1658,7 @@ export interface WeekPlanPlayer {
   player_id: number
   photo_code?: number | null
   luck?: { luck: number; z: number; actual: number; deserved: number }
+  analyst?: { observed: string; direction: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WATCH' | null; match: string; match_id: number; confidence: 'low' | 'medium' | 'high' }
   name: string
   position: string
   team_short: string

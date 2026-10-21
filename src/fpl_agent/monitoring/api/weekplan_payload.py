@@ -50,6 +50,33 @@ def _attach_luck(conn, payload: dict) -> None:
             stamp(alt["into"])
 
 
+def _attach_analyst(conn, payload: dict) -> None:
+    """Under every player in a transfer, the Match Analyst's latest finding about him: what his last match actually showed."""
+    from fpl_agent.models.match_analyst import analyst_for_players
+
+    ids: set[int] = set()
+    for move in payload.get("moves", []) + payload.get("declined", []):
+        ids.add(move["out"]["player_id"])
+        ids.add(move["into"]["player_id"])
+        for alt in move.get("alternatives", []):
+            ids.add(alt["into"]["player_id"])
+    try:
+        notes = {n["player_id"]: n for n in analyst_for_players(conn, ids, limit=len(ids))}
+    except Exception:
+        return
+
+    def stamp(player: dict) -> None:
+        n = notes.get(player.get("player_id"))
+        if n is not None:
+            player["analyst"] = {"observed": n["observed"], "direction": n["direction"], "match": n["match"], "match_id": n["match_id"], "confidence": n["confidence"]}
+
+    for move in payload.get("moves", []) + payload.get("declined", []):
+        stamp(move["out"])
+        stamp(move["into"])
+        for alt in move.get("alternatives", []):
+            stamp(alt["into"])
+
+
 def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
     """What it takes to turn the lineup the manager has set into the best one
     from the same fifteen: who comes into the eleven, who leaves it, the
@@ -188,6 +215,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "fixtures": fixture_context_by_team_code(conn, team_ids),
         }
         _attach_luck(conn, payload)
+        _attach_analyst(conn, payload)
         return attach_photo_codes(conn, payload)
     finally:
         conn.close()
