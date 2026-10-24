@@ -31,10 +31,12 @@ from fpl_agent.models.match_intelligence import (
     parse_match,
     parse_match_events,
     parse_momentum,
+    parse_coaches,
     parse_player_states,
     parse_reviews,
     parse_shot_map,
     parse_team_states,
+    parse_unavailable,
 )
 
 _MATCHES_URL = "https://www.fotmob.com/api/data/matches"
@@ -412,6 +414,39 @@ def sync_match(
              _SOURCE_NAME, now, "medium"),
         )
 
+    if player_states:
+        # The payload is the whole truth for this match right now. A row left from an earlier, predicted lineup for a
+        # player who is in neither the starting eleven nor the bench is a stale guess, not a fact.
+        current_ids = [ps.fotmob_player_id for ps in player_states]
+        marks = ",".join("?" * len(current_ids))
+        conn.execute(
+            f"DELETE FROM player_match_state WHERE match_id=? AND fotmob_player_id NOT IN ({marks})",
+            (match_id, *current_ids),
+        )
+
+    unavailable = parse_unavailable(payload)
+    if player_states or unavailable:
+        conn.execute("DELETE FROM match_unavailable WHERE match_id=?", (match_id,))
+    for un in unavailable:
+        fpl_team_id = team_name_to_fpl_id.get(un.team_name)
+        player_id = match_player_in_team(conn, fpl_team_id, un.name_raw) if fpl_team_id and un.name_raw else None
+        conn.execute(
+            "INSERT OR REPLACE INTO match_unavailable "
+            "(match_id, fotmob_player_id, player_id, team_id, name_raw, kind, expected_return, retrieved_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (match_id, un.fotmob_player_id, player_id, fpl_team_id, un.name_raw, un.kind, un.expected_return, now),
+        )
+    for team_name, (coach_name, formation) in parse_coaches(payload).items():
+        fpl_team_id = team_name_to_fpl_id.get(team_name)
+        if fpl_team_id is None or (coach_name is None and formation is None):
+            continue
+        conn.execute(
+            "INSERT INTO match_coach (match_id, team_id, coach_name, formation, retrieved_at) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(match_id, team_id) DO UPDATE SET coach_name=excluded.coach_name, "
+            "formation=excluded.formation, retrieved_at=excluded.retrieved_at",
+            (match_id, fpl_team_id, coach_name, formation, now),
+        )
+
     for ts in team_states:
         fpl_team_id = team_name_to_fpl_id.get(ts.team_name)
         if fpl_team_id is None:
@@ -611,10 +646,14 @@ def sync_match(
 
     maybe_enqueue_analysis(conn, match_id, prior_status, match.home_team_name, match.away_team_name, result)
 
-    if tracked_squad_ids and player_states:
+    if player_states:
         from fpl_agent.ingestion.change_detection import detect_lineup_confirmations
-        detect_lineup_confirmations(conn, tracked_squad_ids, match_id, now)
-        conn.commit()
+        from fpl_agent.optimization.week_plan import plan_target_ids
+
+        watched = set(tracked_squad_ids or ()) | plan_target_ids(conn)
+        if watched:
+            detect_lineup_confirmations(conn, watched, match_id, now)
+            conn.commit()
     if player_states:
         from fpl_agent.ingestion.change_detection import detect_early_withdrawals
         detect_early_withdrawals(conn, tracked_squad_ids or set(), match_id, now)

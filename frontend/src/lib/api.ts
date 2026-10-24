@@ -7,6 +7,7 @@
 // built app is served from the same origin as that server.
 import type {
   MatchStory,
+  SquadNewsPayload,
   ViewPlanPayload,
   SignalsPayload,
   ExplorerPayload,
@@ -113,6 +114,10 @@ export function fetchTablePayload(): Promise<TablePayload> {
 
 export function fetchLiveStory(matchId: number): Promise<{ story: MatchStory; minute: number; provisional: boolean }> {
   return getJson<{ story: MatchStory; minute: number; provisional: boolean }>(`/api/livestory?id=${matchId}`)
+}
+
+export function fetchSquadNews(): Promise<SquadNewsPayload> {
+  return getJson<SquadNewsPayload>('/api/squadnews')
 }
 
 export function fetchViewPlan(scales: Record<number, number>): Promise<ViewPlanPayload> {

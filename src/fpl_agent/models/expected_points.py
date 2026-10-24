@@ -122,6 +122,8 @@ from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goal
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
 
 MODEL_VERSION = "calibrated-v3"
+# Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
+PROJECTION_REVISION = "match-by-match-returns-and-squad-sheets-1"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -190,9 +192,12 @@ def _confirmed_bench_probs(
     from fpl_agent.models.lineup_state import resolve_lineup_state
 
     try:
-        lineup = resolve_lineup_state(conn, player_id, event)
+        fixture_id = fixture_row["id"] if "id" in fixture_row.keys() else None
+        lineup = resolve_lineup_state(conn, player_id, event, fixture_id)
     except Exception:
         return probs
+    if lineup.state == "CONFIRMED_NOT_IN_SQUAD":
+        return MinutesBucketProbabilities(1.0, 0.0, 0.0, "confirmed_not_in_squad")
     if lineup.state != "CONFIRMED_BENCHED":
         return probs
     full = min(probs.p_full, _CONFIRMED_BENCHED_FULL_CAP)
@@ -207,20 +212,87 @@ def _confirmed_bench_probs(
 _START_PERCENT_DECAY_PER_EVENT = 0.5
 
 
+def _returning_probs(
+    conn: sqlite3.Connection, player_id: int, fixture_row, healthy: MinutesBucketProbabilities,
+) -> MinutesBucketProbabilities | None:
+    """An injured or suspended player's minutes for one fixture: his fit distribution scaled by the chance he is back by
+    that kickoff (`models/return_forecast.py`). None when nothing can be said, which leaves the flat discount in place."""
+    from datetime import datetime, timezone
+
+    from fpl_agent.models.return_forecast import return_forecast
+
+    kickoff = fixture_row["kickoff_time"] if fixture_row is not None and "kickoff_time" in fixture_row.keys() else None
+    if not kickoff:
+        return None
+    try:
+        when = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    forecast = return_forecast(conn, player_id, when, datetime.now(timezone.utc))
+    if forecast is None:
+        return None
+    partial = healthy.p_partial * forecast.probability
+    full = healthy.p_full * forecast.probability
+    return MinutesBucketProbabilities(max(0.0, 1.0 - partial - full), partial, full, f"return_forecast_{forecast.basis}")
+
+
 def _fixture_minutes_probs(
     conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities, first_event: int | None,
+    healthy: MinutesBucketProbabilities | None = None,
 ) -> MinutesBucketProbabilities:
     """Per-fixture minutes distribution: a real confirmed bench wins outright,
     otherwise the player's own record is discounted by the predicted start
-    percentage, decaying with distance from the next gameweek."""
-    confirmed = _confirmed_bench_probs(conn, player_id, fixture_row, probs)
-    if confirmed is not probs or fixture_row is None:
+    percentage, decaying with distance from the next gameweek. An injured or
+    suspended player (`healthy` given) is scaled by the chance he is back for
+    this fixture instead of staying at zero for the whole window; the start
+    percentage is not applied on top, since it already prices the injury."""
+    returning = _returning_probs(conn, player_id, fixture_row, healthy) if healthy is not None else None
+    base = returning if returning is not None else probs
+    confirmed = _confirmed_bench_probs(conn, player_id, fixture_row, base)
+    if confirmed is not base or fixture_row is None:
         return confirmed
+    if returning is not None:
+        return returning
     event = fixture_row["event"]
     if event is None or first_event is None:
         return probs
     weight = _START_PERCENT_DECAY_PER_EVENT ** max(event - first_event, 0)
-    return apply_start_probability(conn, player_id, probs, weight)
+    result = apply_start_probability(conn, player_id, probs, weight)
+    if event == first_event:
+        result = _after_last_sheet(conn, player_id, fixture_row, probs, result)
+    return result
+
+
+def _after_last_sheet(
+    conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities,
+    result: MinutesBucketProbabilities,
+) -> MinutesBucketProbabilities:
+    """A regular who was on the bench or out of the squad last match is less likely to play 60 minutes next (models/
+    sheet_study.py, measured). Discount-only and never stacked on the start-percentage discount: the lower chance of 60+
+    minutes is kept."""
+    from datetime import datetime, timedelta
+
+    from fpl_agent.models.matchday_status import STARTING, latest_sheet_roles
+    from fpl_agent.models.sheet_study import SHEET_FACTOR
+
+    last = latest_sheet_roles(conn).get(player_id)
+    if last is None or last[0] == STARTING:
+        return result
+    kickoff = fixture_row["kickoff_time"] if "kickoff_time" in fixture_row.keys() else None
+    if not kickoff:
+        return result
+    try:
+        gap = datetime.fromisoformat(kickoff.replace("Z", "+00:00")) - datetime.fromisoformat(last[1].replace("Z", "+00:00"))
+    except ValueError:
+        return result
+    if gap > timedelta(days=10) or gap < timedelta(0):
+        return result
+    capped_full = min(result.p_full, probs.p_full * SHEET_FACTOR)
+    if capped_full >= result.p_full:
+        return result
+    return MinutesBucketProbabilities(
+        max(0.0, 1.0 - result.p_partial - capped_full), result.p_partial, capped_full, "after_last_sheet",
+    )
 
 
 # Real, disclosed weight (2026-09-13, "make the optimizer smarter" research
@@ -784,7 +856,7 @@ def _player_match_rates(
     current season's rules silently returns zero rows for the replayed season
     rather than erroring."""
     player = conn.execute(
-        "SELECT p.team_id, et.singular_name_short AS position FROM players p "
+        "SELECT p.team_id, p.status, et.singular_name_short AS position FROM players p "
         "JOIN element_types et ON et.id = p.element_type WHERE p.id=?",
         (player_id,),
     ).fetchone()
@@ -821,6 +893,9 @@ def _player_match_rates(
         hierarchical_priors = _hierarchical_prior_rates(conn, player_id, season, as_of_date)
         shrunk = player_shrunk_rates(conn, player_id, season, as_of_date, prior_overrides=hierarchical_priors)
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
+    minutes_probs_healthy = None
+    if as_of_date is None and player["status"] in ("i", "s"):
+        minutes_probs_healthy = minutes_bucket_probabilities(conn, player_id, season, as_of_date, healthy=True)
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
     # Real, empirical fraction of a team's own goals that carry a credited
@@ -1049,7 +1124,7 @@ def _player_match_rates(
         "assisted_goal_rate": fpl_assisted_goal_rate(conn),
         "saves_pts_rule": (get_rule(conn, rules_season, "scoring.saves", 0) or 0) if position == "GKP" else 0,
         "historical_minutes_fraction": minutes_fraction,
-        "bonus90": bonus90, "minutes_probs": minutes_probs,
+        "bonus90": bonus90, "minutes_probs": minutes_probs, "minutes_probs_healthy": minutes_probs_healthy,
         "defcon_actions90": defcon_actions90, "defcon_pts_rule": defcon_pts_rule,
         "season": season, "rules_season": rules_season, "goals_source": goals_source,
     }
@@ -1357,9 +1432,13 @@ def expected_points(
     probs = rates["minutes_probs"]
     effective_minutes_fraction = probs.p_partial / 3 + probs.p_full
 
+    # `fixtures.finished` stays 0 for days after the whistle, so a match already played counted as the "next" one (a
+    # substitute's projection was cut for a match he had finished); FotMob's own full-time status closes that gap.
     upcoming = conn.execute(
         "SELECT id, team_h, team_a, kickoff_time, event FROM fixtures "
-        "WHERE (team_h=? OR team_a=?) AND finished=0 ORDER BY event",
+        "WHERE (team_h=? OR team_a=?) AND finished=0 "
+        "AND NOT EXISTS (SELECT 1 FROM match_intelligence mi WHERE mi.fpl_fixture_id = fixtures.id AND mi.status = 'FULL_TIME') "
+        "ORDER BY event",
         (rates["team_id"], rates["team_id"]),
     ).fetchall()
     if from_event is not None:
@@ -1391,7 +1470,7 @@ def expected_points(
     next_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
     fixture_rates = [
         {
-            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, f, probs, next_event),
+            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, f, probs, next_event, rates.get("minutes_probs_healthy")),
             "player_share_per90": _market_blended_share(conn, player_id, f, goals_pairs[i][0], rates["player_share_per90"]),
         }
         for i, f in enumerate(fixtures)
@@ -1528,7 +1607,9 @@ def expected_points_window(
         # have a real confirmed teamsheet, or real anytime-scorer odds,
         # yet - see _confirmed_bench_probs/_market_blended_share.
         fixture_rates = {
-            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, fixture, rates["minutes_probs"], next_event),
+            **rates, "minutes_probs": _fixture_minutes_probs(
+                conn, player_id, fixture, rates["minutes_probs"], next_event, rates.get("minutes_probs_healthy"),
+            ),
             "player_share_per90": _market_blended_share(conn, player_id, fixture, team_goals, rates["player_share_per90"]),
         }
         breakdowns.append(_match_components(

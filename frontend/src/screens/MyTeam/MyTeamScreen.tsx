@@ -80,7 +80,7 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
   // already had a badge; a confirmed IN gets the equivalent positive one.
   const confirmedIn = p.lineup?.state === 'CONFIRMED_STARTING'
   const confirmedOut = p.lineup !== null && p.lineup !== undefined
-    && (p.lineup.state === 'OUT_UNAVAILABLE' || p.lineup.state === 'CONFIRMED_BENCHED')
+    && (p.lineup.state === 'OUT_UNAVAILABLE' || p.lineup.state === 'CONFIRMED_BENCHED' || p.lineup.state === 'CONFIRMED_NOT_IN_SQUAD')
   const boxClass = big ? 'h-20 w-20' : small ? 'h-11 w-11' : 'h-14 w-14'
   const ringClass = confirmedIn ? 'ring-2 ring-pitch-green' : confirmedOut ? 'ring-2 ring-alert-red' : ''
   return (
@@ -338,7 +338,7 @@ export function MyTeamScreen() {
   // real confirmed lineup (`lineup_state.py`'s CONFIRMED_STARTING/BENCHED),
   // not just a pre-match prediction.
   const lineupsConfirmed = allSquadPlayers.some(
-    (pl) => pl.lineup?.state === 'CONFIRMED_STARTING' || pl.lineup?.state === 'CONFIRMED_BENCHED',
+    (pl) => pl.lineup?.state === 'CONFIRMED_STARTING' || pl.lineup?.state === 'CONFIRMED_BENCHED' || pl.lineup?.state === 'CONFIRMED_NOT_IN_SQUAD',
   )
 
   // Ghost XI divergence - the locked squad's real starting XI vs the real

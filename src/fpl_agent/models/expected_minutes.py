@@ -193,7 +193,7 @@ class ExpectedMinutes:
 
 
 @memoised_in_scope
-def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinutes:
+def expected_minutes(conn: sqlite3.Connection, player_id: int, healthy: bool = False) -> ExpectedMinutes:
     player = conn.execute("SELECT status, team_id FROM players WHERE id=?", (player_id,)).fetchone()
     if player is None:
         raise ValueError(f"unknown player_id: {player_id}")
@@ -495,7 +495,7 @@ def expected_minutes(conn: sqlite3.Connection, player_id: int) -> ExpectedMinute
     if start_percent is not None and not start_proportional:
         base = base * start_percent_minutes_factor(start_percent)
 
-    damped = min(base * _AVAILABILITY_DAMPING[classification], 90.0)
+    damped = min(base * (1.0 if healthy else _AVAILABILITY_DAMPING[classification]), 90.0)
 
     return ExpectedMinutes(
         player_id=player_id,

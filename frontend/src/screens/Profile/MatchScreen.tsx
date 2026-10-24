@@ -4,7 +4,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchReport } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import { CHART_COLORS, baseChart, intAxisLabels } from '@/lib/chartTheme'
+import { CHART_COLORS, areaFade, baseChart, intAxisLabels } from '@/lib/chartTheme'
 import { MomentumBand, type MomentumMarker } from '@/components/football/MomentumBand'
 import { MatchAnalyst } from '@/components/match/MatchAnalyst'
 import type { LiveShot, MatchInsight, MatchLineupRow, MatchReview, MatchTimelineRow, MatchTeamStats } from '@/lib/types'
@@ -240,10 +240,11 @@ function ShotQuality({ shots, homeTeamId, homeShort, awayShort }: {
 
       <div className="mb-2 text-[12px] font-bold text-text-faint">Cumulative xG</div>
       <Chart
-        type="line"
+        type="area"
         height={220}
         options={baseChart({
-          chart: { type: 'line' },
+          chart: { type: 'area' },
+          fill: areaFade(0.2),
           stroke: { width: 3, curve: 'stepline' },
           colors: [CHART_COLORS.primary, CHART_COLORS.secondary],
           xaxis: { type: 'numeric', title: { text: 'Minute' }, labels: { formatter: (v: string) => `${Math.round(Number(v))}'`, style: { cssClass: 'tabular' } } },
@@ -265,6 +266,8 @@ function ShotQuality({ shots, homeTeamId, homeShort, awayShort }: {
         options={baseChart({
           chart: { type: 'bubble' },
           colors: [CHART_COLORS.primary, CHART_COLORS.secondary],
+          fill: { opacity: 0.7 },
+          stroke: { width: 2, colors: ['var(--panel)'] },
           xaxis: { type: 'numeric', title: { text: 'Minute' }, tickAmount: 6, labels: { formatter: (v: string) => `${Math.round(Number(v))}'`, style: { cssClass: 'tabular' } } },
           yaxis: { show: false, min: -0.5, max: 1.5 },
           tooltip: { y: { formatter: (v: number) => `${v.toFixed(2)} xG` } },

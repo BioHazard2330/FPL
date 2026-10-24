@@ -1706,6 +1706,32 @@ export interface MoveConfidence {
   horizon: number
 }
 
+export interface SquadNewsItem {
+  player_id: number
+  photo_code: number | null
+  name: string
+  team: string
+  team_code: number
+  position: string | null
+  owned: boolean
+  severity: number
+  sheet_role: 'STARTING' | 'BENCH' | 'NOT_IN_SQUAD' | null
+  sheet_detail: string | null
+  fpl_status: string
+  fpl_chance: number | null
+  next_gw_probability: number | null
+  back_gameweek: number | null
+  facts: { source: string; text: string }[]
+  headlines: { title: string; outlet: string; tier: string; published_at: string; link: string }[]
+}
+
+export interface SquadNewsPayload {
+  status: 'ready' | 'none'
+  event: number | null
+  next_event: number | null
+  items: SquadNewsItem[]
+}
+
 export interface ViewPlanPayload {
   event: number
   horizon: number

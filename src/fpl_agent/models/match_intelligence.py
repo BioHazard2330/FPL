@@ -510,6 +510,46 @@ def parse_player_states(payload: dict) -> list[PlayerMatchState]:
     return states
 
 
+@dataclass(frozen=True)
+class UnavailablePlayer:
+    fotmob_player_id: str
+    name_raw: str
+    team_name: str
+    kind: str | None
+    expected_return: str | None
+
+
+def parse_unavailable(payload: dict) -> list[UnavailablePlayer]:
+    """FotMob's own per-team `unavailable` list from the lineup block: who is out for THIS match, the kind
+    (injury / suspension / international duty) and its expected-return string, as FotMob prints it."""
+    lineup = (payload.get("content") or {}).get("lineup") or {}
+    out: list[UnavailablePlayer] = []
+    for side_key in ("homeTeam", "awayTeam"):
+        side = lineup.get(side_key) or {}
+        team_name = side.get("name", "")
+        for entry in side.get("unavailable") or []:
+            info = entry.get("unavailability") or {}
+            pid = entry.get("id")
+            if pid is None:
+                continue
+            out.append(UnavailablePlayer(
+                fotmob_player_id=str(pid), name_raw=entry.get("name") or "", team_name=team_name,
+                kind=info.get("type"), expected_return=info.get("expectedReturn"),
+            ))
+    return out
+
+
+def parse_coaches(payload: dict) -> dict[str, tuple[str | None, str | None]]:
+    """team name -> (head coach, formation) from the lineup block."""
+    lineup = (payload.get("content") or {}).get("lineup") or {}
+    out: dict[str, tuple[str | None, str | None]] = {}
+    for side_key in ("homeTeam", "awayTeam"):
+        side = lineup.get(side_key) or {}
+        coach = side.get("coach") or {}
+        out[side.get("name", "")] = (coach.get("name"), side.get("formation"))
+    return out
+
+
 _TEAM_STATS_FIELDS = (
     "possession_pct", "shots", "shots_on_target", "xg", "corners", "big_chances", "big_chances_missed",
     "touches_opp_box", "accurate_passes", "pass_accuracy_pct", "tackles", "interceptions", "blocks",

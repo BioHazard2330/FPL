@@ -931,6 +931,25 @@ def start_calibration_cmd():
         click.echo(f"  reading {b['band']:<8} n={b['n']:<5} started {rate}")
 
 
+@cli.command("sheet-study")
+def sheet_study_cmd():
+    """Whether a bench seat or an omission from the squad carries to the next match (models/sheet_study.py)."""
+    from fpl_agent.models.sheet_study import sheet_study
+
+    conn = get_connection()
+    try:
+        out = sheet_study(conn)
+    finally:
+        conn.close()
+    click.echo("regulars, by role last match -> next match")
+    for g in out["groups"]:
+        click.echo(
+            f"  {g['role']:<18} n={g['n']:<4} started {g['started'] * 100:4.0f}%  60+ {g['played_60'] * 100:4.0f}%  "
+            f"model {g['model_60'] * 100:4.0f}%  shrunk ratio {g['shrunk_ratio']}"
+        )
+    click.echo(f"factor in use: {out['factor_in_use']}")
+
+
 @cli.command("price-model")
 @click.option("--refit", is_flag=True, help="refit on the stored history now instead of reading the stored fit")
 @click.option("--top", default=8, help="players shown for tonight's likeliest rises and falls")

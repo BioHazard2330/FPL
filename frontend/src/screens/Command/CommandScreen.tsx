@@ -15,6 +15,7 @@ import { DecisionSheet } from '@/components/command/DecisionSheet'
 import { LiveStrip } from '@/components/command/LiveStrip'
 import { MoveCard } from '@/components/command/MoveCard'
 import { SeasonRibbon } from '@/components/command/SeasonRibbon'
+import { SquadNews } from '@/components/command/SquadNews'
 import { SquadPitch } from '@/components/command/SquadPitch'
 import { Panel } from '@/components/ui/kit'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
@@ -182,6 +183,7 @@ export function CommandScreen() {
       <div className="data-in">
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
+        <SquadNews />
         <div className="bare grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
           {plan.action_squad && <SquadPitch block={plan.action_squad} fixtures={plan.fixtures} title={`Your GW${plan.event} team`} sub={moves.length > 0 ? 'After the moves above, with the armband set.' : 'As it stands, with the armband set.'} />}
           <div className="space-y-6">

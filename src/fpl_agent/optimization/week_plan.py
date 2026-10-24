@@ -224,11 +224,11 @@ def new_results_since(conn: sqlite3.Connection, detail: dict) -> int:
 def calibration_id() -> str:
     """Identifies the constants that change a projection without changing any input row: the qualitative adjustment sizes and the
     projection model version. A stored plan made under a different id is rebuilt rather than served."""
-    from fpl_agent.models.expected_points import MODEL_VERSION
+    from fpl_agent.models.expected_points import MODEL_VERSION, PROJECTION_REVISION
     from fpl_agent.models.qualitative_feed import CALIBRATED_FRACTIONS, MAX_ADJUSTMENT_FRACTION
 
     sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
-    return f"{MODEL_VERSION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
+    return f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
 
 
 def _start_percents(conn: sqlite3.Connection, ids: set[int]) -> dict[int, int]:
@@ -981,6 +981,18 @@ def latest_week_plan(conn: sqlite3.Connection) -> tuple[dict, str, int] | None:
     if decision is None:
         return None
     return decision.detail, decision.created_at, decision.id
+
+
+def plan_target_ids(conn: sqlite3.Connection) -> set[int]:
+    """Players the stored plan wants to buy, or weighed and declined: a team sheet that leaves one of them out changes the
+    plan as much as one that leaves out a player the manager owns."""
+    stored = latest_week_plan(conn)
+    if stored is None:
+        return set()
+    detail = stored[0]
+    return {m["into"]["player_id"] for m in detail.get("moves", [])} | {
+        m["into"]["player_id"] for m in detail.get("declined", [])
+    }
 
 
 def light_squad_state(conn: sqlite3.Connection) -> dict | None:

@@ -476,3 +476,50 @@ def test_refresh_does_not_reenqueue_when_already_full_time(monkeypatch, db_conn)
 
     count = db_conn.execute("SELECT COUNT(*) c FROM qualitative_analysis_jobs").fetchone()["c"]
     assert count == 0
+
+
+def _lineup_payload(home_starters, home_subs, unavailable=None, lineup_type="standard"):
+    payload = {**_DETAILS_PAYLOAD, "content": {**_DETAILS_PAYLOAD["content"]}}
+    payload["content"]["lineup"] = {
+        "lineupType": lineup_type,
+        "homeTeam": {"id": 9825, "name": "Arsenal", "formation": "4-3-3", "coach": {"name": "Mikel Arteta"},
+                     "starters": home_starters, "subs": home_subs, "unavailable": unavailable or []},
+        "awayTeam": {"id": 8669, "name": "Coventry City", "formation": "4-4-2", "starters": [], "subs": []},
+    }
+    return payload
+
+
+def test_sync_match_clears_a_player_the_official_sheet_leaves_out(monkeypatch, db_conn):
+    """A predicted lineup stored him as a starter; the official sheet lists him in neither the eleven nor the bench."""
+    _seed(db_conn)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+
+    predicted = _lineup_payload([{"id": 1, "name": "Test Player"}, {"id": 7, "name": "Stale Guess"}], [], lineup_type="predicted")
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: predicted)
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+    assert db_conn.execute("SELECT COUNT(*) FROM player_match_state").fetchone()[0] == 2
+
+    official = _lineup_payload([{"id": 1, "name": "Test Player"}], [{"id": 9, "name": "Bench Man"}])
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: official)
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+
+    ids = {r["fotmob_player_id"]: r["started"] for r in db_conn.execute("SELECT fotmob_player_id, started FROM player_match_state")}
+    assert ids == {"1": 1, "9": 0}
+
+
+def test_sync_match_stores_unavailable_list_and_coach(monkeypatch, db_conn):
+    _seed(db_conn)
+    monkeypatch.setattr(fotmob_mod, "find_match", lambda day, h, a: "5795363")
+    monkeypatch.setattr(fotmob_mod, "save_raw", lambda name, data: "raw/path.json")
+    payload = _lineup_payload(
+        [{"id": 1, "name": "Test Player"}], [],
+        unavailable=[{"id": 5, "name": "Hurt Man", "unavailability": {"type": "injury", "expectedReturn": "About a week"}}],
+    )
+    monkeypatch.setattr(fotmob_mod, "fetch_match_details", lambda mid: payload)
+    sync_match(db_conn, "Arsenal", "Coventry", date(2026, 8, 21))
+
+    un = db_conn.execute("SELECT * FROM match_unavailable").fetchall()
+    assert [(r["fotmob_player_id"], r["kind"], r["expected_return"]) for r in un] == [("5", "injury", "About a week")]
+    coach = db_conn.execute("SELECT coach_name, formation FROM match_coach WHERE team_id=1").fetchone()
+    assert (coach["coach_name"], coach["formation"]) == ("Mikel Arteta", "4-3-3")

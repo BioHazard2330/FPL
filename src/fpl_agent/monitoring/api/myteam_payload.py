@@ -26,6 +26,7 @@ _LINEUP_LABEL = {
     "CONFIRMED_STARTING": "Confirmed",
     "PREDICTED_START": "Predicted",
     "CONFIRMED_BENCHED": "Benched",
+    "CONFIRMED_NOT_IN_SQUAD": "Not in squad",
     "OUT_UNAVAILABLE": "Out",
 }
 

@@ -472,3 +472,32 @@ body,
   letter-spacing: -0.005em;
   font-weight: 600;
 }
+
+/* Charts: the tooltip is the app's own panel, not ApexCharts' default box. */
+.apexcharts-tooltip {
+  background: var(--panel) !important;
+  border: 1px solid var(--divider) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+  color: var(--text) !important;
+  overflow: hidden;
+}
+.apexcharts-tooltip-title {
+  background: transparent !important;
+  border-bottom: 1px solid var(--divider) !important;
+  color: var(--text-muted) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+.apexcharts-tooltip-text-y-value,
+.apexcharts-tooltip-text-goals-value,
+.apexcharts-tooltip-text-z-value {
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+}
+.apexcharts-xaxistooltip {
+  display: none !important;
+}
+.apexcharts-point-annotation-label {
+  filter: none;
+}

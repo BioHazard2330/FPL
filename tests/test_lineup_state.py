@@ -1,3 +1,5 @@
+import pytest
+
 from fpl_agent.models.lineup_state import resolve_lineup_state, squad_lineup_states
 
 
@@ -58,6 +60,15 @@ def _seed_confirmed_starter(conn, match_id, player_id, team_id):
     conn.commit()
 
 
+def _seed_bench_row(conn, match_id, player_id, team_id, minutes=0, on_minute=None):
+    conn.execute(
+        "INSERT INTO player_match_state (match_id, player_id, fotmob_player_id, team_id, started, minutes, "
+        "substituted_on_minute, source, retrieved_at, confidence) VALUES (?,?,?,?,0,?,?,'fotmob','t0','medium')",
+        (match_id, player_id, str(player_id), team_id, minutes, on_minute),
+    )
+    conn.commit()
+
+
 def test_out_unavailable_beats_everything(db_conn):
     _seed_teams(db_conn)
     _seed_player(db_conn, 1, 1, status="i")  # injured, real Tier 1 signal
@@ -80,16 +91,68 @@ def test_confirmed_starting_when_lineup_published(db_conn):
     assert state.source == "confirmed_lineup"
 
 
-def test_confirmed_benched_when_lineup_published_but_player_not_in_it(db_conn):
+def test_a_substitute_is_benched_not_confirmed_starting(db_conn):
+    """Calafiori, Arsenal v Everton: on the bench, came on at 68'. His stored row must not read as a starter."""
     _seed_teams(db_conn)
     _seed_player(db_conn, 1, 1)
-    _seed_player(db_conn, 2, 1)  # same team, not in the confirmed XI
+    _seed_player(db_conn, 2, 1)
     _seed_fixture(db_conn, 100, 1, 1, 2)
-    _seed_match_intelligence(db_conn, 1, 100, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, status="FULL_TIME", lineup_type="standard")
     _seed_confirmed_starter(db_conn, 1, 1, 1)
+    _seed_bench_row(db_conn, 1, 2, 1, minutes=22, on_minute=68)
 
     state = resolve_lineup_state(db_conn, 2, event=1)
     assert state.state == "CONFIRMED_BENCHED"
+    assert "came on 68'" in state.detail
+
+
+def test_a_player_in_neither_list_is_outside_the_matchday_squad(db_conn):
+    """Joao Pedro, Chelsea v Spurs: in neither the eleven nor the substitutes of the official sheet."""
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_player(db_conn, 2, 1)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, 1, 1, 1)
+
+    state = resolve_lineup_state(db_conn, 2, event=1)
+    assert state.state == "CONFIRMED_NOT_IN_SQUAD"
+    assert state.detail == "not in the matchday squad"
+
+
+def test_not_in_squad_carries_fotmobs_reason_when_it_gives_one(db_conn):
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_player(db_conn, 2, 1)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, 1, 1, 1)
+    db_conn.execute(
+        "INSERT INTO match_unavailable (match_id, fotmob_player_id, player_id, team_id, name_raw, kind, expected_return, "
+        "retrieved_at) VALUES (1, '2', 2, 1, 'P2', 'injury', 'Early November 2026', 't0')"
+    )
+    db_conn.commit()
+
+    state = resolve_lineup_state(db_conn, 2, event=1)
+    assert state.state == "CONFIRMED_NOT_IN_SQUAD"
+    assert state.detail == "not in the matchday squad: injury (back early November 2026)"
+
+
+def test_a_double_gameweek_player_reads_his_unfinished_match(db_conn):
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_fixture(db_conn, 101, 1, 2, 1)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, status="FULL_TIME", lineup_type="standard")
+    _seed_match_intelligence(db_conn, 2, 101, 2, 1, status="PRE_MATCH", lineup_type="standard")
+    _seed_confirmed_starter(db_conn, 1, 1, 1)
+    _seed_bench_row(db_conn, 2, 1, 1)
+    db_conn.execute("UPDATE match_intelligence SET kickoff_utc='2026-08-22T14:00:00Z' WHERE id=1")
+    db_conn.execute("UPDATE match_intelligence SET kickoff_utc='2026-08-25T19:00:00Z' WHERE id=2")
+    db_conn.commit()
+
+    assert resolve_lineup_state(db_conn, 1, event=1).state == "CONFIRMED_BENCHED"
+    assert resolve_lineup_state(db_conn, 1, event=1, fixture_id=100).state == "CONFIRMED_STARTING"
 
 
 def test_a_real_fotmob_predicted_lineup_is_not_reported_as_confirmed(db_conn):
@@ -175,12 +238,45 @@ def test_squad_lineup_states_batches_correctly(db_conn):
     _seed_teams(db_conn)
     _seed_player(db_conn, 1, 1, status="i")
     _seed_player(db_conn, 2, 1)
-    _seed_player(db_conn, 3, 2)
+    _seed_player(db_conn, 3, 1)
     _seed_fixture(db_conn, 100, 1, 1, 2)
     _seed_match_intelligence(db_conn, 1, 100, 1, 2)
     _seed_confirmed_starter(db_conn, 1, 2, 1)
+    _seed_player(db_conn, 4, 1)
+    _seed_bench_row(db_conn, 1, 4, 1)
 
-    states = squad_lineup_states(db_conn, [1, 2, 3], event=1)
+    states = squad_lineup_states(db_conn, [1, 2, 3, 4], event=1)
     assert states[1].state == "OUT_UNAVAILABLE"
     assert states[2].state == "CONFIRMED_STARTING"
-    assert states[3].state == "CONFIRMED_BENCHED"
+    assert states[3].state == "CONFIRMED_NOT_IN_SQUAD"
+    assert states[4].state == "CONFIRMED_BENCHED"
+
+
+def test_a_regular_left_on_the_bench_last_match_is_capped_for_the_next(db_conn):
+    from fpl_agent.models.expected_points import _after_last_sheet
+    from fpl_agent.models.minutes_distribution import MinutesBucketProbabilities
+    from fpl_agent.models.sheet_study import SHEET_FACTOR
+
+    _seed_teams(db_conn)
+    _seed_player(db_conn, 1, 1)
+    _seed_player(db_conn, 2, 1)
+    _seed_fixture(db_conn, 100, 1, 1, 2)
+    _seed_match_intelligence(db_conn, 1, 100, 1, 2, status="FULL_TIME", lineup_type="standard")
+    db_conn.execute("UPDATE match_intelligence SET kickoff_utc='2026-08-22T14:00:00Z' WHERE id=1")
+    _seed_confirmed_starter(db_conn, 1, 2, 1)
+    _seed_bench_row(db_conn, 1, 1, 1, minutes=20, on_minute=70)
+    next_fixture = db_conn.execute("SELECT '2026-08-29T14:00:00Z' AS kickoff_time").fetchone()
+    probs = MinutesBucketProbabilities(0.05, 0.05, 0.9, "empirical")
+
+    benched = _after_last_sheet(db_conn, 1, next_fixture, probs, probs)
+    assert benched.p_full == pytest.approx(0.9 * SHEET_FACTOR)
+    assert benched.p_partial == 0.05 and benched.p_zero == pytest.approx(1 - 0.05 - benched.p_full)
+
+    started = _after_last_sheet(db_conn, 2, next_fixture, probs, probs)
+    assert started is probs
+
+    already_lower = MinutesBucketProbabilities(0.4, 0.1, 0.5, "x")
+    assert _after_last_sheet(db_conn, 1, next_fixture, probs, already_lower) is already_lower
+
+    far = db_conn.execute("SELECT '2026-09-20T14:00:00Z' AS kickoff_time").fetchone()
+    assert _after_last_sheet(db_conn, 1, far, probs, probs) is probs

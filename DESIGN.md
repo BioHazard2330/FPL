@@ -471,10 +471,18 @@ Rules:
 - **Every chart answers a stated question.** If you cannot write the
   question above it, delete the chart. Prefer one strong visual with a clear
   explanation over four generic ones.
-- Flat fills only. `flatAreaFill()` is one colour at one low opacity — the
-  line stays the information, the wash stays context. No multi-stop
-  gradients, no glow, no shadows.
-- Square corners on bars (`borderRadius: 0`).
+- **One hue, faded.** (Revised 2026-10-25: the flat-fill rule produced charts the
+  user called bland.) `areaFade()` is a vertical fade of the series colour, opaque
+  at the line and clear at the axis (`reversedAxis` for rank charts, where the line
+  sits at the bottom of the area); `barFill()` thins a bar toward its base. Still no
+  rainbow ramps, no glow, no drop shadows.
+- Bars are rounded at the free end (`borderRadius: 5`, `borderRadiusApplication:
+  'end'`); lines end in a round cap and a continuous series is a monotone curve
+  (`stepline` for a quantity that jumps, such as points or rank during a
+  gameweek). Dashed horizontal grid, no axis border or ticks, a thin dashed hover
+  crosshair, tooltips in the app's own panel (`.apexcharts-tooltip` in index.css).
+- **End on the number.** `lastPoint(x, y, colour, text)` marks and labels the last
+  point of a series; bars carry their value above them.
 - Semantic palette only (`CHART_COLORS`), never a decorative ramp.
 - **Gameweeks are integers.** Every gameweek axis formats through
   `gwAxisLabels`. There is no GW 6.8.
@@ -603,7 +611,7 @@ make a claim the data does not support.
 - State the unit and the horizon on every number.
 
 **Don't**
-- Add a shadow, glow, gradient fill, gradient text, or glass panel.
+- Add a shadow, glow, gradient text, or glass panel. (A one-hue fade under a chart line or inside a distribution is the exception, section 8.)
 - Wrap a table or a chart in a bordered card.
 - Sort a starting XI by anything but position.
 - Animate anything that is not arriving, measuring, or live.
@@ -682,3 +690,12 @@ removed or changed, as rules for what comes next:
   "How fragile is the plan?").
 - **Chip and status names are shown as people say them** (`chipName`), never
   as the API's identifiers.
+
+## 16. Squad news and charts (2026-10-25)
+
+- **Squad news** (`components/command/SquadNews.tsx`, `/api/squadnews`) sits under the decision sheet on Command and lists only
+  players with something to say. Each line carries a source pill (Team sheet, FPL, FotMob, Return forecast, an outlet name);
+  a headline is quoted as published and links out; nothing is generated and no statement is attributed to a manager that
+  nobody made.
+- **Distribution charts** (`EdgeDensity`): smooth curve, one-hue fade, the half left of the zero rule drawn in red when it is one
+  series, and the share of trials on each side written on the rule.

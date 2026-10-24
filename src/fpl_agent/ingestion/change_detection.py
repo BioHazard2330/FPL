@@ -321,35 +321,27 @@ def detect_lineup_confirmations(
     lineup_type_row = conn.execute("SELECT lineup_type FROM match_intelligence WHERE id=?", (match_id,)).fetchone()
     if lineup_type_row is not None and lineup_type_row["lineup_type"] == "predicted":
         return 0
-    placeholders = ",".join("?" * len(tracked_squad_ids))
-    rows = conn.execute(
-        f"""
-        SELECT p.id AS player_id, p.web_name,
-               EXISTS(
-                   SELECT 1 FROM player_match_state pms
-                   WHERE pms.match_id=? AND pms.player_id = p.id
-               ) AS is_starting
-        FROM players p
-        JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id)
-        JOIN match_intelligence mi ON mi.fpl_fixture_id = f.id AND mi.id = ?
-        WHERE p.id IN ({placeholders})
-        """,
-        (match_id, match_id, *tracked_squad_ids),
-    ).fetchall()
+    from fpl_agent.models.matchday_status import BENCH, NOT_IN_SQUAD, STARTING, squad_matchday_status
+
+    statuses = squad_matchday_status(conn, sorted(tracked_squad_ids), None, match_id=match_id)
 
     fired = 0
-    for r in rows:
+    for pid, st in statuses.items():
+        if st.role is None:
+            continue
+        new_status = {STARTING: "confirmed_starting", BENCH: "confirmed_benched", NOT_IN_SQUAD: "confirmed_not_in_squad"}[st.role]
+        if st.role == BENCH and st.came_on:
+            continue
+        # Same status already reported for this match is a repeat poll; a different one is the sheet being corrected.
         already = conn.execute(
-            "SELECT 1 FROM change_events WHERE event_type='lineup_confirmed' AND entity_id=? AND old_value=?",
-            (r["player_id"], str(match_id)),
+            "SELECT 1 FROM change_events WHERE event_type='lineup_confirmed' AND entity_id=? AND old_value=? AND new_value=?",
+            (pid, str(match_id), new_status),
         ).fetchone()
         if already:
             continue
-        starting = bool(r["is_starting"])
-        new_status = "confirmed_starting" if starting else "confirmed_benched"
-        severity = "MEDIUM" if starting else "HIGH"
+        severity = "MEDIUM" if st.role == STARTING else "HIGH"
         record_event(
-            conn, "lineup_confirmed", "player", r["player_id"], str(match_id), new_status,
+            conn, "lineup_confirmed", "player", pid, str(match_id), new_status,
             now, source, "CONFIRMED", severity,
         )
         fired += 1

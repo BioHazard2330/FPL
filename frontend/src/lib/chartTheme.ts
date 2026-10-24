@@ -2,20 +2,14 @@ import type { ApexOptions } from 'apexcharts'
 
 /** One chart language for the whole app.
  *
- * Before this, every chart carried its own inline ApexCharts config: three
- * on Live, one on Plan, each independently re-declaring grid colour, font
- * colour, toolbar, tooltip theme and stroke width. They drifted (one used a
- * two-stop gradient fill, which DESIGN.md's own no-gradient rule forbids;
- * one had fractional gameweek ticks). A shared base makes a chart look like
- * part of the same broadcast package by default, and makes a per-chart
- * override a deliberate act rather than an accident.
- *
- * Rules encoded here, all from DESIGN.md:
- * - flat fills, no multi-stop gradients, no glow, no drop shadows
- * - square corners on every bar (`borderRadius: 0`)
- * - the palette's semantic roles, never a decorative colour ramp
- * - tabular figures on axis labels so numbers line up column-to-column
- * - animation is a real data-arrival event, disabled under reduced motion
+ * Every chart shares one base, so a graph looks like part of the same broadcast package by default and a per-chart override is
+ * a deliberate act. What the base does:
+ * - a line sits on a single-hue fade (opaque at the line, clear at the axis), never a rainbow ramp and never a glow
+ * - bars are rounded at the free end; lines end in a round cap, and the last point of a series is marked and labelled
+ * - the grid is dashed horizontals only, axes carry no border or ticks, the hover crosshair is a thin dashed rule
+ * - tooltips are the app's own panel (see `.apexcharts-tooltip` in index.css)
+ * - tabular figures on every axis so numbers line up column to column
+ * - motion is a real data-arrival event, disabled under reduced motion
  */
 
 const prefersReducedMotion = () =>
@@ -53,17 +47,25 @@ export function baseChart(overrides: ApexOptions = {}): ApexOptions {
     },
     grid: {
       borderColor: 'var(--divider)',
-      strokeDashArray: 0,
+      strokeDashArray: 4,
       xaxis: { lines: { show: false } },
-      padding: { left: 8, right: 16, top: 0, bottom: 0 },
+      padding: { left: 8, right: 20, top: 8, bottom: 0 },
       ...(overrides.grid ?? {}),
     },
+    xaxis: {
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      crosshairs: { stroke: { color: 'var(--text-faint)', width: 1, dashArray: 3 } },
+      tooltip: { enabled: false },
+      ...(overrides.xaxis ?? {}),
+    },
+    markers: { size: 0, strokeWidth: 3, strokeColors: 'var(--panel)', hover: { sizeOffset: 3 }, ...(overrides.markers ?? {}) },
     dataLabels: { enabled: false, ...(overrides.dataLabels ?? {}) },
     legend: { show: false, ...(overrides.legend ?? {}) },
-    stroke: { width: 3, curve: 'straight', lineCap: 'butt', ...(overrides.stroke ?? {}) },
+    stroke: { width: 2.5, curve: 'monotoneCubic', lineCap: 'round', ...(overrides.stroke ?? {}) },
     plotOptions: {
       ...(overrides.plotOptions ?? {}),
-      bar: { borderRadius: 0, columnWidth: '45%', ...(overrides.plotOptions?.bar ?? {}) },
+      bar: { borderRadius: 5, borderRadiusApplication: 'end', columnWidth: '52%', ...(overrides.plotOptions?.bar ?? {}) },
     },
     tooltip: {
       theme: 'dark',
@@ -89,6 +91,8 @@ function stripHandled(o: ApexOptions): ApexOptions {
     dataLabels: _dataLabels,
     legend: _legend,
     stroke: _stroke,
+    xaxis: _xaxis,
+    markers: _markers,
     plotOptions: _plotOptions,
     tooltip: _tooltip,
     states: _states,
@@ -97,11 +101,49 @@ function stripHandled(o: ApexOptions): ApexOptions {
   return rest
 }
 
-/** A single flat area wash under a line - the one fill this system allows.
- * Deliberately NOT a two-stop gradient: it is one colour at one low opacity,
- * so the line stays the information and the fill stays context. */
-export function flatAreaFill(opacity = 0.14): ApexOptions['fill'] {
-  return { type: 'solid', opacity }
+/** The fade under a line: one hue, opaque at the line and clear at the axis. The line stays the information, the fade is
+ * context. `strength` is the opacity at the line. */
+export function areaFade(strength = 0.5, reversedAxis = false): ApexOptions['fill'] {
+  return {
+    type: 'gradient',
+    gradient: {
+      shade: 'dark',
+      type: 'vertical',
+      shadeIntensity: 0,
+      opacityFrom: reversedAxis ? 0 : strength,
+      opacityTo: reversedAxis ? strength : 0,
+      stops: [0, 92, 100],
+    },
+  }
+}
+
+/** Rounded bars that thin slightly toward the base. */
+export function barFill(): ApexOptions['fill'] {
+  return {
+    type: 'gradient',
+    gradient: { shade: 'dark', type: 'vertical', shadeIntensity: 0, opacityFrom: 1, opacityTo: 0.62, stops: [0, 100] },
+  }
+}
+
+/** Marks and labels the last point of a series, so a chart ends on the number it is about. */
+export function lastPoint(x: string | number, y: number, color: string, text: string): NonNullable<ApexOptions['annotations']> {
+  return {
+    points: [
+      {
+        x,
+        y,
+        marker: { size: 6, fillColor: color, strokeColor: 'var(--panel)', strokeWidth: 3 },
+        label: {
+          text,
+          offsetY: -4,
+          offsetX: -14,
+          borderWidth: 0,
+          borderRadius: 6,
+          style: { color: '#0b0e13', background: color, fontWeight: 700, fontSize: '12px', padding: { left: 7, right: 7, top: 3, bottom: 3 } },
+        },
+      },
+    ],
+  }
 }
 
 /** Gameweeks are integers. Every gameweek axis in this app formats through
@@ -116,9 +158,14 @@ export const intAxisLabels = {
   style: { cssClass: 'tabular' },
 }
 
+export function formatRank(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}m`
+  return v >= 1000 ? `${Math.round(v / 1000)}k` : `${Math.round(v)}`
+}
+
 /** Overall rank reads better in thousands, and lower is better - the axis
  * has to be reversed or the chart tells the opposite story. */
 export const rankAxisLabels = {
-  formatter: (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${Math.round(v)}`),
+  formatter: (v: number) => formatRank(v),
   style: { cssClass: 'tabular' },
 }

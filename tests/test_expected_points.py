@@ -1397,3 +1397,39 @@ def test_a_window_of_single_fixtures_is_the_sum_of_its_gameweeks_with_no_damping
     parts = sum(expected_points_window(db_conn, 1, n_gw=1, from_event=e).total_median for e in (20, 21, 22, 23))
     assert whole == pytest.approx(parts, abs=0.1)
     assert whole > 0
+
+
+def test_a_player_left_out_of_the_matchday_squad_projects_zero_for_that_match(db_conn):
+    from test_lineup_state import _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+    _seed_second_player(db_conn, 2, team_id=1)
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, lineup_type="standard")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)
+
+    out = expected_points(db_conn, 1)
+
+    assert out.median == 0.0 and out.floor == 0.0 and out.ceiling == 0.0
+
+
+def test_a_match_already_played_is_not_the_next_fixture(db_conn):
+    """`fixtures.finished` stays 0 for days after the whistle; FotMob's full-time status decides."""
+    from test_lineup_state import _seed_bench_row, _seed_confirmed_starter, _seed_match_intelligence
+
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=8.0, expected_assists=5.0, bonus=15)
+    _insert_fixture(db_conn, fixture_id=1, event=1, team_h=1, team_a=2)
+    _seed_second_player(db_conn, 2, team_id=1)
+    baseline = expected_points(db_conn, 1)
+
+    _seed_match_intelligence(db_conn, match_id=1, fpl_fixture_id=1, home_team_id=1, away_team_id=2, status="FULL_TIME", lineup_type="standard")
+    _seed_confirmed_starter(db_conn, match_id=1, player_id=2, team_id=1)
+    _seed_bench_row(db_conn, match_id=1, player_id=1, team_id=1, minutes=20, on_minute=70)
+
+    after_whistle = expected_points(db_conn, 1)
+
+    assert after_whistle.median >= baseline.median * 0.5

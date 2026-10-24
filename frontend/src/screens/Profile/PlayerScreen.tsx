@@ -6,7 +6,7 @@ import { clubColors } from '@/lib/clubs'
 import { Face } from '@/components/ui/Face'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
-import { CHART_COLORS, baseChart } from '@/lib/chartTheme'
+import { CHART_COLORS, areaFade, baseChart, lastPoint } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile } from '@/lib/api'
 import { ProjectionBand } from '@/components/shell/ProjectionBand'
 import { StoriesRail } from '@/components/shell/StoriesRail'
@@ -287,12 +287,19 @@ export function PlayerScreen() {
         <div className="border-t border-divider px-10 py-8">
           <div className="mb-3 text-[13px] font-bold text-text-faint">Price</div>
           <Chart
-            type="line"
+            type="area"
             height={180}
             options={baseChart({
-              chart: { type: 'line' },
+              chart: { type: 'area' },
+              fill: areaFade(0.3),
               colors: [CHART_COLORS.secondary],
               stroke: { width: 3, curve: 'stepline' },
+              annotations: lastPoint(
+                shortDate(p.price_history[p.price_history.length - 1].valid_from),
+                p.price_history[p.price_history.length - 1].price_m,
+                CHART_COLORS.secondary,
+                `£${p.price_history[p.price_history.length - 1].price_m.toFixed(1)}m`,
+              ),
               xaxis: { categories: p.price_history.map((r) => shortDate(r.valid_from)), labels: { style: { cssClass: 'tabular' } } },
               yaxis: { labels: { formatter: (v: number) => `£${v.toFixed(1)}m`, style: { cssClass: 'tabular' } } },
             })}

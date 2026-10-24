@@ -3,7 +3,9 @@ import { Disclosure } from '@/components/ui/kit'
 const USED: [string, string][] = [
   ['How good each team is', 'Dixon-Coles ratings fitted on five seasons of goals and xG, then set against the bookmakers\' match odds, which carry most of the weight. Every finished match refits it within one sync cycle.'],
   ['Who takes the chances', "A player's share of his team's xG and xA this season, shrunk toward his position, and FPL's own rate of credited assists by position."],
-  ['Who is going to play', 'His own record of 90s, part-games and absences, the start chance on the lineup feed, official injury and suspension flags, confirmed teamsheets, and the news.'],
+  ['Who is going to play', "His own record of 90s, part-games and absences, the start chance on the lineup feed, official injury and suspension flags, the match-day squad sheet (eleven, bench or neither list) and FotMob's injury and return notes, and the news."],
+  ['Being left on the bench', "Regulars on the bench last match reached 60 minutes 43% of the time next match (32% if unused) against the model's 57%, so the next match's chance of 60 minutes is capped at 0.8x (measured on 75 team sheets, shrunk toward no effect). Left out of the squad while fit: 36%, only 11 cases, so not sized."],
+  ['When an injured player is back', "FPL's stated return date, else FotMob's phrase, else how long injuries of this kind have lasted in this database: each match is weighed on its own, not zero for the whole window."],
   ['What a fixture is worth', 'Goals expected for both sides, correlated in one simulated match: clean sheets, goals conceded, saves, bonus, defensive contributions. Doubles and blanks are summed or zeroed.'],
   ['Roles', 'Penalty, corner and free-kick duty from FPL\'s own notes, and role changes the match analyst has seen in two or more matches, at the size measured on 22,000 player-matches.'],
   ['The market', "Tonight's price change from a model fitted on the transfer and price history, and the cost of selling at FPL's half-rise rule."],

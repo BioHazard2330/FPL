@@ -8,7 +8,7 @@ import { fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
-import { CHART_COLORS, baseChart, flatAreaFill, intAxisLabels, rankAxisLabels } from '@/lib/chartTheme'
+import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
 import type { LiveMatchEvent } from '@/lib/types'
 
@@ -209,11 +209,18 @@ export function LiveScreen() {
               height={220}
               options={baseChart({
                 chart: { type: 'area' },
-                fill: flatAreaFill(),
+                fill: areaFade(),
+                stroke: { curve: 'stepline' },
                 colors: [CHART_COLORS.primary],
                 xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
                 yaxis: { labels: intAxisLabels },
                 tooltip: { x: { format: 'HH:mm' } },
+                annotations: lastPoint(
+                  new Date(charts.intragame.timestamps[charts.intragame.timestamps.length - 1]).getTime(),
+                  charts.intragame.points[charts.intragame.points.length - 1],
+                  CHART_COLORS.primary,
+                  `${charts.intragame.points[charts.intragame.points.length - 1]}`,
+                ),
               })}
               series={[{
                 name: 'Points',
@@ -230,13 +237,21 @@ export function LiveScreen() {
               height={220}
               options={baseChart({
                 chart: { type: 'area' },
-                fill: flatAreaFill(),
+                fill: areaFade(0.5, true),
                 colors: [CHART_COLORS.secondary],
                 // Reversed: a lower overall rank is better, so an unreversed
                 // axis would draw a real climb up the leaderboard as a fall.
+                stroke: { curve: 'stepline' },
                 xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
                 yaxis: { reversed: true, labels: rankAxisLabels },
                 tooltip: { x: { format: 'HH:mm' } },
+                annotations: (() => {
+                  const ranked = charts.intragame.timestamps
+                    .map((t, i) => ({ t: new Date(t).getTime(), r: charts.intragame!.rank[i] }))
+                    .filter((pt): pt is { t: number; r: number } => pt.r !== null)
+                  const end = ranked[ranked.length - 1]
+                  return end ? lastPoint(end.t, end.r, CHART_COLORS.secondary, formatRank(end.r)) : undefined
+                })(),
               })}
               series={[{
                 name: 'Rank',
@@ -487,12 +502,19 @@ export function LiveScreen() {
                 height={260}
                 options={baseChart({
                   chart: { type: 'area' },
-                  fill: flatAreaFill(),
+                  fill: areaFade(0.5, true),
                   colors: [CHART_COLORS.primary],
                   xaxis: { categories: charts.rank.events.map((e) => `GW${e}`), labels: { style: { cssClass: 'tabular' } } },
                   // Reversed: a lower overall rank is better, so an unreversed
                   // axis would draw a real climb as a fall.
                   yaxis: { reversed: true, labels: rankAxisLabels },
+                  markers: { size: 4 },
+                  annotations: lastPoint(
+                    `GW${charts.rank.events[charts.rank.events.length - 1]}`,
+                    charts.rank.values[charts.rank.values.length - 1],
+                    CHART_COLORS.primary,
+                    formatRank(charts.rank.values[charts.rank.values.length - 1]),
+                  ),
                 })}
                 series={[{ name: 'Overall rank', data: charts.rank.values }]}
               />
@@ -506,10 +528,17 @@ export function LiveScreen() {
                 height={260}
                 options={baseChart({
                   chart: { type: 'area' },
-                  fill: flatAreaFill(),
+                  fill: areaFade(),
                   colors: [CHART_COLORS.secondary],
                   xaxis: { categories: charts.cumulative_points.events.map((e) => `GW${e}`), labels: { style: { cssClass: 'tabular' } } },
                   yaxis: { labels: intAxisLabels },
+                  markers: { size: 4 },
+                  annotations: lastPoint(
+                    `GW${charts.cumulative_points.events[charts.cumulative_points.events.length - 1]}`,
+                    charts.cumulative_points.values[charts.cumulative_points.values.length - 1],
+                    CHART_COLORS.secondary,
+                    `${charts.cumulative_points.values[charts.cumulative_points.values.length - 1]}`,
+                  ),
                 })}
                 series={[{ name: 'Cumulative points', data: charts.cumulative_points.values }]}
               />
@@ -523,7 +552,10 @@ export function LiveScreen() {
                 height={220}
                 options={baseChart({
                   chart: { type: 'bar' },
+                  fill: barFill(),
                   colors: [CHART_COLORS.accent],
+                  dataLabels: { enabled: true, offsetY: -22, style: { fontSize: '12px', fontWeight: 700, colors: ['var(--text)'] }, background: { enabled: false } },
+                  plotOptions: { bar: { dataLabels: { position: 'top' } } },
                   xaxis: { categories: charts.captain_contribution.events.map((e) => `GW${e}`), labels: { style: { cssClass: 'tabular' } } },
                   yaxis: { labels: intAxisLabels },
                 })}

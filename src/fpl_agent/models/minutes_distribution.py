@@ -409,8 +409,10 @@ def apply_start_probability(
 
 
 def minutes_bucket_probabilities(
-    conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None
+    conn: sqlite3.Connection, player_id: int, season: str, as_of_date: str | None = None, healthy: bool = False,
 ) -> MinutesBucketProbabilities:
+    """`healthy=True` skips the live availability discount: the player's minutes as if fit, for callers that apply a
+    match-by-match return forecast instead (`models/return_forecast.py`)."""
     clause, extra = ("AND match_date < ?", (as_of_date,)) if as_of_date else ("", ())
     rows = conn.execute(
         f"SELECT minutes FROM player_match_stats_history WHERE player_id=? AND season=? {clause} "
@@ -473,11 +475,11 @@ def minutes_bucket_probabilities(
         zero = (n * raw_zero + k * prior_zero) / (n + k)
         partial = (n * raw_partial + k * prior_partial) / (n + k)
         full = (n * raw_full + k * prior_full) / (n + k)
-        if as_of_date is None:
+        if as_of_date is None and not healthy:
             zero, partial, full = _apply_live_availability_damping(conn, player_id, zero, partial, full)
         return MinutesBucketProbabilities(zero, partial, full, "empirical")
 
-    em = expected_minutes(conn, player_id)
+    em = expected_minutes(conn, player_id, healthy=healthy)
     nonzero_fraction = min(em.expected_minutes / 90, 1.0)
     full = nonzero_fraction * 0.85
     partial = nonzero_fraction * 0.15

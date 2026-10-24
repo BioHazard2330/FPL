@@ -28,6 +28,7 @@ from fpl_agent.monitoring.api.profile_payload import build_club_profile, build_p
 from fpl_agent.monitoring.api.receipts_payload import build_receipts_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
+from fpl_agent.monitoring.api.squadnews_payload import build_squad_news
 from fpl_agent.monitoring.api.table_payload import build_table_payload
 from fpl_agent.monitoring.api.viewplan_payload import build_view_plan
 from fpl_agent.monitoring.api.weekplan_payload import build_week_plan_payload
@@ -55,6 +56,7 @@ API_BUILDERS = {
     "livecone": build_livecone_payload,
     "whatif": build_whatif_payload,
     "viewplan": build_view_plan,
+    "squadnews": build_squad_news,
     "livestory": build_live_story,
     "explorer": build_explorer_payload,
     "projection": build_projection_payload,

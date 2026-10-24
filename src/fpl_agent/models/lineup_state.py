@@ -21,6 +21,10 @@ drop until close to kickoff (well-known football convention, not
 independently re-derived here) - a "predicted" lineup_type now falls
 through to the real predicted-lineup fallback below instead.
 
+A bench seat and absence from the matchday squad are different states: FotMob lists starters and substitutes, so a
+player in neither list is CONFIRMED_NOT_IN_SQUAD (see `models/matchday_status.py`). Before 2026-10-25 any stored row
+counted as "starting", so a substitute showed as confirmed and an omitted player as benched.
+
 Priority, most decisive first: official unavailability (Tier 1, `players.status`)
 beats a confirmed lineup beats a mere prediction beats no signal at all - a player
 flagged unavailable by FPL itself is reported as such even if some stale predicted-
@@ -32,10 +36,12 @@ from dataclasses import dataclass
 from fpl_agent.ingestion.lineup_probability_source import get_start_percent
 from fpl_agent.ingestion.predicted_lineups_source import get_predicted_lineup_for_squad
 from fpl_agent.models.availability import classify
+from fpl_agent.models.matchday_status import BENCH, NOT_IN_SQUAD, STARTING, squad_matchday_status
 
 _STATE_PREDICTED_START = "PREDICTED_START"
 _STATE_CONFIRMED_STARTING = "CONFIRMED_STARTING"
 _STATE_CONFIRMED_BENCHED = "CONFIRMED_BENCHED"
+_STATE_CONFIRMED_NOT_IN_SQUAD = "CONFIRMED_NOT_IN_SQUAD"
 _STATE_OUT_UNAVAILABLE = "OUT_UNAVAILABLE"
 _STATE_UNKNOWN = "UNKNOWN"
 
@@ -67,46 +73,17 @@ def _availability_states(conn: sqlite3.Connection, player_ids: list[int]) -> dic
     return out
 
 
-def _confirmed_lineup_states(conn: sqlite3.Connection, player_ids: list[int], event: int) -> dict[int, LineupState]:
-    if not player_ids:
-        return {}
-    placeholders = ",".join("?" * len(player_ids))
-    # Each player's own real fixture for this event, then whether that match's
-    # lineup has been confirmed (player_match_state populated with a real
-    # NON-predicted lineup_type) and whether this player is among the
-    # confirmed rows. `mi.lineup_type` is read alongside the row count -
-    # see this module's own docstring for why the row count alone was
-    # wrong.
-    rows = conn.execute(
-        f"""
-        SELECT p.id AS player_id, mi.id AS match_id, mi.lineup_type,
-               (SELECT COUNT(*) FROM player_match_state pms WHERE pms.match_id = mi.id) AS lineup_rows,
-               EXISTS(
-                   SELECT 1 FROM player_match_state pms
-                   WHERE pms.match_id = mi.id AND pms.player_id = p.id
-               ) AS is_starting
-        FROM players p
-        JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event = ?
-        JOIN match_intelligence mi ON mi.fpl_fixture_id = f.id
-        WHERE p.id IN ({placeholders})
-        """,
-        (event, *player_ids),
-    ).fetchall()
+def _confirmed_lineup_states(
+    conn: sqlite3.Connection, player_ids: list[int], event: int, fixture_id: int | None = None,
+) -> dict[int, LineupState]:
     out: dict[int, LineupState] = {}
-    for r in rows:
-        if r["lineup_rows"] == 0:
-            continue  # not confirmed yet - leave for the predicted-lineup fallback
-        if r["lineup_type"] == "predicted":
-            continue  # a real FotMob PREDICTED lineup, not a real confirmed one - leave for the predicted-lineup fallback
-        if r["is_starting"]:
-            out[r["player_id"]] = LineupState(
-                r["player_id"], _STATE_CONFIRMED_STARTING, "in the confirmed starting lineup", "confirmed_lineup"
-            )
-        else:
-            out[r["player_id"]] = LineupState(
-                r["player_id"], _STATE_CONFIRMED_BENCHED,
-                "not in the confirmed starting lineup for this match", "confirmed_lineup",
-            )
+    for pid, st in squad_matchday_status(conn, player_ids, event, fixture_id).items():
+        if st.role == STARTING:
+            out[pid] = LineupState(pid, _STATE_CONFIRMED_STARTING, st.detail, "confirmed_lineup")
+        elif st.role == BENCH:
+            out[pid] = LineupState(pid, _STATE_CONFIRMED_BENCHED, st.detail, "confirmed_lineup")
+        elif st.role == NOT_IN_SQUAD:
+            out[pid] = LineupState(pid, _STATE_CONFIRMED_NOT_IN_SQUAD, st.detail, "confirmed_lineup")
     return out
 
 
@@ -129,7 +106,9 @@ def _predicted_states(conn: sqlite3.Connection, player_ids: list[int]) -> dict[i
     return out
 
 
-def squad_lineup_states(conn: sqlite3.Connection, player_ids: list[int], event: int | None) -> dict[int, "LineupState"]:
+def squad_lineup_states(
+    conn: sqlite3.Connection, player_ids: list[int], event: int | None, fixture_id: int | None = None,
+) -> dict[int, "LineupState"]:
     """Batched resolver - one real query per tier instead of N+1 per-player
     lookups. Priority: OUT_UNAVAILABLE > confirmed lineup > predicted lineup >
     UNKNOWN (no signal from any source)."""
@@ -140,7 +119,7 @@ def squad_lineup_states(conn: sqlite3.Connection, player_ids: list[int], event: 
     out_states = _availability_states(conn, ids)
     remaining = [pid for pid in ids if pid not in out_states]
 
-    confirmed_states = _confirmed_lineup_states(conn, remaining, event) if (remaining and event is not None) else {}
+    confirmed_states = _confirmed_lineup_states(conn, remaining, event, fixture_id) if (remaining and event is not None) else {}
     remaining = [pid for pid in remaining if pid not in confirmed_states]
 
     predicted_states = _predicted_states(conn, remaining) if remaining else {}
@@ -158,5 +137,7 @@ def squad_lineup_states(conn: sqlite3.Connection, player_ids: list[int], event: 
     return result
 
 
-def resolve_lineup_state(conn: sqlite3.Connection, player_id: int, event: int | None) -> LineupState:
-    return squad_lineup_states(conn, [player_id], event)[player_id]
+def resolve_lineup_state(
+    conn: sqlite3.Connection, player_id: int, event: int | None, fixture_id: int | None = None,
+) -> LineupState:
+    return squad_lineup_states(conn, [player_id], event, fixture_id)[player_id]

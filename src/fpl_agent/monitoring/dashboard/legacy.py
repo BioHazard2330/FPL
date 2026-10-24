@@ -96,6 +96,7 @@ _LINEUP_STATE_BADGE = {
     "CONFIRMED_STARTING": ("Confirmed", "ok", "compact"),
     "PREDICTED_START": ("Predicted", "warn", "compact"),
     "CONFIRMED_BENCHED": ("BENCHED", "bad", "full"),
+    "CONFIRMED_NOT_IN_SQUAD": ("NOT IN SQUAD", "bad", "full"),
     "OUT_UNAVAILABLE": ("OUT", "bad", "full"),
     "UNKNOWN": (None, None, None),
 }
@@ -457,7 +458,7 @@ def _risk_monitor_html(conn: sqlite3.Connection, squad_ids: set[int], event: int
         lineup = squad_lineup_states(conn, list(squad_ids), event)
         names = {r["id"]: r["web_name"] for r in conn.execute("SELECT id, web_name FROM players").fetchall()}
         for pid, ls in lineup.items():
-            if pid in flagged_player_ids or ls.state != "CONFIRMED_BENCHED":
+            if pid in flagged_player_ids or ls.state not in ("CONFIRMED_BENCHED", "CONFIRMED_NOT_IN_SQUAD"):
                 continue
             flagged_player_ids.add(pid)
             rows.append(f"""<div class="risk-row">
@@ -642,7 +643,7 @@ def _player_card(
     elif is_recommended_out:
         status_word, status_tone = "CONSIDER SELLING", "sell"
         status_why = out_why or "The model's current recommended swap starts with this player - see Primary Decision above for the full case."
-    elif lineup_state is not None and lineup_state.state in ("OUT_UNAVAILABLE", "CONFIRMED_BENCHED"):
+    elif lineup_state is not None and lineup_state.state in ("OUT_UNAVAILABLE", "CONFIRMED_BENCHED", "CONFIRMED_NOT_IN_SQUAD"):
         status_word, status_tone = "WATCH", "watch"
         status_why = lineup_state.detail or "Lineup status flagged for this player - check team news."
     else:
