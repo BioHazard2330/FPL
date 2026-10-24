@@ -198,6 +198,10 @@ def _side_of(team_id: int, home_id: int) -> str:
     return "home" if team_id == home_id else "away"
 
 
+def _suspect_bucket_local(minute: int) -> str:
+    return "35 or earlier" if minute <= 35 else "36-60" if minute <= 60 else "61-75" if minute <= 75 else "76 or later"
+
+
 def _empty_state_row() -> dict:
     return {"minutes": 0.0, "xg_for": 0.0, "shots_for": 0, "xg_against": 0.0, "shots_against": 0}
 
@@ -468,7 +472,9 @@ def _find_players_status(pms: list[dict], players: dict[int, dict], status_after
     return flags
 
 
-def build_story(inputs: dict, league: dict | None = None) -> dict:
+def build_story(inputs: dict, league: dict | None = None, live_minute: int | None = None) -> dict:
+    """`live_minute` marks a match still in play: the length is the clock, every game-state split ends there, and a starter taken
+    off early is called a probable injury with the rate the stored stories give for that minute."""
     match = inputs["match"]
     home_id, away_id = match["home_id"], match["away_id"]
     players = inputs["players"]
@@ -476,7 +482,7 @@ def build_story(inputs: dict, league: dict | None = None) -> dict:
     shots = [s for s in shots_all if s["xg"] is not None]
     events, dropped = dedupe_events(inputs["events"])
     goals = _goal_timeline(events, players, shots_all, home_id, away_id)
-    length = _match_length(events, shots_all)
+    length = live_minute if live_minute is not None else _match_length(events, shots_all)
     consistent = (
         len([g for g in goals if g["side"] == "home"]) == match["home_score"]
         and len([g for g in goals if g["side"] == "away"]) == match["away_score"]
@@ -500,6 +506,15 @@ def build_story(inputs: dict, league: dict | None = None) -> dict:
     lines = _player_lines(shots_all, inputs["pms"], players, home_id, goals)
     sub_events = [e for e in events if e["type"] == "Substitution"]
     subs = classify_subs(sub_events, goals, players, inputs["pms"], home_id, inputs.get("status_after", {}))
+    if live_minute is not None:
+        rates = inputs.get("suspect_rates") or {}
+        started_ids = {row["player_id"] for row in inputs["pms"] if row["started"]}
+        for sub in subs:
+            cell = rates.get(_suspect_bucket_local(sub["minute"]))
+            if sub["off_id"] in started_ids and sub["minute"] not in (45, 46) and cell and sub["kind"] not in ("INJURY_LINKED",) and cell["rate"] >= 0.5:
+                sub["kind"] = "INJURY_SUSPECT"
+                sub["note"] = f"starter off at minute {sub['minute']}; {cell['injury']} of {cell['n']} starters taken off by then this season were injury-linked"
+                sub["suspect_rate"] = round(cell["rate"], 2)
     status_flags = _find_players_status(inputs["pms"], players, inputs.get("status_after", {}))
     missed_pens = [e for e in events if e["type"] == "MissedPenalty"]
 
@@ -508,7 +523,7 @@ def build_story(inputs: dict, league: dict | None = None) -> dict:
         "spells": spells, "lines": lines, "subs": subs, "goals": goals, "players": players, "shots": shots,
         "status_flags": status_flags, "league": league or {}, "length": length, "home_id": home_id,
         "missed_pens": missed_pens, "events": events, "consistent": consistent, "pms": inputs["pms"],
-        "team_state_xg": inputs.get("team_state_xg", {}),
+        "team_state_xg": inputs.get("team_state_xg", {}), "live": live_minute is not None,
     }
     findings = _findings(ctx)
     findings.sort(key=lambda f: -f["rank"])
@@ -525,7 +540,7 @@ def build_story(inputs: dict, league: dict | None = None) -> dict:
         if s["xg"] is not None
     ]
     return {
-        "version": ENGINE_VERSION, "match_id": match["id"], "consistent": consistent, "length": length,
+        "version": ENGINE_VERSION, "match_id": match["id"], "consistent": consistent, "length": length, "provisional": live_minute is not None,
         "headline": headline, "uncertainties": uncertainties,
         "match": {
             "home": {"team_id": home_id, "name": match["home_name"], "score": match["home_score"]},
@@ -617,7 +632,7 @@ def _team_findings(ctx: dict) -> list[dict]:
                 metric="dead_ball_xga_share",
             ))
         actual_pts = 3 if score_for > score_against else 1 if score_for == score_against else 0
-        if ctx["deserved"]:
+        if ctx["deserved"] and not ctx["live"]:
             d = ctx["deserved"]
             xpts = d["home_points"] if side == "home" else d["away_points"]
             win_p = d["home_win"] if side == "home" else d["away_win"]
@@ -827,6 +842,15 @@ def _player_findings(ctx: dict) -> list[dict]:
 def _sub_findings(ctx: dict) -> list[dict]:
     out: list[dict] = []
     for sub in ctx["subs"]:
+        if sub["kind"] == "INJURY_SUSPECT" and sub["off_id"] is not None:
+            out.append(_finding(
+                "player", sub["off_id"], "MINUTES",
+                f"Taken off at minute {sub['minute']} with the score margin at {sub['margin']:+d}; {sub['note']}",
+                "A starter withdrawn this early is read as a probable knock until FPL's own status says otherwise.", "NEGATIVE", "MINUTES",
+                f"early in-play withdrawal ({round(100 * sub['suspect_rate'])}% injury-linked by this minute so far this season)", "medium",
+                "match_events substitution + stored substitution outcomes", 0.92,
+            ))
+    for sub in ctx["subs"]:
         if sub["kind"] == "INJURY_LINKED" and sub["off_id"] is not None:
             out.append(_finding(
                 "player", sub["off_id"], "MINUTES",
@@ -887,6 +911,8 @@ def _sub_findings(ctx: dict) -> list[dict]:
 def _headline(ctx: dict, findings: list[dict]) -> str:
     m, metrics = ctx["match"], ctx["metrics"]
     base = f"{m['home_name']} {m['home_score']}-{m['away_score']} {m['away_name']}"
+    if ctx["live"]:
+        base = f"Minute {ctx['length']}, {base}"
     h, a = metrics["home"], metrics["away"]
     parts = [f"{_fmt(h['xg'])} xG to {_fmt(a['xg'])}"] if (h["shots"] or a["shots"]) else []
     seen: set[str] = set()
@@ -1086,6 +1112,58 @@ def analyst_for_players(conn: sqlite3.Connection, player_ids: set[int], limit: i
             }
     newest_first = sorted(seen.values(), key=lambda n: n["kickoff"] or "", reverse=True)
     return sorted(newest_first, key=lambda n: _DIRECTION_ORDER.get(n["direction"], 4))[:limit]
+
+
+def parse_live_minute(text: str | None) -> int | None:
+    """FotMob's own clock string: "56'", "45+2'", "HT". Added time is folded into 45 or 90."""
+    if not text:
+        return None
+    t = text.strip().upper()
+    if t in ("HT", "HALFTIME"):
+        return 45
+    m = re.match(r"(\d+)(?:\s*\+\s*\d+)?", t)
+    return int(m.group(1)) if m else None
+
+
+def truncate_inputs(inputs: dict, minute: int) -> dict:
+    """The same match as it stood at `minute`: only shots and events up to it, and the score the goals so far make. Used to replay finished
+    matches through the live path, so the live reading is tested on real data instead of waiting for a live match."""
+    shots = [s for s in inputs["shots"] if (s["minute"] or 0) <= minute]
+    events = [e for e in inputs["events"] if (e["minute"] or 0) <= minute]
+    home, away = inputs["match"]["home_id"], inputs["match"]["away_id"]
+    players = inputs["players"]
+    hs = as_ = 0
+    for e in dedupe_events(events)[0]:
+        if e["type"] != "Goal" or "VAR" in (e["description"] or "")[:3]:
+            continue
+        if e["team_id"] == home:
+            hs += 1
+        elif e["team_id"] == away:
+            as_ += 1
+    pms = [{**r, "off_min": r["off_min"] if (r["off_min"] or 999) <= minute else None, "on_min": r["on_min"] if (r["on_min"] or 999) <= minute else None} for r in inputs["pms"]
+           if r["on_min"] is None or r["on_min"] <= minute]
+    return {**inputs, "shots": shots, "events": events, "pms": pms, "players": players, "match": {**inputs["match"], "home_score": hs, "away_score": as_}, "status_after": {}}
+
+
+def analyse_live(conn: sqlite3.Connection, match_id: int, as_of_minute: int | None = None) -> dict | None:
+    """A provisional story for a match in play (or, with `as_of_minute`, a finished one replayed to that minute)."""
+    from fpl_agent.models.signal_reliability import suspect_rates
+
+    inputs = load_inputs(conn, match_id)
+    if inputs is None:
+        return None
+    if as_of_minute is None:
+        if inputs["match"]["status"] not in ("LIVE", "HALFTIME"):
+            return None
+        row = conn.execute("SELECT live_minute FROM match_intelligence WHERE id = ?", (match_id,)).fetchone()
+        minute = parse_live_minute(row["live_minute"]) if row else None
+        if minute is None:
+            return None
+    else:
+        minute = as_of_minute
+        inputs = truncate_inputs(inputs, minute)
+    inputs["suspect_rates"] = suspect_rates(conn)
+    return build_story(inputs, cached_league_profile(conn), live_minute=minute)
 
 
 AUTO_AFTER_HOURS = 8

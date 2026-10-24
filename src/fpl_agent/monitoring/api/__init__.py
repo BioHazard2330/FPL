@@ -18,6 +18,7 @@ from fpl_agent.monitoring.api.field_payload import build_field_payload
 from fpl_agent.monitoring.api.explorer_payload import build_explorer_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
 from fpl_agent.monitoring.api.livecone_payload import build_livecone_payload
+from fpl_agent.monitoring.api.livestory_payload import build_live_story
 from fpl_agent.monitoring.api.match_payload import build_match_report
 from fpl_agent.monitoring.api.matchweek_payload import build_matchweek_payload
 from fpl_agent.monitoring.api.myteam_payload import build_my_team_payload
@@ -28,6 +29,7 @@ from fpl_agent.monitoring.api.receipts_payload import build_receipts_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
 from fpl_agent.monitoring.api.table_payload import build_table_payload
+from fpl_agent.monitoring.api.viewplan_payload import build_view_plan
 from fpl_agent.monitoring.api.weekplan_payload import build_week_plan_payload
 from fpl_agent.monitoring.api.whatif_payload import build_whatif_payload
 
@@ -52,6 +54,8 @@ API_BUILDERS = {
     "audit": build_audit_payload,
     "livecone": build_livecone_payload,
     "whatif": build_whatif_payload,
+    "viewplan": build_view_plan,
+    "livestory": build_live_story,
     "explorer": build_explorer_payload,
     "projection": build_projection_payload,
     # Parameterised profiles (`?id=`) - the dispatcher passes `params` to a

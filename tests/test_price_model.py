@@ -1,5 +1,6 @@
 """The price model reports a probability the history can support, and is used only when it beat the base rate."""
 import json
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -34,15 +35,21 @@ def test_a_model_is_not_used_unless_it_beat_the_base_rate_on_held_out_nights():
     assert pm.usable({"models": {"rise": None}}, "rise") is False
 
 
+_SECOND_SNAPSHOT: list[str] = []
+
+
 def _seed_player(conn):
     conn.execute("INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) VALUES (3, 'Midfielder', 'MID', 'Midfielders', 't0')")
     conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1, 1, 'T', 'T', 't0')")
     conn.execute("INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) VALUES (1, 1, 'P', 1, 3, 'a', 0, 't0')")
     conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES ('total_players', '10000000', 't0')")
     conn.execute("INSERT INTO player_ownership_history (player_id, selected_by_percent, valid_from, valid_until) VALUES (1, 20.0, '2026-10-19T00:00:00+00:00', NULL)")
+    now = datetime.now(timezone.utc)
+    first, second = (now - timedelta(hours=30)).isoformat(), (now - timedelta(hours=6)).isoformat()
+    _SECOND_SNAPSHOT[:] = [second]
     for when, until, tin, tout, evin, evout in (
-        ("2026-10-19T12:00:00+00:00", "2026-10-20T12:00:00+00:00", 1_000_000, 900_000, 1_000, 500),
-        ("2026-10-20T12:00:00+00:00", None, 1_400_000, 900_000, 500_000, 20_000),
+        (first, second, 1_000_000, 900_000, 1_000, 500),
+        (second, None, 1_400_000, 900_000, 500_000, 20_000),
     ):
         conn.execute(
             "INSERT INTO player_transfer_momentum_history (player_id, transfers_in_event, transfers_out_event, transfers_in, transfers_out, valid_from, valid_until) VALUES (1,?,?,?,?,?,?)",
@@ -92,6 +99,6 @@ def test_classify_without_any_stored_model_is_the_old_heuristic(db_conn):
 def test_tonight_reports_snapshot_age_and_skips_players_without_a_day_of_history(db_conn):
     _seed_player(db_conn)
     _store(db_conn, bias=-3.0)
-    out = pm.tonight(db_conn, now=pm._ts("2026-10-20T20:00:00+00:00"))
+    out = pm.tonight(db_conn, now=pm._ts(_SECOND_SNAPSHOT[0]) + 8 * 3600)
     assert out[1]["snapshot_age_h"] == pytest.approx(8.0)
     assert 0 < out[1]["p_rise"] < 0.1 and out[1]["p_fall"] is None

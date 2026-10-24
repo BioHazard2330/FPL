@@ -357,7 +357,9 @@ def detect_lineup_confirmations(
 
 
 EARLY_WITHDRAWAL_MAX_MINUTE = 60
-INJURY_LIKELY_MINUTE = 45
+# Measured, not assumed: of the starters the stored stories show taken off in play, every one before minute 36 was injury-linked
+# (7 of 7 when this was fitted) and those from 36 to 60 were 6%. HIGH is reserved for the first.
+INJURY_LIKELY_MINUTE = 35
 EARLY_WITHDRAWAL_MIN_OWNED = 2.0
 
 
@@ -371,6 +373,12 @@ def detect_early_withdrawals(
     injury is by far the most common one, and FPL's own status lags it by hours, to
     the press conference. HIGH for a squad player or any withdrawal by the 45th
     minute, MEDIUM otherwise. Once per (player, match)."""
+    try:
+        from fpl_agent.models.signal_reliability import suspect_probability, suspect_rates
+
+        rates = suspect_rates(conn)
+    except Exception:
+        rates, suspect_probability = {}, None
     rows = conn.execute(
         "SELECT pms.player_id, pms.substituted_off_minute AS minute, p.web_name, "
         "       COALESCE((SELECT selected_by_percent FROM player_ownership_history WHERE player_id = p.id AND valid_until IS NULL), 0) AS owned "
@@ -390,11 +398,16 @@ def detect_early_withdrawals(
         ).fetchone()
         if already:
             continue
-        severity = "HIGH" if mine or r["minute"] <= INJURY_LIKELY_MINUTE else "MEDIUM"
+        severity = "HIGH" if r["minute"] <= INJURY_LIKELY_MINUTE else "MEDIUM"
+        cell = suspect_probability(rates, r["minute"]) if suspect_probability else None
+        evidence = (
+            f" {cell['injury']} of {cell['n']} starters taken off that early this season turned out injured."
+            if cell and cell["n"] >= 5 else ""
+        )
         record_event(
             conn, "early_withdrawal", "player", r["player_id"], str(match_id), f"off at {r['minute']}'",
             now, source, "CONFIRMED", severity,
-            fpl_impact=f"{r['web_name']} was taken off after {r['minute']} minutes; the feed gives no reason, so check his status before the next deadline.",
+            fpl_impact=f"{r['web_name']} was taken off after {r['minute']} minutes; the feed gives no reason, so check his status before the next deadline.{evidence}",
         )
         fired += 1
     return fired

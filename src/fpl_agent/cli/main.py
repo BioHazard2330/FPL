@@ -902,6 +902,22 @@ def signal_reliability_cmd():
         click.echo(f"  {m['label']:<42} r={r} {ci:<16} n={m['n']:<6} {m['verdict']:<10} {m['source']}")
 
 
+@cli.command("start-calibration")
+def start_calibration_cmd():
+    """Whether the start-percentage feed's readings match who then started (models/start_calibration.py)."""
+    from fpl_agent.models.start_calibration import calibration
+
+    conn = get_connection()
+    try:
+        out = calibration(conn)
+    finally:
+        conn.close()
+    click.echo(f"{out['pairs']} readings paired with a finished match")
+    for b in out["bands"]:
+        rate = "   n/a" if b["rate"] is None else f"{b['rate'] * 100:5.1f}%"
+        click.echo(f"  reading {b['band']:<8} n={b['n']:<5} started {rate}")
+
+
 @cli.command("price-model")
 @click.option("--refit", is_flag=True, help="refit on the stored history now instead of reading the stored fit")
 @click.option("--top", default=8, help="players shown for tonight's likeliest rises and falls")

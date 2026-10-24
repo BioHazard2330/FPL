@@ -21,7 +21,7 @@ players.status or change_events, never treated as a confirmed lineup.
 Current-state, not append-only (delete+insert per sync) - a stale
 percentage has no standing value once a fresher one exists, same reasoning
 predicted_lineup_players already uses."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from bs4 import BeautifulSoup
@@ -57,6 +57,17 @@ def fetch_team_news_html(url: str = TEAM_NEWS_URL) -> str:
     return resp.text
 
 
+def _percent_column(table) -> int:
+    """Index of the "Start %" column. The site added a "GW7 Mins" column ahead of it (2026-10), and reading the third cell
+    stored last gameweek's minutes as the start probability for every player: 0 for anyone who sat out, 29 for a 29-minute
+    cameo. The header names the column; a table without one keeps the original third position."""
+    heads = [th.get_text(strip=True).lower() for th in table.select("thead th")]
+    for i, head in enumerate(heads):
+        if "start" in head and "%" in head:
+            return i
+    return 2
+
+
 def parse_start_percentages(html: str) -> list[dict]:
     """One dict per team: {team_name_raw, players: [{name_raw, pos_raw,
     start_percent}]}. Walks every `<h2>/<h3>` heading whose text ends in
@@ -82,21 +93,54 @@ def parse_start_percentages(html: str) -> list[dict]:
                 break
             if sib.name != "table":
                 continue
+            percent_col = _percent_column(sib)
             for row in sib.select("tbody tr"):
                 cells = row.find_all("td")
-                if len(cells) < 3:
+                if len(cells) <= percent_col:
                     continue
                 name_raw = cells[0].get_text(strip=True)
                 pos_raw = cells[1].get_text(strip=True)
-                percent_raw = cells[2].get_text(strip=True).rstrip("%")
-                if not name_raw or not percent_raw.isdigit():
+                percent_raw = cells[percent_col].get_text(strip=True)
+                if not name_raw or not percent_raw.endswith("%") or not percent_raw[:-1].isdigit():
                     continue
-                players.append({"name_raw": name_raw, "pos_raw": pos_raw, "start_percent": int(percent_raw)})
+                players.append({"name_raw": name_raw, "pos_raw": pos_raw, "start_percent": int(percent_raw[:-1])})
 
         if players:
             teams.append({"team_name_raw": team_name_raw, "players": players})
 
     return teams
+
+
+def looks_like_percentages(teams: list[dict]) -> bool:
+    """The page quotes start chances in steps of five or ten. A column of minutes or any other count read in their place
+    (what happened in 2026-10) is mostly values off that grid, so a parse where more than a fifth are is refused rather than
+    stored."""
+    values = [p["start_percent"] for t in teams for p in t["players"]]
+    if not values:
+        return False
+    off_grid = sum(1 for v in values if v % 5 != 0)
+    return off_grid / len(values) <= 0.2
+
+
+def _append_history(conn, team_id: int, rows: list[tuple], now: str) -> None:
+    """Keep every figure the model could have acted on: a row when it changes, or when the last one is over a day old."""
+    last = {
+        r["player_id"]: (r["start_percent"], r["fetched_at"])
+        for r in conn.execute(
+            "SELECT h.player_id, h.start_percent, h.fetched_at FROM player_start_probability_history h "
+            "JOIN (SELECT player_id, MAX(fetched_at) AS m FROM player_start_probability_history WHERE team_id=? GROUP BY player_id) x "
+            "ON x.player_id = h.player_id AND x.m = h.fetched_at", (team_id,),
+        )
+    }
+    stale_before = (datetime.fromisoformat(now) - timedelta(days=1)).isoformat()
+    fresh = [
+        (pid, tid, pct, now) for pid, tid, _pos, pct, _t in rows
+        if pid not in last or last[pid][0] != pct or last[pid][1] < stale_before
+    ]
+    if fresh:
+        conn.executemany(
+            "INSERT OR IGNORE INTO player_start_probability_history (player_id, team_id, start_percent, fetched_at) VALUES (?,?,?,?)", fresh,
+        )
 
 
 def sync_lineup_probabilities(conn, url: str = TEAM_NEWS_URL) -> dict:
@@ -115,6 +159,10 @@ def sync_lineup_probabilities(conn, url: str = TEAM_NEWS_URL) -> dict:
     if not teams:
         update_source_health(conn, _SOURCE_NAME, success=False, error="parsed zero team blocks")
         return {"teams": 0, "players": 0, "players_matched": 0, "unknown_teams": []}
+
+    if not looks_like_percentages(teams):
+        update_source_health(conn, _SOURCE_NAME, success=False, error="parsed values are not start percentages")
+        return {"teams": 0, "players": 0, "players_matched": 0, "unknown_teams": [], "rejected": True}
 
     team_by_name = {row["name"]: row["id"] for row in conn.execute("SELECT id, name FROM teams").fetchall()}
 
@@ -137,6 +185,7 @@ def sync_lineup_probabilities(conn, url: str = TEAM_NEWS_URL) -> dict:
                 rows_to_insert.append((player_id, team_id, p["pos_raw"], p["start_percent"], now))
             players_written += 1
 
+        _append_history(conn, team_id, rows_to_insert, now)
         conn.execute("DELETE FROM player_start_probability WHERE team_id=?", (team_id,))
         conn.executemany(
             "INSERT INTO player_start_probability (player_id, team_id, position_raw, start_percent, fetched_at) "

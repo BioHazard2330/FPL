@@ -199,6 +199,31 @@ def injury_followup(conn: sqlite3.Connection) -> dict:
     }
 
 
+def _suspect_bucket(minute: int) -> str:
+    return "35 or earlier" if minute <= 35 else "36-60" if minute <= 60 else "61-75" if minute <= 75 else "76 or later"
+
+
+def suspect_rates(conn: sqlite3.Connection) -> dict:
+    """How often a starter taken off in play (not at half-time) turned out injury-linked, by when it happened. Read from the stored stories:
+    before minute 36 every one this season was (the others sit at 0-6%), which is what lets a live feed call an early withdrawal."""
+    started = {(r["match_id"], r["player_id"]) for r in conn.execute("SELECT match_id, player_id FROM player_match_state WHERE started = 1 AND player_id IS NOT NULL")}
+    table: dict[str, list[int]] = {}
+    for r in conn.execute("SELECT match_id, story_json FROM match_story"):
+        story = json.loads(r["story_json"])
+        for sub in story.get("subs", []):
+            if sub.get("off_id") is None or (r["match_id"], sub["off_id"]) not in started or sub["minute"] in (45, 46):
+                continue
+            cell = table.setdefault(_suspect_bucket(sub["minute"]), [0, 0])
+            cell[1] += 1
+            cell[0] += sub["kind"] == "INJURY_LINKED"
+    return {b: {"n": n, "injury": k, "rate": (k + 0.5) / (n + 1)} for b, (k, n) in table.items()}
+
+
+def suspect_probability(rates: dict, minute: int) -> dict | None:
+    cell = rates.get(_suspect_bucket(minute))
+    return cell
+
+
 def injury_sentence(rate: dict) -> str | None:
     if not rate or rate["n"] < 5:
         return None

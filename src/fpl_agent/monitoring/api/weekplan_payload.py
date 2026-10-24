@@ -77,6 +77,34 @@ def _attach_analyst(conn, payload: dict) -> None:
             stamp(alt["into"])
 
 
+def _attach_form(conn, payload: dict, squad_ids: list[int]) -> None:
+    """The eye test, with its evidence: on every player in a transfer and as a board of the squad, how the last three matches compare with the
+    rest of his season and what players in that state went on to do (`models/form_watch`)."""
+    from fpl_agent.models.form_watch import form_watch
+
+    ids: set[int] = set(squad_ids)
+    for move in payload.get("moves", []) + payload.get("declined", []):
+        ids.add(move["out"]["player_id"])
+        ids.add(move["into"]["player_id"])
+    try:
+        fw = form_watch(conn, sorted(ids))
+    except Exception:
+        return
+    names = {r["id"]: (r["web_name"], r["element_type"]) for r in conn.execute("SELECT id, web_name, element_type FROM players WHERE id IN (%s)" % ",".join("?" * len(ids)), tuple(ids))} if ids else {}
+    for move in payload.get("moves", []) + payload.get("declined", []):
+        for side in ("out", "into"):
+            f = fw.get(move[side]["player_id"])
+            if f is not None:
+                move[side]["form"] = f
+    board = []
+    for pid, f in fw.items():
+        if pid in squad_ids and pid in names:
+            board.append({"player_id": pid, "name": names[pid][0], "position": {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}.get(names[pid][1]), **f})
+    order = {"COLD": 0, "COOLING": 1, "HOT": 2, "STEADY": 3}
+    board.sort(key=lambda r: (order.get(r["label"], 3), r["ratio"]))
+    payload["form_board"] = board
+
+
 def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
     """What it takes to turn the lineup the manager has set into the best one
     from the same fifteen: who comes into the eleven, who leaves it, the
@@ -216,6 +244,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         }
         _attach_luck(conn, payload)
         _attach_analyst(conn, payload)
+        _attach_form(conn, payload, list(detail.get("squad_ids", [])))
         return attach_photo_codes(conn, payload)
     finally:
         conn.close()

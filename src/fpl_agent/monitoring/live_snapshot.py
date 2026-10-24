@@ -660,7 +660,7 @@ def _deadline_block(conn: sqlite3.Connection) -> dict:
     try:
         nxt = conn.execute(
             "SELECT id, name, deadline_time FROM events "
-            "WHERE finished = 0 AND deadline_time IS NOT NULL "
+            "WHERE finished = 0 AND deadline_time IS NOT NULL AND deadline_time > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
             "ORDER BY deadline_time LIMIT 1"
         ).fetchone()
         prev = conn.execute(

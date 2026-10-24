@@ -46,3 +46,26 @@ def test_a_different_captain_alone_is_worth_changing():
     assert changes["worth_changing"] is True
     assert changes["captain_from"]["player_id"] == 2
     assert changes["captain_to"]["player_id"] == 1
+
+
+def test_the_form_board_orders_the_squad_coldest_first_and_stamps_players_in_moves(monkeypatch):
+    from fpl_agent.monitoring.api import weekplan_payload
+
+    readings = {
+        1: {"label": "STEADY", "ratio": 1.0}, 2: {"label": "COLD", "ratio": 0.3},
+        3: {"label": "HOT", "ratio": 1.8}, 4: {"label": "COOLING", "ratio": 0.6},
+    }
+    monkeypatch.setattr("fpl_agent.models.form_watch.form_watch", lambda conn, ids: {i: dict(readings[i]) for i in ids if i in readings})
+
+    class _Rows(list):
+        pass
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            return _Rows({"id": i, "web_name": f"P{i}", "element_type": 3} for i in args)
+
+    payload = {"moves": [{"out": {"player_id": 2}, "into": {"player_id": 4}}], "declined": []}
+    weekplan_payload._attach_form(_Conn(), payload, [1, 2, 3])
+
+    assert [r["name"] for r in payload["form_board"]] == ["P2", "P3", "P1"]
+    assert payload["moves"][0]["out"]["form"]["label"] == "COLD" and payload["moves"][0]["into"]["form"]["label"] == "COOLING"

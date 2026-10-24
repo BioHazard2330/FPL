@@ -53,3 +53,13 @@ def test_deadline_block_never_raises_into_the_live_poll(db_conn):
             raise RuntimeError("simulated DB failure")
 
     assert _deadline_block(Exploding()) == {}
+
+
+def test_a_gameweek_whose_deadline_has_passed_but_is_not_finished_is_not_the_next_deadline(db_conn):
+    """The gameweek in play has finished = 0 for days after its deadline; the countdown must run to the next one."""
+    _event(db_conn, 8, "2020-10-23T17:30:00Z")
+    _event(db_conn, 9, "2099-10-31T11:00:00Z")
+    db_conn.commit()
+    out = _deadline_block(db_conn)
+    assert out["next_deadline_event"] == 9 and out["next_deadline_name"] == "Gameweek 9"
+    assert out["last_deadline_time"] == "2020-10-23T17:30:00Z"

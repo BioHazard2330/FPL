@@ -138,6 +138,7 @@ class PlannedMove:
     timing: str = "any"
     timing_note: str = ""
     alternatives: list[Alternative] = field(default_factory=list)
+    confidence: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -785,6 +786,14 @@ def build_week_plan(
     moves = [make_move(ordered_pairs[i], i, g) for _, i, g in accepted if i in ordered_pairs]
     if moves:
         try:
+            from fpl_agent.models.move_confidence import move_confidence
+
+            conf = move_confidence(conn, [(m.out.player_id, m.into.player_id) for m in moves], event, horizon)
+            moves = [replace(m, confidence=conf.get((m.out.player_id, m.into.player_id))) for m in moves]
+        except Exception:
+            _logger.exception("move confidence failed - the plan itself is unaffected")
+    if moves:
+        try:
             stresses = stress_moves(solve, [(m.out.player_id, m.into.player_id) for m in moves], min_move_gain, event)
             moves = [replace(m, stress=st) for m, st in zip(moves, stresses, strict=True)]
         except Exception:
@@ -869,6 +878,60 @@ def build_week_plan(
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
         team_outlook=team_outlook, calibration=calibration_id(),
     )
+
+
+@scoped
+def plan_with_view(
+    conn: sqlite3.Connection, scales: dict[int, float], horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
+) -> dict | None:
+    """The transfers the planner would make if every projection of the named players were multiplied by his scale in every gameweek:
+    a manager's own view applied to the same solver. Only the move selection runs (no alternatives, stress tests, road ahead or
+    lineup), so it answers "what changes if I think Saka is 25% worse" in a fraction of a full build."""
+    locked = get_locked_squad(conn)
+    if locked is None or locked.source != "synced_real":
+        return None
+    squad_ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in locked.xi.bench]
+    if len(squad_ids) != 15:
+        return None
+    event = locked.event + 1
+    bank = int(round(locked.bank_tenths or 0))
+    free_transfers = locked.free_transfers if locked.free_transfers is not None else 1
+    pool = build_player_pool(conn, n_gw=horizon)
+    cache: dict = {}
+    clean = {int(k): float(v) for k, v in scales.items() if v is not None and abs(float(v) - 1.0) > 1e-9}
+
+    def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
+        merged = {**clean, **(scale or {})}
+        return plan_transfers_milp(
+            conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
+            pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
+            model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
+            league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
+            forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=merged or None,
+        )
+
+    selection = select_moves(solve, event, min_move_gain)
+    if selection is None:
+        return None
+    pairs = selection.first_moves(selection.final) if selection.accepted else []
+    order = {i: o for o, i in pairs}
+    by_id = {c.player_id: c for c in pool}
+    wanted = set(squad_ids) | {p for pair in pairs for p in pair} | {p for o, i, _ in selection.declined for p in (o, i)}
+    names = {r["id"]: r["web_name"] for r in conn.execute("SELECT id, web_name FROM players WHERE id IN (%s)" % ",".join("?" * len(wanted)), tuple(wanted))}
+    moves = [
+        {"out": {"player_id": order[i], "name": names.get(order[i], str(order[i]))}, "into": {"player_id": i, "name": names.get(i, str(i))}, "gain": g}
+        for _, i, g in selection.accepted if i in order
+    ]
+    declined = [
+        {"out": {"player_id": o, "name": names.get(o, str(o))}, "into": {"player_id": i, "name": names.get(i, str(i))}, "gain": g}
+        for o, i, g in selection.declined
+    ]
+    total = selection.final.sequence.total_net_ev if selection.accepted else selection.roll_total
+    return {
+        "event": event, "horizon": horizon, "scales": clean, "moves": moves, "declined": declined,
+        "plan_total": round(total, 2), "roll_total": round(selection.roll_total, 2), "gain_vs_roll": round(total - selection.roll_total, 2),
+        "proven_optimal": selection.proven, "free_transfers": free_transfers,
+    }
 
 
 def week_plan_to_dict(plan: WeekPlan) -> dict:

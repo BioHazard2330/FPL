@@ -531,12 +531,18 @@ def _withdrawal_match(db_conn, minute, started=1, owned=None):
     db_conn.commit()
 
 
-def test_a_squad_starter_withdrawn_in_the_first_hour_raises_a_high_event_once(db_conn):
-    _withdrawal_match(db_conn, 38)
+def test_a_squad_starter_withdrawn_before_minute_36_raises_a_high_event_once(db_conn):
+    _withdrawal_match(db_conn, 28)
     assert detect_early_withdrawals(db_conn, {1}, match_id=1, now="t1") == 1
     events = [e for e in _events(db_conn) if e["event_type"] == "early_withdrawal"]
     assert len(events) == 1 and events[0]["severity"] == "HIGH"
     assert detect_early_withdrawals(db_conn, {1}, match_id=1, now="t2") == 0
+
+
+def test_a_squad_starter_withdrawn_between_36_and_60_is_medium_because_those_were_rarely_injuries(db_conn):
+    _withdrawal_match(db_conn, 38)
+    assert detect_early_withdrawals(db_conn, {1}, match_id=1, now="t1") == 1
+    assert [e["severity"] for e in _events(db_conn) if e["event_type"] == "early_withdrawal"] == ["MEDIUM"]
 
 
 def test_an_unowned_player_withdrawn_early_raises_nothing(db_conn):
