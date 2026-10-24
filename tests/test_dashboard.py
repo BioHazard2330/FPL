@@ -2017,7 +2017,7 @@ def test_pitch_shows_benched_badge_when_confirmed_but_excluded(db_conn):
 
     html = _pitch_html_from_xi(db_conn, xi, cap_id=None, vc_id=None, event=1)
 
-    assert "BENCHED" in html
+    assert "NOT IN SQUAD" in html
     assert "lineup-badge-full" in html
 
 
