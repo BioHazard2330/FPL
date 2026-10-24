@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { LiveAnalyst } from '@/components/live/LiveAnalyst'
 import { Link } from 'react-router-dom'
 import { crestUrl } from '@/lib/api'
 import { MomentumBand } from '@/components/football/MomentumBand'
-import { WinProbabilityOrb3D } from '@/components/three/WinProbabilityOrb3D'
 import type { LiveMatch, LiveMatchPlayer, LiveShot, LiveTeamMatchStats } from '@/lib/types'
 
 /** Real opposed stat bar - one rule split between the two sides in
@@ -19,7 +18,7 @@ function OpposedStat({ label, home, away, decimals = 0 }: { label: string; home:
     <div className="grid grid-cols-[3.5rem_1fr_3.5rem] items-center gap-3 py-1.5">
       <span className="tabular text-right text-sm font-bold text-text">{home !== null ? home.toFixed(decimals) : '—'}</span>
       <div>
-        <div className="text-center text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+        <div className="text-center text-[12px] font-bold text-text-faint">{label}</div>
         <div className="mt-1 flex h-1.5 w-full gap-px">
           <div className="bar-draw bg-pitch-green" style={{ width: `${homePct}%` }} />
           <div className="flex-1 bg-broadcast-blue" />
@@ -44,8 +43,8 @@ function ShotMap({ shots, homeTeamId }: { shots: LiveShot[]; homeTeamId: number 
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Shot map</span>
-        <span className="text-[11px] uppercase tracking-wide text-text-faint">{drawable.length} shots · radius = xG</span>
+        <span className="text-[12px] font-bold text-text-faint">Shot map</span>
+        <span className="text-[12px] text-text-faint">{drawable.length} shots · radius = xG</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`Shot map, ${drawable.length} real shots`}>
         <rect x="0.4" y="0.4" width={W - 0.8} height={H - 0.8} fill="none" stroke="var(--divider)" strokeWidth="0.5" />
@@ -99,7 +98,7 @@ function MyPlayerRow({ p }: { p: LiveMatchPlayer }) {
   return (
     <div className={`flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-divider py-2 last:border-b-0 ${involved ? 'bg-pitch-green/10' : ''}`}>
       <Link to={`/player/${p.player_id}`} className="font-bold text-text hover:text-pitch-green">{p.web_name}</Link>
-      {!p.started && <span className="bg-raised px-1 py-0.5 text-[11px] font-bold uppercase text-text-muted">sub</span>}
+      {!p.started && <span className="bg-raised px-1 py-0.5 text-[12px] font-bold text-text-muted">sub</span>}
       {(p.goals ?? 0) > 0 && <span className="text-sm font-bold text-pitch-green">{p.goals}G</span>}
       {(p.assists ?? 0) > 0 && <span className="text-sm font-bold text-broadcast-gold">{p.assists}A</span>}
       <span className="tabular ml-auto flex shrink-0 gap-3 text-xs text-text-muted">
@@ -139,13 +138,12 @@ export function MatchCard({ m }: { m: LiveMatch }) {
   const hs = m.team_stats.home
   const as = m.team_stats.away
   const hasStats = hs !== null || as !== null
-  const [orbView, setOrbView] = useState(false)
 
   return (
     <div className={`bg-void border-l-4 ${m.is_squad_match ? 'border-broadcast-gold' : 'border-divider'}`}>
       <div className="flex items-center gap-4 px-6 py-5">
         <Link to={`/club/${m.home_team_id}`} className="flex flex-1 items-center justify-end gap-3 hover:opacity-80">
-          <span className="font-display text-xl font-bold uppercase tracking-wide text-text">{m.home_short}</span>
+          <span className="font-display text-xl font-bold text-text">{m.home_short}</span>
           {homeCrest && <img src={homeCrest} alt="" className="h-9 w-9" />}
         </Link>
         <div className="shrink-0 text-center">
@@ -154,7 +152,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
           </div>
           <div className="mt-1.5 flex items-center justify-center gap-1.5">
             <span className={`size-1.5 rounded-full ${m.status === 'LIVE' ? 'animate-pulse-live bg-alert-red' : 'bg-broadcast-gold'}`} />
-            <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted">
+            <span className="text-[12px] font-bold text-text-muted">
               {/* FotMob's own display string is already complete ("17'",
                   "HT", "45+2'") - a real, previously-dormant bug appended a
                   second apostrophe on top of it (never caught live - this
@@ -166,57 +164,46 @@ export function MatchCard({ m }: { m: LiveMatch }) {
         </div>
         <Link to={`/club/${m.away_team_id}`} className="flex flex-1 items-center gap-3 hover:opacity-80">
           {awayCrest && <img src={awayCrest} alt="" className="h-9 w-9" />}
-          <span className="font-display text-xl font-bold uppercase tracking-wide text-text">{m.away_short}</span>
+          <span className="font-display text-xl font-bold text-text">{m.away_short}</span>
         </Link>
       </div>
 
-      {m.is_squad_match && (
-        <div className="bg-broadcast-gold px-6 py-1 text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold-ink">
-          Your squad is in this match
+      {m.my_players.length > 0 && (
+        <div className="border-t border-divider px-6 py-3">
+          <div className="mb-1 text-[13px] font-medium text-broadcast-gold">Your players in this match</div>
+          {m.my_players
+            .slice()
+            .sort((a, b) => (b.minutes ?? 0) - (a.minutes ?? 0))
+            .map((p) => <MyPlayerRow key={p.player_id} p={p} />)}
         </div>
       )}
 
+      <details open={m.is_squad_match} className="group border-t border-divider">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-6 py-3 text-[13px] font-medium text-text-muted hover:text-text [&::-webkit-details-marker]:hidden">
+          <span>Match detail: win probability, stats, momentum, shots</span>
+          <span aria-hidden className="transition-transform group-open:rotate-90">&#9656;</span>
+        </summary>
+
       {m.win_probability && (
         <div className="border-t border-divider px-6 py-3" title={m.win_probability.basis}>
-          <div className="mb-1.5 flex items-baseline justify-between text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <div className="mb-1.5 flex items-baseline justify-between text-[13px] text-text-faint">
             <span>Win probability</span>
-            <div className="flex items-center gap-2">
-              <span className="normal-case tracking-normal text-text-faint">real-time, not live-performance-adjusted</span>
-              <button
-                type="button"
-                onClick={() => setOrbView((v) => !v)}
-                className={`px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${orbView ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
-              >
-                {orbView ? 'Bar' : '3D'}
-              </button>
-            </div>
+            <span>from the pre-match model; it does not move with the play</span>
           </div>
-          {orbView ? (
-            <div className="h-28 w-full">
-              <WinProbabilityOrb3D
-                split={{
-                  homeWinPct: m.win_probability.home_win_pct,
-                  drawPct: m.win_probability.draw_pct,
-                  awayWinPct: m.win_probability.away_win_pct,
-                }}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="flex h-3 w-full overflow-hidden">
-                <div className="bg-pitch-green" style={{ width: `${m.win_probability.home_win_pct}%` }} />
-                <div className="bg-text-faint" style={{ width: `${m.win_probability.draw_pct}%` }} />
-                <div className="bg-broadcast-blue" style={{ width: `${m.win_probability.away_win_pct}%` }} />
-              </div>
-              <div className="mt-1 flex justify-between text-[12px] font-bold">
-                <span className="text-pitch-green">{m.win_probability.home_win_pct.toFixed(0)}%</span>
-                <span className="text-text-faint">{m.win_probability.draw_pct.toFixed(0)}% draw</span>
-                <span className="text-broadcast-blue">{m.win_probability.away_win_pct.toFixed(0)}%</span>
-              </div>
-            </>
-          )}
+          <div className="flex h-3 w-full overflow-hidden rounded-sm">
+            <div className="bg-pitch-green" style={{ width: `${m.win_probability.home_win_pct}%` }} />
+            <div className="bg-text-faint" style={{ width: `${m.win_probability.draw_pct}%` }} />
+            <div className="bg-broadcast-blue" style={{ width: `${m.win_probability.away_win_pct}%` }} />
+          </div>
+          <div className="mt-1 flex justify-between text-[13px] font-semibold">
+            <span className="text-pitch-green">{m.win_probability.home_win_pct.toFixed(0)}%</span>
+            <span className="text-text-faint">{m.win_probability.draw_pct.toFixed(0)}% draw</span>
+            <span className="text-broadcast-blue">{m.win_probability.away_win_pct.toFixed(0)}%</span>
+          </div>
         </div>
       )}
+
+      {(m.status === 'LIVE' || m.status === 'HALFTIME') && <LiveAnalyst matchId={m.match_id} homeShort={m.home_short} awayShort={m.away_short} />}
 
       {hasStats && (
         <div className="border-t border-divider px-6 py-4">
@@ -238,7 +225,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
           {(hs?.formation || as?.formation) && (
             <div className="mt-2 flex items-center justify-between text-[13px] text-text-muted">
               <span>{hs?.formation ?? '—'}</span>
-              <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Formation</span>
+              <span className="text-[12px] font-bold text-text-faint">Formation</span>
               <span>{as?.formation ?? '—'}</span>
             </div>
           )}
@@ -255,7 +242,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
         if (nowMinute === null) return null
         const elapsed = Math.max(nowMinute - m.shots[0].minute!, 0)
         return (
-          <div className="border-t border-divider px-6 py-2 text-center text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <div className="border-t border-divider px-6 py-2 text-center text-[12px] font-bold text-text-faint">
             {elapsed === 0 ? 'Shot just now' : `${elapsed}' since last shot`}
             {m.shots[0].player_name && <span className="normal-case tracking-normal text-text-muted"> &middot; {m.shots[0].player_name}</span>}
           </div>
@@ -279,15 +266,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
         </div>
       )}
 
-      {m.my_players.length > 0 && (
-        <div className="border-t border-divider px-6 py-4">
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">My players in this match</div>
-          {m.my_players
-            .slice()
-            .sort((a, b) => (b.minutes ?? 0) - (a.minutes ?? 0))
-            .map((p) => <MyPlayerRow key={p.player_id} p={p} />)}
-        </div>
-      )}
+      </details>
     </div>
   )
 }

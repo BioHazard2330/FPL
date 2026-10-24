@@ -26,7 +26,7 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
   return (
     <div className="w-full max-w-2xl">
       <div className="flex items-baseline justify-between">
-        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-text-faint">{checkpoint.chosen.name}</span>
+        <span className="text-[12px] font-bold text-text-faint">{checkpoint.chosen.name}</span>
         <span className="tabular font-display text-3xl font-bold text-pitch-green">
           <MetricNumber value={chosenTotal} />
         </span>
@@ -36,7 +36,7 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
       </div>
 
       <div className="mt-4 flex items-baseline justify-between">
-        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-text-faint">{checkpoint.alt.name}</span>
+        <span className="text-[12px] font-bold text-text-faint">{checkpoint.alt.name}</span>
         <span className="tabular text-xl font-bold text-text-muted">
           <MetricNumber value={altTotal} />
         </span>
@@ -50,9 +50,9 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
           {delta >= 0 ? '+' : ''}
           {delta.toFixed(1)}
         </span>
-        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-text-faint">pts over {horizonGw} GW</span>
+        <span className="text-[12px] font-bold text-text-faint">pts over {horizonGw} GW</span>
         {noise !== null && (
-          <span className={`ml-2 text-[12px] uppercase tracking-wide ${insideNoise ? 'text-broadcast-gold' : 'text-text-faint'}`}>
+          <span className={`ml-2 text-[12px] ${insideNoise ? 'text-broadcast-gold' : 'text-text-faint'}`}>
             {insideNoise ? `inside the ±${noise.toFixed(1)} noise band` : `clears the ±${noise.toFixed(1)} noise band`}
           </span>
         )}
@@ -78,7 +78,7 @@ export function ComparisonGraphic({ checkpoint }: ComparisonGraphicProps) {
                 : { left: '50%', width: `${(delta / axisMax) * 50}%` }}
             />
           </div>
-          <div className="mt-1 flex justify-between text-[11px] uppercase tracking-wide text-text-faint">
+          <div className="mt-1 flex justify-between text-[12px] text-text-faint">
             <span>−{axisMax.toFixed(0)}</span>
             <span>{checkpoint.alt.name} ← 0 → {checkpoint.chosen.name}</span>
             <span>+{axisMax.toFixed(0)}</span>

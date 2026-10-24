@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { SignalLedger } from '@/components/football/SignalLedger'
 import { Masthead } from '@/components/shell/Masthead'
+import { Disclosure, Panel } from '@/components/ui/kit'
 import { crestUrl, fetchFootballPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { ScreenError } from '@/components/shell/ScreenStates'
@@ -9,6 +10,7 @@ import { relativeTime } from '@/lib/time'
 import { NextFixture } from '@/components/football/FixtureRun'
 import { AwayDaysMap, type TravelLeg } from '@/components/football/AwayDaysMap'
 import type { ChangeFeedRow, FixtureContext, FixtureTickerRow, FootballSignal, TeamStateRow } from '@/lib/types'
+import { plain } from '@/lib/text'
 
 // Real FPL 1-5 FDR scale (fixture_ticker's own `difficulty` field) - the
 // same broadcast-ticker color convention every FPL tool uses: 1-2 easy
@@ -41,7 +43,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
   return (
     <div className="border-b border-divider py-6">
       <div className="mb-4 flex flex-wrap items-baseline gap-3 px-10">
-        <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture ticker</span>
+        <span className="text-[13px] font-bold text-text-faint">Fixture ticker</span>
         <span className="text-[13px] text-text-faint">my clubs &middot; easiest run first &middot; next {width} gameweeks</span>
       </div>
       <div>
@@ -52,7 +54,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
             <div key={r.team_id} className="flex items-stretch gap-4 border-t border-divider px-10 py-1.5 first:border-t-0">
               <div className="flex w-28 shrink-0 items-center gap-2">
                 {crest && <img src={crest} alt="" className="h-6 w-6" />}
-                <span className="font-display text-base font-bold uppercase tracking-wide text-text">{r.team_short}</span>
+                <span className="font-display text-base font-bold text-text">{r.team_short}</span>
               </div>
               <div className="flex gap-1.5">
                 {r.fixtures.map((f) => (
@@ -60,7 +62,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
                     key={f.event}
                     className={`flex w-[4.5rem] flex-col items-center justify-center gap-0.5 px-1 py-1.5 ${FDR_COLOR[f.difficulty] ?? 'bg-raised text-text-muted'}`}
                   >
-                    <span className="text-[11px] font-bold uppercase opacity-80">GW{f.event}</span>
+                    <span className="text-[12px] font-bold opacity-80">GW{f.event}</span>
                     <span className="text-xs font-bold">
                       {f.opponent_short} {f.is_home ? '(H)' : '(A)'}
                     </span>
@@ -69,11 +71,11 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
               </div>
               {p !== null && (
                 <div className="ml-auto flex shrink-0 items-baseline gap-2 self-center">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Avg FDR</span>
+                  <span className="text-[12px] font-bold text-text-faint">Avg FDR</span>
                   <span
                     className={`tabular font-display text-xl font-bold ${
-                      p <= 2.4 ? 'text-pitch-green' : p >= 3.6 ? 'text-alert-red' : 'text-text-muted'
-                    }`}
+ p <= 2.4 ? 'text-pitch-green' : p >= 3.6 ? 'text-alert-red' : 'text-text-muted'
+ }`}
                   >
                     {p.toFixed(1)}
                   </span>
@@ -109,8 +111,8 @@ function ChangeFeedRail({ rows }: { rows: ChangeFeedRow[] }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 {crest && <img src={crest} alt="" className="h-3.5 w-3.5 shrink-0 rounded-full" />}
-                <span className={`font-bold uppercase tracking-wide ${FEED_CATEGORY_COLOR[r.category] ?? 'text-text-faint'}`}>{r.category}</span>
-                {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[8px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
+                <span className={`font-bold ${FEED_CATEGORY_COLOR[r.category] ?? 'text-text-faint'}`}>{r.category}</span>
+                {r.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
               </div>
               <div className="mt-0.5 text-text">
                 <span className="font-semibold">{r.entity_name}</span>
@@ -135,7 +137,6 @@ const CATEGORY_ACCENT: Record<string, string> = {
   SET_PIECE_CHANGE: 'border-broadcast-blue', SET_PIECES: 'border-broadcast-blue', TACTICAL_CHANGE: 'border-broadcast-blue',
   CREATION: 'border-broadcast-gold', GOAL_THREAT: 'border-pitch-green', ROLE_CHANGE: 'border-alert-red', MINUTES: 'border-text-faint',
 }
-const LEFT_BOARD_CATEGORIES = ['SET_PIECE_CHANGE', 'SET_PIECES', 'TACTICAL_CHANGE', 'CREATION']
 
 const TIMELINE_CATEGORIES = ['SET_PIECE_CHANGE', 'SET_PIECES', 'TACTICAL_CHANGE']
 
@@ -171,12 +172,12 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
       <div className="flex min-w-[260px] max-w-[300px] items-start gap-3 border-l border-broadcast-blue bg-void px-5 py-4">
         <span className="mt-1 size-2 shrink-0 rounded-full bg-broadcast-blue" />
         <div>
-          <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-broadcast-blue">
+          <div className="flex items-center gap-2 text-[12px] font-bold text-broadcast-blue">
             {crest && <img src={crest} alt="" className="h-3.5 w-3.5 rounded-full" />}
             {s.category.replace(/_/g, ' ')}
           </div>
           <div className="mt-1 font-display text-lg font-bold text-text">{s.entity_name}</div>
-          <p className="mt-1 text-xs leading-relaxed text-text-muted">{s.evidence}</p>
+          <p className="mt-1 text-xs leading-relaxed text-text-muted">{plain(s.evidence)}</p>
           {s.fpl_effect && <div className={`mt-2 text-xs font-bold ${DIRECTION_COLOR[s.direction] ?? 'text-text'}`}>{s.fpl_effect}</div>}
         </div>
       </div>
@@ -189,18 +190,18 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
     >
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}
-        <span className="text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.category.replace(/_/g, ' ')}</span>
+        <span className="text-[12px] font-bold text-text-faint">{s.category.replace(/_/g, ' ')}</span>
       </div>
       <div className={`mt-1.5 font-display font-bold text-text ${large ? 'text-4xl' : 'text-2xl'}`}>{s.entity_name}</div>
-      <p className={`mt-2 leading-relaxed text-text-muted ${large ? 'max-w-2xl text-base' : 'text-sm'}`}>{s.evidence}</p>
+      <p className={`mt-2 leading-relaxed text-text-muted ${large ? 'max-w-2xl text-base' : 'text-sm'}`}>{plain(s.evidence)}</p>
       {s.interpretation && <p className="mt-1 text-sm italic text-text-faint">{s.interpretation}</p>}
       {s.fpl_effect && <div className={`mt-3 font-bold ${DIRECTION_COLOR[s.direction] ?? 'text-text'} ${large ? 'text-lg' : 'text-sm'}`}>{s.fpl_effect}</div>}
       {extra.length > 0 && (
         <ul className="mt-3 space-y-1 border-t border-divider pt-2 text-xs text-text-faint">
           {extra.map((e) => (
             <li key={signalKey(e)}>
-              <span className="mr-2 font-bold uppercase tracking-wide">{e.category.replace(/_/g, ' ')}</span>
-              {e.evidence}
+              <span className="mr-2 font-bold">{e.category.replace(/_/g, ' ')}</span>
+              {plain(e.evidence)}
             </li>
           ))}
         </ul>
@@ -223,9 +224,9 @@ function SignalRow({ s }: { s: FootballSignal }) {
         <span className="size-1.5 shrink-0 rounded-full bg-broadcast-blue" />
         {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
         <span className="font-bold text-text">{s.entity_name}</span>
-        {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
-        <span className="text-broadcast-blue">{s.evidence}</span>
-        <span className="ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
+        {s.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
+        <span className="text-broadcast-blue">{plain(s.evidence)}</span>
+        <span className="ml-auto shrink-0 text-[12px] font-bold text-text-faint">{s.confidence}</span>
       </div>
     )
   }
@@ -233,11 +234,11 @@ function SignalRow({ s }: { s: FootballSignal }) {
     <div className="flex flex-wrap items-baseline gap-2 border-b border-divider py-2.5 text-sm last:border-b-0">
       {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
       <span className="font-bold text-text">{s.entity_name}</span>
-      {s.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MY SQUAD</span>}
-      <span className="text-text-muted">{s.evidence}</span>
+      {s.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
+      <span className="text-text-muted">{plain(s.evidence)}</span>
       {s.interpretation && <span className="italic text-text-faint">{s.interpretation}</span>}
       {s.fpl_effect && <span className={`font-semibold ${DIRECTION_COLOR[s.direction] ?? 'text-text'}`}>{s.fpl_effect}</span>}
-      <span className="ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide text-text-faint">{s.confidence}</span>
+      <span className="ml-auto shrink-0 text-[12px] font-bold text-text-faint">{s.confidence}</span>
     </div>
   )
 }
@@ -259,11 +260,11 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
     <div>
       <div className="flex items-center gap-4 border-b border-divider px-10 pb-2">
         <span className="w-40 shrink-0" />
-        <span className="w-20 shrink-0 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Next</span>
-        <span className="flex-1 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-alert-red">xGA conceded</span>
+        <span className="w-20 shrink-0 text-[12px] font-bold text-text-faint">Next</span>
+        <span className="flex-1 text-right text-[12px] font-bold text-alert-red">xGA conceded</span>
         <span className="w-px" />
-        <span className="flex-1 text-[11px] font-bold uppercase tracking-[0.1em] text-pitch-green">xG created</span>
-        <span className="hidden w-[26rem] shrink-0 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint xl:block">
+        <span className="flex-1 text-[12px] font-bold text-pitch-green">xG created</span>
+        <span className="hidden w-[26rem] shrink-0 text-[12px] font-bold text-text-faint xl:block">
           Shape &amp; FPL implication
         </span>
       </div>
@@ -280,11 +281,11 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
               {crest && <img src={crest} alt="" className="h-5 w-5" />}
               <Link
                 to={`/club/${t.team_id}`}
-                className="truncate font-display text-sm font-bold uppercase tracking-wide text-text hover:text-pitch-green"
+                className="truncate font-display text-sm font-bold text-text hover:text-pitch-green"
               >
                 {t.team_name}
               </Link>
-              {t.in_squad && <span className="ml-auto bg-broadcast-gold px-1 py-0.5 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
+              {t.in_squad && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
             </div>
             {/* Who they actually play next, beside how good they are - the
                 two halves of the same football question. */}
@@ -330,7 +331,7 @@ function FootballSkeleton() {
       <div className="px-10 pb-6 pt-7">
         <div className="h-2 w-40 bg-raised" />
         <div className="mt-2 h-9 w-56 bg-raised" />
-        <div className="mt-3 font-mono text-[13px] uppercase tracking-[0.15em] text-text-faint">
+        <div className="mt-3 text-[13px] text-text-faint">
           Loading football intelligence &mdash; a league-wide scan, can take up to 30s on a cold cache
         </div>
       </div>
@@ -394,46 +395,12 @@ export function FootballScreen() {
   }
 
   const p = state.data
-  const leftBoard = p.categories.filter((c) => LEFT_BOARD_CATEGORIES.includes(c.category))
-  const rightBoard = p.categories.filter((c) => !LEFT_BOARD_CATEGORIES.includes(c.category))
   const featuredGroups = groupByPlayer(p.squad_changes)
-  // A signal already shown above is not shown again below. Without this the
-  // same line of evidence appeared in the featured cards and then again in
-  // its own category band, and a squad player's one good match filled the
-  // screen four times over.
-  const alreadyShown = new Set(p.squad_changes.map(signalKey))
-  const boardRows = [...leftBoard, ...rightBoard]
-    .map((c) => {
-      const rows: FootballSignal[] = []
-      for (const sig of c.signals) {
-        const key = signalKey(sig)
-        if (alreadyShown.has(key)) continue
-        alreadyShown.add(key)
-        rows.push(sig)
-        if (rows.length === 6) break
-      }
-      return { ...c, rows }
-    })
-    .filter((c) => c.rows.length > 0)
+  const myWire = p.change_feed.filter((r) => r.is_mine)
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Match Intelligence Wire" title="Football" />
-
-      <div className="relative overflow-hidden px-10 pb-6 pt-7">
-        <span className="ghost-watermark pointer-events-none absolute -top-10 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
-          MATCH
-        </span>
-        <div className="relative font-mono text-[13px] uppercase tracking-[0.15em] text-text-faint">Football intelligence</div>
-        <div className="relative mt-1 flex flex-wrap items-baseline gap-x-3">
-          <span className="tabular font-display text-4xl font-bold text-text">{p.signal_count}</span>
-          <span className="text-sm text-text-faint">signals tracked</span>
-          {p.squad_signal_count > 0 && (
-            <span className="tabular ml-4 font-display text-2xl font-bold text-broadcast-gold">{p.squad_signal_count}</span>
-          )}
-          {p.squad_signal_count > 0 && <span className="text-sm text-text-faint">affect your squad</span>}
-        </div>
-      </div>
+      <Masthead right={p.squad_signal_count > 0 ? `${p.squad_signal_count} signals touch your squad` : undefined} />
 
       <FixtureTicker rows={p.fixture_ticker} />
 
@@ -443,93 +410,59 @@ export function FootballScreen() {
           memoized above (see its own comment) so the map doesn't tear
           down and rebuild on every 60s poll tick. */}
       {travelLegs.length > 0 && (
-        <div className="border-b border-divider px-10 py-8">
-          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Away days</div>
-          <div className="mb-4 text-xs text-text-faint">
-            real upcoming away trips for your clubs &middot; {travelLegs.length} legs
-          </div>
-          {/* Taller than wide, deliberately - real England spans more
-              latitude than longitude in this local view, and fitting that
-              tall shape into a short wide panel forced Leaflet to zoom out
-              far enough to leave the sides empty and every club crammed
-              into a small centre cluster (confirmed live). */}
-          <div className="mx-auto h-[30rem] w-full max-w-md overflow-hidden border-2 border-divider">
+        <Disclosure title="Away days" summary={`${travelLegs.length} away trips coming up for your clubs`}>
+          <div className="mx-auto h-[30rem] w-full max-w-md overflow-hidden rounded-lg border border-divider">
             <AwayDaysMap legs={travelLegs} />
           </div>
-        </div>
+        </Disclosure>
       )}
 
       {/* FEATURED SQUAD SIGNALS + CHANGE WIRE - a real 70/30 asymmetric split
           (art-direction pass v3): the editorial cards carry the page, a
           narrow MANAGER/XI/AVAILABILITY newsroom ticker runs alongside,
           never a fourth equal-width card. */}
-      {(p.squad_changes.length > 0 || p.change_feed.length > 0) && (
-        <div className="mt-6 grid grid-cols-1 gap-8 border-y border-divider px-10 py-6 lg:grid-cols-[7fr_3fr]">
-          <div>
-            {p.squad_changes.length > 0 && (
-              <>
-                <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Featured squad signals</div>
-                <div className="flex flex-wrap gap-4">
-                  {featuredGroups.slice(0, 4).map((g, i) => (
-                    <FeaturedSignalCard key={g[0].entity_id} s={g[0]} large={i === 0} extra={g.slice(1, 4)} />
-                  ))}
-                </div>
-                {featuredGroups.length > 4 && (
-                  <div className="mt-4 divide-y divide-divider">
-                    {featuredGroups.slice(4).map((g) => <SignalRow key={g[0].entity_id} s={g[0]} />)}
+      {(p.squad_changes.length > 0 || myWire.length > 0) && (
+        <Panel title="What changed for your players" sub="This gameweek's matches and status changes, for players you own.">
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[7fr_3fr]">
+            <div>
+              {p.squad_changes.length > 0 && (
+                <>
+                  <div className="flex flex-wrap gap-4">
+                    {featuredGroups.slice(0, 3).map((g, i) => (
+                      <FeaturedSignalCard key={g[0].entity_id} s={g[0]} large={i === 0} extra={g.slice(1, 3)} />
+                    ))}
                   </div>
-                )}
-              </>
+                  {featuredGroups.length > 3 && (
+                    <div className="mt-4 divide-y divide-divider">
+                      {featuredGroups.slice(3, 8).map((g) => <SignalRow key={g[0].entity_id} s={g[0]} />)}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {myWire.length > 0 && (
+              <div className="border-t border-divider pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                <div className="mb-1 text-[13px] font-medium text-text-faint">Status changes</div>
+                <ChangeFeedRail rows={myWire} />
+              </div>
             )}
           </div>
-          {p.change_feed.length > 0 && (
-            <div className="border-t border-divider pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Change wire</div>
-              <ChangeFeedRail rows={p.change_feed} />
-            </div>
-          )}
-        </div>
+        </Panel>
       )}
-
-      {/* INTELLIGENCE BOARD - full-width editorial bands, category label in
-          a fixed left gutter, signals flowing in the content column. The
-          previous two equal side-by-side stacks were a card grid wearing a
-          different name: both columns had identical weight, so no category
-          could ever read as more important than another. Change-of-state
-          categories (set-piece/tactical) still render as timeline ticks
-          inside their band; trend categories render as prose rows. */}
-      <div className="mt-8">
-        {boardRows.map((c) => (
-          <div key={c.category} className="grid grid-cols-1 gap-x-8 border-t border-divider px-10 py-6 lg:grid-cols-[13rem_1fr]">
-            <div className="mb-3 lg:mb-0">
-              <div className={`border-l-4 pl-3 ${CATEGORY_ACCENT[c.category] ?? 'border-text-faint'}`}>
-                <div className="font-display text-xl font-bold uppercase leading-tight tracking-wide text-text">{c.label}</div>
-                <div className="tabular mt-0.5 text-[13px] text-text-faint">{c.count} tracked</div>
-              </div>
-            </div>
-            <div>
-              {c.rows.map((s) => <SignalRow key={signalKey(s)} s={s} />)}
-            </div>
-          </div>
-        ))}
-      </div>
 
       {p.team_state.length > 0 && (
-        <div className="mt-10 border-t border-divider pt-8">
-          <div className="mb-3 flex flex-wrap items-baseline gap-3 px-10">
-            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Team state</span>
-            <span className="text-[13px] text-text-faint">real rolling xG / xGA, opposed on one shared scale</span>
-          </div>
+        <Panel title="How your clubs are playing" sub="Chances created and conceded over their recent matches, on one shared scale.">
           <TeamStateGrid rows={p.team_state} fixtures={p.fixtures} />
-        </div>
+        </Panel>
       )}
 
-      <SignalLedger />
+      <Disclosure title="Do these signals carry?" summary="How well last match's numbers predict the next one, measured on every stored season">
+        <SignalLedger />
+      </Disclosure>
 
       {/* TEAM ODDS - real next-fixture clean-sheet ranking, bar composition not a table */}
       {p.team_odds.length > 0 && (
-        <div className="mt-10 border-t border-divider px-10 pt-8">
-          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Team odds — next fixture</div>
+        <Panel title="Clean sheets, next fixture" sub="The model's chance each club keeps one, and the goals it expects them to score.">
           <div className="grid grid-cols-1 gap-x-10 gap-y-1 md:grid-cols-2">
             {p.team_odds.map((t) => {
               const crest = crestUrl(t.team_code)
@@ -549,7 +482,7 @@ export function FootballScreen() {
               )
             })}
           </div>
-        </div>
+        </Panel>
       )}
     </div>
   )

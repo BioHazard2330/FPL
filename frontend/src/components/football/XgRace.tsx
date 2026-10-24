@@ -111,7 +111,7 @@ export function XgRace({ career, thisSeason }: { career: CareerMatch[]; thisSeas
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${mode === m ? 'bg-text text-void' : 'text-text-muted hover:text-text'}`}
+              className={`px-2.5 py-1 text-[12px] font-bold transition-colors ${mode === m ? 'bg-text text-void' : 'text-text-muted hover:text-text'}`}
             >
               {m === 'goals' ? 'Goals v xG' : 'Assists v xA'}
             </button>
@@ -164,23 +164,23 @@ export function XgRace({ career, thisSeason }: { career: CareerMatch[]; thisSeas
 
         <div className="space-y-5">
           <div>
-            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">All matches on record</div>
+            <div className="text-[12px] font-bold text-text-faint">All matches on record</div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="tabular font-display text-4xl font-bold text-text">{last.actual}</span>
-              <span className="text-[12px] uppercase tracking-wide text-text-faint">{label.a}</span>
+              <span className="text-[12px] text-text-faint">{label.a}</span>
               <span className="tabular font-display text-2xl font-bold text-pitch-green">{last.expected.toFixed(1)}</span>
-              <span className="text-[12px] uppercase tracking-wide text-text-faint">{label.e}</span>
+              <span className="text-[12px] text-text-faint">{label.e}</span>
             </div>
             <Delta value={last.actual - last.expected} />
           </div>
           {thisSeason && seasonRows.length > 0 && (
             <div>
-              <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">This season, {seasonRows.length} matches</div>
+              <div className="text-[12px] font-bold text-text-faint">This season, {seasonRows.length} matches</div>
               <div className="mt-1 flex items-baseline gap-3">
                 <span className="tabular font-display text-4xl font-bold text-text">{seasonActual}</span>
-                <span className="text-[12px] uppercase tracking-wide text-text-faint">{label.a}</span>
+                <span className="text-[12px] text-text-faint">{label.a}</span>
                 <span className="tabular font-display text-2xl font-bold text-pitch-green">{seasonExpected.toFixed(1)}</span>
-                <span className="text-[12px] uppercase tracking-wide text-text-faint">{label.e}</span>
+                <span className="text-[12px] text-text-faint">{label.e}</span>
               </div>
               <Delta value={seasonActual - seasonExpected} />
             </div>
@@ -200,7 +200,7 @@ export function XgRace({ career, thisSeason }: { career: CareerMatch[]; thisSeas
                 </div>
               </div>
             ) : (
-              <div className="text-[12px] uppercase tracking-wide text-text-faint">hover the race</div>
+              <div className="text-[12px] text-text-faint">hover the race</div>
             )}
           </div>
         </div>

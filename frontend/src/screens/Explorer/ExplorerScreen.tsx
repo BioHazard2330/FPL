@@ -28,7 +28,7 @@ const COLUMNS: { key: Key; label: string; title: string; fmt: (p: ExplorerPlayer
   { key: 'points', label: 'Pts', title: 'Total points this season', fmt: (p) => (p.points === null ? '' : String(p.points)) },
   { key: 'minutes_share', label: 'Mins', title: 'Minutes played as a share of the minutes available', fmt: (p) => `${Math.round(p.minutes_share * 100)}%` },
   { key: 'xgi_90', label: 'xGI/90', title: 'Expected goals plus expected assists per 90 minutes', fmt: (p) => (p.xgi_90 === null ? '' : p.xgi_90.toFixed(2)) },
-  { key: 'deserved_ppg', label: 'Und/GW', title: 'Points per appearance the chances behind them support: actual points less the luck from the audit', fmt: (p) => (p.deserved_ppg === null ? '' : p.deserved_ppg.toFixed(1)) },
+  { key: 'deserved_ppg', label: 'Earned/GW', title: 'Points per appearance the chances behind them support: actual points less the luck from the audit', fmt: (p) => (p.deserved_ppg === null ? '' : p.deserved_ppg.toFixed(1)) },
   { key: 'luck_z', label: 'Luck', title: 'Points above (+) or below (−) what his chances imply, in standard errors', fmt: (p) => (p.luck_z === null ? '' : `${p.luck_z > 0 ? '+' : ''}${p.luck_z.toFixed(1)}`) },
 ]
 
@@ -38,7 +38,7 @@ const PAGE = 80
 function statusChip(p: ExplorerPlayer) {
   if (p.status === 'a') return null
   const label = p.status === 'd' ? (p.chance !== null ? `${p.chance}%` : 'doubt') : p.status === 'i' ? 'injured' : p.status === 's' ? 'suspended' : 'out'
-  return <span title={p.news ?? ''} className="rounded bg-broadcast-gold/15 px-1.5 text-[11px] font-semibold text-broadcast-gold">{label}</span>
+  return <span title={p.news ?? ''} className="rounded bg-broadcast-gold/15 px-1.5 text-[12px] font-semibold text-broadcast-gold">{label}</span>
 }
 
 export function ExplorerScreen() {
@@ -94,7 +94,7 @@ export function ExplorerScreen() {
         type="button"
         title={c.title}
         onClick={() => { setSort((s) => (s.key === c.key ? { key: c.key, dir: s.dir === 1 ? -1 : 1 } : { key: c.key, dir: -1 })); setShown(PAGE) }}
-        className={`text-right font-mono text-[12px] uppercase tracking-[0.04em] ${active ? 'text-text' : 'text-text-faint hover:text-text-muted'}`}
+        className={`text-right text-[12px] ${active ? 'text-text' : 'text-text-faint hover:text-text-muted'}`}
       >
         {c.label}{active ? (sort.dir === -1 ? ' ↓' : ' ↑') : ''}
       </button>
@@ -141,9 +141,9 @@ export function ExplorerScreen() {
         <div className="overflow-x-auto">
         <div className="min-w-[66rem]">
         <div className={`${grid} border-b border-divider pb-2`}>
-          <span className="font-mono text-[12px] uppercase tracking-[0.04em] text-text-faint">Player</span>
+          <span className="text-[12px] text-text-faint">Player</span>
           {COLUMNS.map(header)}
-          <span className="font-mono text-[12px] uppercase tracking-[0.04em] text-text-faint">Next three</span>
+          <span className="text-[12px] text-text-faint">Next three</span>
         </div>
         {filtered.slice(0, shown).map((p) => (
           <div key={p.player_id} className={`${grid} border-b border-divider py-1.5 text-sm`}>
@@ -152,10 +152,10 @@ export function ExplorerScreen() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Link to={`/player/${p.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">{p.name}</Link>
-                  {p.mine && <span className="rounded bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
+                  {p.mine && <span className="rounded bg-pitch-green px-1 text-[12px] font-bold leading-4 text-pitch-green-ink">yours</span>}
                   {statusChip(p)}
                 </div>
-                <div className="font-mono text-[12px] uppercase text-text-faint">{p.team_short} · {p.position}</div>
+                <div className="text-[12px] text-text-faint">{p.team_short} · {p.position}</div>
               </div>
             </div>
             {COLUMNS.map((c) => {
@@ -168,7 +168,7 @@ export function ExplorerScreen() {
             })}
             <div className="flex gap-1">
               {p.fixtures.map((f, i) => (
-                <span key={i} className={`rounded px-1 py-0.5 font-mono text-[11px] font-bold leading-4 ${fdrFill(f.difficulty)}`} title={`${f.home ? 'home' : 'away'} to ${f.opponent}`}>
+                <span key={i} className={`rounded px-1 py-0.5 font-mono text-[12px] font-bold leading-4 ${fdrFill(f.difficulty)}`} title={`${f.home ? 'home' : 'away'} to ${f.opponent}`}>
                   {f.opponent}{f.home ? '' : '*'}
                 </span>
               ))}

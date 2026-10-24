@@ -4,7 +4,8 @@ import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
-import { fetchLiveSnapshot, fetchWeekPlanPayload } from '@/lib/api'
+import { fetchLiveSnapshot } from '@/lib/api'
+import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, baseChart, flatAreaFill, intAxisLabels, rankAxisLabels } from '@/lib/chartTheme'
@@ -23,18 +24,6 @@ const RETURN_KIND: Record<LiveMatchEvent['kind'], { label: string; color: string
   goal: { label: 'Goal', color: 'text-pitch-green' },
   assist: { label: 'Assist', color: 'text-broadcast-gold' },
   red_card: { label: 'Red card', color: 'text-alert-red' },
-}
-
-/** One cell of the control-room console strip. Deliberately not a card:
- * the cells share one band and are separated by rules, the way a real
- * broadcast control desk reads a row of monitors. */
-function ConsoleCell({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div className={`border-l border-divider px-6 py-4 first:border-l-0 first:pl-10 ${wide ? 'min-w-0 flex-1' : 'shrink-0'}`}>
-      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
-      <div className="mt-1">{children}</div>
-    </div>
-  )
 }
 
 /** Skeleton shaped like the control room it precedes (console strip, then
@@ -74,7 +63,6 @@ function LiveSkeleton() {
 
 export function LiveScreen() {
   const state = useFetch(fetchLiveSnapshot, [], 10000)
-  const planState = useFetch(fetchWeekPlanPayload, [], 60000)
 
   if (state.status === 'loading') return <LiveSkeleton />
   if (state.status === 'error') {
@@ -106,7 +94,6 @@ export function LiveScreen() {
   const bench = squad.filter((s) => s.slot === 'bench')
   const rankArrowUp = rank?.rank_gain !== null && rank?.rank_gain !== undefined ? rank.rank_gain > 0 : null
   const charts = p.charts
-  const plan = planState.status === 'ready' && planState.data.status !== 'none' ? planState.data : null
   const snapshotAgeMs = p.generated_at ? Date.now() - new Date(p.generated_at).getTime() : null
   const snapshotOld = !isLive && snapshotAgeMs !== null && snapshotAgeMs > 30 * 60 * 1000
   const pointsChanges = p.points_changes
@@ -123,15 +110,11 @@ export function LiveScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead
-        edition={isLive ? 'Control Room · ● LIVE' : 'Control Room'}
-        title={`GW${p.event ?? '?'} · ${p.gw?.state ?? 'No live window'}`}
-        right={<span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>}
-      />
+      <Masthead right={<span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>} />
 
       {snapshotOld && (
         <div className="border-b border-divider bg-panel px-10 py-3">
-          <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold">This is an old snapshot</span>
+          <span className="text-[12px] font-bold text-broadcast-gold">This is an old snapshot</span>
           <span className="ml-3 text-sm text-text-muted">
             Written {relativeTime(p.generated_at)}. Nothing polls outside the active window (a deadline's run-up and a gameweek's matches), so everything below is how things stood
             then. &ldquo;Sync now&rdquo; in the header brings it up to date.
@@ -152,12 +135,12 @@ export function LiveScreen() {
         <div className="border-b border-divider bg-panel px-10 py-8">
           <div className="flex flex-wrap items-end gap-10">
             <div>
-              <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Gameweek points</div>
+              <div className="text-[13px] font-bold text-text-faint">Points this gameweek</div>
               <div className="tabular font-display text-7xl font-bold leading-none text-text">{points.points.toFixed(0)}</div>
             </div>
             {rank?.estimated_rank != null && (
               <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">
+                <div className="text-[13px] font-bold text-text-faint">
                   Live rank{rank.precision ? ` · ${rank.precision}` : ''}
                 </div>
                 <div className={`tabular font-display text-3xl font-bold ${rank.is_current ? 'text-text' : 'text-text-faint'}`}>
@@ -175,21 +158,21 @@ export function LiveScreen() {
             )}
             {rank?.safety_score != null && (
               <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Safety score</div>
+                <div className="text-[13px] font-bold text-text-faint">Cushion</div>
                 <div className="tabular font-display text-3xl font-bold text-text">{rank.safety_score.toFixed(0)}</div>
-                <div className="mt-0.5 text-[12px] text-text-faint">pts above the next rank band</div>
+                <div className="mt-0.5 text-[12px] text-text-faint">points above the next rank band</div>
               </div>
             )}
             {rank?.template_pct != null && (
               <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Template rating</div>
+                <div className="text-[13px] font-bold text-text-faint">Overlap with the top 10k</div>
                 <div className="tabular font-display text-3xl font-bold text-text">{rank.template_pct.toFixed(0)}%</div>
-                <div className="mt-0.5 text-[12px] text-text-faint">match with the top-10k template</div>
+                <div className="mt-0.5 text-[12px] text-text-faint">of your team matches the template</div>
               </div>
             )}
             {points.captain_name && (
               <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain</div>
+                <div className="text-[13px] font-bold text-text-faint">Captain</div>
                 <div className="tabular font-display text-3xl font-bold text-broadcast-gold">
                   {points.captain_points ?? 0}
                   <span className="ml-2 font-sans text-base font-semibold text-text">{points.captain_name}</span>
@@ -218,8 +201,8 @@ export function LiveScreen() {
       {charts?.intragame && charts.intragame.timestamps.length > 1 && (
         <div className="grid grid-cols-1 gap-px border-b border-divider bg-divider lg:grid-cols-2">
           <div className="bg-void px-10 py-8">
-            <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
-              Live points progression &mdash; GW{p.event}
+            <div className="mb-3 text-[13px] font-bold text-text-faint">
+              Your points through the gameweek
             </div>
             <Chart
               type="area"
@@ -239,8 +222,8 @@ export function LiveScreen() {
             />
           </div>
           <div className="bg-void px-10 py-8">
-            <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
-              Live rank progression &mdash; GW{p.event}
+            <div className="mb-3 text-[13px] font-bold text-text-faint">
+              Your rank through the gameweek
             </div>
             <Chart
               type="area"
@@ -266,58 +249,30 @@ export function LiveScreen() {
         </div>
       )}
 
-      {/* CONSOLE STRIP - the real control-room readout: is anything live,
-          where do I stand, is the standing decision still valid, and have
-          finished-GW points been revised under me. One band, rule-separated
-          cells, no cards. */}
-      <div className="flex flex-wrap items-stretch border-b border-divider">
-        <ConsoleCell label="Channel">
-          <div className="flex items-center gap-2">
-            <span className={`size-2.5 rounded-full ${isLive ? 'animate-pulse-live bg-alert-red' : 'bg-text-faint'}`} />
-            <span className="font-display text-lg font-bold uppercase tracking-wide text-text">
-              {isLive ? 'Live' : 'Standby'}
+      {(matches.length > 0 || pointsChanges) && (
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-1 px-8 py-4 text-[14px] text-text-muted">
+          {matches.length > 0 && (
+            <span>
+              <span className="tabular font-semibold text-alert-red">{matches.length}</span> match{matches.length === 1 ? '' : 'es'} on now
+              {squadMatches > 0 && <span className="text-broadcast-gold"> &middot; {squadMatches} with your players</span>}
             </span>
-          </div>
-        </ConsoleCell>
-
-        <ConsoleCell label="Live matches">
-          <div className={`tabular font-display text-lg font-bold ${matches.length > 0 ? 'text-alert-red' : 'text-text-faint'}`}>
-            {matches.length}
-            {squadMatches > 0 && <span className="ml-2 text-sm font-semibold text-broadcast-gold">{squadMatches} with my players</span>}
-          </div>
-        </ConsoleCell>
-
-        {plan && (
-          <ConsoleCell label="Week plan">
-            <div className={`font-display text-lg font-bold uppercase tracking-wide ${plan.status === 'current' ? 'text-pitch-green' : 'text-alert-red'}`}>
-              {plan.status === 'current' ? 'Current' : 'Out of date'}
-            </div>
-            <div className="mt-0.5 text-[12px] text-text-faint">
-              {plan.status === 'stale' ? (plan.stale_reasons?.[0] ?? '') : `solved ${relativeTime(plan.computed_at)}`}
-            </div>
-          </ConsoleCell>
-        )}
-
-        {pointsChanges && (
-          <ConsoleCell label={`GW${pointsChanges.event} revisions`} wide>
-            <div className="tabular font-display text-lg font-bold text-text">
-              {pointsChanges.squad_revisions}
-              <span className="ml-1 text-sm font-normal text-text-faint">of {pointsChanges.total_revisions} league-wide</span>
-            </div>
-            <div className="mt-0.5 text-[12px] uppercase tracking-wide text-text-faint">
-              {pointsChanges.locked ? 'gameweek locked' : 'still provisional'}
-            </div>
-          </ConsoleCell>
-        )}
-      </div>
+          )}
+          {pointsChanges && (
+            <span>
+              GW{pointsChanges.event} points revised for <span className="tabular font-semibold text-text">{pointsChanges.squad_revisions}</span> of your players
+              <span className="text-text-faint"> ({pointsChanges.total_revisions} league-wide, {pointsChanges.locked ? 'now locked' : 'still provisional'})</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* MATCH CENTRE - the dominant object whenever football is actually
           happening. Real score, real per-team state, real momentum and shot
           geometry straight off the fast poll channel. */}
       {matches.length > 0 ? (
         <div className="border-b border-divider">
-          <div className="px-10 pb-2 pt-6 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
-            Match centre &mdash; squad matches first
+          <div className="px-10 pb-2 pt-6 text-[13px] font-bold text-text-faint">
+            Matches, yours first
           </div>
           <div className="grid grid-cols-1 gap-px bg-divider 2xl:grid-cols-2">
             {matches.map((m) => <MatchCard key={m.match_id} m={m} />)}
@@ -340,12 +295,12 @@ export function LiveScreen() {
         <div className="grid grid-cols-1 gap-px bg-divider lg:grid-cols-[3fr_2fr]">
           <div className="bg-void px-10 py-8">
             <div className="mb-4 flex flex-wrap items-baseline gap-3">
-              <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Live squad impact</span>
+              <span className="text-[13px] font-bold text-text-faint">Live squad impact</span>
               <span className="text-[13px] text-text-faint">actual points once a player has minutes, xP before kickoff</span>
             </div>
             <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
               <div>
-                <div className="pb-1 text-[12px] font-bold uppercase tracking-wide text-text-faint">Starting XI</div>
+                <div className="pb-1 text-[12px] font-bold text-text-faint">Starting XI</div>
                 <div className="divide-y divide-divider">
                   {starting.map((s) => {
                     const live = livePointsById.get(s.player_id)
@@ -360,18 +315,18 @@ export function LiveScreen() {
                     const isDiff = hasActual && (actual ?? 0) >= 5 && s.ownership_percent !== null && s.ownership_percent < 10
                     return (
                       <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
-                        {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[11px] font-bold text-broadcast-gold-ink">C</span>}
-                        {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[11px] font-bold text-text">V</span>}
+                        {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[12px] font-bold text-broadcast-gold-ink">C</span>}
+                        {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[12px] font-bold text-text">V</span>}
                         <Link to={`/player/${s.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">
                           {s.web_name}
                         </Link>
-                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[11px] font-bold text-text-muted">{s.position}</span>
+                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
                         {s.ownership_percent !== null && (
                           <span className="shrink-0 text-[12px] text-text-faint">{s.ownership_percent.toFixed(1)}% owned</span>
                         )}
-                        {isDiff && <span className="shrink-0 text-[11px] font-bold uppercase text-broadcast-gold">Diff</span>}
+                        {isDiff && <span className="shrink-0 text-[12px] font-bold text-broadcast-gold">Diff</span>}
                         {s.classification && s.classification !== 'FIT' && (
-                          <span className={`shrink-0 text-[11px] font-bold uppercase ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
+                          <span className={`shrink-0 text-[12px] font-bold ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
                             {s.classification}
                           </span>
                         )}
@@ -389,7 +344,7 @@ export function LiveScreen() {
                 </div>
               </div>
               <div className="mt-6 md:mt-0">
-                <div className="pb-1 text-[12px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
+                <div className="pb-1 text-[12px] font-bold text-text-faint">Bench</div>
                 <div className="divide-y divide-divider opacity-70">
                   {bench.map((s) => {
                     const live = livePointsById.get(s.player_id)
@@ -398,7 +353,7 @@ export function LiveScreen() {
                     return (
                       <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
                         <span className="truncate font-bold text-text">{s.web_name}</span>
-                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[11px] font-bold text-text-muted">{s.position}</span>
+                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
                         {hasActual ? (
                           <span className="tabular ml-auto shrink-0 font-semibold text-text">{actual}</span>
                         ) : (
@@ -413,7 +368,7 @@ export function LiveScreen() {
           </div>
 
           <div className="bg-void px-10 py-8">
-            <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Bonus &amp; defensive contribution</div>
+            <div className="mb-1 text-[13px] font-bold text-text-faint">Bonus &amp; defensive contribution</div>
             {bonusDefcon.some((r) => (r.minutes ?? 0) > 0) ? (
               <>
                 <p className="mb-3 text-[13px] text-text-faint">
@@ -439,7 +394,7 @@ export function LiveScreen() {
           from (no new source, no new network call). */}
       {p.threats.length > 0 && (
         <div className="border-t border-divider bg-void px-10 py-8">
-          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Threats</div>
+          <div className="mb-1 text-[13px] font-bold text-text-faint">Threats</div>
           <p className="mb-3 text-[13px] text-text-faint">Template picks you don't own, hauling right now.</p>
           <div className="flex flex-wrap gap-x-10 gap-y-3">
             {p.threats.map((t) => (
@@ -448,7 +403,7 @@ export function LiveScreen() {
                 <Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-alert-red">
                   {t.web_name}
                 </Link>
-                <span className="bg-raised px-1.5 py-0.5 text-[11px] font-bold text-text-muted">{t.position}</span>
+                <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{t.position}</span>
                 <span className="text-[12px] text-text-faint">{t.ownership_percent.toFixed(1)}% owned</span>
               </div>
             ))}
@@ -464,7 +419,7 @@ export function LiveScreen() {
         <div className={`grid grid-cols-1 gap-px border-t border-divider bg-divider ${wireCols > 1 ? 'lg:grid-cols-2' : ''}`}>
           {events.length > 0 && (
             <div className="bg-void px-10 py-8">
-              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Squad returns</div>
+              <div className="mb-1 text-[13px] font-bold text-text-faint">Squad returns</div>
               <p className="mb-3 text-[13px] text-text-faint">Running totals this gameweek, not a timed feed.</p>
               <div className="divide-y divide-divider">
                 {events.map((e, i) => {
@@ -472,7 +427,7 @@ export function LiveScreen() {
                   return (
                     <div key={i} className="flex items-baseline gap-3 py-2.5">
                       <span className={`tabular font-display text-2xl font-bold ${kind?.color ?? 'text-text'}`}>{e.count}</span>
-                      <span className={`text-[12px] font-bold uppercase tracking-[0.1em] ${kind?.color ?? 'text-text-faint'}`}>
+                      <span className={`text-[12px] font-bold ${kind?.color ?? 'text-text-faint'}`}>
                         {kind?.label ?? e.kind}
                       </span>
                       <span className="ml-auto text-sm font-bold text-text">{e.web_name ?? `#${e.player_id}`}</span>
@@ -485,20 +440,20 @@ export function LiveScreen() {
 
           {changes.length > 0 && (
             <div className="bg-void px-10 py-8">
-              <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Change wire</div>
+              <h2 className="mb-3 font-display text-xl font-semibold text-text">What changed</h2>
               <div className="divide-y divide-divider">
                 {changes.slice(0, 15).map((c, i) => (
                   <div key={i} className="flex items-start gap-3 py-2.5 text-sm">
                     <span
                       className={`mt-1.5 size-1.5 shrink-0 rounded-full ${
-                        c.severity === 'high' ? 'bg-alert-red' : c.severity === 'medium' ? 'bg-broadcast-gold' : 'bg-text-faint'
-                      }`}
+ c.severity === 'high' ? 'bg-alert-red' : c.severity === 'medium' ? 'bg-broadcast-gold' : 'bg-text-faint'
+ }`}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-2">
                         <span className="font-bold text-text">{c.web_name ?? '—'}</span>
-                        <span className="text-[12px] font-bold uppercase tracking-wide text-text-faint">
-                          {c.event_type?.replace(/_/g, ' ') ?? ''}
+                        <span className="text-[12px] font-bold text-text-faint">
+                          {eventLabel(c.event_type)}
                         </span>
                       </div>
                       {c.event_type === 'early_withdrawal' || c.event_type === 'lineup_confirmed' ? (
@@ -508,9 +463,7 @@ export function LiveScreen() {
                         </div>
                       ) : (
                         (c.old_value !== null || c.new_value !== null) && (
-                          <div className="text-xs text-text-muted">
-                            {c.old_value ?? '—'} &rarr; <span className="text-text">{c.new_value ?? '—'}</span>
-                          </div>
+                          <div className="text-xs text-text-muted">{describeChange(c.event_type, c.old_value, c.new_value)}</div>
                         )
                       )}
                     </div>
@@ -528,7 +481,7 @@ export function LiveScreen() {
         <div className={`grid grid-cols-1 gap-px border-t border-divider bg-divider ${chartCols > 1 ? 'lg:grid-cols-2' : ''}`}>
           {charts.rank.events.length > 1 && (
             <div className="bg-void px-10 py-8">
-              <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Overall rank trajectory</div>
+              <div className="mb-3 text-[13px] font-bold text-text-faint">Overall rank trajectory</div>
               <Chart
                 type="area"
                 height={260}
@@ -547,7 +500,7 @@ export function LiveScreen() {
           )}
           {charts.cumulative_points.events.length > 1 && (
             <div className="bg-void px-10 py-8">
-              <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Cumulative points</div>
+              <div className="mb-3 text-[13px] font-bold text-text-faint">Cumulative points</div>
               <Chart
                 type="area"
                 height={260}
@@ -564,7 +517,7 @@ export function LiveScreen() {
           )}
           {charts.captain_contribution.events.length > 1 && (
             <div className={`bg-void px-10 py-8 ${chartCols > 1 ? 'lg:col-span-2' : ''}`}>
-              <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Captain contribution per GW</div>
+              <div className="mb-3 text-[13px] font-bold text-text-faint">Captain contribution per GW</div>
               <Chart
                 type="bar"
                 height={220}
@@ -581,44 +534,6 @@ export function LiveScreen() {
         </div>
       )}
 
-      {/* SYSTEM HEALTH - real per-source freshness + the real adaptive sync
-          cadence this project's own scheduler uses to decide its next tick.
-          Never a decorative "system monitor": every value here already
-          drives a real backend decision. */}
-      {(p.source_freshness.length > 0 || p.cadence) && (
-        <div className="border-t border-divider bg-panel px-10 py-8">
-          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">System health</div>
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_auto]">
-            {p.source_freshness.length > 0 && (
-              <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3">
-                {p.source_freshness.map((s) => (
-                  <div key={s.source} className="flex items-center gap-2">
-                    <span className={`size-1.5 shrink-0 rounded-full ${s.degraded ? 'bg-alert-red' : 'bg-pitch-green'}`} />
-                    <span className="truncate text-sm font-semibold text-text">{s.source}</span>
-                    <span className="ml-auto shrink-0 text-[12px] text-text-faint">
-                      {s.last_success ? new Date(s.last_success).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'never'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {p.cadence && (
-              <div className="border-l border-divider pl-8 text-sm">
-                <div className="text-text-muted">
-                  Sync every <span className="font-bold text-text">{p.cadence.system.interval_minutes}m</span>
-                </div>
-                <div className="mt-1 text-xs text-text-faint">{p.cadence.system.reason}</div>
-                <div className="mt-3 text-text-muted">
-                  Rank refreshes at least every <span className="font-bold text-text">{p.cadence.rank.next_due_floor_minutes}m</span>
-                </div>
-                <div className="mt-3 font-mono text-[12px] uppercase tracking-wide text-text-faint">
-                  Snapshot written {relativeTime(p.generated_at) ?? '—'} · this screen re-reads it every 10s
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

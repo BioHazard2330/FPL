@@ -81,14 +81,14 @@ export function PlayerShots({ playerId, name, teamShort, shots, mine }: {
             type="button"
             onClick={() => setShowLeague((v) => !v)}
             disabled={!leagueLoaded}
-            className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${showLeague && leagueLoaded ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'} disabled:opacity-50`}
+            className={`px-2.5 py-1 text-[12px] font-bold transition-colors ${showLeague && leagueLoaded ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'} disabled:opacity-50`}
           >
             League underneath
           </button>
           <span className="text-[13px] text-text-faint">
             {league.status === 'loading' ? 'loading the league’s shots…' : leagueLoaded ? `${league.data.totals.shots.toLocaleString()} league shots as a density field` : 'league shots unavailable'}
           </span>
-          <Link to="/atlas" className="ml-auto text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-blue hover:underline">Open on the Atlas</Link>
+          <Link to="/atlas" className="ml-auto text-[12px] font-bold text-broadcast-blue hover:underline">Open on the Atlas</Link>
         </div>
         <div className="h-[520px]">
           <ShotAtlas shots={field} visible={allVisible} heroId={playerId} showHeat={leagueLoaded && showLeague} onHover={setHover} />
@@ -120,7 +120,7 @@ export function PlayerShots({ playerId, name, teamShort, shots, mine }: {
         </div>
         {biggest && (
           <div className="border-t border-divider pt-4">
-            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Biggest chance</div>
+            <div className="text-[12px] font-bold text-text-faint">Biggest chance</div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="tabular font-display text-2xl font-bold text-broadcast-gold">{(biggest.xg ?? 0).toFixed(2)}</span>
               <span className="tabular text-xs text-text-muted">
@@ -131,7 +131,7 @@ export function PlayerShots({ playerId, name, teamShort, shots, mine }: {
           </div>
         )}
         <div className="border-t border-divider pt-4">
-          <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">By situation</div>
+          <div className="text-[12px] font-bold text-text-faint">By situation</div>
           {bySituation.map(([k, v]) => (
             <div key={k} className="grid grid-cols-[1fr_auto_auto_auto] items-baseline gap-3 border-b border-divider py-1.5 text-xs">
               <span className="text-text">{SITUATION_LABEL[k] ?? k}</span>
@@ -142,7 +142,7 @@ export function PlayerShots({ playerId, name, teamShort, shots, mine }: {
           ))}
         </div>
         <div className="border-t border-divider pt-4">
-          <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">By match</div>
+          <div className="text-[12px] font-bold text-text-faint">By match</div>
           {byMatch.map(([k, v]) => (
             <Link key={k} to={`/match/${v.match_id ?? ''}`} className="grid grid-cols-[1fr_auto_auto_auto] items-baseline gap-3 border-b border-divider py-1.5 text-xs hover:bg-raised/60">
               <span className="text-text">{v.home ? 'v' : 'at'} {v.opp} <span className="text-text-faint">{v.score ?? ''}</span></span>
@@ -162,7 +162,7 @@ function Big({ label, value, tone }: { label: string; value: number | string; to
   return (
     <div>
       <div className={`tabular font-display text-3xl font-bold ${color}`}>{value}</div>
-      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+      <div className="text-[12px] font-bold text-text-faint">{label}</div>
     </div>
   )
 }

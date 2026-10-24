@@ -6,6 +6,8 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
+  MatchStory,
+  ViewPlanPayload,
   SignalsPayload,
   ExplorerPayload,
   WhatIfPayload,
@@ -107,6 +109,15 @@ export function fetchAtlasPayload(): Promise<AtlasPayload> {
 
 export function fetchTablePayload(): Promise<TablePayload> {
   return getJson<TablePayload>('/api/table')
+}
+
+export function fetchLiveStory(matchId: number): Promise<{ story: MatchStory; minute: number; provisional: boolean }> {
+  return getJson<{ story: MatchStory; minute: number; provisional: boolean }>(`/api/livestory?id=${matchId}`)
+}
+
+export function fetchViewPlan(scales: Record<number, number>): Promise<ViewPlanPayload> {
+  const q = Object.entries(scales).map(([k, v]) => `${k}:${v}`).join(',')
+  return getJson<ViewPlanPayload>(`/api/viewplan?scales=${encodeURIComponent(q)}`)
 }
 
 export function fetchSignalsPayload(): Promise<SignalsPayload> {

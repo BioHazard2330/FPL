@@ -73,7 +73,7 @@ export function SyncButton() {
   if (phase === 'running') {
     const secs = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0
     return (
-      <span className="text-broadcast-gold" title="Syncing FPL, news, lineups and odds, then rebuilding your plan">
+      <span className="text-[13px] text-broadcast-gold" title="Syncing FPL, news, lineups and odds, then rebuilding your plan">
         Syncing {secs}s
       </span>
     )
@@ -90,7 +90,7 @@ export function SyncButton() {
       type="button"
       onClick={start}
       disabled={phase === 'starting'}
-      className="bg-raised px-2 py-1 text-[12px] font-bold tracking-[0.1em] text-text-muted hover:text-text"
+      className="shrink-0 rounded bg-raised px-2.5 py-1 text-[12px] font-semibold text-text-muted hover:text-text"
       title="Run the full sync now: FPL data, news, lineups, odds, then rebuild the plan"
     >
       Sync now

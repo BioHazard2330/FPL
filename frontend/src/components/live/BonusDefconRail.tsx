@@ -30,14 +30,14 @@ export function BonusDefconRail({ rows }: { rows: BonusDefconRow[] }) {
 
               {bonus ? (
                 <span
-                  className={`shrink-0 px-1.5 py-0.5 text-[12px] font-bold uppercase tracking-wide ${
-                    confirmed ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'border border-broadcast-gold text-broadcast-gold'
-                  }`}
+                  className={`shrink-0 px-1.5 py-0.5 text-[12px] font-bold ${
+ confirmed ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'border border-broadcast-gold text-broadcast-gold'
+ }`}
                 >
                   +{bonus} {confirmed ? 'bonus' : 'prov.'}
                 </span>
               ) : (
-                <span className="shrink-0 text-[12px] uppercase tracking-wide text-text-faint">no bonus</span>
+                <span className="shrink-0 text-[12px] text-text-faint">no bonus</span>
               )}
 
               {hasDefcon ? (
@@ -51,14 +51,14 @@ export function BonusDefconRail({ rows }: { rows: BonusDefconRow[] }) {
                   </span>
                   <span
                     className={`tabular w-16 shrink-0 text-right text-xs font-bold ${
-                      r.defcon_reached ? 'text-pitch-green' : 'text-text-muted'
-                    }`}
+ r.defcon_reached ? 'text-pitch-green' : 'text-text-muted'
+ }`}
                   >
                     {r.defensive_contribution}/{r.defcon_threshold}
                   </span>
                 </span>
               ) : (
-                <span className="ml-auto shrink-0 text-[12px] uppercase tracking-wide text-text-faint">no defcon rule</span>
+                <span className="ml-auto shrink-0 text-[12px] text-text-faint">no defcon rule</span>
               )}
             </div>
           )

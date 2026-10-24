@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { MatchStory, StoryFinding, StorySideMetrics, StorySide, StorySub } from '@/lib/types'
+import { plain } from '@/lib/text'
 
 type Names = { home: string; away: string }
 
@@ -31,7 +32,7 @@ export function DeservedResult({ story, names }: { story: MatchStory; names: Nam
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">
+        <div className="text-[12px] font-bold text-text-faint">
           Deserved result · {story.shots.length} shots replayed
         </div>
         <div className="tabular text-[13px] text-text-muted">
@@ -91,7 +92,7 @@ export function GameState({ story, names }: { story: MatchStory; names: Names })
         const total = p.leading.minutes + p.level.minutes + p.trailing.minutes
         return (
           <div key={r.side}>
-            <div className={`mb-1.5 text-[12px] font-bold uppercase tracking-[0.12em] ${r.ink}`}>{r.label}</div>
+            <div className={`mb-1.5 text-[12px] font-bold ${r.ink}`}>{r.label}</div>
             <div className="flex h-3 w-full gap-px">
               {(['leading', 'level', 'trailing'] as const).map((k) => (
                 p[k].minutes > 0 && <div key={k} className={`${STATE_INK[k]} bar-draw`} style={{ width: `${(p[k].minutes / total) * 100}%` }} />
@@ -100,7 +101,7 @@ export function GameState({ story, names }: { story: MatchStory; names: Names })
             <div className="mt-2 grid grid-cols-3 gap-3">
               {(['leading', 'level', 'trailing'] as const).map((k) => (
                 <div key={k}>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+                  <div className="text-[12px] font-bold text-text-faint">
                     <span className={`mr-1.5 inline-block size-2 align-middle ${STATE_INK[k]}`} />
                     {STATE_LABEL[k]} · {Math.round(p[k].minutes)}'
                   </div>
@@ -133,7 +134,7 @@ const GROUPS = [
 function Mix({ label, parts, total, ink, unit }: { label: string; parts: Record<'open_play' | 'fast_break' | 'dead_ball' | 'penalty', number>; total: number; ink?: string; unit?: string }) {
   return (
     <div className="grid grid-cols-[8.5rem_1fr_3.2rem] items-center gap-3 py-1">
-      <div className={`truncate text-[12px] font-bold uppercase tracking-[0.1em] ${ink ?? 'text-text-faint'}`}>{label}</div>
+      <div className={`truncate text-[12px] font-bold ${ink ?? 'text-text-faint'}`}>{label}</div>
       <div className="flex h-3 w-full gap-px bg-raised/40">
         {total > 0 &&
           GROUPS.map((g) => parts[g.key] > 0 && <div key={g.key} className={`${g.cls} bar-draw`} style={{ width: `${(parts[g.key] / total) * 100}%` }} title={`${g.label} ${(parts[g.key]).toFixed(2)} xG`} />)}
@@ -206,7 +207,7 @@ export function Substitutions({ subs, names }: { subs: StorySub[]; names: Names 
             </div>
             <div className="truncate text-[12px] text-text-faint">{s.note}</div>
           </div>
-          <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${KIND_STYLE[s.kind] ?? 'bg-raised text-text-muted'}`}>{kindLabel(s.kind)}</span>
+          <span className={`px-1.5 py-0.5 text-[12px] font-bold ${KIND_STYLE[s.kind] ?? 'bg-raised text-text-muted'}`}>{kindLabel(s.kind)}</span>
         </div>
       ))}
     </div>
@@ -248,17 +249,17 @@ export function Findings({ findings, limit = 10 }: { findings: StoryFinding[]; l
           )
         return (
           <div key={i} className={`border-l-4 bg-panel px-4 py-3 ${DIRECTION_RULE[f.fpl_direction ?? 'NEUTRAL']}`}>
-            <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+            <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-bold text-text-faint">
               <span className="text-[13px] normal-case tracking-normal">{subject}</span>
               <span>{f.observation_type.replace(/_/g, ' ').toLowerCase()}</span>
               {f.fpl_direction && <span className={f.fpl_direction === 'POSITIVE' ? 'text-pitch-green' : f.fpl_direction === 'NEGATIVE' ? 'text-alert-red' : f.fpl_direction === 'WATCH' ? 'text-broadcast-gold' : ''}>{f.fpl_direction.toLowerCase()}{f.fpl_signal ? ` · ${f.fpl_signal.replace(/_/g, ' ').toLowerCase()}` : ''}</span>}
               <span>{f.confidence} confidence</span>
             </div>
-            <p className="text-sm leading-snug text-text">{f.observed}</p>
-            {f.inferred && <p className="mt-1 text-[13px] leading-snug text-text-muted">{f.inferred}</p>}
+            <p className="text-sm leading-snug text-text">{plain(f.observed)}</p>
+            {f.inferred && <p className="mt-1 text-[13px] leading-snug text-text-muted">{plain(f.inferred)}</p>}
             {f.reliability && (
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-text-faint">
-                <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${VERDICT_STYLE[f.reliability.verdict]}`}>{f.reliability.verdict}</span>
+                <span className={`px-1.5 py-0.5 text-[12px] font-bold ${VERDICT_STYLE[f.reliability.verdict]}`}>{f.reliability.verdict}</span>
                 <span>
                   {f.reliability.label} {VERDICT_WORD[f.reliability.verdict]}
                   {f.reliability.r !== null ? ` (r ${f.reliability.r >= 0 ? '+' : ''}${f.reliability.r.toFixed(2)}, n ${f.reliability.n.toLocaleString()})` : ''}

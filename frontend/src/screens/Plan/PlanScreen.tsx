@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Masthead } from '@/components/shell/Masthead'
+import { Disclosure } from '@/components/ui/kit'
 import { fetchPlanPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
-import { TransferWormhole } from '@/components/three/TransferWormhole'
 import { WeekPlanDesk } from '@/components/plan/WeekPlanDesk'
 import { WhatIf } from '@/components/plan/WhatIf'
 import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
@@ -45,7 +45,7 @@ function PlannerCrossCheckPanel({ x }: { x: PlannerCrossCheck }) {
 
   return (
     <div className="mt-12 border-t border-divider bg-raised/40 px-10 py-8">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-wide text-broadcast-gold">
+      <div className="mb-1 text-[13px] font-bold text-broadcast-gold">
         Planner cross-check - what the search may be leaving behind
       </div>
       <div className="mb-6 text-xs text-text-faint">
@@ -58,7 +58,7 @@ function PlannerCrossCheckPanel({ x }: { x: PlannerCrossCheck }) {
           <div key={r.label} className="flex items-center gap-4">
             <div className="w-44 shrink-0">
               <div className="text-sm font-semibold text-text">{r.label}</div>
-              <div className="text-[12px] uppercase tracking-wide text-text-faint">{r.sub}</div>
+              <div className="text-[12px] text-text-faint">{r.sub}</div>
             </div>
             <div className="h-3 flex-1 bg-panel">
               <div className={`bar-draw h-full ${r.tone}`} style={{ width: `${(r.value / max) * 100}%` }} />
@@ -120,7 +120,7 @@ function StrategyGrid({ paths, activePath, onSelect }: { paths: PlanPath[]; acti
         {/* header row: GW axis */}
         <div />
         {events.map((e) => (
-          <div key={e} className="border-b border-divider px-2 pb-2 text-center text-[12px] font-bold uppercase tracking-wide text-text-faint">
+          <div key={e} className="border-b border-divider px-2 pb-2 text-center text-[12px] font-bold text-text-faint">
             GW{e}
           </div>
         ))}
@@ -151,13 +151,13 @@ function StrategyGrid({ paths, activePath, onSelect }: { paths: PlanPath[]; acti
                     className={`flex items-center justify-center border-b border-divider px-1 py-2 text-center ${active ? 'bg-panel' : ''}`}
                   >
                     <span
-                      className={`w-full truncate px-1.5 py-1 text-[12px] font-bold uppercase leading-tight ${
-                        s.is_locked
-                          ? 'bg-pitch-green text-pitch-green-ink'
-                          : isChip
-                            ? 'border border-dashed border-broadcast-gold/60 text-broadcast-gold'
-                            : 'text-text-muted'
-                      }`}
+                      className={`w-full truncate px-1.5 py-1 text-[12px] font-bold leading-tight ${
+ s.is_locked
+ ? 'bg-pitch-green text-pitch-green-ink'
+ : isChip
+ ? 'border border-dashed border-broadcast-gold/60 text-broadcast-gold'
+ : 'text-text-muted'
+ }`}
                     >
                       {s.chip_played ?? s.action}
                     </span>
@@ -201,14 +201,14 @@ function StepRail({ path }: { path: PlanPath }) {
           <div key={i} className="flex items-stretch">
             <div
               className={`flex flex-col gap-1 px-5 py-4 ${hasSquadRebuild ? 'min-w-[260px]' : 'min-w-[150px]'} ${
-                s.is_locked
-                  ? 'border-t border-white/40 bg-pitch-green text-pitch-green-ink'
-                  : isChip
-                    ? 'border-2 border-dashed border-broadcast-gold/60 bg-panel text-text'
-                    : 'border-2 border-dashed border-divider bg-panel text-text-muted'
-              }`}
+ s.is_locked
+ ? 'border-t border-white/40 bg-pitch-green text-pitch-green-ink'
+ : isChip
+ ? 'border-2 border-dashed border-broadcast-gold/60 bg-panel text-text'
+ : 'border-2 border-dashed border-divider bg-panel text-text-muted'
+ }`}
             >
-              <span className={`text-[12px] font-bold uppercase tracking-wide ${s.is_locked ? 'opacity-80' : isChip ? 'text-broadcast-gold' : 'opacity-70'}`}>
+              <span className={`text-[12px] font-bold ${s.is_locked ? 'opacity-80' : isChip ? 'text-broadcast-gold' : 'opacity-70'}`}>
                 GW{s.event}{s.is_locked ? ' · now' : ''}
               </span>
               <span className="font-display text-lg font-bold leading-tight">{s.chip_played ?? s.action}</span>
@@ -221,25 +221,14 @@ function StepRail({ path }: { path: PlanPath }) {
                   the "3D" ask, scoped to real shirts on a real rotating
                   plane rather than an invented portal effect. */}
               {s.player_out && s.player_in && (
-                <div className="mt-1 flex items-center gap-1.5">
-                  <TransferWormhole
-                    outShirt={s.player_out.team_code !== null ? shirtUrl(s.player_out.team_code, s.player_out.position === 'GKP', 66) : null}
-                    inShirt={s.player_in.team_code !== null ? shirtUrl(s.player_in.team_code, s.player_in.position === 'GKP', 66) : null}
-                    outName={s.player_out.name}
-                    inName={s.player_in.name}
-                  />
-                  {/* Names stay visible without hovering - the flip is a
-                      real bonus flourish, never the only way to read who's
-                      actually moving. */}
-                  <span className="truncate text-xs opacity-70">
-                    {s.player_out.name} <span aria-hidden="true">&rarr;</span> {s.player_in.name}
-                  </span>
+                <div className="mt-1 truncate text-xs opacity-70">
+                  {s.player_out.name} <span aria-hidden="true">&rarr;</span> {s.player_in.name}
                 </div>
               )}
               {hasSquadRebuild && (
                 <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[13px]">
                   <div className="min-w-0">
-                    <div className="mb-0.5 text-[11px] font-bold uppercase tracking-wide opacity-60">
+                    <div className="mb-0.5 text-[12px] font-bold opacity-60">
                       Out ({s.players_out.length})
                     </div>
                     <div className="space-y-0.5">
@@ -254,7 +243,7 @@ function StepRail({ path }: { path: PlanPath }) {
                     </div>
                   </div>
                   <div className="min-w-0">
-                    <div className="mb-0.5 text-[11px] font-bold uppercase tracking-wide opacity-60">
+                    <div className="mb-0.5 text-[12px] font-bold opacity-60">
                       In ({s.players_in.length})
                     </div>
                     <div className="space-y-0.5">
@@ -276,7 +265,7 @@ function StepRail({ path }: { path: PlanPath }) {
                   {s.gw_ev.toFixed(1)} pts
                 </span>
               )}
-              {s.uses_hit && <span className="text-[12px] font-bold uppercase tracking-wide opacity-80">Takes a hit</span>}
+              {s.uses_hit && <span className="text-[12px] font-bold opacity-80">Takes a hit</span>}
             </div>
             {i < path.steps.length - 1 && <RailArrow />}
           </div>
@@ -285,7 +274,7 @@ function StepRail({ path }: { path: PlanPath }) {
       {path.steps.length > 1 && (
         <>
           <RailArrow />
-          <div className="flex min-w-[130px] flex-col justify-center px-4 py-4 text-[12px] font-bold uppercase tracking-wide text-text-faint">
+          <div className="flex min-w-[130px] flex-col justify-center px-4 py-4 text-[12px] font-bold text-text-faint">
             Re-evaluate — not locked in
           </div>
         </>
@@ -332,30 +321,33 @@ export function PlanScreen() {
     )
   }
 
-  const BeamDivider = (
-    <div className="border-y border-divider bg-raised/40 px-10 py-5">
-      <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-broadcast-gold">The beam search&apos;s view</div>
-      <p className="mt-1 max-w-3xl text-sm text-text-muted">
-        The older planner: one transfer a gameweek, chips included, a search that keeps its best five paths. It answers a different question from the plan
-        above and is kept as a second opinion. When the two disagree about this week, the plan above is the one to act on.
-      </p>
-    </div>
-  )
+  const second = (body: React.ReactNode) =>
+    week ? (
+      <Disclosure
+        title="Second opinion: the older planner"
+        summary="One transfer a gameweek, chips included. When it disagrees about this week, the plan above is the one to act on."
+      >
+        {body}
+      </Disclosure>
+    ) : (
+      body
+    )
 
   if (state.status !== 'ready') {
     return (
       <div className="data-in pb-16">
-        <Masthead edition="Strategy Desk" title="Plan" />
+        <Masthead />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
-        {BeamDivider}
-        {state.status === 'loading' ? (
-          <div className="animate-pulse px-10 py-8">
-            <Skel className="h-2 w-40" />
-            <Skel className="mt-4 h-14 w-[26rem]" />
-          </div>
-        ) : (
-          <div className="px-10 py-8 text-sm text-text-muted">The beam search&apos;s plan could not be fetched. Nothing is being shown in its place.</div>
+        {second(
+          state.status === 'loading' ? (
+            <div className="animate-pulse">
+              <Skel className="h-2 w-40" />
+              <Skel className="mt-4 h-14 w-[26rem]" />
+            </div>
+          ) : (
+            <div className="text-sm text-text-muted">The older planner&apos;s plan could not be fetched. Nothing is being shown in its place.</div>
+          ),
         )}
       </div>
     )
@@ -365,11 +357,10 @@ export function PlanScreen() {
   if (!p.has_plan) {
     return (
       <div className="data-in pb-16">
-        <Masthead edition="Strategy Desk" title="Plan" />
+        <Masthead />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
-        {BeamDivider}
-        <div className="p-10 text-text-muted">{p.reason}</div>
+        {second(<div className="text-text-muted">{p.reason}</div>)}
       </div>
     )
   }
@@ -379,19 +370,17 @@ export function PlanScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Strategy Desk" title={week ? 'Plan' : `${p.horizon_gw}-gameweek plan`} />
+      <Masthead />
       {week && <WeekPlanDesk plan={week} />}
       {week && <WhatIf />}
-      {week && BeamDivider}
+      {second(
+        <>
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
-        <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
-          PLAN
-        </span>
-        <div className="relative text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">
+        <div className="relative text-[13px] font-bold text-text-faint">
           {leader.already_played_chip ? 'Locked in this gameweek · leading follow-up plan' : `Leading strategy over ${p.horizon_gw} gameweeks`}
           {leader.tie && <span className={`ml-2 ${TIE_COLOR[leader.tie]}`}>{leader.tie.replace(/_/g, ' ')}</span>}
         </div>
-        <div className="relative mt-1 font-display text-6xl font-bold uppercase text-text">{leader.descriptor}</div>
+        <div className="relative mt-1 font-display text-6xl font-bold text-text">{leader.descriptor}</div>
         <div className="relative mt-2 flex items-center gap-6">
           <span className="tabular text-3xl font-bold text-pitch-green">{leader.score?.toFixed(1)} pts</span>
           {leader.delta_vs_roll !== null && (
@@ -418,7 +407,7 @@ export function PlanScreen() {
           compare. */}
       {p.paths && p.paths.length > 1 && (
         <div className="mt-8 bg-panel px-10 py-8">
-          <div className="mb-5 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Strategy grid</div>
+          <div className="mb-5 text-[13px] font-bold text-text-faint">Strategy grid</div>
           <StrategyGrid paths={p.paths} activePath={activePath} onSelect={setActivePath} />
         </div>
       )}
@@ -428,7 +417,7 @@ export function PlanScreen() {
           plan, not a drill-down under a grid that no longer exists. */}
       {current && (
         <div className="mt-10 px-10">
-          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <div className="mb-3 text-[13px] font-bold text-text-faint">
             {p.paths && p.paths.length > 1 ? 'Selected path detail' : 'Path detail'}
           </div>
           <StepRail path={current} />
@@ -450,12 +439,12 @@ export function PlanScreen() {
           annotating anyway. */}
       {current?.horizon_breakdown && (
         <div className="mt-12 px-10">
-          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Horizon totals</div>
+          <div className="mb-3 text-[13px] font-bold text-text-faint">Horizon totals</div>
           <div className="flex flex-wrap gap-10 border-t border-divider pt-4">
             {Object.entries(current.horizon_breakdown).map(([h, entry]) => (
               <div key={h}>
                 <div className="tabular font-display text-2xl font-bold text-text">{entry.path_total.toFixed(1)}</div>
-                <div className="text-[13px] uppercase tracking-wide text-text-faint">at {h} gameweeks</div>
+                <div className="text-[13px] text-text-faint">at {h} gameweeks</div>
                 {entry.delta_vs_roll !== null && (
                   <div className="tabular text-xs text-pitch-green">
                     {entry.delta_vs_roll >= 0 ? '+' : ''}
@@ -472,7 +461,7 @@ export function PlanScreen() {
           risk-strip language My Team's own squad-risks strip already uses */}
       {p.sensitivity && p.sensitivity.length > 0 && (
         <div className="mt-12 border-t border-divider bg-raised/40 px-10 py-8">
-          <div className="mb-4 text-[13px] font-bold uppercase tracking-wide text-broadcast-gold">Strategy risks - what would flip this</div>
+          <div className="mb-4 text-[13px] font-bold text-broadcast-gold">Strategy risks - what would flip this</div>
           <div className="space-y-3">
             {p.sensitivity.map((s) => (
               <div key={s.label} className="flex items-center gap-4 border-l border-broadcast-gold/50 pl-3">
@@ -488,6 +477,8 @@ export function PlanScreen() {
       )}
 
       {p.planner_cross_check && <PlannerCrossCheckPanel x={p.planner_cross_check} />}
+        </>,
+      )}
     </div>
   )
 }

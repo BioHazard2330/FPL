@@ -29,7 +29,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
 
   return (
     <section className="bg-void px-10 py-10">
-      <div className="mb-6 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Captain battle</div>
+      <div className="mb-6 text-[13px] font-bold text-text-faint">Captain battle</div>
 
       <div className="grid grid-cols-1 items-center gap-6 md:[perspective:1200px] md:grid-cols-[1fr_auto_1fr]">
         {/* best - right-aligned into the axis, real static Z-depth pushing
@@ -38,7 +38,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
         <div className="flex items-center justify-end gap-6 text-right md:[transform:translateZ(40px)]">
           <PlayerPhoto code={block.best.photo_code} teamCode={block.best.team_code} isGkp={block.best.position === 'GKP'} className="h-36 w-28 md:h-44 md:w-36" />
           <div className="min-w-0">
-            <div className="truncate font-display text-4xl font-bold uppercase text-text md:text-5xl">{block.best.name}</div>
+            <div className="truncate font-display text-4xl font-bold text-text md:text-5xl">{block.best.name}</div>
             <div className="tabular mt-1 text-4xl font-bold text-pitch-green">
               <MetricNumber value={block.best.median} suffix=" xP" />
             </div>
@@ -69,7 +69,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
           <div className="flex items-center gap-6 md:[transform:translateZ(-50px)]">
             <PlayerPhoto code={block.second.photo_code} teamCode={block.second.team_code} isGkp={block.second.position === 'GKP'} className="h-24 w-20 md:h-28 md:w-24" muted />
             <div className="min-w-0">
-              <div className="truncate font-display text-2xl font-bold uppercase text-text-muted md:text-3xl">{block.second.name}</div>
+              <div className="truncate font-display text-2xl font-bold text-text-muted md:text-3xl">{block.second.name}</div>
               <div className="tabular mt-1 text-2xl font-bold text-text-muted">{block.second.median.toFixed(1)} xP</div>
               <div className="mt-1.5">
                 <NextFixture fixtures={secondRun} />
@@ -95,7 +95,7 @@ export function CaptainFaceOff({ block, fixtures }: { block: CaptainBlock; fixtu
         <div className="mt-8 border-t border-divider pt-4 text-center text-sm text-text-muted">
           Edge driven by <span className="font-semibold text-text">{block.edge_driver.label}</span>{' '}
           <span className="font-bold text-pitch-green">(+{block.edge_driver.value.toFixed(1)})</span>
-          {block.robustness && <span className="ml-4 text-xs uppercase tracking-wide text-text-faint">{block.robustness}</span>}
+          {block.robustness && <span className="ml-4 text-xs text-text-faint">{block.robustness}</span>}
         </div>
       )}
     </section>

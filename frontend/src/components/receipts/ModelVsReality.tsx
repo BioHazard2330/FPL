@@ -104,10 +104,10 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
 
       <div className="space-y-5">
         <div>
-          <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Measured error</div>
+          <div className="text-[12px] font-bold text-text-faint">Measured error</div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="tabular font-display text-3xl font-bold text-text">{block.mae.toFixed(2)}</span>
-            <span className="text-[12px] uppercase tracking-wide text-text-faint">pts off, on average</span>
+            <span className="text-[12px] text-text-faint">pts off, on average</span>
           </div>
           <div className="mt-1 text-xs text-text-muted">
             per player per gameweek, over <span className="tabular font-semibold text-text">{block.n}</span> settled predictions
@@ -115,12 +115,12 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
         </div>
 
         <div>
-          <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Lean</div>
+          <div className="text-[12px] font-bold text-text-faint">Lean</div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className={`tabular font-display text-3xl font-bold ${block.bias > 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
               {block.bias > 0 ? '+' : ''}{block.bias.toFixed(2)}
             </span>
-            <span className="text-[12px] uppercase tracking-wide text-text-faint">
+            <span className="text-[12px] text-text-faint">
               {block.bias > 0 ? 'it undersells' : 'it oversells'}
             </span>
           </div>
@@ -131,10 +131,10 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
 
         {block.band_coverage_pct !== null && (
           <div>
-            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Its own range held</div>
+            <div className="text-[12px] font-bold text-text-faint">Its own range held</div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="tabular font-display text-3xl font-bold text-text">{block.band_coverage_pct}%</span>
-              <span className="text-[12px] uppercase tracking-wide text-text-faint">of the time</span>
+              <span className="text-[12px] text-text-faint">of the time</span>
             </div>
             <div className="mt-1 text-xs text-text-muted">
               how often the real score fell inside the floor-to-ceiling range it stated. Hover a dot to see that range.
@@ -144,7 +144,7 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
 
         {tiers.length > 0 && (
           <div>
-            <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">By predicted tier</div>
+            <div className="text-[12px] font-bold text-text-faint">By predicted tier</div>
             <div className="mt-2 space-y-1">
               {tiers.map((t) => (
                 <div key={t.k} className="grid grid-cols-[2.2rem_1fr_1fr_2.4rem] items-baseline gap-2 text-xs">
@@ -169,12 +169,12 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
                 {' · '}got <span className={`font-semibold ${hover.actual > hover.predicted ? 'text-pitch-green' : 'text-alert-red'}`}>{hover.actual.toFixed(0)}</span>
                 {hover.minutes !== null && <span className="text-text-faint"> · {hover.minutes}'</span>}
               </div>
-              <div className="mt-1 text-[12px] uppercase tracking-wide text-text-faint">
+              <div className="mt-1 text-[12px] text-text-faint">
                 {hover.confidence ? `${hover.confidence} confidence` : ''}{hover.inside_band ? ' · inside its range' : ' · outside its range'}
               </div>
             </div>
           ) : (
-            <div className="text-[12px] uppercase tracking-wide text-text-faint">hover a dot</div>
+            <div className="text-[12px] text-text-faint">hover a dot</div>
           )}
         </div>
 

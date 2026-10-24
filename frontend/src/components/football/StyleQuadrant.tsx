@@ -91,13 +91,13 @@ export function StyleQuadrant({ rows }: { rows: TableRow[] }) {
   return (
     <div className="border-b border-divider">
       <div className="flex flex-wrap items-center gap-4 px-10 pt-6">
-        <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">How they play</span>
+        <span className="text-[13px] font-bold text-text-faint">How they play</span>
         {DIMS.map((d) => (
           <button
             key={d.key}
             type="button"
             onClick={() => setDimKey(d.key)}
-            className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${dimKey === d.key ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+            className={`px-2.5 py-1 text-[12px] font-bold transition-colors ${dimKey === d.key ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}
           >
             {d.label}
           </button>
@@ -150,18 +150,18 @@ export function StyleQuadrant({ rows }: { rows: TableRow[] }) {
               <div className="flex items-center gap-3">
                 {crestUrl(h.r.code) && <img src={crestUrl(h.r.code) as string} alt="" className="h-9 w-9" />}
                 <div>
-                  <div className="font-display text-3xl font-bold uppercase leading-none text-text">{h.r.short}</div>
-                  <div className="text-[12px] uppercase tracking-[0.1em] text-text-faint">{h.r.style?.matches} matches read</div>
+                  <div className="font-display text-3xl font-bold leading-none text-text">{h.r.short}</div>
+                  <div className="text-[12px] text-text-faint">{h.r.style?.matches} matches read</div>
                 </div>
               </div>
               <div className="mt-5 space-y-3 text-sm">
                 <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{dim.x.label}</div>
+                  <div className="text-[12px] font-bold text-text-faint">{dim.x.label}</div>
                   <div className="tabular font-display text-2xl font-bold text-text">{fmt(h.x, dim.x)}</div>
                   <div className="tabular text-[12px] text-text-faint">league {fmt(xAvg, dim.x)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{dim.y.label}</div>
+                  <div className="text-[12px] font-bold text-text-faint">{dim.y.label}</div>
                   <div className="tabular font-display text-2xl font-bold text-text">{fmt(h.y, dim.y)}</div>
                   <div className="tabular text-[12px] text-text-faint">league {fmt(yAvg, dim.y)}</div>
                 </div>
@@ -169,7 +169,7 @@ export function StyleQuadrant({ rows }: { rows: TableRow[] }) {
             </div>
           ) : (
             <div>
-              <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">{dim.label}</div>
+              <div className="text-[12px] font-bold text-text-faint">{dim.label}</div>
               <p className="mt-2 text-sm leading-relaxed text-text-muted">{dim.note}</p>
               <p className="mt-3 text-[13px] leading-relaxed text-text-faint">
                 Measured over {pts.reduce((a, p) => a + (p.r.style?.matches ?? 0), 0) / 2} matches; the smaller a club&rsquo;s sample, the more one match can move it. Hover a crest.

@@ -29,7 +29,7 @@ export function ConfidenceGraphic({ why, fragileCount, edge, robustness, isStale
 
   return (
     <section className="bg-void px-10 pb-20 pt-16">
-      <div className="mb-6 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Decision confidence</div>
+      <div className="mb-6 text-[13px] font-bold text-text-faint">Decision confidence</div>
       <div className="flex flex-col gap-8 md:flex-row md:items-end">
         <div className={`font-display text-7xl font-bold leading-none ${LABEL_COLOR[label] ?? 'text-text'}`}>{label}</div>
 
@@ -47,7 +47,7 @@ export function ConfidenceGraphic({ why, fragileCount, edge, robustness, isStale
           <div className="text-sm text-text-muted">
             {fragileCount === 0 ? 'No fragile dependencies flagged' : `${fragileCount} fragile dependenc${fragileCount === 1 ? 'y' : 'ies'} flagged`}
           </div>
-          {robustness && <div className="text-xs uppercase tracking-wide text-text-faint">Captain robustness: {robustness}</div>}
+          {robustness && <div className="text-xs text-text-faint">Captain robustness: {robustness}</div>}
           {isStale && <div className="text-sm font-semibold text-broadcast-gold">Stale &mdash; {staleReason ?? 'recomputing'}</div>}
           {degradedSources > 0 && (
             <div className="flex items-center gap-2 text-xs text-alert-red">

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Panel } from '@/components/ui/kit'
 import type { DeskPayload, WeekPlanPayload } from '@/lib/types'
 
 type Tone = 'ok' | 'look' | 'act'
@@ -137,25 +138,24 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
   items.sort((a, b) => order.indexOf(a.tone) - order.indexOf(b.tone))
   const open = items.filter((i) => i.tone !== 'ok').length
 
+  const DOT: Record<Tone, string> = { ok: 'bg-pitch-green', look: 'bg-broadcast-gold', act: 'bg-alert-red' }
+
   return (
-    <section className="bg-void px-10 py-10">
-      <div className="mb-1 flex items-baseline gap-4">
-        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Before the deadline</span>
-        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
-          {open === 0 ? 'nothing open' : `${open} thing${open === 1 ? '' : 's'} to look at`}
-        </span>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-px bg-divider">
+    <Panel
+      title="Before the deadline"
+      sub={open === 0 ? 'Nothing open: every check below is clear.' : `${open} thing${open === 1 ? '' : 's'} to look at before you confirm.`}
+    >
+      <div className="grid grid-cols-1 gap-x-10 gap-y-4 lg:grid-cols-2">
         {items.map((it) => (
-          <div key={it.title} className={`border-l-4 bg-panel px-5 py-3.5 ${TONE[it.tone].rail}`}>
-            <div className="flex items-center gap-3">
-              <span className={`px-1.5 text-[11px] font-bold uppercase leading-4 tracking-[0.1em] ${TONE[it.tone].chip}`}>{TONE[it.tone].label}</span>
-              <span className="text-sm font-bold text-text">{it.title}</span>
+          <div key={it.title} className="flex gap-3">
+            <span className={`mt-[7px] size-2 shrink-0 rounded-full ${DOT[it.tone]}`} aria-label={TONE[it.tone].label} />
+            <div className="min-w-0">
+              <div className="text-[14px] font-semibold text-text">{it.title}</div>
+              <div className="mt-0.5 text-[13px] leading-snug text-text-muted">{it.detail}</div>
             </div>
-            <div className="mt-1 text-xs leading-relaxed text-text-muted">{it.detail}</div>
           </div>
         ))}
       </div>
-    </section>
+    </Panel>
   )
 }

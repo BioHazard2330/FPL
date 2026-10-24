@@ -36,7 +36,7 @@ function InPicker({ index, exclude, value, onPick }: {
         <button type="button" onClick={() => { setOpen(true); setQ('') }} className="flex w-full items-center gap-2 rounded-md bg-raised px-3 py-2 text-left text-sm">
           <span className="font-bold text-text">{value.name}</span>
           <span className="text-xs text-text-muted">{value.team_short} · {value.position}{value.price !== null ? ` · £${value.price.toFixed(1)}m` : ''}</span>
-          <span className="ml-auto text-[12px] uppercase tracking-wide text-text-faint">change</span>
+          <span className="ml-auto text-[12px] text-text-faint">change</span>
         </button>
       ) : (
         <input
@@ -76,7 +76,7 @@ function Brief({ b }: { b: WhatIfBrief }) {
       <Link to={`/player/${b.player_id}`} className="font-bold text-text hover:text-pitch-green">{b.name}</Link>
       <span className="text-xs text-text-muted">{b.team_short} · {b.position}{b.price !== null ? ` · £${b.price.toFixed(1)}m` : ''}</span>
       {b.status !== 'a' && b.news && (
-        <span className="rounded bg-broadcast-gold/15 px-1.5 text-[11px] font-semibold text-broadcast-gold" title={b.news}>
+        <span className="rounded bg-broadcast-gold/15 px-1.5 text-[12px] font-semibold text-broadcast-gold" title={b.news}>
           {b.status === 'd' ? 'doubt' : b.status === 'i' ? 'injured' : b.status === 's' ? 'suspended' : 'out'}
         </span>
       )}
@@ -108,15 +108,15 @@ export function WhatIf() {
   const clear = () => { setOuts([null]); setIns([null]) }
 
   return (
-    <section className="allow-overflow px-10 py-8">
+    <section className="allow-overflow px-6 pb-6 pt-5">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-5">
-        <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Try your own moves</h2>
-        <span className="text-[13px] text-text-muted">
+        <h2 className="font-display text-xl font-semibold text-text">Try your own moves</h2>
+        <span className="text-[13px] text-text-faint">
           {base.data.free_transfers} free transfer{base.data.free_transfers === 1 ? '' : 's'} · bank £{((base.data.bank_tenths ?? 0) / 10).toFixed(1)}m · priced over the next {base.data.horizon} gameweeks
         </span>
       </div>
-      <p className="mb-5 max-w-3xl text-[13px] text-text-faint">
-        Pick who goes and who comes in. The page checks the squad is legal and affordable, then sets the best eleven you would field after the moves against the one you have now, for each of the next five gameweeks, keeping the same fifteen throughout.
+      <p className="mb-5 max-w-3xl text-[14px] leading-snug text-text-muted">
+        Pick who goes out and who comes in. It checks the squad is legal and affordable, then compares the best eleven you could field after the moves with the one you have now, for each of the next five gameweeks.
       </p>
 
       <div className="space-y-3">
@@ -158,7 +158,7 @@ export function WhatIf() {
       {r && r.totals && r.moves && (
         <div className="mt-6 grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-10">
           <div>
-            <div className="mb-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">The moves</div>
+            <div className="mb-2 text-[12px] text-text-faint">The moves</div>
             {r.moves.map((m) => (
               <div key={m.into.player_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-divider py-2">
                 <Brief b={m.out} />
@@ -174,7 +174,7 @@ export function WhatIf() {
           <div>
             <div className="flex items-end gap-6">
               <div>
-                <div className="font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">Net over {r.horizon} gameweeks, against keeping your fifteen</div>
+                <div className="text-[12px] text-text-faint">Net over {r.horizon} gameweeks, against keeping your fifteen</div>
                 <div className={`tabular font-display text-6xl font-bold leading-none ${r.totals.gain_net >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
                   {r.totals.gain_net >= 0 ? '+' : ''}{r.totals.gain_net.toFixed(1)}
                 </div>

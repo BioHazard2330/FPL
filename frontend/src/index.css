@@ -222,24 +222,6 @@ body,
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-/* Real composition device: ghost/outline watermark typography (a stroked,
-   transparent-fill numeral) - flat, no glow. The three `.atmosphere-*`
-   radial-gradient "wash" utilities that used to live here were removed
-   2026-09-08 (Command visual composition rebuild, Part 12) - a direct,
-   confirmed contradiction with this project's own DESIGN.md ("no glow, no
-   gradient" is the system's single most-repeated rule) that had crept back
-   in during an earlier pass. Command's own hero/captain-battle no longer
-   use them; the four other screens still referencing the class names keep
-   compiling (an unmatched Tailwind-style class name is a silent no-op, not
-   an error) and simply render their flat base colour instead - a real,
-   deliberate simplification consistent with DESIGN.md, not a regression. */
-.ghost-watermark {
-  -webkit-text-stroke: 1.5px color-mix(in srgb, var(--text) 16%, transparent);
-  color: transparent;
-  user-select: none;
-  pointer-events: none;
-}
-
 @keyframes pulse-live {
   0%,
   100% {
@@ -421,6 +403,13 @@ body,
 }
 .screen-frame > * > *:empty {
   display: none;
+}
+/* A line of context or a bare row that sits in the flow without a card of its own. */
+.screen-frame > * > .bare {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
 }
 
 /* Small filled blocks (tags, chips, tiles, cells) get a soft corner; the

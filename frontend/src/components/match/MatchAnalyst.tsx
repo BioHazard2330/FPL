@@ -12,13 +12,13 @@ import { DeservedResult, Findings, GameState, SituationMix, Substitutions } from
 export function MatchAnalyst({ story, homeShort, awayShort, homeId }: { story: MatchStory; homeShort: string; awayShort: string; homeId: number }) {
   const names = { home: homeShort, away: awayShort }
   const band = 'border-b border-divider px-10 py-8'
-  const eyebrow = 'mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint'
+  const eyebrow = 'mb-4 text-[13px] font-medium text-text-faint'
   return (
     <>
       <div className={band}>
         <div className="mb-2 flex items-baseline justify-between gap-4">
-          <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-pitch-green">The analyst&rsquo;s read</div>
-          <div className="font-mono text-[11px] tracking-[0.1em] text-text-faint">{story.version}</div>
+          <div className="text-[13px] font-bold text-pitch-green">The analyst&rsquo;s read</div>
+          <div className="text-[12px] text-text-faint">{story.version}</div>
         </div>
         <h2 className="max-w-5xl font-display text-[1.75rem] font-semibold leading-tight text-text">{story.headline}</h2>
         <div className="mt-6">

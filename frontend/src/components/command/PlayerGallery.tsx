@@ -36,7 +36,7 @@ function GalleryTile({ p, captainId, viceId, tier = 'normal', fixtures }: {
   return (
     <div className={`relative flex flex-col items-center text-center ${widthClass}`}>
       {p.is_new && (
-        <span className="absolute left-1 top-0 z-10 bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">in</span>
+        <span className="absolute left-1 top-0 z-10 bg-pitch-green px-1 text-[12px] font-bold leading-4 text-pitch-green-ink">in</span>
       )}
       {p.player_id === captainId && (
         <span className="absolute right-1 top-0 z-10 flex h-5 w-5 items-center justify-center bg-broadcast-gold text-xs font-bold text-broadcast-gold-ink">C</span>
@@ -87,11 +87,11 @@ export function PlayerGallery({ block, fixtures }: { block: ActionSquadBlock; fi
   return (
     <section className="bg-panel px-10 py-10">
       <div className="mb-6 flex flex-wrap items-baseline gap-3">
-        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">
+        <span className="text-[13px] font-bold text-text-faint">
           {block.action ? `The ${block.action.toLowerCase()} squad` : 'Resulting squad'}
         </span>
         {formationReal ? (
-          <span className="font-display text-sm font-bold tracking-[0.2em] text-text-muted">{formation}</span>
+          <span className="font-display text-sm font-bold text-text-muted">{formation}</span>
         ) : (
           <span className="text-[13px] text-text-faint">position data incomplete &mdash; shown as a flat list, not a formation</span>
         )}
@@ -103,7 +103,7 @@ export function PlayerGallery({ block, fixtures }: { block: ActionSquadBlock; fi
           {byRow.map((row) =>
             row.players.length === 0 ? null : (
               <div key={row.key} className="flex items-end gap-4">
-                <span className="w-9 shrink-0 pb-6 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+                <span className="w-9 shrink-0 pb-6 text-right text-[12px] font-bold text-text-faint">
                   {row.label}
                 </span>
                 <div className="flex flex-1 flex-wrap items-end justify-center gap-x-6 gap-y-5">
@@ -140,7 +140,7 @@ export function PlayerGallery({ block, fixtures }: { block: ActionSquadBlock; fi
 
       {block.bench.length > 0 && (
         <div className="mt-8 flex flex-wrap items-end gap-x-7 gap-y-4 border-t border-divider/60 pt-6">
-          <span className="w-9 shrink-0 pb-4 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">SUB</span>
+          <span className="w-9 shrink-0 pb-4 text-right text-[12px] font-bold text-text-faint">SUB</span>
           <div className="flex flex-wrap items-end gap-x-7 gap-y-4 opacity-60">
             {block.bench.map((pl) => (
               <GalleryTile key={pl.player_id} p={pl} captainId={null} viceId={null} tier="bench" />

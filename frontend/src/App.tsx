@@ -2,7 +2,6 @@ import { lazy, Suspense, type CSSProperties } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { AppSidebar } from '@/components/shell/AppSidebar'
 import { ContextHeader } from '@/components/shell/ContextHeader'
-import { MatchdayBar } from '@/components/shell/MatchdayBar'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { CommandScreen } from '@/screens/Command/CommandScreen'
 import { CommandPalette } from '@/components/shell/CommandPalette'
@@ -48,7 +47,6 @@ function App() {
       <AppSidebar />
       <SidebarInset className="min-w-0">
         <ContextHeader />
-        <MatchdayBar />
         <main className="flex-1 overflow-auto">
           <div className="screen-frame">
           <Suspense fallback={<RouteFallback />}>

@@ -29,15 +29,12 @@ export function DecisionHero({
     <section className="relative overflow-hidden bg-void px-10 pb-14 pt-10">
       {/* the gameweek as real typographic architecture, not a corner sticker -
           bleeds off the right edge, sits BEHIND every other layer here */}
-      <span className="ghost-watermark pointer-events-none absolute -right-10 -top-6 select-none font-display text-[22rem] font-bold uppercase leading-none">
-        {gwLabel}
-      </span>
 
       <div className="relative">
-        <div className="font-mono text-[13px] uppercase tracking-[0.25em] text-text-faint">{gwLabel} &middot; The decision</div>
+        <div className="text-[13px] text-text-faint">{gwLabel} &middot; The decision</div>
 
         <div className="verdict-block mt-5 inline-block bg-pitch-green py-5 pl-7 pr-16">
-          <h1 className="font-display text-6xl font-bold uppercase leading-[0.88] text-pitch-green-ink md:text-7xl">{actionWord}</h1>
+          <h1 className="font-display text-6xl font-bold leading-[0.88] text-pitch-green-ink md:text-7xl">{actionWord}</h1>
         </div>
 
         {alternative && (
@@ -63,7 +60,7 @@ export function DecisionHero({
           </div>
         )}
 
-        <div className="mt-10 flex flex-wrap gap-x-7 gap-y-1.5 border-t border-divider pt-5 font-mono text-[13px] uppercase tracking-wide text-text-faint">
+        <div className="mt-10 flex flex-wrap gap-x-7 gap-y-1.5 border-t border-divider pt-5 text-[13px] text-text-faint">
           <span>{freeTransfersValue} free transfer{freeTransfersValue === '1' ? '' : 's'}</span>
           <span>£{bankM.toFixed(1)}m bank</span>
           {chipsAvailable.length > 0 && <span className="text-broadcast-gold">{chipsAvailable.join(' · ')}</span>}

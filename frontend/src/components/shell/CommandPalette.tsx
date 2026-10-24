@@ -133,7 +133,7 @@ export function CommandPalette() {
           {filtered.length === 0 && <div className="px-4 py-3 text-sm text-text-faint">No match.</div>}
         </div>
         {filtered.some((i) => i.player) && (
-          <div className="border-t border-divider px-4 py-1.5 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">Enter opens the file · Shift+Enter compares</div>
+          <div className="border-t border-divider px-4 py-1.5 text-[12px] text-text-faint">Enter opens the file · Shift+Enter compares</div>
         )}
       </div>
     </div>

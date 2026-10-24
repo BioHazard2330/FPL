@@ -31,7 +31,7 @@ const sign = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
 function Stat({ label, value, sub, tone = 'text-text' }: { label: string; value: React.ReactNode; sub?: string; tone?: string }) {
   return (
     <div>
-      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+      <div className="text-[12px] font-bold text-text-faint">{label}</div>
       <div className={`tabular mt-0.5 font-display text-4xl font-bold leading-none ${tone}`}>{value}</div>
       {sub && <div className="mt-1 text-[13px] text-text-faint">{sub}</div>}
     </div>
@@ -53,7 +53,7 @@ function EdgeRow({ label, e, mean, highlight }: { label: React.ReactNode; e: Edg
 
 function Header() {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem_4.5rem_4.5rem] gap-3 border-b border-divider py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-text-faint">
+    <div className="grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem_4.5rem_4.5rem] gap-3 border-b border-divider py-1.5 text-[12px] text-text-faint">
       <div className="pl-2" />
       <div className="text-right">pts</div>
       <div className="text-right">edge</div>
@@ -84,7 +84,7 @@ function Body({ d }: { d: FieldPayload }) {
       <section className="border-b border-divider px-10 py-8">
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-12">
           <div>
-            <div className="mb-3 font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">GW{d.event} · the plan against the average manager</div>
+            <div className="mb-3 text-[12px] text-text-faint">GW{d.event} · the plan against the average manager</div>
             <div className="flex flex-wrap gap-x-10 gap-y-4">
               <Stat label="Edge" value={sign(plan.edge.mean)} sub="points over the field, on average" tone="text-pitch-green" />
               <Stat label="Beat the field" value={pct(plan.edge.p_beat)} sub="of simulated gameweeks" />
@@ -117,7 +117,7 @@ function Body({ d }: { d: FieldPayload }) {
       </section>
 
       <section className="border-b border-divider px-10 py-7">
-        <h2 className="mb-3 font-display text-2xl font-bold uppercase tracking-wide text-text">Versions of your week</h2>
+        <h2 className="mb-3 font-display text-2xl font-bold text-text">Versions of your week</h2>
         <Header />
         {options.map((o) => <EdgeRow key={o.key} label={o.label} e={o.edge} mean={o.mean_points} highlight={o.key === 'plan'} />)}
         {d.model_bias && (
@@ -134,7 +134,7 @@ function Body({ d }: { d: FieldPayload }) {
 
       <section className="border-b border-divider px-10 py-7">
         <div className="mb-1 flex flex-wrap items-baseline justify-between gap-4">
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Who wears the armband</h2>
+          <h2 className="font-display text-2xl font-bold text-text">Who wears the armband</h2>
           {best && upside && (
             <span className="text-xs text-text-muted">
               Best edge: <span className="font-bold text-text">{best.name}</span>
@@ -145,7 +145,7 @@ function Body({ d }: { d: FieldPayload }) {
         <p className="mb-3 max-w-3xl text-xs text-text-muted">
           Captain share is how often the sampled top managers captain him; field EO is the average multiplier the field gives him. A captain the field also captains costs you rank when he scores and you did not back him, and gains you almost none when he does.
         </p>
-        <div className="grid grid-cols-[2.2rem_minmax(0,1fr)_4.5rem_4.5rem_4rem_4.5rem_4.5rem_4.5rem] items-center gap-3 border-b border-divider py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-text-faint">
+        <div className="grid grid-cols-[2.2rem_minmax(0,1fr)_4.5rem_4.5rem_4rem_4.5rem_4.5rem_4.5rem] items-center gap-3 border-b border-divider py-1.5 text-[12px] text-text-faint">
           <div /><div />
           <div className="text-right">field cap</div><div className="text-right">field EO</div><div className="text-right">pts</div><div className="text-right">edge</div><div className="text-right">beat field</div><div className="text-right">top 10%</div>
         </div>
@@ -154,8 +154,8 @@ function Body({ d }: { d: FieldPayload }) {
             <PlayerPhoto code={c.photo_code} teamCode={c.team_code} isGkp={c.position === 'GKP'} className="h-9 w-7" />
             <div className="min-w-0">
               <Link to={`/player/${c.player_id}`} className="font-bold text-text hover:text-pitch-green">{c.name}</Link>
-              <span className="ml-2 font-mono text-[12px] uppercase text-text-faint">{c.team_short}</span>
-              {c.chosen && <span className="ml-2 bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">plan's pick</span>}
+              <span className="ml-2 text-[12px] text-text-faint">{c.team_short}</span>
+              {c.chosen && <span className="ml-2 bg-broadcast-gold px-1 text-[12px] font-bold leading-4 text-broadcast-gold-ink">plan's pick</span>}
             </div>
             <div className="tabular text-right text-text-muted">{pct(c.captain_share)}</div>
             <div className="tabular text-right text-text-muted">{c.field_eo.toFixed(2)}</div>
@@ -172,12 +172,12 @@ function Body({ d }: { d: FieldPayload }) {
 
       <section className="grid grid-cols-2 gap-12 px-10 py-7">
         <div>
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">What the field has that you do not</h2>
+          <h2 className="font-display text-2xl font-bold text-text">What the field has that you do not</h2>
           <p className="mb-3 mt-1 text-xs text-text-muted">Players with the most field ownership times expected points that are not in your squad. Each is a way to lose rank to a week you played correctly.</p>
           {(d.threats ?? []).map((t) => (
             <div key={t.player_id} className="grid grid-cols-[2.2rem_minmax(0,1fr)_4rem_4rem_4rem] items-center gap-3 border-b border-divider py-2 text-sm">
               <PlayerPhoto code={t.photo_code} teamCode={t.team_code} isGkp={t.position === 'GKP'} className="h-9 w-7" />
-              <div className="min-w-0"><Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-pitch-green">{t.name}</Link><span className="ml-2 font-mono text-[12px] uppercase text-text-faint">{t.team_short} · {t.position}</span></div>
+              <div className="min-w-0"><Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-pitch-green">{t.name}</Link><span className="ml-2 text-[12px] text-text-faint">{t.team_short} · {t.position}</span></div>
               <div className="tabular text-right text-text-muted" title="average multiplier across the field">{t.field_eo.toFixed(2)}</div>
               <div className="tabular text-right text-text-muted" title="chance of 8+ points">{pct(t.p_haul)} haul</div>
               <div className="tabular text-right font-bold text-alert-red" title="field ownership times expected points">−{t.cost.toFixed(1)}</div>
@@ -185,11 +185,11 @@ function Body({ d }: { d: FieldPayload }) {
           ))}
         </div>
         <div>
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Where your edge comes from</h2>
+          <h2 className="font-display text-2xl font-bold text-text">Where your edge comes from</h2>
           <p className="mb-3 mt-1 text-xs text-text-muted">For each starter: his expected points times (your multiplier minus the field's). Low or negative means you are only matching the field there.</p>
           {(d.contributions ?? []).map((c) => (
             <div key={c.player_id} className="grid grid-cols-[minmax(0,1fr)_4rem_9rem_3.5rem] items-center gap-3 border-b border-divider py-2 text-sm">
-              <div className="min-w-0"><Link to={`/player/${c.player_id}`} className="font-bold text-text hover:text-pitch-green">{c.name}</Link>{c.you === 2 && <span className="ml-2 bg-broadcast-gold px-1 text-[11px] font-bold uppercase leading-4 text-broadcast-gold-ink">C</span>}</div>
+              <div className="min-w-0"><Link to={`/player/${c.player_id}`} className="font-bold text-text hover:text-pitch-green">{c.name}</Link>{c.you === 2 && <span className="ml-2 bg-broadcast-gold px-1 text-[12px] font-bold leading-4 text-broadcast-gold-ink">C</span>}</div>
               <div className="tabular text-right text-text-faint">EO {c.field_eo.toFixed(2)}</div>
               <div className="relative h-2.5 bg-raised"><div className={`h-full ${c.edge >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${Math.min(100, (Math.abs(c.edge) / 7) * 100)}%` }} /></div>
               <div className={`tabular text-right font-bold ${c.edge >= 0 ? 'text-text' : 'text-alert-red'}`}>{sign(c.edge)}</div>
@@ -213,9 +213,9 @@ export function FieldScreen() {
         right={state.status === 'ready' && state.data.field ? <span className="text-text-muted">{state.data.n_trials?.toLocaleString()} simulated gameweeks · {pct(state.data.field.coverage)} of ownership covered</span> : undefined}
       />
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-divider px-10 py-3">
-        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">The field is</span>
+        <span className="text-[12px] text-text-faint">The field is</span>
         {(['population', 'top10k'] as const).map((k) => (
-          <button key={k} type="button" onClick={() => setKind(k)} className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${kind === k ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+          <button key={k} type="button" onClick={() => setKind(k)} className={`px-2.5 py-1 text-[13px] font-semibold ${kind === k ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
             {k === 'population' ? 'Everyone' : 'Top 10,000'}
           </button>
         ))}

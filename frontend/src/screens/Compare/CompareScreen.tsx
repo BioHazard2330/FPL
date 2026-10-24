@@ -41,12 +41,12 @@ function Picker({ label, selected, index, onPick, exclude }: {
   }, [q, index, exclude])
   return (
     <div className="relative">
-      <div className="mb-1 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
+      <div className="mb-1 text-[12px] text-text-faint">{label}</div>
       {selected && !open ? (
         <button type="button" onClick={() => { setOpen(true); setQ('') }} className="flex w-full items-center gap-2 bg-raised px-3 py-2 text-left">
           <span className="font-bold text-text">{selected.name}</span>
           <span className="text-xs text-text-muted">{selected.team_short} · {selected.position}</span>
-          <span className="ml-auto text-[12px] uppercase tracking-wide text-text-faint">change</span>
+          <span className="ml-auto text-[12px] text-text-faint">change</span>
         </button>
       ) : (
         <input
@@ -89,27 +89,27 @@ function Hero({ p, align }: { p: ComparePlayer; align: 'left' | 'right' }) {
         {crest && <img src={crest} alt="" className="absolute -bottom-2 -right-2 h-10 w-10 rounded-full bg-void ring-4 ring-void" />}
       </div>
       <div className="min-w-0 pb-1">
-        <Link to={`/player/${p.player_id}`} className="block font-display text-5xl font-bold uppercase leading-[0.95] text-text hover:text-pitch-green">{p.name}</Link>
-        <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
+        <Link to={`/player/${p.player_id}`} className="block font-display text-5xl font-bold leading-[0.95] text-text hover:text-pitch-green">{p.name}</Link>
+        <div className="mt-2 text-xs font-semibold text-text-muted">
           {p.team_name} · {p.position}{p.price !== null ? ` · £${p.price.toFixed(1)}m` : ''}
         </div>
         <div className={`mt-2 flex flex-wrap gap-1.5 ${right ? 'justify-end' : ''}`}>
-          {p.is_mine && <span className="bg-pitch-green px-1.5 text-[12px] font-bold uppercase leading-5 text-pitch-green-ink">in your squad</span>}
+          {p.is_mine && <span className="bg-pitch-green px-1.5 text-[12px] font-bold leading-5 text-pitch-green-ink">in your squad</span>}
           {p.status !== 'a' && p.news && (
-            <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold uppercase leading-5 text-broadcast-gold-ink" title={p.news}>
+            <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold leading-5 text-broadcast-gold-ink" title={p.news}>
               {p.chance !== null ? `${p.chance}% to play` : 'flagged'}
             </span>
           )}
           {p.start_percent !== null && p.start_percent < 70 && (
-            <span className="bg-alert-red px-1.5 text-[12px] font-bold uppercase leading-5 text-alert-red-ink">{p.start_percent}% to start</span>
+            <span className="bg-alert-red px-1.5 text-[12px] font-bold leading-5 text-alert-red-ink">{p.start_percent}% to start</span>
           )}
-          {p.price_trend === 'RISE_LIKELY' && <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold uppercase leading-5 text-broadcast-gold-ink">price rising</span>}
-          {p.price_trend === 'FALL_LIKELY' && <span className="bg-alert-red px-1.5 text-[12px] font-bold uppercase leading-5 text-alert-red-ink">price falling</span>}
-          {p.duties.length > 0 && <span className="bg-raised px-1.5 text-[12px] font-bold uppercase leading-5 text-text-muted">{p.duties.join(' · ')}</span>}
+          {p.price_trend === 'RISE_LIKELY' && <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold leading-5 text-broadcast-gold-ink">price rising</span>}
+          {p.price_trend === 'FALL_LIKELY' && <span className="bg-alert-red px-1.5 text-[12px] font-bold leading-5 text-alert-red-ink">price falling</span>}
+          {p.duties.length > 0 && <span className="bg-raised px-1.5 text-[12px] font-bold leading-5 text-text-muted">{p.duties.join(' · ')}</span>}
         </div>
         <div className={`mt-4 flex items-baseline gap-2 ${right ? 'justify-end' : ''}`}>
           <span className="tabular font-display text-6xl font-bold leading-none text-pitch-green">{p.xp_window.toFixed(1)}</span>
-          <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">xP next {p.fixture_count || 5} fixtures</span>
+          <span className="text-[12px] font-bold text-text-faint">xP next {p.fixture_count || 5} fixtures</span>
         </div>
       </div>
     </div>
@@ -128,7 +128,7 @@ function Row({ r }: { r: ComparePayload['rows'][number] }) {
         <span className={`tabular text-lg font-bold ${txt('a')}`}>{r.a_text ?? '—'}</span>
         <div className="flex h-3 w-48 justify-end bg-raised"><div className={`bar-draw-right h-full ${tone('a')}`} style={{ width: w(r.a) }} /></div>
       </div>
-      <div className="text-center font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{r.label}</div>
+      <div className="text-center text-[12px] text-text-faint">{r.label}</div>
       <div className="flex items-center gap-3">
         <div className="flex h-3 w-48 bg-raised"><div className={`bar-draw h-full ${tone('b')}`} style={{ width: w(r.b) }} /></div>
         <span className={`tabular text-lg font-bold ${txt('b')}`}>{r.b_text ?? '—'}</span>
@@ -143,7 +143,7 @@ function Components({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   const hi = Math.max(...COMPONENT_LABELS.flatMap(([k]) => [Math.abs(ca[k]), Math.abs(cb[k])]), 0.5)
   return (
     <section className="border-b border-divider px-10 py-7">
-      <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Where the next gameweek's points come from</h2>
+      <h2 className="font-display text-2xl font-bold text-text">Where the next gameweek's points come from</h2>
       <p className="mb-4 mt-1 text-xs text-text-muted">The model's own breakdown of the one-gameweek projection. Negative parts are deductions.</p>
       {COMPONENT_LABELS.map(([k, label]) => {
         const va = ca[k], vb = cb[k]
@@ -155,7 +155,7 @@ function Components({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
               <span className="tabular text-sm font-bold text-text">{va.toFixed(2)}</span>
               <div className="flex h-2.5 w-48 justify-end bg-raised"><div className={`h-full ${va >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: bar(va) }} /></div>
             </div>
-            <div className="text-center font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{label}</div>
+            <div className="text-center text-[12px] text-text-faint">{label}</div>
             <div className="flex items-center gap-3">
               <div className="flex h-2.5 w-48 bg-raised"><div className={`h-full ${vb >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: bar(vb) }} /></div>
               <span className="tabular text-sm font-bold text-text">{vb.toFixed(2)}</span>
@@ -204,7 +204,7 @@ function AsTransfer({ d }: { d: ComparePayload }) {
   return (
     <section className="border-b border-divider bg-void px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-        <span className="font-display text-xl font-bold uppercase tracking-wide text-text">As a transfer</span>
+        <span className="font-display text-xl font-bold text-text">As a transfer</span>
         <span className="text-sm text-text-muted">
           {out.name} out, {into.name} in:{' '}
           <span className="tabular font-bold text-pitch-green">{t.gain_window >= 0 ? '+' : ''}{t.gain_window.toFixed(1)}</span> xP over {d.window} fixtures,{' '}
@@ -214,7 +214,7 @@ function AsTransfer({ d }: { d: ComparePayload }) {
       <div className="flex flex-wrap gap-x-8 gap-y-1">
         {checks.map((c) => (
           <span key={c.text} className="flex items-center gap-2 text-xs text-text-muted">
-            <span className={`px-1.5 text-[11px] font-bold uppercase leading-4 ${c.ok ? 'bg-pitch-green text-pitch-green-ink' : 'bg-alert-red text-alert-red-ink'}`}>{c.ok ? 'ok' : 'check'}</span>
+            <span className={`px-1.5 text-[12px] font-bold leading-4 ${c.ok ? 'bg-pitch-green text-pitch-green-ink' : 'bg-alert-red text-alert-red-ink'}`}>{c.ok ? 'ok' : 'check'}</span>
             {c.text}
           </span>
         ))}
@@ -231,7 +231,7 @@ function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
   if (pairs.length === 0) return null
   return (
     <div className="mt-6">
-      <div className="mb-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">From your week plan</div>
+      <div className="mb-2 text-[12px] text-text-faint">From your week plan</div>
       <div className="flex flex-wrap gap-2">
         {pairs.map((m) => (
           <button key={m.into.player_id} type="button" onClick={() => onPick(m.out.player_id, m.into.player_id)} className="bg-raised px-3 py-1.5 text-sm text-text hover:bg-divider">
@@ -298,7 +298,7 @@ export function CompareScreen() {
           <section className="grid grid-cols-2 gap-10 px-10 py-7">
             {[compare.data.a, compare.data.b].map((p) => (
               <div key={p.player_id}>
-                <div className="mb-2 font-mono text-[12px] uppercase tracking-[0.08em] text-text-faint">{p.name} · next fixtures</div>
+                <div className="mb-2 text-[12px] text-text-faint">{p.name} · next fixtures</div>
                 <FixtureRun fixtures={p.fixtures} max={5} showEvent />
                 {p.news && <p className="mt-3 text-xs text-text-muted">Official note: {p.news}</p>}
                 <p className="tabular mt-3 text-xs text-text-muted">

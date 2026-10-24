@@ -29,7 +29,7 @@ function FormDots({ form }: { form: TableRow['form'] }) {
   return (
     <span className="inline-flex gap-0.5">
       {form.map((r, i) => (
-        <span key={i} className={`inline-block h-3.5 w-3.5 text-center text-[11px] font-bold leading-[14px] ${r === 'W' ? 'bg-pitch-green text-pitch-green-ink' : r === 'D' ? 'bg-raised text-text-muted' : 'bg-alert-red text-alert-red-ink'}`}>{r}</span>
+        <span key={i} className={`inline-block h-3.5 w-3.5 text-center text-[12px] font-bold leading-[14px] ${r === 'W' ? 'bg-pitch-green text-pitch-green-ink' : r === 'D' ? 'bg-raised text-text-muted' : 'bg-alert-red text-alert-red-ink'}`}>{r}</span>
       ))}
     </span>
   )
@@ -179,8 +179,8 @@ export function TableScreen() {
               <div className="flex items-center gap-3">
                 {crestUrl(h.code) && <img src={crestUrl(h.code) as string} alt="" className="h-10 w-10" />}
                 <div>
-                  <div className="font-display text-3xl font-bold uppercase leading-none text-text">{h.short}</div>
-                  <div className="text-[12px] uppercase tracking-[0.1em] text-text-faint">{h.position}{ordinal(h.position)} · {h.points} pts · {h.played} played</div>
+                  <div className="font-display text-3xl font-bold leading-none text-text">{h.short}</div>
+                  <div className="text-[12px] text-text-faint">{h.position}{ordinal(h.position)} · {h.points} pts · {h.played} played</div>
                 </div>
               </div>
               <div className="mt-5 grid grid-cols-2 gap-y-4">
@@ -211,18 +211,18 @@ export function TableScreen() {
                   <FormDots form={h.form} />
                 </div>
               </div>
-              <Link to={`/club/${h.team_id}`} className="mt-5 inline-block text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-blue hover:underline">Open the club file</Link>
+              <Link to={`/club/${h.team_id}`} className="mt-5 inline-block text-[12px] font-bold text-broadcast-blue hover:underline">Open the club file</Link>
             </div>
           ) : (
             <div>
-              <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">The quadrant</div>
+              <div className="text-[12px] font-bold text-text-faint">The quadrant</div>
               <p className="mt-2 text-sm leading-relaxed text-text-muted">
                 Every club by the chances it creates against the chances it allows, per match. The dashed lines are the league average. Hover a crest.
               </p>
               <div className="mt-5 space-y-2 text-[13px] text-text-faint">
                 <div className="flex items-center gap-2"><span className="inline-block size-3 rounded-full border-2 border-broadcast-gold" /> a club you own players from</div>
               </div>
-              <div className="mt-6 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">League average</div>
+              <div className="mt-6 text-[12px] font-bold text-text-faint">League average</div>
               <div className="tabular mt-1 text-sm text-text-muted">{xAvg.toFixed(2)} xG created · {yAvg.toFixed(2)} allowed, per match</div>
             </div>
           )}
@@ -234,10 +234,10 @@ export function TableScreen() {
       {/* THE TABLE */}
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-center gap-4">
-          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Sort by</span>
+          <span className="text-[13px] font-bold text-text-faint">Sort by</span>
           {([['points', 'Points'], ['xpts', 'Deserved points'], ['luck', 'Luck'], ['gd', 'Goal difference'], ['xgd', 'xG difference'], ['xg', 'xG'], ['xga', 'xG allowed'], ['finishing', 'Finishing'], ['keeping', 'Keeping']] as [SortKey, string][]).map(([k, label]) => (
             <button key={k} type="button" onClick={() => setSort(k)}
-              className={`px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.1em] transition-colors ${sort === k ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+              className={`px-2.5 py-1 text-[12px] font-bold transition-colors ${sort === k ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
               {label}
             </button>
           ))}
@@ -245,7 +245,7 @@ export function TableScreen() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[68rem] text-left text-sm">
             <thead>
-              <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
+              <tr className="border-b border-divider text-[12px] text-text-faint">
                 <th className="py-2 pr-3 font-bold">#</th>
                 <th className="py-2 pr-4 font-bold">Club</th>
                 <th className="tabular py-2 pr-3 text-right font-bold">P</th>
@@ -309,7 +309,7 @@ function Stat({ label, v, sub, tone = 'text-text' }: { label: string; v: string;
   return (
     <div>
       <div className={`tabular font-display text-2xl font-bold ${tone}`}>{v}</div>
-      <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+      <div className="text-[12px] font-bold text-text-faint">{label}</div>
       {sub && <div className="tabular text-[12px] text-text-muted">{sub}</div>}
     </div>
   )

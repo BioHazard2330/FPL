@@ -319,7 +319,7 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
                   setPlaying(true)
                 }
               }}
-              className="shrink-0 border border-divider bg-raised px-3 py-1.5 text-[12px] font-bold uppercase tracking-[0.12em] text-text transition-colors hover:border-pitch-green hover:text-pitch-green"
+              className="shrink-0 border border-divider bg-raised px-3 py-1.5 text-[12px] font-bold text-text transition-colors hover:border-pitch-green hover:text-pitch-green"
               aria-label={playing ? 'Pause the replay' : 'Play the replay'}
             >
               {playing ? 'Pause' : minute >= length ? 'Replay' : 'Play'}
@@ -421,7 +421,7 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
 
         <aside className="space-y-5 border-t border-divider pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">At minute {cur}</div>
+            <div className="text-[12px] font-bold text-text-faint">At minute {cur}</div>
             <div className="mt-1 flex items-baseline justify-center gap-4 xl:justify-start">
               <span className="tabular font-display text-6xl font-bold leading-none text-text">{score[0]}</span>
               <span className="font-display text-3xl text-text-faint">-</span>
@@ -429,17 +429,17 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
             </div>
             <div className="mt-2 grid grid-cols-2 gap-3">
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-pitch-green">{homeShort} xG</div>
+                <div className="text-[12px] font-bold text-pitch-green">{homeShort} xG</div>
                 <div className="tabular font-display text-3xl font-bold text-text">{cumulative.home.toFixed(2)}</div>
               </div>
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-broadcast-blue">{awayShort} xG</div>
+                <div className="text-[12px] font-bold text-broadcast-blue">{awayShort} xG</div>
                 <div className="tabular font-display text-3xl font-bold text-text">{cumulative.away.toFixed(2)}</div>
               </div>
             </div>
           </div>
           <div>
-            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">Latest</div>
+            <div className="mb-1.5 text-[12px] font-bold text-text-faint">Latest</div>
             {latest.length === 0 ? (
               <div className="text-[13px] text-text-faint">Nothing yet.</div>
             ) : (

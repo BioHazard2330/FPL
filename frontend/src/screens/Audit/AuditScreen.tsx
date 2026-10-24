@@ -47,8 +47,8 @@ function Row({ r, scale }: { r: LuckRow; scale: number }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <Link to={`/player/${r.player_id}`} className="truncate text-sm font-bold text-text hover:text-pitch-green">{r.name}</Link>
-          {r.mine && <span className="bg-pitch-green px-1 text-[11px] font-bold uppercase leading-4 text-pitch-green-ink">yours</span>}
-          <span className="font-mono text-[12px] uppercase text-text-faint">{r.team_short} · {r.position}{r.owned !== null ? ` · ${r.owned.toFixed(0)}%` : ''}</span>
+          {r.mine && <span className="bg-pitch-green px-1 text-[12px] font-bold leading-4 text-pitch-green-ink">yours</span>}
+          <span className="text-[12px] text-text-faint">{r.team_short} · {r.position}{r.owned !== null ? ` · ${r.owned.toFixed(0)}%` : ''}</span>
         </div>
         <div className="truncate text-[13px] text-text-muted">{why(r)}</div>
       </div>
@@ -68,7 +68,7 @@ function Row({ r, scale }: { r: LuckRow; scale: number }) {
 function Radar({ title, note, rows, scale }: { title: string; note: string; rows: LuckRow[]; scale: number }) {
   return (
     <div>
-      <h3 className="font-display text-xl font-bold uppercase tracking-wide text-text">{title}</h3>
+      <h3 className="font-display text-xl font-bold text-text">{title}</h3>
       <p className="mb-2 text-xs text-text-muted">{note}</p>
       {rows.map((r) => <Row key={r.player_id} r={r} scale={scale} />)}
     </div>
@@ -89,9 +89,9 @@ function MatchCard({ m }: { m: MatchRebuild }) {
     <article className="border-b border-divider px-6 py-5">
       <div className="mb-2 flex items-center gap-3">
         {h && <img src={h} alt="" className="h-7 w-7" />}
-        <span className="font-display text-xl font-bold uppercase text-text">{m.home.short}</span>
+        <span className="font-display text-xl font-bold text-text">{m.home.short}</span>
         <span className="tabular font-display text-3xl font-bold text-text">{m.home.score}–{m.away.score}</span>
-        <span className="font-display text-xl font-bold uppercase text-text">{m.away.short}</span>
+        <span className="font-display text-xl font-bold text-text">{m.away.short}</span>
         {a && <img src={a} alt="" className="h-7 w-7" />}
         <span className="tabular ml-auto text-xs text-text-muted">
           xG <span className="font-bold text-pitch-green">{m.home.xg.toFixed(2)}</span> – <span className="font-bold text-broadcast-blue">{m.away.xg.toFixed(2)}</span>
@@ -99,9 +99,9 @@ function MatchCard({ m }: { m: MatchRebuild }) {
       </div>
       <XgRace match={m} />
       <div className="mt-2 flex h-4 w-full">
-        <div className="flex items-center justify-center bg-pitch-green text-[11px] font-bold text-pitch-green-ink" style={{ width: `${d.home_win * 100}%` }}>{d.home_win >= 0.12 ? pct(d.home_win) : ''}</div>
-        <div className="flex items-center justify-center bg-raised text-[11px] font-bold text-text-muted" style={{ width: `${d.draw * 100}%` }}>{d.draw >= 0.12 ? pct(d.draw) : ''}</div>
-        <div className="flex items-center justify-center bg-broadcast-blue text-[11px] font-bold text-broadcast-blue-ink" style={{ width: `${d.away_win * 100}%` }}>{d.away_win >= 0.12 ? pct(d.away_win) : ''}</div>
+        <div className="flex items-center justify-center bg-pitch-green text-[12px] font-bold text-pitch-green-ink" style={{ width: `${d.home_win * 100}%` }}>{d.home_win >= 0.12 ? pct(d.home_win) : ''}</div>
+        <div className="flex items-center justify-center bg-raised text-[12px] font-bold text-text-muted" style={{ width: `${d.draw * 100}%` }}>{d.draw >= 0.12 ? pct(d.draw) : ''}</div>
+        <div className="flex items-center justify-center bg-broadcast-blue text-[12px] font-bold text-broadcast-blue-ink" style={{ width: `${d.away_win * 100}%` }}>{d.away_win >= 0.12 ? pct(d.away_win) : ''}</div>
       </div>
       <div className="mt-1.5 text-xs text-text-muted">
         {verdict}. Deserved score {d.likely_score[0]}–{d.likely_score[1]}.{' '}
@@ -153,7 +153,7 @@ export function AuditScreen() {
       </section>
 
       <section className="border-b border-divider px-10 py-7">
-        <h2 className="mb-3 font-display text-2xl font-bold uppercase tracking-wide text-text">Your squad</h2>
+        <h2 className="mb-3 font-display text-2xl font-bold text-text">Your squad</h2>
         {d.squad.map((r) => <Row key={r.player_id} r={r} scale={scale} />)}
         <p className="mt-2 text-[13px] text-text-faint">Bar: gold is luck in your favour, blue is points owed. z is the luck over its own standard error; beyond ±2 is unusual.</p>
       </section>
@@ -161,7 +161,7 @@ export function AuditScreen() {
       {d.armband.length > 0 && (
         <section className="border-b border-divider px-10 py-7">
           <div className="mb-1 flex flex-wrap items-baseline justify-between gap-4">
-            <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Your armband</h2>
+            <h2 className="font-display text-2xl font-bold text-text">Your armband</h2>
             <span className="text-[13px] text-text-muted">
               the armband has cost <span className="tabular font-bold text-text">{d.armband.reduce((s, r) => s + r.cost, 0).toFixed(0)}</span> points against the best in each eleven;{' '}
               <span className="tabular font-bold text-broadcast-blue">{d.armband.reduce((s, r) => s + r.owed, 0).toFixed(0)}</span> of the captains' own returns were owed by their chances
@@ -170,7 +170,7 @@ export function AuditScreen() {
           <p className="mb-3 max-w-3xl text-[13px] text-text-faint">
             Cost is what the armband left on the table against the highest scorer of that gameweek's eleven, the extra a captain earns, so it is nearly always positive. Owed is the same armband's points the captain's own chances said he should have had.
           </p>
-          <div className="grid grid-cols-[3.5rem_minmax(0,1.2fr)_5rem_5rem_minmax(0,1.2fr)_5rem_5rem] gap-3 border-b border-divider pb-1.5 font-mono text-[12px] uppercase tracking-[0.06em] text-text-faint">
+          <div className="grid grid-cols-[3.5rem_minmax(0,1.2fr)_5rem_5rem_minmax(0,1.2fr)_5rem_5rem] gap-3 border-b border-divider pb-1.5 text-[12px] text-text-faint">
             <span>GW</span><span>Captain</span><span className="text-right">Scored</span><span className="text-right">Chances</span><span>Best in the eleven</span><span className="text-right">Cost</span><span className="text-right">Owed</span>
           </div>
           {d.armband.map((r) => (
@@ -178,7 +178,7 @@ export function AuditScreen() {
               <span className="font-mono text-[13px] text-text-faint">GW{r.event}</span>
               <span className="min-w-0 truncate font-semibold text-text">
                 <Link to={`/player/${r.captain.player_id}`} className="hover:text-pitch-green">{r.captain.name}</Link>
-                {r.chip === '3xc' && <span className="ml-2 rounded bg-broadcast-gold px-1 text-[11px] font-bold uppercase text-broadcast-gold-ink">TC</span>}
+                {r.chip === '3xc' && <span className="ml-2 rounded bg-broadcast-gold px-1 text-[12px] font-bold text-broadcast-gold-ink">TC</span>}
               </span>
               <span className="tabular text-right font-bold text-text">{r.captain.actual}</span>
               <span className="tabular text-right text-text-muted">{r.captain.deserved.toFixed(1)}</span>
@@ -195,10 +195,10 @@ export function AuditScreen() {
 
       <section className="border-b border-divider px-10 py-7">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Regression radar</h2>
+          <h2 className="font-display text-2xl font-bold text-text">Regression radar</h2>
           <div className="flex gap-1">
             {(['season', 'recent'] as const).map((w) => (
-              <button key={w} type="button" onClick={() => setWindow(w)} className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${window === w ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+              <button key={w} type="button" onClick={() => setWindow(w)} className={`px-2.5 py-1 text-[13px] font-semibold ${window === w ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
                 {w === 'season' ? 'Whole season' : `Last ${d.thresholds.recent_gameweeks} gameweeks`}
               </button>
             ))}
@@ -212,10 +212,10 @@ export function AuditScreen() {
 
       <section className="px-0 py-7">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4 px-10">
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-text">Match rebuilds</h2>
+          <h2 className="font-display text-2xl font-bold text-text">Match rebuilds</h2>
           <div className="flex gap-1">
             {d.events.map((e) => (
-              <button key={e} type="button" onClick={() => setEvent(e)} className={`px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[0.05em] ${d.event === e ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
+              <button key={e} type="button" onClick={() => setEvent(e)} className={`px-2.5 py-1 text-[13px] font-semibold ${d.event === e ? 'bg-text text-void' : 'bg-raised text-text-muted hover:text-text'}`}>
                 GW{e}
               </button>
             ))}

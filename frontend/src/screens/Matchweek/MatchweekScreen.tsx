@@ -3,7 +3,6 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchweekPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import { Podium3D } from '@/components/three/Podium3D'
 import type { LeaderRow, LeagueTableRow, MatchweekBlock, MatchweekFixture } from '@/lib/types'
 
 const FORM_FILL: Record<string, string> = {
@@ -21,7 +20,7 @@ function Form({ form }: { form: string[] }) {
       {form.map((r, i) => (
         <span
           key={i}
-          className={`flex size-4 items-center justify-center text-[11px] font-bold ${FORM_FILL[r] ?? 'bg-raised text-text-muted'}`}
+          className={`flex size-4 items-center justify-center text-[12px] font-bold ${FORM_FILL[r] ?? 'bg-raised text-text-muted'}`}
         >
           {r}
         </span>
@@ -45,7 +44,7 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
       <table className="w-full min-w-[54rem] text-left text-sm">
         <caption className="sr-only">Premier League table, computed from real played fixtures</caption>
         <thead>
-          <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
+          <tr className="border-b border-divider text-[12px] text-text-faint">
             <th scope="col" className="w-10 py-2 pr-2 text-right font-bold">#</th>
             <th scope="col" className="py-2 pr-4 font-bold">Club</th>
             <th scope="col" className="tabular w-10 py-2 pr-2 text-right font-bold">P</th>
@@ -74,7 +73,7 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
                     {crest && <img src={crest} alt="" className="h-5 w-5" />}
                     <span className="truncate">{r.name}</span>
                     {r.in_squad && (
-                      <span className="shrink-0 bg-broadcast-gold px-1 py-0.5 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>
+                      <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>
                     )}
                   </Link>
                 </th>
@@ -133,8 +132,8 @@ function FixtureLine({ f }: { f: MatchweekFixture }) {
     <Wrapper
       {...(clickable ? { to: `/match/${f.match_id}` } : {})}
       className={`flex w-full items-center gap-3 border-b border-divider py-2.5 text-left ${
-        f.has_squad_interest ? 'bg-panel' : ''
-      } ${clickable ? 'hover:bg-raised' : ''}`}
+ f.has_squad_interest ? 'bg-panel' : ''
+ } ${clickable ? 'hover:bg-raised' : ''}`}
     >
       <span className="flex flex-1 items-center justify-end gap-2 text-right">
         <span className={`truncate text-sm font-bold ${f.home.in_squad ? 'text-broadcast-gold' : 'text-text'}`}>{f.home.name}</span>
@@ -156,7 +155,7 @@ function FixtureLine({ f }: { f: MatchweekFixture }) {
         <span className={`truncate text-sm font-bold ${f.away.in_squad ? 'text-broadcast-gold' : 'text-text'}`}>{f.away.name}</span>
       </span>
 
-      {clickable && <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-text-faint">report</span>}
+      {clickable && <span className="shrink-0 text-[12px] font-bold text-text-faint">report</span>}
     </Wrapper>
   )
 }
@@ -174,14 +173,14 @@ function MatchweekBlockView({ block }: { block: MatchweekBlock }) {
   return (
     <div className="px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold uppercase tracking-wide text-text">Gameweek {block.event}</span>
-        <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
+        <span className="font-display text-2xl font-bold text-text">Gameweek {block.event}</span>
+        <span className="text-[13px] font-bold text-text-faint">
           {block.complete ? 'complete' : block.is_next ? 'next up' : 'to come'}
         </span>
       </div>
       {[...byDay.entries()].map(([day, fixtures]) => (
         <div key={day} className="mt-4 first:mt-0">
-          <div className="border-b border-divider pb-1 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">{day}</div>
+          <div className="border-b border-divider pb-1 text-[12px] font-bold text-text-faint">{day}</div>
           {fixtures.map((f) => <FixtureLine key={f.fixture_id} f={f} />)}
         </div>
       ))}
@@ -202,7 +201,7 @@ function LeaderBoard({ title, sub, rows, metric }: {
   if (rows.length === 0) return null
   return (
     <div className="bg-void px-10 py-8">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">{title}</div>
+      <div className="mb-1 text-[13px] font-bold text-text-faint">{title}</div>
       <div className="mb-3 text-[13px] text-text-faint">{sub}</div>
       <div className="divide-y divide-divider">
         {rows.map((r, i) => {
@@ -217,8 +216,8 @@ function LeaderBoard({ title, sub, rows, metric }: {
               <Link to={`/player/${r.player_id}`} className="min-w-0 flex-1 truncate text-sm font-bold text-text hover:text-pitch-green">
                 {r.name}
               </Link>
-              {r.is_mine && <span className="shrink-0 bg-broadcast-gold px-1 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
-              <span className="w-9 shrink-0 text-[12px] uppercase text-text-faint">{r.team_short}</span>
+              {r.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
+              <span className="w-9 shrink-0 text-[12px] text-text-faint">{r.team_short}</span>
               <span className={`tabular w-12 shrink-0 text-right font-bold ${lead ? 'text-lg text-text' : 'text-sm text-text-muted'}`}>
                 {metric(r)}
               </span>
@@ -258,62 +257,16 @@ export function MatchweekScreen() {
 
   const p = state.data
   const played = p.table.reduce((n: number, r: LeagueTableRow) => n + r.played, 0) / 2
-  const leader = p.table[0]
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Match Desk" title="The Premier League" right={<span className="text-text-faint">{played} matches played</span>} />
-
-      {/* THE LEADERS - a real standings hero. Football opens with who is top,
-          not with a metric. */}
-      {leader && leader.played > 0 && (
-        <div className="relative overflow-hidden border-b border-divider px-10 py-8">
-          <span className="ghost-watermark pointer-events-none absolute -top-12 right-2 select-none font-display text-[11rem] font-bold uppercase leading-none">
-            TABLE
-          </span>
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end">
-            <div className="h-56 w-full shrink-0 lg:w-96">
-              <Podium3D
-                entries={p.table.slice(0, 3).map((r: LeagueTableRow) => ({
-                  position: r.position, name: r.name, points: r.points, crestUrl: crestUrl(r.code),
-                }))}
-              />
-            </div>
-            <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
-              {p.table.slice(0, 3).map((r: LeagueTableRow) => {
-                const crest = crestUrl(r.code)
-                const first = r.position === 1
-                return (
-                  <div key={r.team_id} className="flex items-end gap-3">
-                    <span className={`tabular font-display font-bold leading-none ${first ? 'text-5xl text-pitch-green' : 'text-2xl text-text-faint'}`}>
-                      {r.position}
-                    </span>
-                    {crest && <img src={crest} alt="" className={first ? 'h-12 w-12' : 'h-7 w-7'} />}
-                    <div>
-                      <Link
-                        to={`/club/${r.team_id}`}
-                        className={`block font-display font-bold uppercase leading-none text-text hover:text-pitch-green ${first ? 'text-3xl' : 'text-lg'}`}
-                      >
-                        {r.name}
-                      </Link>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className={`tabular font-bold ${first ? 'text-xl text-text' : 'text-sm text-text-muted'}`}>{r.points} pts</span>
-                        <Form form={r.form} />
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      <Masthead right={<span>{played} matches played</span>} />
 
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">League table</span>
+          <span className="font-display text-xl font-semibold text-text">League table</span>
           <span className="text-[13px] text-text-faint">
-            computed from real results &middot; blue = top four &middot; red = relegation &middot; xG is per match
+            blue is the top four, red is relegation; xG and xGA are per match
           </span>
         </div>
         <LeagueTable rows={p.table} />
@@ -324,19 +277,19 @@ export function MatchweekScreen() {
         <div className="grid grid-cols-1 gap-px border-t border-divider bg-divider lg:grid-cols-3">
           <LeaderBoard
             title="Top scorers"
-            sub="real recorded goals this season"
+            sub="goals this season"
             rows={p.leaders.scorers}
             metric={(r) => `${r.goals ?? 0}`}
           />
           <LeaderBoard
             title="Most assists"
-            sub="real recorded assists this season"
+            sub="assists this season"
             rows={p.leaders.assists}
             metric={(r) => `${r.assists ?? 0}`}
           />
           <LeaderBoard
             title="Underlying numbers"
-            sub="real xG + xA — the board that leads output"
+            sub="xG plus xA, the chances behind the output"
             rows={p.leaders.underlying}
             metric={(r) => (r.xgi !== null ? r.xgi.toFixed(2) : '—')}
           />
@@ -356,8 +309,7 @@ export function MatchweekScreen() {
 
       {p.results.length > 0 && (
         <div className="border-t border-divider px-10 py-6 text-sm text-text-muted">
-          Click any completed fixture above for its real match report &mdash; timeline, possession and xG contest, and both
-          teams' player ratings. Real detail is held for {p.results.length} finished matches.
+          Click any finished fixture for its match report: timeline, possession, the xG contest and both teams' player ratings.
         </div>
       )}
 

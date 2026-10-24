@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { Disclosure } from '@/components/ui/kit'
 import { crestUrl, fetchScoutPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
@@ -44,7 +45,7 @@ function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
       {r.xp !== null && <span className="tabular font-semibold text-pitch-green">{r.xp.toFixed(1)} xP</span>}
       <span className={isTrap ? 'font-semibold text-text' : 'text-text-muted'}>{isTrap ? r.risk ?? r.why_now : r.why_now}</span>
       {!isTrap && r.risk && <span className="italic text-broadcast-gold">{r.risk}</span>}
-      <span className={`ml-auto shrink-0 text-[12px] font-bold uppercase tracking-wide ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
+      <span className={`ml-auto shrink-0 text-[12px] font-bold ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
     </div>
   )
 }
@@ -75,7 +76,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
   if (!player) {
     return (
       <div className="sticky top-4 flex h-[70vh] w-80 shrink-0 flex-col items-center justify-center border-2 border-dashed border-divider text-center">
-        <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Scouting bench</div>
+        <div className="text-[13px] font-bold text-text-faint">Scouting bench</div>
         <p className="mt-2 max-w-[16rem] text-sm text-text-muted">Select a player from the table to pull up their real scouting profile here.</p>
       </div>
     )
@@ -95,7 +96,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
       </div>
       {run && run.length > 0 && (
         <div className="border-b border-divider px-6 py-3">
-          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Next five</div>
+          <div className="mb-1.5 text-[12px] font-bold text-text-faint">Next five</div>
           <div className="flex items-center justify-between gap-3">
             <FixtureRun fixtures={run} max={5} showEvent />
             <RunPressure fixtures={run} max={5} />
@@ -105,7 +106,7 @@ function PlayerDetailPanel({ player, fixtures }: { player: ScoutPlayerRow | null
       <div className="grid grid-cols-3 gap-px bg-divider">
         {stats.map((s) => (
           <div key={s.label} className="bg-panel px-3 py-3">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">{s.label}</div>
+            <div className="text-[12px] font-bold text-text-faint">{s.label}</div>
             <div className="tabular mt-0.5 text-lg font-bold text-text">{s.value ?? '—'}</div>
           </div>
         ))}
@@ -125,12 +126,12 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
   if (block.positions.length === 0) return null
   return (
     <div className="border-b border-divider px-10 py-8">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Template team</div>
+      <div className="mb-1 text-[13px] font-bold text-text-faint">Template team</div>
       <div className="mb-5 text-xs text-text-faint">Highest real-owned pool per position - not a formation, a market read.</div>
       <div className="pitch-surface flex flex-col gap-6 px-6 py-8">
         {block.positions.map((pos) => (
           <div key={pos.position} className="relative flex items-start gap-4">
-            <span className="w-9 shrink-0 pt-4 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+            <span className="w-9 shrink-0 pt-4 text-right text-[12px] font-bold text-text-faint">
               {POSITION_ROW_LABEL[pos.position] ?? pos.position}
             </span>
             <div className="flex flex-1 flex-wrap items-start justify-center gap-6">
@@ -140,7 +141,7 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
               return (
                 <div key={tp.player_id} className="relative flex w-24 flex-col items-center text-center">
                   {tp.is_mine && (
-                    <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[11px] font-bold text-broadcast-gold-ink">M</span>
+                    <span className="absolute right-1 top-0 flex h-4 w-4 items-center justify-center bg-broadcast-gold text-[12px] font-bold text-broadcast-gold-ink">M</span>
                   )}
                   <div className="relative h-14 w-14">
                     {shirt ? <img src={shirt} alt="" className="h-14 w-14 object-contain" /> : <div className="h-14 w-14 bg-raised" />}
@@ -151,7 +152,7 @@ function TemplateTeamBoard({ block }: { block: TemplateTeamBlock }) {
                     {tp.eo_percent !== null ? `${tp.eo_percent.toFixed(1)}%` : `${tp.ownership_pct.toFixed(1)}%`}
                   </div>
                   {tp.margin_of_error_pp !== null && (
-                    <div className="text-[11px] text-text-faint">&plusmn;{tp.margin_of_error_pp.toFixed(1)}pp</div>
+                    <div className="text-[12px] text-text-faint">&plusmn;{tp.margin_of_error_pp.toFixed(1)}pp</div>
                   )}
                 </div>
               )
@@ -190,12 +191,12 @@ function ExpectedDataLeaderboard({ rows }: { rows: ExpectedDataRow[] }) {
   if (rows.length === 0) return null
   return (
     <div className="border-b border-divider px-10 py-8">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Expected data</div>
+      <div className="mb-1 text-[13px] font-bold text-text-faint">Expected data</div>
       <div className="mb-4 text-xs text-text-faint">Real current-season xG/xA, ranked by per-90 rate - not raw totals.</div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-divider text-[13px] uppercase tracking-wide text-text-faint">
+            <tr className="border-b border-divider text-[13px] text-text-faint">
               <th className="py-2 pr-4">Player</th>
               <th className="tabular py-2 pr-4">xG</th>
               <th className="tabular py-2 pr-4">xA</th>
@@ -270,7 +271,7 @@ export function ScoutScreen() {
           <Skel className="h-2 w-32" />
           <Skel className="mt-3 h-10 w-72" />
         </div>
-        <div className="mt-6 flex gap-6 px-10">
+        <div className="flex gap-6 px-8 pb-6 pt-4">
           <div className="min-w-0 flex-1">
             <SkelTable rows={12} cols={8} />
           </div>
@@ -302,34 +303,13 @@ export function ScoutScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Market Desk" title="Player Market" right={<>{filtered.length} of {rows.length} players</>} />
-
-      {/* MARKET OVERVIEW - real category counts as boards, not prose */}
-      {opp && (
-        <div className="relative flex flex-wrap divide-x divide-divider overflow-hidden border-b border-divider">
-          <span className="ghost-watermark pointer-events-none absolute -top-8 right-2 select-none font-display text-[9rem] font-bold uppercase leading-none">
-            MARKET
-          </span>
-          {[
-            { label: 'Value', n: opp.value.length },
-            { label: 'Breakout', n: opp.breakout.length },
-            { label: 'Trap', n: opp.trap.length },
-            { label: 'Role change', n: opp.role_change.length },
-            { label: 'Fixture swing', n: opp.fixture_swing.length },
-          ].map((m) => (
-            <div key={m.label} className="min-w-[140px] flex-1 px-8 py-5">
-              <div className="tabular font-display text-3xl font-bold text-text">{m.n}</div>
-              <div className="text-[13px] font-bold uppercase tracking-wide text-text-faint">{m.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Masthead right={<>{filtered.length} of {rows.length} players</>} />
 
       {opp && (oppCategories.length > 0 || opp.fixture_swing.length > 0) && (
-        <div className="mt-6 grid grid-cols-1 gap-8 border-b border-divider px-10 pb-8 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-10 gap-y-8 px-8 py-6 lg:grid-cols-2">
           {oppCategories.map((c) => (
             <div key={c.label}>
-              <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">{c.label}</div>
+              <div className="mb-2 text-[13px] font-bold text-text-faint">{c.label}</div>
               <div className="divide-y divide-divider">
                 {c.rows.map((r, i) => <OpportunityRowView key={i} r={r} kind={c.label} />)}
               </div>
@@ -337,7 +317,7 @@ export function ScoutScreen() {
           ))}
           {opp.fixture_swing.length > 0 && (
             <div>
-              <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Fixture swing</div>
+              <div className="mb-2 text-[13px] font-bold text-text-faint">Fixture swing</div>
               {opp.fixture_swing.map((s, i) => {
                 const crest = crestUrl(s.team_code)
                 return (
@@ -355,7 +335,7 @@ export function ScoutScreen() {
             <div className="grid grid-cols-2 gap-6">
               {opp.transfers_in.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers in</div>
+                  <div className="mb-2 text-[13px] font-bold text-text-faint">Transfers in</div>
                   {opp.transfers_in.map((t, i) => {
                     const crest = crestUrl(t.team_code)
                     return (
@@ -370,7 +350,7 @@ export function ScoutScreen() {
               )}
               {opp.transfers_out.length > 0 && (
                 <div>
-                  <div className="mb-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Transfers out</div>
+                  <div className="mb-2 text-[13px] font-bold text-text-faint">Transfers out</div>
                   {opp.transfers_out.map((t, i) => {
                     const crest = crestUrl(t.team_code)
                     return (
@@ -388,10 +368,18 @@ export function ScoutScreen() {
         </div>
       )}
 
-      {state.status === 'ready' && <TemplateTeamBoard block={state.data.template_team} />}
-      {state.status === 'ready' && <ExpectedDataLeaderboard rows={state.data.expected_data} />}
+      {state.status === 'ready' && (
+        <Disclosure title="The most-owned team" summary="The highest-owned player in each slot, and how much of your squad it covers">
+          <TemplateTeamBoard block={state.data.template_team} />
+        </Disclosure>
+      )}
+      {state.status === 'ready' && (
+        <Disclosure title="Underlying numbers" summary="Season xG and xA per 90, the chances behind the points">
+          <ExpectedDataLeaderboard rows={state.data.expected_data} />
+        </Disclosure>
+      )}
 
-      <div className="mt-4 flex flex-wrap items-center gap-3 px-10">
+      <div className="flex flex-wrap items-center gap-3 px-8 pt-6">
         <input
           type="search"
           value={query}
@@ -404,7 +392,7 @@ export function ScoutScreen() {
             <button
               key={pos}
               onClick={() => setPosition(pos)}
-              className={`px-3 py-2 text-xs font-bold uppercase ${pos === position ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
+              className={`px-3 py-2 text-xs font-bold ${pos === position ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
             >
               {pos}
             </button>
@@ -415,7 +403,7 @@ export function ScoutScreen() {
             <button
               key={k}
               onClick={() => setSortKey(k)}
-              className={`px-3 py-2 text-xs font-bold uppercase ${k === sortKey ? 'bg-broadcast-blue text-broadcast-blue-ink' : 'bg-raised text-text-muted hover:text-text'}`}
+              className={`px-3 py-2 text-xs font-bold ${k === sortKey ? 'bg-broadcast-blue text-broadcast-blue-ink' : 'bg-raised text-text-muted hover:text-text'}`}
             >
               Sort: {SORT_LABEL[k]}
             </button>
@@ -423,11 +411,11 @@ export function ScoutScreen() {
         </div>
         <button
           onClick={() => setMineOnly((v) => !v)}
-          className={`px-3 py-2 text-xs font-bold uppercase ${mineOnly ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
+          className={`px-3 py-2 text-xs font-bold ${mineOnly ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
         >
-          My Squad
+          Mine only
         </button>
-        <label className="flex items-center gap-2 bg-raised px-3 py-2 text-xs font-bold uppercase text-text-muted">
+        <label className="flex items-center gap-2 bg-raised px-3 py-2 text-xs font-bold text-text-muted">
           Max price
           <input
             type="range"
@@ -444,12 +432,12 @@ export function ScoutScreen() {
 
       {/* THE WORKSTATION - table + a real persistent detail pane, not a
           drawer that slides over the table it came from. */}
-      <div className="mt-6 flex gap-6 px-10">
+      <div className="flex gap-6 px-8 pb-6 pt-4">
         <div className="min-w-0 flex-1 overflow-x-auto">
           <div className="max-h-[70vh] overflow-y-auto border-t border-divider">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-panel">
-                <tr className="border-b border-divider text-[13px] uppercase tracking-wide text-text-faint">
+                <tr className="border-b border-divider text-[13px] text-text-faint">
                   <th className="py-2 pr-4">Player</th>
                   <th className="py-2 pr-4">Pos</th>
                   <th className="py-2 pr-4">Next 3</th>
@@ -485,7 +473,7 @@ export function ScoutScreen() {
                             {r.name}
                           </Link>
                           <span className="font-normal text-text-faint">{r.team_short}</span>
-                          {r.is_mine && <span className="bg-broadcast-gold px-1 py-0.5 text-[11px] font-bold text-broadcast-gold-ink">MINE</span>}
+                          {r.is_mine && <span className="rounded bg-broadcast-gold/20 px-1.5 py-0.5 text-[12px] font-semibold text-broadcast-gold">yours</span>}
                         </span>
                       </td>
                       <td className="py-2 pr-4">
@@ -510,17 +498,17 @@ export function ScoutScreen() {
             </table>
           </div>
         </div>
-        <PlayerDetailPanel player={selected} fixtures={fixtures} />
+        {selected && <PlayerDetailPanel player={selected} fixtures={fixtures} />}
       </div>
 
       {/* PRICE MOVES - real rise/fall forecast + confirmed change ledger */}
       {state.status === 'ready' && (state.data.price_moves.forecast.length > 0 || state.data.price_moves.ledger.length > 0) && (
-        <div className="mt-10 border-t border-divider px-10 pt-8">
-          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Price moves</div>
+        <div className="px-8 py-6">
+          <h2 className="mb-4 font-display text-xl font-semibold text-text">Price changes</h2>
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             {state.data.price_moves.forecast.length > 0 && (
               <div>
-                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">{state.data.price_moves.forecast.some((r) => r.calibrated) ? 'Tonight (fitted price model)' : 'Forecast (uncalibrated momentum heuristic)'}</div>
+                <div className="mb-2 text-[12px] font-bold text-text-faint">{state.data.price_moves.forecast.some((r) => r.calibrated) ? 'Likely tonight, from the fitted price model' : 'Likely tonight (rough momentum guess)'}</div>
                 <div className="divide-y divide-divider border-t border-divider">
                   {state.data.price_moves.forecast.slice(0, 12).map((r) => {
                     const crest = crestUrl(r.team_code)
@@ -534,7 +522,7 @@ export function ScoutScreen() {
                         <span className="relative ml-auto h-2 w-16 shrink-0 border border-divider bg-void">
                           <span className={`absolute inset-y-0 left-0 ${rising ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${r.progress_pct}%` }} />
                         </span>
-                        <span className={`w-20 shrink-0 text-right text-xs font-bold uppercase ${rising ? 'text-pitch-green' : 'text-alert-red'}`}>
+                        <span className={`w-20 shrink-0 text-right text-xs font-bold ${rising ? 'text-pitch-green' : 'text-alert-red'}`}>
                           {rising ? '▲ rise' : '▼ fall'}{r.probability != null ? ` ${Math.round(r.probability * 100)}%` : ''}
                         </span>
                       </div>
@@ -545,7 +533,7 @@ export function ScoutScreen() {
             )}
             {state.data.price_moves.ledger.length > 0 && (
               <div>
-                <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-text-faint">Confirmed changes</div>
+                <div className="mb-2 text-[12px] font-bold text-text-faint">Confirmed changes</div>
                 <div className="divide-y divide-divider border-t border-divider">
                   {state.data.price_moves.ledger.map((r) => {
                     const crest = crestUrl(r.team_code)

@@ -2,35 +2,32 @@ import { Activity, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, S
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
-  { to: '/my-team', label: 'My Team', icon: Users },
+  { to: '/my-team', label: 'My team', icon: Users },
   { to: '/plan', label: 'Plan', icon: Route },
-  { to: '/matchweek', label: 'Matchweek', icon: Trophy },
-  { to: '/football', label: 'Football', icon: Goal },
-  { to: '/desk', label: 'Desk', icon: Newspaper },
+  { to: '/live', label: 'Live', icon: Radio },
+  { to: '/matchweek', label: 'League', icon: Trophy },
+  { to: '/table', label: 'Team styles', icon: ListOrdered },
   { to: '/previews', label: 'Previews', icon: Swords },
+  { to: '/football', label: 'My clubs', icon: Goal },
+  { to: '/atlas', label: 'Shot map', icon: LocateFixed },
+  { to: '/scout', label: 'Market', icon: Search },
   { to: '/compare', label: 'Compare', icon: Scale },
   { to: '/explorer', label: 'Explorer', icon: SlidersHorizontal },
-  { to: '/field', label: 'Field', icon: Telescope },
-  { to: '/audit', label: 'Audit', icon: ScanSearch },
-  { to: '/atlas', label: 'Atlas', icon: LocateFixed },
-  { to: '/table', label: 'Table', icon: ListOrdered },
-  { to: '/scout', label: 'Scout', icon: Search },
-  { to: '/receipts', label: 'Receipts', icon: Receipt },
-  { to: '/advanced', label: 'Advanced', icon: Activity },
-  { to: '/live', label: 'Live', icon: Radio },
+  { to: '/desk', label: 'News', icon: Newspaper },
+  { to: '/field', label: 'Versus the field', icon: Telescope },
+  { to: '/audit', label: 'Luck check', icon: ScanSearch },
+  { to: '/receipts', label: 'Track record', icon: Receipt },
+  { to: '/advanced', label: 'System', icon: Activity },
 ] as const
 
-/** Real section hierarchy over the same seven destinations - not new
- * routes, and deliberately not a collapsible tree. The three groups are
- * the three genuinely different questions this product answers: what do I
- * do (decision), what is happening in football (intelligence), and is the
- * machine itself healthy right now (operations). Ordering within each
- * group is unchanged, so no existing muscle memory breaks. */
+/** Five groups, by the question each answers: what do I do this week, what is happening in the league, who should I buy,
+ * how am I doing against everyone else, and is the machine healthy. Ordering inside a group runs from most to least used. */
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
-  { label: 'Decision', routes: ['/', '/my-team', '/plan', '/receipts'] },
-  { label: 'The football', routes: ['/matchweek', '/football', '/atlas', '/table'] },
-  { label: 'Intelligence', routes: ['/field', '/audit', '/desk', '/previews', '/compare', '/explorer', '/scout'] },
-  { label: 'Operations', routes: ['/live', '/advanced'] },
+  { label: 'This week', routes: ['/', '/my-team', '/plan', '/live'] },
+  { label: 'The league', routes: ['/matchweek', '/table', '/previews', '/football', '/atlas'] },
+  { label: 'Players', routes: ['/scout', '/compare', '/explorer', '/desk'] },
+  { label: 'How I am doing', routes: ['/field', '/audit', '/receipts'] },
+  { label: 'System', routes: ['/advanced'] },
 ]
 
 /** Profile routes are real destinations with no nav entry of their own - a

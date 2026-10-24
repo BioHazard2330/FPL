@@ -9,7 +9,6 @@ import { crestUrl, fetchPlayerProfile } from '@/lib/api'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { ProjectionBand } from '@/components/shell/ProjectionBand'
 import { StoriesRail } from '@/components/shell/StoriesRail'
-import { FlipCard } from '@/components/three/FlipCard'
 import { PlayerShots } from '@/components/football/PlayerShots'
 import { XgRace } from '@/components/football/XgRace'
 import { MarketPulse } from '@/components/football/MarketPulse'
@@ -92,46 +91,25 @@ export function PlayerScreen() {
       {/* THE FILE HEAD - kit at real scale, identity, and the one thing that
           changes whether any of the rest matters: availability. */}
       <div className="relative overflow-hidden border-b border-divider">
-        <span className="ghost-watermark pointer-events-none absolute -top-14 right-4 select-none font-display text-[12rem] font-bold uppercase leading-none">
-          {pl.position}
-        </span>
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          {(
-            <FlipCard
-              className="h-44 w-36 shrink-0"
-              ariaLabel={`Flip ${pl.name}'s card to see season totals`}
-              front={<PlayerPhoto code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} className="h-44 w-36" />}
-              back={
-                <div className="flex h-44 w-36 flex-col items-center justify-center gap-1 border-2 border-divider bg-panel text-center">
-                  <span className="text-[8px] font-bold uppercase tracking-wide text-text-faint">This season</span>
-                  <span className="tabular font-display text-2xl font-bold text-pitch-green">{totals?.total_points ?? '—'}</span>
-                  <span className="text-[11px] uppercase tracking-wide text-text-faint">points</span>
-                  {totals && (
-                    <span className="tabular mt-1 text-[12px] text-text-muted">
-                      {totals.goals_scored}G &middot; {totals.assists}A
-                    </span>
-                  )}
-                </div>
-              }
-            />
-          )}
+          <PlayerPhoto code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} className="h-44 w-36 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
               {crest && <img src={crest} alt="" className="h-6 w-6" />}
-              <Link to={`/club/${pl.team_id}`} className="text-sm font-bold uppercase tracking-wide text-text-muted hover:text-text">
+              <Link to={`/club/${pl.team_id}`} className="text-sm font-bold text-text-muted hover:text-text">
                 {pl.team_name}
               </Link>
               <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{pl.position}</span>
               {pl.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[12px] font-bold text-broadcast-gold-ink">IN MY SQUAD</span>}
-              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[12px] font-bold uppercase text-text-muted hover:text-text">Compare</Link>
+              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted hover:text-text">Compare</Link>
             </div>
-            <div className="mt-1 font-display text-5xl font-bold uppercase leading-none text-text">{pl.name}</div>
+            <div className="mt-1 font-display text-5xl font-bold leading-none text-text">{pl.name}</div>
             <div className="mt-3 flex flex-wrap items-center gap-4">
               {pl.price_m !== null && (
                 <span className="tabular font-display text-2xl font-bold text-text">£{pl.price_m.toFixed(1)}m</span>
               )}
               {status && (
-                <span className={`px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide ${status.fill}`}>{status.label}</span>
+                <span className={`px-2 py-0.5 text-[12px] font-bold ${status.fill}`}>{status.label}</span>
               )}
             </div>
             {pl.news && <p className="mt-2 max-w-2xl text-sm text-broadcast-gold">{pl.news}</p>}
@@ -158,7 +136,7 @@ export function PlayerScreen() {
             ] as const
           ).map(([label, value]) => (
             <div key={label} className="bg-void px-5 py-4">
-              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+              <div className="text-[12px] font-bold text-text-faint">{label}</div>
               <div className="tabular mt-1 font-display text-2xl font-bold text-text">
                 {value === null || value === undefined ? '—' : typeof value === 'number' ? value : value}
               </div>
@@ -172,7 +150,7 @@ export function PlayerScreen() {
       {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
       <div className="border-b border-divider px-10 py-8">
         <div className="mb-4 flex flex-wrap items-baseline gap-3">
-          <span className="font-display text-2xl font-bold uppercase text-text">Where he shoots</span>
+          <span className="font-display text-2xl font-bold text-text">Where he shoots</span>
           <span className="text-[13px] text-text-faint">every shot FotMob recorded for him this season · dot area is xG · filled only for a goal</span>
         </div>
         <PlayerShots playerId={pl.player_id} name={pl.name} teamShort={pl.team_short} shots={p.shots} mine={pl.is_mine} />
@@ -182,7 +160,7 @@ export function PlayerScreen() {
       {p.career.length > 1 && (
         <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
-            <span className="font-display text-2xl font-bold uppercase text-text">The race</span>
+            <span className="font-display text-2xl font-bold text-text">The race</span>
             <span className="text-[13px] text-text-faint">what his chances were worth against what he made of them, every match this database holds</span>
           </div>
           <XgRace career={p.career} thisSeason={p.match_log[0]?.season ?? null} />
@@ -193,7 +171,7 @@ export function PlayerScreen() {
       {(p.ownership.length > 1 || p.momentum.length > 1) && (
         <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
-            <span className="font-display text-2xl font-bold uppercase text-text">The market</span>
+            <span className="font-display text-2xl font-bold text-text">The market</span>
             <span className="text-[13px] text-text-faint">ownership as it moved, and the transfer counters each gameweek, as sampled</span>
           </div>
           <MarketPulse ownership={p.ownership} momentum={p.momentum} deadlines={p.deadlines} />
@@ -205,7 +183,7 @@ export function PlayerScreen() {
           every rate it showed was a season aggregate. */}
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Match log</span>
+          <span className="text-[13px] font-bold text-text-faint">Match log</span>
           <span className="text-[13px] text-text-faint">real per-match record, most recent first</span>
         </div>
         {p.match_log.length === 0 ? (
@@ -218,7 +196,7 @@ export function PlayerScreen() {
             <table className="w-full min-w-[44rem] text-left text-sm">
               <caption className="sr-only">Per-match record</caption>
               <thead>
-                <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
+                <tr className="border-b border-divider text-[12px] text-text-faint">
                   <th scope="col" className="py-2 pr-4 font-bold">Date</th>
                   <th scope="col" className="py-2 pr-4 font-bold">Returns</th>
                   <th scope="col" className="tabular py-2 pr-4 text-right font-bold">Min</th>
@@ -240,7 +218,7 @@ export function PlayerScreen() {
                     <Fragment key={i}>
                     {newSeason && (
                       <tr className="border-b border-divider">
-                        <td colSpan={8} className="bg-panel py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+                        <td colSpan={8} className="bg-panel py-1.5 text-[12px] font-bold text-text-faint">
                           {m.season} season
                         </td>
                       </tr>
@@ -272,12 +250,12 @@ export function PlayerScreen() {
 
       {(p.analyst ?? []).length > 0 && (
         <div className="border-t border-divider px-10 py-8">
-          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">What the analyst saw</div>
+          <div className="mb-1 text-[13px] font-bold text-text-faint">What the analyst saw</div>
           <p className="mb-4 max-w-3xl text-[13px] text-text-faint">Measured from each match&rsquo;s shots, goals and substitutions. Where a finding rests on a signal, the tag says whether that signal carries to the next match.</p>
           <div className="space-y-5">
             {(p.analyst ?? []).map((m) => (
               <div key={m.match_id}>
-                <Link to={`/match/${m.match_id}`} className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-muted hover:text-pitch-green">
+                <Link to={`/match/${m.match_id}`} className="text-[12px] font-bold text-text-muted hover:text-pitch-green">
                   {m.home} {m.score[0]}-{m.score[1]} {m.away}
                 </Link>
                 <div className="mt-1.5 space-y-px bg-divider">
@@ -287,7 +265,7 @@ export function PlayerScreen() {
                       {f.inferred && <p className="mt-0.5 text-[13px] text-text-muted">{f.inferred}</p>}
                       {f.reliability && (
                         <p className="mt-1 text-[12px] text-text-faint">
-                          <span className="font-bold uppercase tracking-[0.1em]">{f.reliability.verdict}</span> · {f.reliability.label}
+                          <span className="font-bold">{f.reliability.verdict}</span> · {f.reliability.label}
                           {f.reliability.r !== null ? ` (r ${f.reliability.r >= 0 ? '+' : ''}${f.reliability.r.toFixed(2)})` : ''} · {f.confidence} confidence
                         </p>
                       )}
@@ -303,7 +281,7 @@ export function PlayerScreen() {
       {/* PRICE - the FPL market's own read on this player over time. */}
       {p.price_history.length > 1 && (
         <div className="border-t border-divider px-10 py-8">
-          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Price</div>
+          <div className="mb-3 text-[13px] font-bold text-text-faint">Price</div>
           <Chart
             type="line"
             height={180}

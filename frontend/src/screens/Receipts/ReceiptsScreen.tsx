@@ -49,7 +49,7 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
         const negative = (r.value ?? 0) < 0
         return (
           <div key={r.label} className="flex items-center gap-3">
-            <div className="w-20 shrink-0 text-[12px] uppercase tracking-wide text-text-faint">{r.label}</div>
+            <div className="w-20 shrink-0 text-[12px] text-text-faint">{r.label}</div>
             <div className="relative h-4 flex-1">
               {/* the do-nothing line - everything is read against this */}
               <div className="absolute left-1/2 top-0 h-full w-px bg-divider" />
@@ -63,8 +63,8 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
               )}
             </div>
             <div className={`tabular w-14 text-right text-sm font-semibold ${
-              r.value === null ? 'text-text-faint' : r.value < 0 ? 'text-alert-red' : 'text-text'
-            }`}>
+ r.value === null ? 'text-text-faint' : r.value < 0 ? 'text-alert-red' : 'text-text'
+ }`}>
               {r.value === null ? '—' : `${r.value > 0 ? '+' : ''}${r.value}`}
             </div>
           </div>
@@ -72,7 +72,7 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
       })}
       <div className="flex items-center gap-3 pt-0.5">
         <div className="w-20 shrink-0" />
-        <div className="flex-1 text-center text-[11px] uppercase tracking-wide text-text-faint">
+        <div className="flex-1 text-center text-[12px] text-text-faint">
           vs doing nothing ({row.roll_points ?? '—'} pts)
         </div>
         <div className="w-14" />
@@ -88,7 +88,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <div className="tabular text-lg font-bold text-text">GW{row.event}</div>
         {row.your_chip_label && (
-          <div className="border border-broadcast-gold px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide text-broadcast-gold">
+          <div className="border border-broadcast-gold px-2 py-0.5 text-[12px] font-bold text-broadcast-gold">
             you played {row.your_chip_label}
           </div>
         )}
@@ -104,7 +104,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
         {row.delta_vs_you !== null && (
           <div className={`tabular ml-auto text-lg font-bold ${beat ? 'text-broadcast-blue' : 'text-pitch-green'}`}>
             {row.delta_vs_you > 0 ? '+' : ''}{row.delta_vs_you}
-            <span className="ml-1 text-[12px] font-normal uppercase tracking-wide text-text-faint">
+            <span className="ml-1 text-[12px] font-normal text-text-faint">
               {beat ? 'it would have gained' : 'you were ahead'}
             </span>
           </div>
@@ -189,22 +189,22 @@ export function ReceiptsScreen() {
         <div className="flex flex-wrap items-baseline gap-x-12 gap-y-5">
           <div>
             <div className="tabular text-6xl font-bold leading-none text-pitch-green">{h.your_total}</div>
-            <div className="mt-2 text-[13px] uppercase tracking-wide text-text-faint">your squad</div>
+            <div className="mt-2 text-[13px] text-text-faint">your squad</div>
           </div>
           <div>
             <div className="tabular text-6xl font-bold leading-none text-broadcast-blue">{h.optimizer_total ?? '—'}</div>
-            <div className="mt-2 text-[13px] uppercase tracking-wide text-text-faint">its squad</div>
+            <div className="mt-2 text-[13px] text-text-faint">its squad</div>
           </div>
           <div>
             <div className="tabular text-4xl font-bold leading-none text-text-faint">{h.roll_total ?? '—'}</div>
-            <div className="mt-2 text-[13px] uppercase tracking-wide text-text-faint">doing nothing</div>
+            <div className="mt-2 text-[13px] text-text-faint">doing nothing</div>
           </div>
           {h.delta !== null && (
             <div className="ml-auto text-right">
               <div className={`tabular text-5xl font-bold leading-none ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
                 {h.delta > 0 ? '+' : ''}{h.delta}
               </div>
-              <div className="mt-2 max-w-[16rem] text-[13px] uppercase tracking-wide text-text-faint">
+              <div className="mt-2 max-w-[16rem] text-[13px] text-text-faint">
                 {behind ? 'points it would have COST you' : 'points it would have gained you'}
               </div>
             </div>
@@ -221,7 +221,7 @@ export function ReceiptsScreen() {
           reasons the advice goes unused and they are all measurable. */}
       {data.flags && (
         <div className="border-b border-divider bg-raised/40 px-10 py-6">
-          <div className="mb-3 text-[13px] font-bold uppercase tracking-wide text-alert-red">
+          <div className="mb-3 text-[13px] font-bold text-alert-red">
             Why the single-swap engine was not followed
           </div>
           <ul className="space-y-2 text-xs text-text-muted">
@@ -253,7 +253,7 @@ export function ReceiptsScreen() {
           transfer bar is built from comes from, drawn against real dots. */}
       {data.calibration && data.calibration.n > 0 && (
         <div className="border-t border-divider px-10 py-8">
-          <div className="mb-1 text-[13px] font-bold uppercase tracking-wide text-broadcast-gold">Model vs reality</div>
+          <div className="mb-1 text-[13px] font-bold text-broadcast-gold">Model vs reality</div>
           <div className="mb-6 max-w-3xl text-xs text-text-muted">{data.calibration.note}</div>
           <ModelVsReality block={data.calibration} />
         </div>
@@ -261,17 +261,17 @@ export function ReceiptsScreen() {
 
       {/* METHOD + the correction, on the same page as the numbers. */}
       <div className="border-t border-divider bg-raised/40 px-10 py-8">
-        <div className="mb-2 text-[13px] font-bold uppercase tracking-wide text-broadcast-gold">How this is measured</div>
+        <div className="mb-2 text-[13px] font-bold text-broadcast-gold">How this is measured</div>
         <div className="max-w-3xl text-xs leading-relaxed text-text-muted">{data.method}</div>
         {data.correction && (
           <>
-            <div className="mb-2 mt-6 text-[13px] font-bold uppercase tracking-wide text-alert-red">Correction</div>
+            <div className="mb-2 mt-6 text-[13px] font-bold text-alert-red">Correction</div>
             <div className="max-w-3xl text-xs leading-relaxed text-text-muted">{data.correction}</div>
           </>
         )}
         {data.internal_consistency && data.internal_consistency.length > 0 && (
           <div className="mt-6">
-            <div className="mb-2 text-[13px] font-bold uppercase tracking-wide text-text-faint">
+            <div className="mb-2 text-[13px] font-bold text-text-faint">
               Internal consistency (a different question)
             </div>
             <div className="flex flex-wrap gap-6 text-xs text-text-muted">

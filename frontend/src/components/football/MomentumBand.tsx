@@ -62,8 +62,8 @@ export function MomentumBand({ points, markers = [], maxMinuteOverride, isLive =
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Momentum</span>
-        <span className="text-[11px] uppercase tracking-wide text-text-faint">to {maxMinute}&prime;</span>
+        <span className="text-[12px] font-bold text-text-faint">Momentum</span>
+        <span className="text-[12px] text-text-faint">to {maxMinute}&prime;</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-[150px] w-full" role="img" aria-label="Match momentum: home pressure above the line, away below, with real goal/card markers">
         <polygon points={homeArea} fill="var(--pitch-green)" opacity="0.9" />
@@ -96,7 +96,7 @@ export function MomentumBand({ points, markers = [], maxMinuteOverride, isLive =
           )
         })}
       </svg>
-      <div className="mt-1.5 flex justify-between text-[12px] font-semibold uppercase tracking-wide text-text-faint">
+      <div className="mt-1.5 flex justify-between text-[12px] font-semibold text-text-faint">
         <span>0&prime;</span>
         {htX !== null && <span>HT</span>}
         <span>{isLive ? `${points[points.length - 1].minute}′` : 'FT'}</span>

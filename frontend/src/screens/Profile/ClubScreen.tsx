@@ -5,11 +5,8 @@ import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchClubProfile } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import { SeasonDnaHelix } from '@/components/three/SeasonDnaHelix'
-import { XgMountainRange } from '@/components/three/XgMountainRange'
-import { TrophyShelf3D } from '@/components/three/TrophyShelf3D'
+import { MatchXgBars } from '@/components/football/MatchXgBars'
 import { ClubPitches } from '@/components/football/ClubPitches'
-import { HONOURS } from '@/lib/honours'
 import type { ClubResultRow } from '@/lib/types'
 
 const RESULT_FILL: Record<string, string> = {
@@ -17,13 +14,6 @@ const RESULT_FILL: Record<string, string> = {
   D: 'bg-raised text-text-muted',
   L: 'bg-alert-red text-alert-red-ink',
 }
-
-// SeasonDnaHelix's own spiral advances 2*pi/7 radians per real match - below
-// this many points it hasn't completed enough of a turn to read as a real
-// coil (confirmed live 2026-09-12: 3 points looked like two dots and a
-// line, not a spiral). A plain W/D/L strip stands in until there's enough
-// real season for the shape to mean something.
-const MIN_SPIRAL_MATCHES = 6
 
 function shortDate(iso: string | null) {
   if (!iso) return '—'
@@ -43,7 +33,7 @@ function ResultRow({ r }: { r: ClubResultRow }) {
       <span className={`flex size-6 shrink-0 items-center justify-center text-[13px] font-bold ${RESULT_FILL[r.result]}`}>
         {r.result}
       </span>
-      <span className="w-12 shrink-0 text-[12px] uppercase tracking-wide text-text-faint">{r.is_home ? 'Home' : 'Away'}</span>
+      <span className="w-12 shrink-0 text-[12px] text-text-faint">{r.is_home ? 'Home' : 'Away'}</span>
       <span className="flex min-w-0 flex-1 items-center gap-2">
         {crest && <img src={crest} alt="" className="h-5 w-5 shrink-0" />}
         <span className="truncate text-sm font-bold text-text">{r.opponent_short}</span>
@@ -57,8 +47,8 @@ function ResultRow({ r }: { r: ClubResultRow }) {
       {outperformed !== null && (
         <span
           className={`tabular w-14 shrink-0 text-right text-xs font-bold ${
-            outperformed > 0.5 ? 'text-pitch-green' : outperformed < -0.5 ? 'text-alert-red' : 'text-text-faint'
-          }`}
+ outperformed > 0.5 ? 'text-pitch-green' : outperformed < -0.5 ? 'text-alert-red' : 'text-text-faint'
+ }`}
           title="Real goal difference minus expected goal difference - did the scoreline flatter them"
         >
           {outperformed > 0 ? '+' : ''}{outperformed.toFixed(1)}
@@ -109,24 +99,20 @@ export function ClubScreen() {
   const xgMatches = chronological.filter(
     (r): r is ClubResultRow & { xg: number; xga: number } => r.xg !== null && r.xga !== null,
   )
-  const honours = HONOURS[c.code]
 
   return (
     <div className="data-in pb-16">
       <Masthead edition="Club File" title={c.name} right={<span className="text-text-faint">{p.results.length} played</span>} />
 
       <div className="relative overflow-hidden border-b border-divider">
-        <span className="ghost-watermark pointer-events-none absolute -top-14 right-4 select-none font-display text-[12rem] font-bold uppercase leading-none">
-          {c.short}
-        </span>
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
           {crest && <img src={crest} alt="" className="h-20 w-20 shrink-0" />}
           <div className="min-w-0">
-            <div className="font-display text-5xl font-bold uppercase leading-none text-text">{c.name}</div>
+            <div className="font-display text-5xl font-bold leading-none text-text">{c.name}</div>
             <div className="mt-3 flex items-center gap-2">
               {form.length > 0 && (
                 <>
-                  <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Form</span>
+                  <span className="text-[12px] font-bold text-text-faint">Form</span>
                   {form.map((r, i) => (
                     <span key={i} className={`flex size-5 items-center justify-center text-[12px] font-bold ${RESULT_FILL[r]}`}>
                       {r}
@@ -154,23 +140,6 @@ export function ClubScreen() {
           ridgelines. Two real 3D data views, not a decorative pair - each
           renders `null` (and this whole section stays hidden) with nothing
           real to draw yet. */}
-      {/* TROPHY SHELF - real major-honours counts (`lib/honours.ts`), one
-          small trophy mesh per title this club has actually won, a real
-          bare shelf when it has won nothing. Absent (not a zero shelf) for
-          any club `HONOURS` doesn't cover - a future season's promoted/
-          relegated club, never guessed at. */}
-      {honours && (
-        <div className="border-b border-divider bg-void px-10 py-7">
-          <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Trophy shelf</div>
-          <div className="mb-3 text-[13px] text-text-faint">
-            real major honours &middot; league {honours.league} &middot; FA Cup {honours.faCup} &middot; League Cup {honours.leagueCup} &middot; European {honours.european}
-          </div>
-          <div className="h-72 w-full">
-            <TrophyShelf3D honours={honours} />
-          </div>
-        </div>
-      )}
-
       <StoriesRail stories={p.stories} subject={p.club.name} />
 
       {/* THE TWO PITCHES - where they shoot, where they concede. */}
@@ -181,47 +150,25 @@ export function ClubScreen() {
       {(chronological.length > 0 || xgMatches.length > 0) && (
         <div className="grid grid-cols-1 gap-px border-b border-divider bg-divider lg:grid-cols-2">
           {chronological.length > 0 && (
-            <div className="bg-void px-10 py-7">
-              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Season shape</div>
-              <div className="mb-3 text-[13px] text-text-faint">real results this season, oldest at the base</div>
-              {chronological.length >= MIN_SPIRAL_MATCHES ? (
-                <div className="h-64 w-full">
-                  <SeasonDnaHelix matches={chronological.map((r) => ({ result: r.result, opponent_short: r.opponent_short }))} />
-                </div>
-              ) : (
-                // Real early-season honesty, not a decorative placeholder:
-                // the spiral needs enough real points to actually curve -
-                // at 1-2 matches it's just two dots and a line, which reads
-                // as broken rather than as a season shape. The plain strip
-                // reuses the exact real W/D/L colours the page's own form
-                // line already establishes, so nothing new is invented.
-                <div className="flex h-64 w-full flex-col items-center justify-center gap-3">
-                  <div className="flex gap-1.5">
-                    {chronological.map((r, i) => (
-                      <span
-                        key={i}
-                        className={`flex size-8 items-center justify-center text-sm font-bold ${RESULT_FILL[r.result]}`}
-                      >
-                        {r.result}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="max-w-xs text-center text-[13px] text-text-faint">
-                    the 3D season spiral needs a few more real matches before it reads as a real shape
-                  </p>
-                </div>
-              )}
+            <div className="bg-void px-8 py-6">
+              <div className="mb-1 font-display text-xl font-semibold text-text">Results this season</div>
+              <div className="mb-4 text-[13px] text-text-faint">oldest on the left</div>
+              <div className="flex flex-wrap gap-1.5">
+                {chronological.map((r, i) => (
+                  <span key={i} title={r.opponent_short} className={`flex size-8 items-center justify-center rounded text-sm font-bold ${RESULT_FILL[r.result]}`}>
+                    {r.result}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           {xgMatches.length > 0 && (
-            <div className="bg-void px-10 py-7">
-              <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">xG range</div>
-              <div className="mb-3 text-[13px] text-text-faint">
-                <span className="text-pitch-green">real xG for</span> vs <span className="text-alert-red">real xG against</span>, per match
+            <div className="bg-void px-8 py-6">
+              <div className="mb-1 font-display text-xl font-semibold text-text">Chances each match</div>
+              <div className="mb-4 text-[13px] text-text-faint">
+                <span className="text-pitch-green">xG created</span> against <span className="text-alert-red">xG allowed</span>
               </div>
-              <div className="h-64 w-full">
-                <XgMountainRange matches={xgMatches.map((r) => ({ xg: r.xg, xga: r.xga, opponent_short: r.opponent_short }))} />
-              </div>
+              <MatchXgBars matches={xgMatches.map((r) => ({ xg: r.xg, xga: r.xga, opponent_short: r.opponent_short }))} />
             </div>
           )}
         </div>
@@ -232,7 +179,7 @@ export function ClubScreen() {
             0.3 xG and a 1-0 off 2.4 xG are different football. */}
         <div className="bg-void px-10 py-8">
           <div className="mb-3 flex flex-wrap items-baseline gap-3">
-            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Results</span>
+            <span className="text-[13px] font-bold text-text-faint">Results</span>
             <span className="text-[13px] text-text-faint">score vs xG &middot; right column = how much the scoreline beat the xG</span>
           </div>
           {p.results.length === 0 ? (
@@ -246,14 +193,14 @@ export function ClubScreen() {
             opens their real match log. */}
         <div className="bg-void px-10 py-8">
           <div className="mb-3 flex flex-wrap items-baseline gap-3">
-            <span className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Squad</span>
+            <span className="text-[13px] font-bold text-text-faint">Squad</span>
             <span className="text-[13px] text-text-faint">real recorded season totals &middot; most productive first</span>
           </div>
           <div className="max-h-[36rem] overflow-y-auto">
             <table className="w-full text-left text-sm">
               <caption className="sr-only">{c.name} squad, FPL-registered players</caption>
               <thead className="sticky top-0 bg-void">
-                <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
+                <tr className="border-b border-divider text-[12px] text-text-faint">
                   <th scope="col" className="py-2 pr-3 font-bold">Player</th>
                   <th scope="col" className="py-2 pr-3 font-bold">Pos</th>
                   <th scope="col" className="tabular py-2 pr-3 text-right font-bold">Price</th>
@@ -270,11 +217,11 @@ export function ClubScreen() {
                     <th scope="row" className="py-1.5 pr-3 text-left font-bold">
                       <Link to={`/player/${s.player_id}`} className="flex items-center gap-2 text-text hover:text-pitch-green">
                         <span className="truncate">{s.name}</span>
-                        {s.is_mine && <span className="bg-broadcast-gold px-1 text-[8px] font-bold text-broadcast-gold-ink">MINE</span>}
+                        {s.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
                       </Link>
                     </th>
                     <td className="py-1.5 pr-3">
-                      <span className="bg-raised px-1.5 py-0.5 text-[11px] font-bold text-text-muted">{s.position}</span>
+                      <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
                     </td>
                     <td className="tabular py-1.5 pr-3 text-right text-text-muted">
                       {s.price_m !== null ? `£${s.price_m.toFixed(1)}m` : '—'}

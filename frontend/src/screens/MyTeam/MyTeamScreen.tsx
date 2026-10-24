@@ -3,15 +3,15 @@ import { Link } from 'react-router-dom'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
-import { crestUrl, fetchMyTeamPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { crestUrl, fetchMyTeamPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/ScreenStates'
 import { FixtureRun, NextFixture } from '@/components/football/FixtureRun'
 import { pressureInk, runPressure } from '@/lib/fdr'
 import { PitchMarkings } from '@/components/football/PitchMarkings'
-import { Pitch3D, type Pitch3DPlayer } from '@/components/three/Pitch3D'
 import type { ActionSquadPlayer, FixtureContext, SquadPlayer } from '@/lib/types'
+import { plain } from '@/lib/text'
 
 const CHIP_DISPLAY_NAME: Record<string, string> = {
   wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
@@ -36,7 +36,7 @@ function GhostInTile({ pl }: { pl: ActionSquadPlayer }) {
       </div>
       <div className="mt-1 w-full truncate text-xs font-bold text-broadcast-blue">{pl.name}</div>
       <div className="tabular text-sm font-bold text-broadcast-blue">{pl.median.toFixed(1)}</div>
-      <span className="mt-0.5 bg-broadcast-blue px-1 py-0.5 text-[11px] font-bold uppercase text-void">In</span>
+      <span className="mt-0.5 bg-broadcast-blue px-1 py-0.5 text-[12px] font-bold text-void">In</span>
     </div>
   )
 }
@@ -119,13 +119,13 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
             <div className={`tabular font-bold text-pitch-green ${big ? 'text-base' : 'text-sm'}`}>{p.median.toFixed(1)}</div>
             <NextFixture fixtures={run} className="mt-0.5" />
             {confirmedIn && (
-              <span className="mt-0.5 bg-pitch-green px-1 py-0.5 text-[11px] font-bold uppercase text-pitch-green-ink">Confirmed</span>
+              <span className="mt-0.5 bg-pitch-green px-1 py-0.5 text-[12px] font-bold text-pitch-green-ink">Confirmed</span>
             )}
             {confirmedOut && p.lineup && (
-              <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[11px] font-bold uppercase text-alert-red-ink">{p.lineup.label}</span>
+              <span className="mt-0.5 bg-alert-red px-1 py-0.5 text-[12px] font-bold text-alert-red-ink">{p.lineup.label}</span>
             )}
             {ghostOut && (
-              <span className="mt-0.5 border border-dashed border-broadcast-blue px-1 py-0.5 text-[11px] font-bold uppercase text-broadcast-blue">Out</span>
+              <span className="mt-0.5 border border-dashed border-broadcast-blue px-1 py-0.5 text-[12px] font-bold text-broadcast-blue">Out</span>
             )}
           </button>
         }
@@ -138,15 +138,15 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
         </div>
         <div className="grid grid-cols-3 gap-px bg-divider">
           <div className="bg-panel px-2 py-2 text-center">
-            <div className="text-[11px] font-bold uppercase text-text-faint">Floor</div>
+            <div className="text-[12px] font-bold text-text-faint">Floor</div>
             <div className="tabular text-sm font-bold text-text">{p.floor.toFixed(1)}</div>
           </div>
           <div className="bg-pitch-green px-2 py-2 text-center">
-            <div className="text-[11px] font-bold uppercase text-pitch-green-ink opacity-70">Median</div>
+            <div className="text-[12px] font-bold text-pitch-green-ink opacity-70">Median</div>
             <div className="tabular text-sm font-bold text-pitch-green-ink">{p.median.toFixed(1)}</div>
           </div>
           <div className="bg-panel px-2 py-2 text-center">
-            <div className="text-[11px] font-bold uppercase text-text-faint">Ceiling</div>
+            <div className="text-[12px] font-bold text-text-faint">Ceiling</div>
             <div className="tabular text-sm font-bold text-text">{p.ceiling.toFixed(1)}</div>
           </div>
         </div>
@@ -196,15 +196,15 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
             <div className="space-y-6 p-6">
               <div className="grid grid-cols-3 gap-px bg-divider">
                 <div className="bg-raised p-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Floor</div>
+                  <div className="text-[12px] font-bold text-text-faint">Floor</div>
                   <div className="tabular text-xl font-bold text-text">{player.floor.toFixed(1)}</div>
                 </div>
                 <div className="bg-pitch-green p-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-pitch-green-ink opacity-70">Median</div>
+                  <div className="text-[12px] font-bold text-pitch-green-ink opacity-70">Median</div>
                   <div className="tabular text-xl font-bold text-pitch-green-ink">{player.median.toFixed(1)}</div>
                 </div>
                 <div className="bg-raised p-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Ceiling</div>
+                  <div className="text-[12px] font-bold text-text-faint">Ceiling</div>
                   <div className="tabular text-xl font-bold text-text">{player.ceiling.toFixed(1)}</div>
                 </div>
               </div>
@@ -240,7 +240,7 @@ function PlayerDetailSheet({ player, onClose }: { player: SquadPlayer | null; on
                 )}
                 <Link
                   to={`/player/${player.player_id}`}
-                  className="mt-2 block bg-raised px-3 py-2 text-center text-[13px] font-bold uppercase tracking-[0.1em] text-text hover:bg-divider"
+                  className="mt-2 block bg-raised px-3 py-2 text-center text-[13px] font-bold text-text hover:bg-divider"
                 >
                   Open full player file
                 </Link>
@@ -278,7 +278,6 @@ export function MyTeamScreen() {
   // object reference would freeze the detail sheet on stale data forever
   // once a poll refresh replaces the squad with new objects).
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [view3D, setView3D] = useState(false)
   const [showGhost, setShowGhost] = useState(false)
   // Ghost XI (2026-09-10): the SAME `action_squad` CommandScreen already
   // renders (the resulting squad from `optimization/decision_analysis.py`'s
@@ -333,7 +332,6 @@ export function MyTeamScreen() {
     return <div className="p-10 text-text-muted">{p.error ?? 'No squad to show yet.'}</div>
   }
 
-  const star = p.positions?.flatMap((pos) => pos.players).find((pl) => pl.tier === 'CORE') ?? p.positions?.[0]?.players[0]
   const allSquadPlayers = [...(p.positions?.flatMap((pos) => pos.players) ?? []), ...(p.bench ?? [])]
   const selected = selectedId !== null ? (allSquadPlayers.find((pl) => pl.player_id === selectedId) ?? null) : null
   // Real teamsheet-drop moment: at least one squad player's own match has a
@@ -364,56 +362,35 @@ export function MyTeamScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead edition="Squad Report" title={p.bar.pitch_heading ?? 'My Team'} />
+      <Masthead />
 
-      {/* HERO - one unified band, not two stacked sections: a compact facts
-          column facing the real star-player moment, a single oversized
-          ghost numeral running behind both. */}
-      <div className="relative overflow-hidden border-b border-divider">
-        <span className="ghost-watermark pointer-events-none absolute -right-6 -top-10 select-none font-display text-[13rem] font-bold uppercase leading-none">
-          SQUAD
-        </span>
-        <div className="relative grid grid-cols-1 gap-8 px-10 py-8 lg:grid-cols-[auto_1fr]">
-          <div className="flex flex-wrap gap-x-8 gap-y-4 lg:flex-col lg:flex-nowrap lg:gap-y-5 lg:border-r lg:border-divider lg:pr-8">
-            <div>
-              <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Squad value</div>
-              <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.squad_value_m.toFixed(1)}m</div>
-            </div>
-            <div>
-              <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Bank</div>
-              <div className="tabular font-display text-2xl font-bold text-text">£{p.bar.bank_m.toFixed(1)}m</div>
-            </div>
-            {p.bar.formation && (
-              <div>
-                <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Formation</div>
-                <div className="font-display text-2xl font-bold text-text">{p.bar.formation}</div>
-              </div>
-            )}
-            {p.bar.captain_name && (
-              <div>
-                <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Captain</div>
-                <div className="font-display text-2xl font-bold text-broadcast-gold">{p.bar.captain_name}</div>
-              </div>
-            )}
-            {p.bar.vice_name && (
-              <div>
-                <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Vice</div>
-                <div className="font-display text-2xl font-bold text-text-muted">{p.bar.vice_name}</div>
-              </div>
-            )}
-          </div>
-
-          {star && (
-            <div className="flex items-end gap-8">
-              <PlayerPhoto code={star.photo_code} teamCode={star.team_code} isGkp={star.position === 'GKP'} className="h-52 w-40" />
-              <div>
-                <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Top projected this GW</div>
-                <div className="font-display text-5xl font-bold uppercase text-text">{star.name}</div>
-                <div className="tabular mt-1 text-3xl font-bold text-pitch-green">{star.median.toFixed(1)} xP</div>
-              </div>
-            </div>
-          )}
+      <div className="grid grid-cols-2 gap-x-8 gap-y-5 px-8 py-6 md:grid-cols-5">
+        <div>
+          <div className="text-[13px] text-text-faint">Squad value</div>
+          <div className="tabular mt-0.5 font-display text-2xl font-semibold text-text">£{p.bar.squad_value_m.toFixed(1)}m</div>
         </div>
+        <div>
+          <div className="text-[13px] text-text-faint">In the bank</div>
+          <div className="tabular mt-0.5 font-display text-2xl font-semibold text-text">£{p.bar.bank_m.toFixed(1)}m</div>
+        </div>
+        {p.bar.formation && (
+          <div>
+            <div className="text-[13px] text-text-faint">Formation</div>
+            <div className="mt-0.5 font-display text-2xl font-semibold text-text">{p.bar.formation}</div>
+          </div>
+        )}
+        {p.bar.captain_name && (
+          <div>
+            <div className="text-[13px] text-text-faint">Captain</div>
+            <div className="mt-0.5 font-display text-2xl font-semibold text-broadcast-gold">{p.bar.captain_name}</div>
+          </div>
+        )}
+        {p.bar.vice_name && (
+          <div>
+            <div className="text-[13px] text-text-faint">Vice-captain</div>
+            <div className="mt-0.5 font-display text-2xl font-semibold text-text-muted">{p.bar.vice_name}</div>
+          </div>
+        )}
       </div>
 
       {/* TACTICAL BOARD - the pitch (+ bench, real substitutes standing by)
@@ -428,7 +405,7 @@ export function MyTeamScreen() {
               to="/"
               className="mb-4 block border-l-4 border-broadcast-gold bg-panel px-4 py-3 hover:bg-raised"
             >
-              <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold">This is last week&apos;s lineup</span>
+              <span className="text-[13px] font-semibold text-broadcast-gold">Your lineup is not the best one from this squad</span>
               <span className="mt-1 block text-sm text-text-muted">
                 Set properly, the same fifteen are worth{' '}
                 <span className="tabular font-bold text-pitch-green">+{doctor.xp_gain.toFixed(1)} xP</span> in GW{plan?.event}: start{' '}
@@ -445,7 +422,7 @@ export function MyTeamScreen() {
           )}
           <div className="mb-3 flex items-center justify-between">
             {lineupsConfirmed ? (
-              <div className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-pitch-green">
+              <div className="flex items-center gap-1.5 text-[12px] font-bold text-pitch-green">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-pitch-green" aria-hidden="true" />
                 Lineups confirmed
               </div>
@@ -453,43 +430,23 @@ export function MyTeamScreen() {
               <span />
             )}
             <div className="flex gap-2">
-              {hasGhostDivergence && !view3D && (
+              {hasGhostDivergence && (
                 <button
                   type="button"
                   onClick={() => setShowGhost((v) => !v)}
                   title="Overlay the eleven you would field after this week's planned transfers - the same squad COMMAND's week plan resolves to, never a second competing suggestion."
-                  className={`px-3 py-1.5 text-[12px] font-bold uppercase tracking-wide ${showGhost ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
+                  className={`px-3 py-1.5 text-[12px] font-bold ${showGhost ? 'bg-broadcast-blue text-void' : 'bg-raised text-text-muted hover:text-text'}`}
                 >
-                  {showGhost ? 'Hide ghost XI' : 'Ghost XI: after the week plan'}
+                  {showGhost ? 'Hide planned changes' : 'Show the plan\'s changes'}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setView3D((v) => !v)}
-                className={`px-3 py-1.5 text-[12px] font-bold uppercase tracking-wide ${view3D ? 'bg-pitch-green text-pitch-green-ink' : 'bg-raised text-text-muted hover:text-text'}`}
-              >
-                {view3D ? 'Flat view' : '3D view'}
-              </button>
             </div>
           </div>
-          {view3D ? (
-            <div className="h-[28rem] w-full border-2 border-divider">
-              <Pitch3D
-                players={(p.positions ?? []).flatMap((pos, rowIdx) =>
-                  pos.players.map((pl, slot): Pitch3DPlayer => ({
-                    playerId: pl.player_id, name: pl.name, row: rowIdx, rowCount: pos.players.length, slot,
-                    isCaptain: pl.is_captain,
-                    crestUrl: crestUrl(pl.team_code),
-                  })),
-                )}
-              />
-            </div>
-          ) : (
             <div className="pitch-surface relative flex flex-col justify-between gap-7 px-6 py-14">
               <PitchMarkings />
               {p.positions?.map((pos) => (
                 <div key={pos.position} className="relative flex items-center gap-4">
-                  <span className="w-9 shrink-0 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+                  <span className="w-9 shrink-0 text-right text-[12px] font-bold text-text-faint">
                     {pos.label}
                   </span>
                   <div className="flex flex-1 flex-wrap justify-center gap-6">
@@ -508,11 +465,10 @@ export function MyTeamScreen() {
                 </div>
               ))}
             </div>
-          )}
 
           {p.bench && p.bench.length > 0 && (
             <div className="mt-6 flex items-center gap-6 border-t border-divider pt-5">
-              <div className="shrink-0 text-[12px] font-bold uppercase tracking-wide text-text-faint">Bench</div>
+              <div className="shrink-0 text-[12px] font-bold text-text-faint">Bench</div>
               <div className="flex flex-1 flex-wrap gap-x-6 gap-y-4 opacity-70">
                 {p.bench.map((pl) => (
                   <PlayerTile key={pl.player_id} p={pl} dim fixtures={p.fixtures} onSelect={(pl) => setSelectedId(pl.player_id)} />
@@ -526,11 +482,11 @@ export function MyTeamScreen() {
             pressure, and risk each get their own real visual treatment,
             stacked to run the full height beside the pitch. */}
         <aside className="bg-panel px-7 py-10">
-          <div className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Squad signals</div>
+          <div className="text-[13px] font-bold text-text-faint">About this squad</div>
 
           {p.strong_link && (
             <div className="mt-5 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold uppercase tracking-wide text-pitch-green">Carrying</div>
+              <div className="text-[12px] font-bold text-pitch-green">Best projected</div>
               <div className="mt-1 font-display text-2xl font-bold text-text">{p.strong_link.name}</div>
               <div className="tabular text-sm text-pitch-green">{p.strong_link.median.toFixed(1)} xP &middot; {p.strong_link.team_short}</div>
             </div>
@@ -538,7 +494,7 @@ export function MyTeamScreen() {
 
           {p.weak_links && p.weak_links.length > 0 && (
             <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold uppercase tracking-wide text-alert-red">Transfer pressure</div>
+              <div className="text-[12px] font-bold text-alert-red">Weakest starters</div>
               <div className="mt-3 divide-y divide-divider">
                 {p.weak_links.map((w) => (
                   <div key={w.name} className="flex items-baseline justify-between py-2.5">
@@ -552,13 +508,13 @@ export function MyTeamScreen() {
 
           {p.analyst && p.analyst.length > 0 && (
             <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">What the analyst saw</div>
-              <div className="mt-0.5 text-[12px] text-text-faint">latest finding per player, most worrying first</div>
+              <div className="text-[12px] font-bold text-text-faint">From the latest matches</div>
+              <div className="mt-0.5 text-[12px] text-text-faint">one note per player, the most worrying first</div>
               <div className="mt-3 space-y-3">
-                {p.analyst.map((n) => (
+                {p.analyst.slice(0, 5).map((n) => (
                   <Link key={n.player_id} to={`/match/${n.match_id}`} className={`block border-l-2 pl-3 hover:bg-raised/40 ${n.direction === 'NEGATIVE' ? 'border-alert-red' : n.direction === 'WATCH' ? 'border-broadcast-gold' : n.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
-                    <div className="text-sm font-bold text-text">{n.name ?? 'Player'} <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{n.match}</span></div>
-                    <p className="text-[13px] leading-snug text-text-muted">{n.observed}</p>
+                    <div className="text-sm font-bold text-text">{n.name ?? 'Player'} <span className="text-[12px] font-bold text-text-faint">{n.match}</span></div>
+                    <p className="text-[13px] leading-snug text-text-muted">{plain(n.observed)}</p>
                   </Link>
                 ))}
               </div>
@@ -567,7 +523,7 @@ export function MyTeamScreen() {
 
           {p.risks && p.risks.length > 0 && (
             <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold uppercase tracking-wide text-broadcast-gold">Squad risks</div>
+              <div className="text-[12px] font-bold text-broadcast-gold">Things to watch</div>
               <div className="mt-3 space-y-3">
                 {p.risks.map((r, i) => (
                   <p key={i} className="border-l border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
@@ -584,8 +540,8 @@ export function MyTeamScreen() {
               rail previously just ended in dead space. */}
           {p.fixtures && Object.keys(p.fixtures).length > 0 && (
             <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold uppercase tracking-wide text-text-faint">Fixture outlook</div>
-              <div className="mt-0.5 text-[12px] text-text-faint">next 5 &middot; my clubs &middot; kindest run first</div>
+              <div className="text-[12px] font-bold text-text-faint">Fixtures ahead</div>
+              <div className="mt-0.5 text-[12px] text-text-faint">next five, easiest run first</div>
               <div className="mt-3 space-y-2.5">
                 {squadClubs(p).map((c) => (
                   <div key={c.code} className="flex items-center gap-2">

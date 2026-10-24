@@ -1658,6 +1658,7 @@ export interface WeekPlanPlayer {
   player_id: number
   photo_code?: number | null
   luck?: { luck: number; z: number; actual: number; deserved: number }
+  form?: FormReading
   analyst?: { observed: string; direction: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WATCH' | null; match: string; match_id: number; confidence: 'low' | 'medium' | 'high' }
   name: string
   position: string
@@ -1678,9 +1679,47 @@ export interface WeekPlanPlayer {
   match_analysis_xp?: number
 }
 
+export interface FormReading {
+  matches: number
+  recent_xgi90: number
+  before_xgi90: number
+  ratio: number
+  recent_shots90: number
+  before_shots90: number
+  per_match_xgi: number[]
+  ratings: number[]
+  label: 'COLD' | 'COOLING' | 'STEADY' | 'HOT'
+  evidence: { bin: string; ratio: number; ci: [number, number]; n: number; sentence: string } | null
+}
+
+export interface MoveConfidence {
+  win_prob: number
+  mean_diff: number
+  sd_diff: number
+  p10: number
+  p90: number
+  sigma_in: number
+  sigma_out: number
+  trials: number
+  horizon: number
+}
+
+export interface ViewPlanPayload {
+  event: number
+  horizon: number
+  scales: Record<string, number>
+  moves: { out: { player_id: number; name: string }; into: { player_id: number; name: string }; gain: number }[]
+  declined: { out: { player_id: number; name: string }; into: { player_id: number; name: string }; gain: number }[]
+  plan_total: number
+  roll_total: number
+  gain_vs_roll: number
+  same_as_stored: boolean
+}
+
 export interface WeekPlanMove {
   out: WeekPlanPlayer
   into: WeekPlanPlayer
+  confidence?: MoveConfidence | null
   gain: number
   cost_tenths: number
   /** When to make it: a moving price says early, an open rotation call says wait for team news. */
@@ -1725,6 +1764,7 @@ export interface LineupChanges {
 }
 
 export interface WeekPlanPayload {
+  form_board?: (FormReading & { player_id: number; name: string; position: string | null })[]
   status: 'none' | 'current' | 'stale'
   stale_reasons?: string[]
   decision_id?: number

@@ -70,13 +70,13 @@ export function SignalLedger() {
   const d = state.data
   return (
     <div className="mt-10 border-t border-divider px-10 py-8">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">How much to trust a football signal</div>
+      <div className="mb-1 text-[13px] font-bold text-text-faint">How much to trust a football signal</div>
       <p className="mb-6 max-w-3xl text-sm text-text-muted">
         A finding is one match. This is how far each kind of signal has carried into the next match, measured on {d.stories} analysed matches this season and on every
         season in the history. Where a signal does not carry, the analyst marks its findings low confidence.
       </p>
 
-      <div className="grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem_4.5rem] items-end gap-x-5 border-b border-divider pb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+      <div className="grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem_4.5rem] items-end gap-x-5 border-b border-divider pb-2 text-[12px] font-bold text-text-faint">
         <span>Signal</span>
         <span className="relative block h-3">
           {[-0.3, 0, 0.1, 0.3, 0.5, 0.7].map((t) => (
@@ -90,15 +90,15 @@ export function SignalLedger() {
         <div key={m.key} className="grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem_4.5rem] items-center gap-x-5 border-b border-divider py-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-text">{m.label}</div>
-            <div className="truncate text-[11px] text-text-faint">{m.source}</div>
+            <div className="truncate text-[12px] text-text-faint">{m.source}</div>
           </div>
           <Whisker m={m} />
           <div className="tabular text-right text-[13px] text-text-muted">
             <div className="font-bold text-text">{m.r !== null ? `${m.r >= 0 ? '+' : ''}${m.r.toFixed(2)}` : '—'}</div>
-            <div className="text-[11px] text-text-faint">{m.n.toLocaleString()}</div>
+            <div className="text-[12px] text-text-faint">{m.n.toLocaleString()}</div>
           </div>
           <div className="text-right">
-            <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${VERDICT_STYLE[m.verdict]}`} title={m.implication}>{m.verdict}</span>
+            <span className={`px-1.5 py-0.5 text-[12px] font-bold ${VERDICT_STYLE[m.verdict]}`} title={m.implication}>{m.verdict}</span>
           </div>
         </div>
       ))}
@@ -109,7 +109,7 @@ export function SignalLedger() {
         <span><span className="mr-1.5 inline-block h-3 w-px bg-broadcast-gold align-middle" />the 0.10 line</span>
       </div>
 
-      <div className="mb-1 mt-10 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">What a two-match streak is worth</div>
+      <div className="mb-1 mt-10 text-[13px] font-bold text-text-faint">What a two-match streak is worth</div>
       <p className="mb-4 max-w-3xl text-sm text-text-muted">
         Next-match output against a flat season rate that already contains the streak, over {d.streak_pairs.toLocaleString()} player-matches. 1.00 means the rate already knew.
         The projection adds the share in the last column, down from a flat {Math.round(d.default_fraction * 100)}% before this was measured.
@@ -118,12 +118,12 @@ export function SignalLedger() {
         <div key={`${r.signal}-${r.direction}`} className="grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem_5.5rem] items-center gap-x-5 border-b border-divider py-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-text">{r.signal.replace(/_/g, ' ').toLowerCase()} · {r.direction.toLowerCase()}</div>
-            <div className="truncate text-[11px] text-text-faint" title={r.streak}>{r.streak}</div>
+            <div className="truncate text-[12px] text-text-faint" title={r.streak}>{r.streak}</div>
           </div>
           <Ratio row={r} />
           <div className="tabular text-right text-[13px]">
             <div className="font-bold text-text">{r.ratio !== null ? r.ratio.toFixed(2) : '—'}</div>
-            <div className="text-[11px] text-text-faint">{r.ci ? `${r.ci[0].toFixed(2)}-${r.ci[1].toFixed(2)}` : ''} · {r.n.toLocaleString()}</div>
+            <div className="text-[12px] text-text-faint">{r.ci ? `${r.ci[0].toFixed(2)}-${r.ci[1].toFixed(2)}` : ''} · {r.n.toLocaleString()}</div>
           </div>
           <div className="tabular text-right text-[13px] font-bold text-broadcast-gold">{r.direction === 'NEGATIVE' ? '-' : '+'}{Math.round(r.applied_fraction * 100)}%</div>
         </div>

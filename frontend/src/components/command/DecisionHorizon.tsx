@@ -14,7 +14,7 @@ export function DecisionHorizon({ checkpoint }: { checkpoint: CheckpointBlock })
   return (
     <section className="border-t border-divider bg-void px-10 py-10">
       <div className="mb-6 flex items-baseline gap-4">
-        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Decision horizon</span>
+        <span className="text-[13px] font-bold text-text-faint">Decision horizon</span>
         <span className="tabular font-display text-4xl font-bold text-pitch-green">
           {lastEdge >= 0 ? '+' : ''}
           {lastEdge.toFixed(1)}pts
@@ -56,7 +56,7 @@ export function DecisionHorizon({ checkpoint }: { checkpoint: CheckpointBlock })
                   style={{ height: `${barH}px` }}
                 />
               </div>
-              <div className="w-full border-t border-divider pt-2 text-center text-[12px] font-bold uppercase tracking-wide text-text-faint">
+              <div className="w-full border-t border-divider pt-2 text-center text-[12px] font-bold text-text-faint">
                 {h} GW
               </div>
             </div>

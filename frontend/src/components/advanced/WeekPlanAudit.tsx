@@ -18,20 +18,17 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
   const maxGain = Math.max(...audit.moves.map((m) => m.stress?.gain_with_others ?? m.gain), 1)
 
   return (
-    <section className="border-b border-divider bg-void px-10 py-8">
-      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
-        <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">GW{audit.event} week plan, checked</span>
-        <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-text-faint">
-          decision #{audit.decision_id} &middot; solved {relativeTime(audit.computed_at) ?? '—'}
-          {audit.solver && (
-            <>
-              {' '}
-              &middot; {audit.solver.proven_optimal ? 'proven best plan' : 'best found, not proven'} over {audit.solver.horizon} GW &middot;{' '}
-              {audit.solver.pool_size} players considered
-            </>
-          )}
+    <section className="px-6 pb-6 pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-5 gap-y-1">
+        <h2 className="font-display text-xl font-semibold text-text">How fragile is the plan?</h2>
+        <span className="text-[13px] text-text-faint">
+          GW{audit.event} plan, solved {relativeTime(audit.computed_at) ?? '—'}
+          {audit.solver && <> &middot; {audit.solver.proven_optimal ? 'the best plan found' : 'best found within the time limit'}</>}
         </span>
       </div>
+      <p className="mt-1 max-w-3xl text-[14px] leading-snug text-text-muted">
+        Each move is priced again with the player coming in delivering only half of what we project. A move that stops paying for itself at that point is a judgement call, not a certainty.
+      </p>
 
       {audit.stale_reasons.length > 0 && (
         <div className="mt-3 max-w-2xl border-l-4 border-alert-red bg-panel px-4 py-2 text-sm text-text-muted">
@@ -46,13 +43,13 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
           <table className="w-full min-w-[56rem] text-left text-sm">
             <caption className="sr-only">Each planned move and what it is worth if the player coming in disappoints</caption>
             <thead>
-              <tr className="border-b border-divider text-[12px] uppercase tracking-[0.1em] text-text-faint">
-                <th scope="col" className="py-2 pr-4 font-bold">Move</th>
-                <th scope="col" className="py-2 pr-4 text-right font-bold">xP next GW</th>
-                <th scope="col" className="py-2 pr-4 text-right font-bold">Solio</th>
-                <th scope="col" className="py-2 pr-4 font-bold">Worth, with the other moves made</th>
-                <th scope="col" className="py-2 pr-4 text-right font-bold">If he returns half</th>
-                <th scope="col" className="py-2 text-right font-bold">Stops clearing {audit.min_move_gain} if he returns</th>
+              <tr className="border-b border-divider text-[12px] text-text-faint">
+                <th scope="col" className="py-2 pr-4 font-medium">Move</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium">xP next GW</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium">Solio says</th>
+                <th scope="col" className="py-2 pr-4 font-medium">Worth, alongside the other moves</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium">If he delivers half</th>
+                <th scope="col" className="py-2 text-right font-medium">Stops paying off if he falls short by</th>
               </tr>
             </thead>
             <tbody>
@@ -62,11 +59,11 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
                   <tr key={m.into_id} className="border-b border-divider align-middle">
                     <th scope="row" className="py-3 pr-4 text-left">
                       <span className="text-text-muted">{m.out}</span> <span aria-hidden className="text-text-faint">&rarr;</span>{' '}
-                      <Link to={`/player/${m.into_id}`} className="font-display text-lg font-bold uppercase text-text hover:text-pitch-green">
+                      <Link to={`/player/${m.into_id}`} className="font-display text-lg font-bold text-text hover:text-pitch-green">
                         {m.into}
                       </Link>
                       {m.start_percent_out !== null && m.start_percent_out < 70 && (
-                        <span className="ml-2 text-[12px] font-bold uppercase text-broadcast-gold">{m.out} {m.start_percent_out}% to start</span>
+                        <span className="ml-2 text-[12px] font-bold text-broadcast-gold">{m.out} {m.start_percent_out}% to start</span>
                       )}
                     </th>
                     <td className="tabular py-3 pr-4 text-right text-text-muted">
@@ -95,7 +92,7 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
                       {m.stress
                         ? m.stress.breakeven_drop_pct === null
                           ? 'more than half'
-                          : `${m.stress.breakeven_drop_pct.toFixed(0)}% less than projected`
+                          : `${m.stress.breakeven_drop_pct.toFixed(0)}% of the projection`
                         : '—'}
                     </td>
                   </tr>
@@ -110,12 +107,11 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
         {audit.model_mae !== null
           ? `The model's own measured error is ${audit.model_mae.toFixed(1)} points per player per gameweek, so a player returning a fifth less than projected is ordinary. `
           : 'There are too few settled predictions to measure the model\'s own error yet. '}
-        A move that stops clearing the bar at that point is a margin call, not a certainty. The last column is interpolated between the two
-        solves, not a third one.
+        The last column is interpolated between the two solves, not a third one.
       </p>
 
       <div className="mt-6 border-t border-divider pt-4">
-        <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">What the plan assumes</div>
+        <div className="mb-2 text-[14px] font-semibold text-text">What the plan assumes</div>
         <ul className="max-w-3xl list-disc space-y-1.5 pl-5 text-sm text-text-muted">
           {audit.assumptions.map((a) => (
             <li key={a}>{a}</li>

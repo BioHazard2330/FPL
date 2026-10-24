@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Panel } from '@/components/ui/kit'
 import type { WeekPlanPayload } from '@/lib/types'
 
 /** WHO WEARS THE ARMBAND, WEEK BY WEEK.
@@ -13,15 +14,14 @@ export function CaptainLadder({ plan }: { plan: WeekPlanPayload }) {
   const top = Math.max(...ladder.flatMap((w) => w.picks.map((p) => p.xp)), 1)
   const lead = ladder.map((w) => w.picks[0]?.player_id)
   return (
-    <section className="bg-panel px-10 py-10">
-      <div className="mb-1 text-[13px] font-bold uppercase tracking-[0.15em] text-text-faint">Armband ladder</div>
-      <p className="mb-6 max-w-3xl text-sm text-text-muted">
-        Top three projected points per gameweek for the squad this plan leaves you with. Ranked by projection alone: this week the armband rule can prefer a close second.
-      </p>
-      <div className="grid gap-px bg-divider" style={{ gridTemplateColumns: `repeat(${ladder.length}, minmax(0, 1fr))` }}>
+    <Panel
+      title="Who wears the armband, week by week"
+      sub="The top three projections for each coming gameweek with the squad this plan leaves you. A name that tops every column is one to build around; one that leads once and drops is a one-week answer."
+    >
+      <div className="grid gap-px overflow-hidden rounded-lg bg-divider" style={{ gridTemplateColumns: `repeat(${ladder.length}, minmax(0, 1fr))` }}>
         {ladder.map((w, wi) => (
           <div key={w.event} className="bg-void px-3 pb-3 pt-3">
-            <div className="mb-2 font-display text-lg font-bold text-text-faint">GW{w.event}</div>
+            <div className="mb-2 font-display text-base font-semibold text-text-faint">GW{w.event}</div>
             {w.picks.map((p, i) => {
               const repeat = lead.filter((id) => id === p.player_id).length
               return (
@@ -36,7 +36,7 @@ export function CaptainLadder({ plan }: { plan: WeekPlanPayload }) {
                     <div className={`bar-draw h-full ${i === 0 ? 'bg-pitch-green' : 'bg-text-faint'}`} style={{ width: `${(p.xp / top) * 100}%` }} />
                   </div>
                   {i === 0 && repeat > 1 && wi === lead.indexOf(p.player_id) && (
-                    <div className="mt-0.5 font-mono text-[11px] uppercase text-text-faint">leads {repeat} of {ladder.length}</div>
+                    <div className="mt-0.5 text-[12px] text-text-faint">leads {repeat} of {ladder.length} weeks</div>
                   )}
                 </div>
               )
@@ -44,6 +44,6 @@ export function CaptainLadder({ plan }: { plan: WeekPlanPayload }) {
           </div>
         ))}
       </div>
-    </section>
+    </Panel>
   )
 }

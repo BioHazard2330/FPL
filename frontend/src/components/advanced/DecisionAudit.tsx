@@ -32,15 +32,12 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
 
   return (
     <div className="relative overflow-hidden border-b border-divider">
-      <span className="ghost-watermark pointer-events-none absolute -top-14 right-4 select-none font-display text-[12rem] font-bold uppercase leading-none">
-        AUDIT
-      </span>
 
       {/* VERDICT BAND */}
       <div className="relative flex flex-wrap items-end gap-x-10 gap-y-4 px-10 pb-6 pt-8">
         <div>
-          <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">Adversarial verdict</div>
-          <div className="font-display text-6xl font-bold uppercase leading-none text-text">{sc.final_decision ?? '—'}</div>
+          <div className="text-[12px] font-bold text-text-faint">Adversarial verdict</div>
+          <div className="font-display text-6xl font-bold leading-none text-text">{sc.final_decision ?? '—'}</div>
         </div>
         <div className="flex flex-wrap gap-x-8 gap-y-3 border-l border-divider pl-10">
           {([
@@ -50,13 +47,13 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
             ['Market evidence', sc.market_evidence],
           ] as const).map(([label, value]) => (
             <div key={label}>
-              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
-              <div className={`font-display text-xl font-bold uppercase ${grade(value)}`}>{value ?? '—'}</div>
+              <div className="text-[12px] font-bold text-text-faint">{label}</div>
+              <div className={`font-display text-xl font-bold ${grade(value)}`}>{value ?? '—'}</div>
             </div>
           ))}
         </div>
         <div className="ml-auto max-w-xs text-right">
-          <div className="font-mono text-[12px] uppercase tracking-wide text-text-faint">Audited {age ?? 'unknown'}</div>
+          <div className="text-[12px] text-text-faint">Audited {age ?? 'unknown'}</div>
           <div className="mt-1 text-[13px] leading-snug text-text-faint">
             Run <code className="font-mono text-text-muted">fpl decision-audit</code> to re-stress the current call.
           </div>
@@ -65,7 +62,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
 
       {audit.cross_check_note && (
         <div className="relative mx-10 mb-6 border-l-4 border-broadcast-gold bg-panel px-5 py-3">
-          <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-gold">Methodology conflict</span>
+          <span className="text-[12px] font-bold text-broadcast-gold">Methodology conflict</span>
           <p className="mt-1 text-sm text-text-muted">{audit.cross_check_note}</p>
           <p className="mt-1 text-[13px] italic text-text-faint">
             This cross-check is itself {age ?? 'of unknown age'} &mdash; re-run the audit before treating it as live.
@@ -76,7 +73,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
       {/* WHAT WOULD MAKE THIS WRONG - the dominant analytical content */}
       <div className="relative grid grid-cols-1 gap-px border-t border-divider bg-divider lg:grid-cols-[1fr_1fr]">
         <div className="bg-void px-10 py-7">
-          <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-alert-red">What would make this wrong</div>
+          <div className="text-[13px] font-bold text-alert-red">What would make this wrong</div>
           {audit.falsifiers.length === 0 ? (
             <p className="mt-3 text-sm text-text-muted">The audit recorded no falsifier it could state a threshold for.</p>
           ) : (
@@ -95,7 +92,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
         </div>
 
         <div className="bg-void px-10 py-7">
-          <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <div className="text-[13px] font-bold text-text-faint">
             Counterfactual stress tests
             <span className="ml-2 normal-case tracking-normal text-text-faint">
               {flipping.length} of {audit.stress_tests.length} flip the decision
@@ -107,7 +104,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
             <div className="mt-4 space-y-3">
               {flipping.map((t, i) => (
                 <div key={`f${i}`} className="border-l-4 border-alert-red bg-panel px-4 py-2.5">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-alert-red">Flips the call</span>
+                  <span className="text-[12px] font-bold text-alert-red">Flips the call</span>
                   <p className="mt-0.5 text-sm leading-snug text-text">{t.note ?? '—'}</p>
                 </div>
               ))}
@@ -130,7 +127,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
       {(sc.why_trust.length > 0 || sc.why_might_not_trust.length > 0) && (
         <div className="relative grid grid-cols-1 gap-px border-t border-divider bg-divider lg:grid-cols-2">
           <div className="bg-void px-10 py-7">
-            <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-pitch-green">Why I trust this</div>
+            <div className="text-[13px] font-bold text-pitch-green">Why I trust this</div>
             <ul className="mt-3 space-y-2">
               {sc.why_trust.map((w, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-snug text-text-muted">
@@ -141,7 +138,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
             </ul>
           </div>
           <div className="bg-void px-10 py-7">
-            <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-broadcast-gold">Why I might not</div>
+            <div className="text-[13px] font-bold text-broadcast-gold">Why I might not</div>
             <ul className="mt-3 space-y-2">
               {sc.why_might_not_trust.map((w, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-snug text-text-muted">
@@ -157,12 +154,12 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
       {/* CAUSAL CHAIN - a numbered spine, the reasoning read in order */}
       {audit.causal_chain.length > 0 && (
         <div className="relative border-t border-divider px-10 py-7">
-          <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">Causal chain</div>
+          <div className="mb-4 text-[13px] font-bold text-text-faint">Causal chain</div>
           <ol className="border-l border-divider">
             {audit.causal_chain.map((c, i) => (
               <li key={i} className="relative pb-4 pl-6 last:pb-0">
                 <span className="absolute -left-[5px] top-1.5 size-2 bg-broadcast-blue" />
-                <div className="text-[12px] font-bold uppercase tracking-[0.1em] text-broadcast-blue">{c.label ?? `Step ${i + 1}`}</div>
+                <div className="text-[12px] font-bold text-broadcast-blue">{c.label ?? `Step ${i + 1}`}</div>
                 <div className="mt-0.5 text-sm leading-snug text-text-muted">{c.detail ?? '—'}</div>
               </li>
             ))}
@@ -173,7 +170,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
       {/* LEAGUE-WIDE OPPORTUNITY CHECK */}
       {audit.league_wide && (
         <div className="relative border-t border-divider bg-panel px-10 py-6">
-          <div className="mb-3 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">League-wide opportunity check</div>
+          <div className="mb-3 text-[13px] font-bold text-text-faint">League-wide opportunity check</div>
           <div className="flex flex-wrap items-end gap-x-10 gap-y-3">
             {([
               ['Breakouts', audit.league_wide.breakout_count],
@@ -182,15 +179,15 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
             ] as const).map(([label, value]) =>
               value === undefined ? null : (
                 <div key={label}>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">{label}</div>
+                  <div className="text-[12px] font-bold text-text-faint">{label}</div>
                   <div className="tabular font-display text-2xl font-bold text-text">{value}</div>
                 </div>
               ),
             )}
             {audit.league_wide.chosen_in_is_trap !== undefined && (
               <div className="border-l border-divider pl-8">
-                <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Chosen candidate on trap list</div>
-                <div className={`font-display text-2xl font-bold uppercase ${audit.league_wide.chosen_in_is_trap ? 'text-alert-red' : 'text-pitch-green'}`}>
+                <div className="text-[12px] font-bold text-text-faint">Chosen candidate on trap list</div>
+                <div className={`font-display text-2xl font-bold ${audit.league_wide.chosen_in_is_trap ? 'text-alert-red' : 'text-pitch-green'}`}>
                   {audit.league_wide.chosen_in_is_trap ? 'Yes' : 'No'}
                 </div>
               </div>
@@ -198,7 +195,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
           </div>
           {(audit.league_wide.top_differentials?.length ?? 0) > 0 && (
             <div className="mt-4 border-t border-divider pt-3">
-              <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">Top differentials the audit weighed</div>
+              <div className="text-[12px] font-bold text-text-faint">Top differentials the audit weighed</div>
               <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-text-muted">
                 {audit.league_wide.top_differentials?.map((d, i) => <span key={i}>{d}</span>)}
               </div>

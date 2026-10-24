@@ -1,5 +1,4 @@
 import { CaptainFaceOff } from '@/components/command/CaptainFaceOff'
-import { FieldStrip } from '@/components/command/FieldStrip'
 import { DeadlineChecklist } from '@/components/command/DeadlineChecklist'
 import { DeskStrip } from '@/components/command/DeskStrip'
 import { CaptainLadder } from '@/components/command/CaptainLadder'
@@ -9,12 +8,14 @@ import { DecisionHorizon } from '@/components/command/DecisionHorizon'
 import { EvidenceRail } from '@/components/command/EvidenceRail'
 import { PlayerGallery } from '@/components/command/PlayerGallery'
 import { StrategyRail } from '@/components/command/StrategyRail'
-import { TrackRecordStrip } from '@/components/command/TrackRecordStrip'
-import { LineupDoctor } from '@/components/command/LineupDoctor'
 import { MarginalValue } from '@/components/command/MarginalValue'
 import { RoadAhead } from '@/components/command/RoadAhead'
-import { WeekPlanHero } from '@/components/command/WeekPlanHero'
-import { LiveCone } from '@/components/live/LiveCone'
+import { EyeTest } from '@/components/command/EyeTest'
+import { DecisionSheet } from '@/components/command/DecisionSheet'
+import { LiveStrip } from '@/components/command/LiveStrip'
+import { MoveCard } from '@/components/command/MoveCard'
+import { SquadPitch } from '@/components/command/SquadPitch'
+import { Panel } from '@/components/ui/kit'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
@@ -138,24 +139,7 @@ export function CommandScreen() {
   // leads. Once it is locked or live, the XI you are actually fielding leads
   // and the decision recedes to a record of what was chosen. Same sections,
   // same data, re-ranked by what the user can actually do about it.
-  const planNodes: Partial<Record<SectionKey, React.ReactNode>> = plan
-    ? {
-        decision: <WeekPlanHero plan={plan} chips={p?.bar.chips_available ?? []} />,
-        value: <MarginalValue plan={plan} />,
-        lineup: <LineupDoctor changes={plan.doctor} event={plan.event} />,
-        squad: plan.action_squad ? <PlayerGallery block={plan.action_squad} fixtures={plan.fixtures} /> : null,
-        captain: plan.captain ? (
-          <>
-            <CaptainFaceOff block={plan.captain} fixtures={plan.fixtures} />
-            <CaptainLadder plan={plan} />
-          </>
-        ) : null,
-        later: <RoadAhead plan={plan} compact />,
-        desk: <DeskStrip desk={desk} />,
-        checklist: <DeadlineChecklist plan={plan} desk={desk} />,
-        field: <FieldStrip />,
-      }
-    : {}
+  const planNodes: Partial<Record<SectionKey, React.ReactNode>> = {}
 
   const legacyNodes: Partial<Record<SectionKey, React.ReactNode>> = p && !plan
     ? {
@@ -191,13 +175,49 @@ export function CommandScreen() {
       }
     : {}
 
+  if (plan) {
+    const moves = plan.moves ?? []
+    return (
+      <div className="data-in">
+        {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
+        <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
+        <div className="bare grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          {plan.action_squad && <SquadPitch block={plan.action_squad} fixtures={plan.fixtures} title={`Your GW${plan.event} team`} sub={moves.length > 0 ? 'After the moves above, with the armband set.' : 'As it stands, with the armband set.'} />}
+          <div className="space-y-6">
+            {moves.length > 0 && (
+              <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
+                <div className="space-y-4">
+                  {moves.map((m) => (
+                    <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} />
+                  ))}
+                  {(plan.declined ?? []).map((m) => (
+                    <p key={m.into.player_id} className="text-[13px] text-text-muted">
+                      <span className="font-semibold text-text">Left out:</span> {m.out.name} &rarr; {m.into.name} adds {m.gain >= 0 ? '+' : ''}
+                      {m.gain.toFixed(1)} over {plan.horizon} GW, under the {plan.min_move_gain} a move has to earn.
+                    </p>
+                  ))}
+                </div>
+              </Panel>
+            )}
+            <MarginalValue plan={plan} />
+          </div>
+        </div>
+        <EyeTest plan={plan} />
+        <CaptainLadder plan={plan} />
+        <DeadlineChecklist plan={plan} desk={desk} />
+        <RoadAhead plan={plan} compact />
+        <DeskStrip desk={desk} />
+      </div>
+    )
+  }
+
   const sections = orderSections(
     {
       decision: null,
       value: null,
       lineup: null,
       later: null,
-      record: <TrackRecordStrip />,
+      record: null,
       squad: null,
       horizon: null,
       captain: null,
@@ -212,24 +232,6 @@ export function CommandScreen() {
 
   return (
     <div className="data-in pb-16">
-      {/* PHASE BANNER - the one thing Command has to say before anything
-          else once the squad is locked: the decision below is history, not
-          an instruction. Rendering the same "do this" hero during a live
-          match was the app's single most misleading moment. */}
-      {!phase.actionable && (
-        <div className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 px-10 py-3 ${phase.fill}`}>
-          <span className="font-display text-sm font-bold uppercase tracking-[0.1em]">
-            {phase.live ? 'Matches are live' : 'Squad locked'}
-          </span>
-          <span className="text-[13px] opacity-80">
-            {phase.live
-              ? 'Nothing below can be acted on until the gameweek settles. This is what you are fielding.'
-              : 'Transfers and the armband are closed for this gameweek. The decision below is the record of what was chosen.'}
-          </span>
-        </div>
-      )}
-      {phase.live && <LiveCone />}
-
       {sections.map((s) => (
         <div key={s.key}>{s.node}</div>
       ))}
