@@ -180,10 +180,12 @@ system watches for.
   scoreline. Nothing else earns this size.
 - **Headline** — Oswald 600–700, 1.1–2.5rem. Player names on a face-off,
   section verdicts, a team's short name on a scoreline, formation strings.
-- **Label** — IBM Plex Sans 700, 9–11px, `0.10–0.16em` tracking, uppercase.
-  The small caption above every number and beside every rule. This is the
-  most-used register in the app and it is what makes a band read as a
-  broadcast graphic rather than a form.
+- **Label** — IBM Plex Sans 500, 12–13px, sentence case, no tracking. The
+  small caption above a number or beside a rule. (Until 2026-10-24 this was
+  700, 9–11px, tracked and uppercase, and was worn by about five hundred
+  elements; the screens read as shouting in a terminal, so it was calmed.
+  Floor is now 12px. Uppercase survives only where the text is itself an
+  abbreviation: club codes, FDR chips, positions.)
 - **Body** — IBM Plex Sans 400, 0.9375rem, capped ~70ch. Reasoning,
   evidence, disclosure text.
 - **Data** — IBM Plex Sans 600 with `font-feature-settings: "tnum"` (the
@@ -192,8 +194,8 @@ system watches for.
   costume.
 
 **Monospace has one job, and it is a real one.** `font-mono` (IBM Plex Mono)
-is reserved for *machine speech*: mastheads, timestamps, CLI command names,
-snapshot ages, sync cadence, system identifiers. It is the voice of the
+is reserved for *machine speech*: CLI command names and code in an error or an
+empty state. It is no longer used for labels or mastheads. It is the voice of the
 system talking about itself. It never carries football content and never
 carries a projection. Earlier versions of this document claimed monospace
 was unused while the app used it in fifteen places — the rule above is the
@@ -382,14 +384,15 @@ everything, because football being played now outranks any cached state.
 | `SETTLING` | NEXT_GW_ANALYSIS | gold | no |
 | `REVIEW` | READY_FOR_NEXT_DEADLINE | green | yes |
 
-### The Matchday Bar
-A persistent broadcast strip under the header, on **every** screen: the phase
-block, the ticking countdown in the Display register, one line saying what the
-phase means for what you can do, and — only when football is genuinely on —
-live scorelines with crests, how many of your players are on the pitch, and
-their goals and assists. It rides the existing `useLiveMeta` poll, so it costs
-no extra fetch. The countdown ticks locally: a countdown computed server-side
-is stale the instant it is serialized.
+### The header bar
+One 56px bar on **every** screen (`ContextHeader`; the separate Matchday Bar
+and the per-screen breadcrumb strip were folded into it on 2026-10-24, because
+the old stack said "GW8" and "live" three times): page title, how many matches
+are on (or "GW8 in progress" when none is), the countdown to the **next
+deadline that is still ahead**, live scorelines with crests, data freshness and
+Sync. It rides the existing `useLiveMeta` poll, so it costs no extra fetch. The
+countdown ticks locally: a countdown computed server-side is stale the instant
+it is serialized.
 
 ### Phase drives composition
 **The section order is the product.** Command holds one set of sections and
@@ -398,14 +401,14 @@ two orders:
 - **Actionable** (`BUILD_UP` / `IMMINENT` / `FINAL_CALL` / `REVIEW`) answers
   *"what should I do?"* — decision → the XI it produces → horizon → captaincy
   → path → evidence → confidence.
-- **Locked / live** answers *"what have I got?"* — the squad leads, the
-  captain (who is on the pitch right now) follows, and the decision drops to
-  the bottom, where it belongs: a record of what was chosen, not an
-  instruction. A banner states this outright.
+- **Live** no longer demotes the decision. Transfers for the next gameweek
+  open the moment a deadline passes, so while matches are on Command still
+  leads with the plan for the next one, and a single line above it (points now,
+  likely finish, chance of finishing ahead of the average manager) links to
+  Live. The old "nothing can be acted on" banner was wrong and is gone.
 
-Same data, same components, re-ranked by what the user can actually act on.
-Any future screen that shows an instruction must ask the phase whether that
-instruction is still possible.
+Any future screen that shows an instruction must ask whether that instruction
+is still possible, and for which gameweek.
 
 ---
 
@@ -580,7 +583,10 @@ make a claim the data does not support.
   sentence, and its confidence is capped.
 - **Every route but Command is its own chunk.** Screens are `React.lazy`
   imports behind one `Suspense` fallback; a heavy library (three.js, leaflet,
-  ApexCharts) must load only on the screen that uses it.
+  ApexCharts) must load only on the screen that uses it. (three.js is no
+  longer a dependency: the podium, season helix, trophy shelf, xG mountains,
+  win-probability orb, transfer flip and 3D pitch were all removed as
+  decoration that told nothing.)
 
 ---
 
@@ -616,23 +622,31 @@ make a claim the data does not support.
 
 Shared, in dependency order:
 
-- `components/shell/` — `AppSidebar` (three-section nav rail: Decision /
-  Intelligence / Operations), `ContextHeader` (broadcast status strip),
-  `Masthead` (per-screen edition line), `ScreenStates` (skeleton primitives
-  + `ScreenError`), `CommandPalette`, `MetricNumber`.
+- `components/ui/kit.tsx` — the shared vocabulary: `Panel` (sentence-case
+  title at one size, one-line subtitle, optional right text), `Disclosure`
+  (a collapsed panel that still says what is inside), `Pill`, `Fig`,
+  `chipName`, `money`. New screens are built from these.
+- `components/shell/` — `AppSidebar` (five groups: This week / The league /
+  Players / How I am doing / System), `ContextHeader` (the one bar above every
+  screen), `Masthead` (a screen's one line of context, or nothing),
+  `ScreenStates` (skeleton primitives + `ScreenError`), `CommandPalette`,
+  `MetricNumber`.
 - `components/football/` — `PitchMarkings`, `FixtureRun` /
   `NextFixture` / `RunPressure` / `FixtureLine`, `SignalLedger`,
   `StyleQuadrant`.
 - `components/match/` — `MatchAnalyst` (composition), `MatchReplay`,
   `AnalystPanels` (deserved result, game state, situation mix, substitutions,
   findings).
-- `components/command/` — `DecisionHero`, `ComparisonGraphic`,
-  `PlayerGallery` (the formation), `CaptainFaceOff`, `DecisionHorizon`,
-  `StrategyRail`, `EvidenceRail`, `ConfidenceGraphic`.
-- `components/live/` — `MatchCentre` (scoreline, opposed stats, momentum
-  band, shot map, my players), `BonusDefconRail`.
+- `components/command/` — `DecisionSheet` (transfers, armband, lineup side by
+  side, account underneath), `SquadPitch` (fixed row spacing, no wrapping),
+  `MoveCard`, `EyeTest`, `MarginalValue`, `CaptainLadder`, `DeadlineChecklist`,
+  `RoadAhead`, `DeskStrip`, `LiveStrip`; the older `DecisionHero`,
+  `PlayerGallery`, `CaptainFaceOff`, `DecisionHorizon`, `StrategyRail`,
+  `EvidenceRail`, `ConfidenceGraphic` remain only for the no-week-plan fallback.
+- `components/live/` — `MatchCentre` (scoreline, your players, then a
+  collapsible detail), `LiveAnalyst` (the provisional reading of a match in
+  play), `LiveCone`, `BonusDefconRail`.
 - `components/advanced/` — `DecisionAudit`.
-- `components/shell/MatchdayBar.tsx` — the season clock, on every screen.
 - `lib/` — `clock.ts` (the phase machine and countdown), `fdr.ts` (the one
   FDR scale), `chartTheme.ts` (the one chart language), `useFetch.ts`
   (polling: 10s Live, 60s elsewhere), `time.ts`.
@@ -641,3 +655,30 @@ Do not create `UniversalCard`, `UniversalPanel`, or
 `UniversalDashboardSection`. Compositions here are authored per screen on
 purpose; shared components exist for real football and system primitives,
 not to avoid writing markup.
+
+
+---
+
+## 15. The restraint pass (2026-10-24)
+
+Direct user feedback: cluttered, jargon, decoration, "aimless data". What was
+removed or changed, as rules for what comes next:
+
+- **Cards come from the frame.** `.screen-frame` turns every root-level child
+  of a screen into a card; a wrapper that should not be one takes `bare`.
+- **A screen has one headline and sections with sentence-case titles.** No
+  giant ghost words behind a hero, no angled verdict block, no eyebrow above
+  every title.
+- **Collapse what a reader opens rarely.** A list of eighteen previews is
+  eighteen one-line rows, open only where the user owns a player; a live card is
+  scoreline and your players first, detail behind a toggle; engine-room
+  readiness, source health and points revisions are disclosures.
+- **A number with no decision attached is cut.** Category count boards, "904
+  signals tracked", "170 tracked" and bonus-point revision lists with no effect
+  on the squad went; the signal ledger that says whether a signal carries stayed.
+- **No system words on a manager's screen:** solver, beam search, decision
+  number, proven optimal, pipeline, raw snake_case source names. Where the
+  mechanism matters it is said in football terms ("planned 42 min ago",
+  "How fragile is the plan?").
+- **Chip and status names are shown as people say them** (`chipName`), never
+  as the API's identifiers.

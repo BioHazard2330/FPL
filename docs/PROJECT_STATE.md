@@ -13,6 +13,10 @@ teach` setup still outstanding before the new frontend-design skills are
 usable. No application code changed as part of that pass except two new
 project-local skill files.
 
+## Where things stand (updated 2026-10-24)
+
+The decision of record is the week plan (`optimization/week_plan.py`), shown on Command as one sheet: transfers, armband, lineup, with each move's chance of paying off. Since 2026-10-24: the start-percentage feed parser is fixed (it had been storing last gameweek's minutes as the start probability), the header countdown runs to the next future deadline, and the dashboard was rebuilt around the decision with one header bar, shared panel components (`components/ui/kit.tsx`), a regrouped and renamed navigation (This week, The league, Players, How I am doing, System), and the decorative layer (ghost watermarks, 3D toys, tracked-uppercase labels, count boards, the 900-signal board) removed. Live carries a provisional match analyst per match in play. Full account: `docs/history/61-session-2026-10-24-start-percent-bug-eye-test-and-the-restraint-pass.md`. Next candidates: calibrate the start-percentage discount once `fpl start-calibration` has a few weeks of readings; fold the System screen's remaining readiness lists into one summary; check each screen at 1080px.
+
 ## Where things stand (updated 2026-09-08, React frontend — Phase 8-10)
 
 The React app (`frontend/`, Vite + TypeScript + Tailwind v4 + shadcn/Base UI)
