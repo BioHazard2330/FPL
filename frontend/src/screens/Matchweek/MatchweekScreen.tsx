@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { clubColors } from '@/lib/clubs'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { crestUrl, fetchMatchweekPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -39,6 +40,7 @@ function Form({ form }: { form: string[] }) {
  * pixels. */
 function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
   const anyPlayed = rows.some((r) => r.played > 0)
+  const xgTop = Math.max(...rows.flatMap((r) => [r.xg_for ?? 0, r.xg_against ?? 0]), 1)
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[54rem] text-left text-sm">
@@ -56,8 +58,8 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
             <th scope="col" className="tabular w-12 py-2 pr-4 text-right font-bold">GD</th>
             <th scope="col" className="tabular w-12 py-2 pr-4 text-right font-bold text-text">Pts</th>
             <th scope="col" className="w-28 py-2 pr-4 font-bold">Form</th>
-            <th scope="col" className="tabular w-16 py-2 pr-2 text-right font-bold text-pitch-green">xG</th>
-            <th scope="col" className="tabular w-16 py-2 text-right font-bold text-alert-red">xGA</th>
+            <th scope="col" className="tabular w-28 py-2 pr-2 text-right font-bold text-pitch-green">xG</th>
+            <th scope="col" className="tabular w-28 py-2 text-right font-bold text-alert-red">xGA</th>
           </tr>
         </thead>
         <tbody>
@@ -70,6 +72,7 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
                 <td className={`tabular py-2 pr-2 pl-2 text-right font-bold text-text-faint ${zone}`}>{r.position}</td>
                 <th scope="row" className="py-2 pr-4 text-left font-bold text-text">
                   <Link to={`/club/${r.team_id}`} className="flex items-center gap-2 hover:text-pitch-green">
+                    <span className="h-5 w-1 shrink-0 rounded-full" style={{ background: clubColors(r.code).accent }} />
                     {crest && <img src={crest} alt="" className="h-5 w-5" />}
                     <span className="truncate">{r.name}</span>
                     {r.in_squad && (
@@ -88,8 +91,18 @@ function LeagueTable({ rows }: { rows: LeagueTableRow[] }) {
                 </td>
                 <td className="tabular py-2 pr-4 text-right font-display text-lg font-bold text-text">{r.points}</td>
                 <td className="py-2 pr-4"><Form form={r.form} /></td>
-                <td className="tabular py-2 pr-2 text-right text-text-muted">{r.xg_for?.toFixed(2) ?? '—'}</td>
-                <td className="tabular py-2 text-right text-text-muted">{r.xg_against?.toFixed(2) ?? '—'}</td>
+                <td className="tabular py-2 pr-2 text-right text-text-muted">
+                  <span className="inline-flex items-center justify-end gap-2">
+                    {r.xg_for?.toFixed(2) ?? '—'}
+                    <span className="h-1.5 w-10 rounded-full bg-void"><span className="block h-full rounded-full bg-pitch-green" style={{ width: `${((r.xg_for ?? 0) / xgTop) * 100}%` }} /></span>
+                  </span>
+                </td>
+                <td className="tabular py-2 text-right text-text-muted">
+                  <span className="inline-flex items-center justify-end gap-2">
+                    {r.xg_against?.toFixed(2) ?? '—'}
+                    <span className="h-1.5 w-10 rounded-full bg-void"><span className="block h-full rounded-full bg-alert-red" style={{ width: `${((r.xg_against ?? 0) / xgTop) * 100}%` }} /></span>
+                  </span>
+                </td>
               </tr>
             )
           })}

@@ -110,6 +110,7 @@ class PlayerRef:
     match_analysis_xp: float = 0.0
     price_p_rise: float | None = None
     price_p_fall: float | None = None
+    xp_by_gw: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,23 @@ class WeekPlan:
     captain_ladder: list[dict] = field(default_factory=list)
     team_outlook: dict = field(default_factory=dict)
     calibration: str = ""
+    matches_finished: int = 0
+
+
+SOFT_REFRESH_MINUTES = 10
+
+
+def finished_match_count(conn: sqlite3.Connection) -> int:
+    """Premier League matches whose final whistle has been read. Every result changes team strength, form, minutes and
+    availability, so the plan is rebuilt as the count grows rather than waiting for its timer."""
+    return conn.execute("SELECT COUNT(*) AS n FROM match_intelligence WHERE status = 'FULL_TIME' AND competition = 'Premier League'").fetchone()["n"]
+
+
+def new_results_since(conn: sqlite3.Connection, detail: dict) -> int:
+    """Matches finished since the plan was made; zero for a plan stored before the count was kept."""
+    if "matches_finished" not in detail:
+        return 0
+    return max(0, finished_match_count(conn) - int(detail["matches_finished"]))
 
 
 def calibration_id() -> str:
@@ -755,7 +773,7 @@ def build_week_plan(
     next_xp_cache: dict = {}
     match_xp: dict[int, float] = {}
 
-    from fpl_agent.models.expected_points import expected_points
+    from fpl_agent.models.expected_points import expected_points, expected_points_window
 
     def next_xp(pid: int) -> float:
         if pid not in next_xp_cache:
@@ -772,11 +790,17 @@ def build_week_plan(
 
         return build_player_pool_for_ids(conn, {pid}, event)[0]
 
+    def by_gw(pid: int) -> list[float]:
+        return [round(expected_points_window(conn, pid, 1, from_event=e).total_median, 2) for e in range(event, event + horizon)]
+
     def make_move(o: int, i: int, gain: float) -> PlannedMove:
         out_c, in_c = candidate(o), candidate(i)
         next_xp(o), next_xp(i)
         out_ref = _ref(out_c, next_xp(o), starts, trends, solio, duties, match_xp, price_probs)
         in_ref = _ref(in_c, next_xp(i), starts, trends, solio, duties, match_xp, price_probs)
+        out_gw, in_gw = by_gw(o), by_gw(i)
+        out_ref = replace(out_ref, xp_by_gw=out_gw, xp_horizon=round(sum(out_gw), 2))
+        in_ref = replace(in_ref, xp_by_gw=in_gw, xp_horizon=round(sum(in_gw), 2))
         timing, note = move_timing(out_ref, in_ref)
         return PlannedMove(
             out=out_ref, into=in_ref, gain=gain, cost_tenths=in_c.price_tenths - out_c.price_tenths,
@@ -876,7 +900,7 @@ def build_week_plan(
         },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
-        team_outlook=team_outlook, calibration=calibration_id(),
+        team_outlook=team_outlook, calibration=calibration_id(), matches_finished=finished_match_count(conn),
     )
 
 
@@ -1090,28 +1114,34 @@ def announce_plan_change(conn: sqlite3.Connection, previous: dict | None, plan: 
     return True
 
 
-def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
-    """Rebuilds and stores the plan when the stored one is missing, stale, or
-    older than `REFRESH_AFTER_HOURS` (prices and fixtures drift even when
-    nothing material is logged). Returns why it ran, or None when it did not.
-    About twenty seconds of solver time, so it runs inline in the scheduled
-    cycle rather than as a detached job."""
+def refresh_reason(conn: sqlite3.Connection) -> str | None:
+    """Why the stored plan should be rebuilt now, or None. A missing or stale plan, a timer, a fresh bookmaker pull, and
+    (new) a match that has finished since: results land all through a gameweek and each one moves the inputs."""
     stored = latest_week_plan(conn)
-    reason: str | None = None
     if stored is None:
-        reason = "no week plan has been made yet"
-    else:
-        detail, created_at, _ = stored
-        reasons = week_plan_staleness(conn, detail, created_at)
-        if reasons:
-            reason = reasons[0]
-        else:
-            age = datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            limit = refresh_after_hours(conn)
-            if age.total_seconds() > limit * 3600:
-                reason = f"the stored plan is {age.total_seconds() / 3600:.0f}h old"
-            elif age.total_seconds() > 1800 and _odds_newer_than(conn, created_at):
-                reason = "bookmaker odds were pulled after this plan was made"
+        return "no week plan has been made yet"
+    detail, created_at, _ = stored
+    reasons = week_plan_staleness(conn, detail, created_at)
+    if reasons:
+        return reasons[0]
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    limit = refresh_after_hours(conn)
+    if age.total_seconds() > limit * 3600:
+        return f"the stored plan is {age.total_seconds() / 3600:.0f}h old"
+    if age.total_seconds() > 1800 and _odds_newer_than(conn, created_at):
+        return "bookmaker odds were pulled after this plan was made"
+    k = new_results_since(conn, detail)
+    if k > 0 and age.total_seconds() > SOFT_REFRESH_MINUTES * 60:
+        return f"{k} more match{'es have' if k > 1 else ' has'} finished since this plan was made"
+    return None
+
+
+def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
+    """Rebuilds and stores the plan when `refresh_reason` says so. Returns why it ran, or None when it did not. About
+    thirty seconds of solver time: inline in the scheduled cycle, detached when a live event asks for it
+    (`fpl week-plan-refresh`)."""
+    stored = latest_week_plan(conn)
+    reason = refresh_reason(conn)
     if reason is None:
         return None
     plan = build_week_plan(conn)

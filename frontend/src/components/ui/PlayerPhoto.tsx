@@ -6,18 +6,20 @@ import { playerPhotoUrl, shirtUrl } from '@/lib/api'
  * is missing or the image fails. The headshot is a transparent PNG with the
  * head and shoulders at the top, so it sits bottom-aligned on a flat tile and
  * is cropped by the tile, never stretched. */
-export function PlayerPhoto({ code, teamCode, isGkp = false, className = 'h-16 w-14', muted = false }: {
+export function PlayerPhoto({ code, teamCode, isGkp = false, className = 'h-16 w-14', muted = false, bare = false }: {
   code?: number | null
   teamCode: number | null
   isGkp?: boolean
   className?: string
   muted?: boolean
+  /** No tile behind the photo, for a face set on a coloured wash. */
+  bare?: boolean
 }) {
   const [failed, setFailed] = useState(false)
   const photo = code && !failed ? playerPhotoUrl(code) : null
   if (photo) {
     return (
-      <div className={`${className} relative shrink-0 overflow-hidden bg-raised ${muted ? 'opacity-80' : ''}`}>
+      <div className={`${className} relative shrink-0 overflow-hidden ${bare ? '' : 'bg-raised'} ${muted ? 'opacity-80' : ''}`}>
         <img
           src={photo}
           alt=""

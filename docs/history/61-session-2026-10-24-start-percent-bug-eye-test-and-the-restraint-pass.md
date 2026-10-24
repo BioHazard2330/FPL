@@ -37,3 +37,14 @@ The complaint was clutter, jargon and decoration, so the pass removed things rat
 - The new move-confidence talent sigma and the form bins are descriptive choices; the bins' realised ratios are measured, the 0.65/0.55 verdict cut-offs are not fitted.
 - Start-percentage minutes discounting (`START_PERCENT_TRUST` 0.75) is still uncalibrated; the history table exists so it can be.
 - The "beyond this week" columns are re-solved every week and are shown as indicative; each later move had to earn 1.5 points in the joint solve, not individually.
+
+
+## Follow-up, 2026-10-25: plan follows results, the horizon bug, a livelier look
+
+User: the dashboard still looks bland; can the optimizer run while live and while a gameweek is on, so it feeds on fresh results; make it smarter and take far more of football into account.
+
+- **Reactive plan.** Rebuilds were timer- and news-driven only, so a Saturday of results did not touch the plan until 12 hours or a squad-level change. The plan now stores how many matches had finished; a result newer than the plan (10 minutes old) is a refresh reason, and MATCH_FINISHED on the live bus starts a detached `fpl week-plan-refresh`. Command shows "N matches finished since, refreshing" in the sheet header.
+- **A real horizon bug.** `expected_points_window` damped by position in the whole window (0.9^i), not per extra match in a gameweek, so later gameweeks of every multi-gameweek window were discounted up to 34%. Found by decomposing predicted against actual points by component (appearance came out 1.4 against 1.9). The MILP prices single gameweeks and was unaffected; candidate ranking and the horizon totals shown beside moves were.
+- **Per-gameweek expected points** (`xp_by_gw`) on both sides of every move, drawn as paired bars with the incoming club's opponent under each week.
+- **Football factors, measured.** Teammate absence, Champions League congestion, team-specific home advantage, clean-sheet calibration: see CLAUDE.md. None justified a model change; the honest finding is that the model already reads what the stored history can support, and the gain available is speed (done) and presentation.
+- **Look.** Official headshots on club-colour washes (`Face`, `lib/clubs.ts`), a transfer drawn as two people moving between two clubs, the armband with a floor-to-ceiling range bar and its opponent, paired weekly bars, a "Where you stand" ribbon (points against the average manager, overall-rank line), club-colour bars and xG/xGA bars on the league table, and a System disclosure listing what the model reads and what was tested and refused.

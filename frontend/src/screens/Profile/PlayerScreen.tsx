@@ -2,11 +2,12 @@ import { Fragment } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
+import { clubColors } from '@/lib/clubs'
+import { Face } from '@/components/ui/Face'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { CHART_COLORS, baseChart } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile } from '@/lib/api'
-import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { ProjectionBand } from '@/components/shell/ProjectionBand'
 import { StoriesRail } from '@/components/shell/StoriesRail'
 import { PlayerShots } from '@/components/football/PlayerShots'
@@ -90,9 +91,12 @@ export function PlayerScreen() {
 
       {/* THE FILE HEAD - kit at real scale, identity, and the one thing that
           changes whether any of the rest matters: availability. */}
-      <div className="relative overflow-hidden border-b border-divider">
+      <div
+        className="relative overflow-hidden border-b border-divider"
+        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(pl.team_code).primary} 38%, #0b0e13) 0%, #12161d 62%)` }}
+      >
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          <PlayerPhoto code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} className="h-44 w-36 shrink-0" />
+          <Face code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} size="2xl" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
               {crest && <img src={crest} alt="" className="h-6 w-6" />}

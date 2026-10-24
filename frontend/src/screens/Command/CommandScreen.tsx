@@ -14,6 +14,7 @@ import { EyeTest } from '@/components/command/EyeTest'
 import { DecisionSheet } from '@/components/command/DecisionSheet'
 import { LiveStrip } from '@/components/command/LiveStrip'
 import { MoveCard } from '@/components/command/MoveCard'
+import { SeasonRibbon } from '@/components/command/SeasonRibbon'
 import { SquadPitch } from '@/components/command/SquadPitch'
 import { Panel } from '@/components/ui/kit'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
@@ -188,7 +189,7 @@ export function CommandScreen() {
               <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
                 <div className="space-y-4">
                   {moves.map((m) => (
-                    <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} />
+                    <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} startEvent={plan.event ?? 0} />
                   ))}
                   {(plan.declined ?? []).map((m) => (
                     <p key={m.into.player_id} className="text-[13px] text-text-muted">
@@ -202,6 +203,7 @@ export function CommandScreen() {
             <MarginalValue plan={plan} />
           </div>
         </div>
+        <SeasonRibbon />
         <EyeTest plan={plan} />
         <CaptainLadder plan={plan} />
         <DeadlineChecklist plan={plan} desk={desk} />

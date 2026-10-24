@@ -1,4 +1,5 @@
 import pytest
+import pytest
 
 from fpl_agent.ingestion.market_identity import get_or_create_market_team
 from fpl_agent.ingestion.sync import (
@@ -1374,3 +1375,25 @@ def test_expected_points_haaland_shaped_case_recovers_a_realistic_rate(db_conn):
     bare_position_avg_goals = position_average_per90(db_conn, position, "goals", season)
 
     assert rates["shrunk_goals90"] > bare_position_avg_goals * 2
+
+
+def test_a_window_of_single_fixtures_is_the_sum_of_its_gameweeks_with_no_damping_between_them(db_conn):
+    """Rotation damping belongs to the second match of a double gameweek, not to a later gameweek."""
+    bootstrap = _bootstrap_two_teams_full_scoring()
+    _seed_full(db_conn, bootstrap, "t0")
+    _insert_season_history(db_conn, player_id=1, minutes=3420, expected_goals=10.0, expected_assists=8.0, bonus=25)
+    db_conn.execute("DELETE FROM fixtures")
+    for n, event in enumerate((20, 21, 22, 23), start=1):
+        db_conn.execute(
+            "INSERT OR IGNORE INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+            "VALUES (?, ?, '2099-01-01T00:00:00Z', 4070908800, 0, 0, 0, 0, 't0')", (event, f"Gameweek {event}"),
+        )
+        _insert_fixture(db_conn, 900 + n, event, 1, 2, date=f"2099-01-{event:02d}")
+    db_conn.commit()
+
+    from fpl_agent.models.expected_points import expected_points_window
+
+    whole = expected_points_window(db_conn, 1, n_gw=4, from_event=20).total_median
+    parts = sum(expected_points_window(db_conn, 1, n_gw=1, from_event=e).total_median for e in (20, 21, 22, 23))
+    assert whole == pytest.approx(parts, abs=0.1)
+    assert whole > 0

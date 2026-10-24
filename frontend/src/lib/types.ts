@@ -652,6 +652,7 @@ export interface IntragameSeries {
 }
 
 export interface LiveCharts {
+  gw_points?: { events: number[]; you: number[]; average: (number | null)[] }
   rank: LiveChartSeries
   cumulative_points: LiveChartSeries
   captain_contribution: LiveChartSeries
@@ -1672,6 +1673,7 @@ export interface WeekPlanPlayer {
   price_trend: 'RISE_LIKELY' | 'FALL_LIKELY' | 'STABLE'
   price_p_rise?: number | null
   price_p_fall?: number | null
+  xp_by_gw?: number[]
   solio_next: number | null
   /** First-choice set-piece duties: any of penalties, free kicks, corners. */
   duties?: string[]
@@ -1766,6 +1768,7 @@ export interface LineupChanges {
 export interface WeekPlanPayload {
   form_board?: (FormReading & { player_id: number; name: string; position: string | null })[]
   status: 'none' | 'current' | 'stale'
+  new_results?: number
   stale_reasons?: string[]
   decision_id?: number
   computed_at?: string

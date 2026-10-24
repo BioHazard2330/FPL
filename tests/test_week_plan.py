@@ -466,3 +466,73 @@ def test_a_plan_made_under_a_different_calibration_is_stale(db_conn, monkeypatch
     missing = _detail()
     del missing["calibration"]
     assert week_plan.week_plan_staleness(db_conn, missing, "2026-10-15T00:00:00+00:00") == ["the projection model's calibration has changed"]
+
+
+def _finished_match(conn, mid):
+    conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (1, 1, 'A', 'A', 't0'), (2, 2, 'B', 'B', 't0')")
+    conn.execute(
+        "INSERT INTO match_intelligence (id, fotmob_match_id, status, competition, home_team_id, away_team_id, home_score, away_score, kickoff_utc, source, retrieved_at) "
+        "VALUES (?, ?, 'FULL_TIME', 'Premier League', 1, 2, 1, 0, '2026-09-01T12:00:00.000Z', 'fotmob', 't0')", (mid, f"f{mid}"),
+    )
+    conn.commit()
+
+
+def test_finished_matches_since_the_plan_was_made_are_counted(db_conn):
+    from fpl_agent.optimization.week_plan import finished_match_count, new_results_since
+
+    _finished_match(db_conn, 1)
+    detail = {"matches_finished": finished_match_count(db_conn)}
+    assert new_results_since(db_conn, detail) == 0
+    _finished_match(db_conn, 2)
+    _finished_match(db_conn, 3)
+    assert new_results_since(db_conn, detail) == 2
+    assert new_results_since(db_conn, {}) == 0
+
+
+def test_a_result_after_the_plan_asks_for_a_rebuild_only_once_the_plan_is_a_few_minutes_old(db_conn, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import fpl_agent.optimization.week_plan as wp
+
+    _finished_match(db_conn, 1)
+    detail = {"matches_finished": 0}
+    monkeypatch.setattr(wp, "week_plan_staleness", lambda conn, d, created: [])
+    monkeypatch.setattr(wp, "refresh_after_hours", lambda conn: 12.0)
+    monkeypatch.setattr(wp, "_odds_newer_than", lambda conn, created: False)
+    for minutes, expect in ((3, False), (30, True)):
+        made = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        monkeypatch.setattr(wp, "latest_week_plan", lambda conn, made=made: (detail, made, 1))
+        reason = wp.refresh_reason(db_conn)
+        assert (reason is not None and "finished" in reason) is expect
+
+
+def test_a_finished_match_starts_one_detached_refresh_and_a_second_event_inside_six_minutes_starts_none(db_conn, monkeypatch):
+    import fpl_agent.cli.main as cli
+    import fpl_agent.optimization.week_plan as wp
+
+    started: list = []
+
+    class _Popen:
+        def __init__(self, args, **kwargs):
+            started.append(args)
+
+    monkeypatch.setattr(cli.subprocess, "Popen", _Popen)
+    monkeypatch.setattr(wp, "refresh_reason", lambda conn: "2 more matches have finished since this plan was made")
+    tmp = __import__("pathlib").Path(__import__("tempfile").mkdtemp())
+    monkeypatch.setattr(cli, "LOGS_DIR", tmp)
+    monkeypatch.setattr(cli, "DATA_DIR", tmp)
+    first = cli._maybe_trigger_week_plan_refresh(db_conn)
+    second = cli._maybe_trigger_week_plan_refresh(db_conn)
+    assert first is not None and second is None
+    assert len(started) == 1 and started[0][-1] == "week-plan-refresh"
+
+
+def test_nothing_is_started_when_the_plan_is_current(db_conn, monkeypatch):
+    import fpl_agent.cli.main as cli
+    import fpl_agent.optimization.week_plan as wp
+
+    started: list = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(wp, "refresh_reason", lambda conn: None)
+    monkeypatch.setattr(cli, "DATA_DIR", __import__("pathlib").Path(__import__("tempfile").mkdtemp()))
+    assert cli._maybe_trigger_week_plan_refresh(db_conn) is None and started == []

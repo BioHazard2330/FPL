@@ -902,6 +902,19 @@ def signal_reliability_cmd():
         click.echo(f"  {m['label']:<42} r={r} {ci:<16} n={m['n']:<6} {m['verdict']:<10} {m['source']}")
 
 
+@cli.command("week-plan-refresh")
+def week_plan_refresh_cmd():
+    """Rebuild the stored week plan if anything (a result, a squad change, news, the clock) says it is out of date."""
+    from fpl_agent.optimization.week_plan import refresh_week_plan_if_needed
+
+    conn = get_connection()
+    try:
+        reason = refresh_week_plan_if_needed(conn)
+    finally:
+        conn.close()
+    click.echo(f"rebuilt: {reason}" if reason else "plan is current")
+
+
 @cli.command("start-calibration")
 def start_calibration_cmd():
     """Whether the start-percentage feed's readings match who then started (models/start_calibration.py)."""
@@ -2610,6 +2623,48 @@ def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
 
 
 _EO_SAMPLE_AUTO_STALE_MINUTES = 120
+
+
+_WEEK_PLAN_AUTO_STALE_MINUTES = 6
+
+
+def _maybe_trigger_week_plan_refresh(conn) -> str | None:
+    """Starts `fpl week-plan-refresh` as a detached, idle-priority process when the stored plan is out of date (a match
+    finished, news landed, the squad moved). Called from the live engine the moment such an event arrives, so a gameweek's
+    plan follows its results instead of waiting for the next 15-minute cycle. An in-flight start blocks a second for six
+    minutes; the refresh itself decides again whether anything is owed."""
+    from fpl_agent.optimization.week_plan import refresh_reason
+
+    reason = refresh_reason(conn)
+    if reason is None or reason.startswith("no week plan"):
+        return None
+    now = datetime.now(timezone.utc)
+    # A file, not an app_meta row: this runs inside the live engine's event handler while the emitting sync still holds its own
+    # write transaction, and a second connection writing here would block for the full busy timeout (see materiality_engine).
+    lock = DATA_DIR / "week_plan_refresh.started"
+    try:
+        if lock.exists() and time.time() - lock.stat().st_mtime < _WEEK_PLAN_AUTO_STALE_MINUTES * 60:
+            return None
+    except OSError:
+        pass
+    fpl_exe = Path(sys.executable).parent / ("fpl.exe" if sys.platform == "win32" else "fpl")
+    if not fpl_exe.exists():
+        return None
+    try:
+        lock.write_text(now.isoformat())
+    except OSError:
+        return None
+    log_path = LOGS_DIR / "week_plan_auto.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(f"\n--- auto-triggered {now.isoformat()}: {reason} ---\n")
+        log_file.flush()
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS if sys.platform == "win32" else 0
+        subprocess.Popen(
+            [str(fpl_exe), "week-plan-refresh"],
+            stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(PROJECT_ROOT), creationflags=creationflags,
+        )
+    return reason
 
 
 def _maybe_trigger_eo_sample(conn) -> str | None:

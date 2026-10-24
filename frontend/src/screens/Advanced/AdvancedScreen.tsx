@@ -3,6 +3,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Disclosure, Panel } from '@/components/ui/kit'
 import { DecisionAudit } from '@/components/advanced/DecisionAudit'
 import { WeekPlanAudit } from '@/components/advanced/WeekPlanAudit'
+import { Knowledge } from '@/components/advanced/Knowledge'
 import { fetchAdvancedPayload } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
@@ -132,6 +133,8 @@ export function AdvancedScreen() {
           </div>
         </details>
       </Panel>
+
+      <Knowledge />
 
       {p.decision_audit && !p.decision_audit.stale && <DecisionAudit audit={p.decision_audit} />}
       {p.decision_audit?.stale && (

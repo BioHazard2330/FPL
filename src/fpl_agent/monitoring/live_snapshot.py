@@ -710,7 +710,15 @@ def _charts_block(conn: sqlite3.Connection) -> dict | None:
     intragame = _intragame_points_block(conn)
     if not rank.events and not cum_points.events and not captain.events and intragame is None:
         return None
+    gw = conn.execute(
+        "SELECT s.event, s.points, e.average_entry_score AS avg, e.finished FROM my_team_gw_summary s JOIN events e ON e.id = s.event "
+        "WHERE s.entry_id = ? ORDER BY s.event", (entry_id,),
+    ).fetchall()
     return {
+        "gw_points": {
+            "events": [r["event"] for r in gw], "you": [r["points"] for r in gw],
+            "average": [r["avg"] if r["finished"] else None for r in gw],
+        },
         "rank": {"events": rank.events, "values": rank.values},
         "cumulative_points": {"events": cum_points.events, "values": cum_points.values},
         "captain_contribution": {"events": captain.events, "values": captain.values},

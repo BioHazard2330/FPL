@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { clubColors } from '@/lib/clubs'
 import { StoriesRail } from '@/components/shell/StoriesRail'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
@@ -104,9 +105,12 @@ export function ClubScreen() {
     <div className="data-in pb-16">
       <Masthead edition="Club File" title={c.name} right={<span className="text-text-faint">{p.results.length} played</span>} />
 
-      <div className="relative overflow-hidden border-b border-divider">
+      <div
+        className="relative overflow-hidden border-b border-divider"
+        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(c.code).primary} 42%, #0b0e13) 0%, #12161d 65%)` }}
+      >
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          {crest && <img src={crest} alt="" className="h-20 w-20 shrink-0" />}
+          {crest && <img src={crest} alt="" className="h-24 w-24 shrink-0 drop-shadow-lg" />}
           <div className="min-w-0">
             <div className="font-display text-5xl font-bold leading-none text-text">{c.name}</div>
             <div className="mt-3 flex items-center gap-2">

@@ -74,6 +74,7 @@ _ROUTED_EVENT_TYPES = (
     EventType.LINEUP_CONFIRMED,
     EventType.PRICE_CHANGED,
     EventType.FIXTURE_CHANGED,
+    EventType.MATCH_FINISHED,
 )
 
 
@@ -113,7 +114,7 @@ def suspended():
 
 
 def _run_gate(event_label: str, entity_label: object) -> None:
-    from fpl_agent.cli.main import _maybe_trigger_strategic_plan_recompute
+    from fpl_agent.cli.main import _maybe_trigger_strategic_plan_recompute, _maybe_trigger_week_plan_refresh
     from fpl_agent.database.connection import get_connection
 
     conn = get_connection()
@@ -124,6 +125,12 @@ def _run_gate(event_label: str, entity_label: object) -> None:
                 "materiality engine: %s (%s) triggered a real strategic-plan recompute - %s",
                 event_label, entity_label, reason,
             )
+        try:
+            plan_reason = _maybe_trigger_week_plan_refresh(conn)
+            if plan_reason is not None:
+                _logger.info("materiality engine: %s (%s) started a week-plan refresh - %s", event_label, entity_label, plan_reason)
+        except Exception:
+            _logger.exception("materiality engine: week-plan refresh trigger failed - the strategic-plan gate above is unaffected")
     finally:
         conn.close()
 

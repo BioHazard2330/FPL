@@ -131,7 +131,7 @@ def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
 def build_week_plan_payload(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
     from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
-    from fpl_agent.optimization.week_plan import latest_week_plan, week_plan_staleness
+    from fpl_agent.optimization.week_plan import latest_week_plan, new_results_since, week_plan_staleness
 
     conn = get_connection()
     try:
@@ -208,6 +208,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace("Z", "+00:00"))).total_seconds() / 3600
         payload = {
             "status": "stale" if reasons else "current",
+            "new_results": new_results_since(conn, detail),
             "stale_reasons": reasons,
             "decision_id": decision_id,
             "computed_at": created_at,

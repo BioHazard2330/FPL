@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
-import { crestUrl } from '@/lib/api'
-import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { Face } from '@/components/ui/Face'
+import { clubColors } from '@/lib/clubs'
 import { FixtureRun } from '@/components/football/FixtureRun'
 import { money } from '@/components/ui/kit'
 import type { FixtureContext, WeekPlanMove, WeekPlanPlayer } from '@/lib/types'
@@ -46,17 +46,13 @@ function notes(p: WeekPlanPlayer, side: 'out' | 'into'): Note[] {
 const INK = { red: 'text-alert-red', gold: 'text-broadcast-gold', green: 'text-pitch-green', plain: 'text-text-muted' }
 
 function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; fixtures?: FixtureContext }) {
-  const crest = crestUrl(p.team_code)
   const run = p.team_code !== null ? fixtures?.[String(p.team_code)] : undefined
   const ns = notes(p, side)
   return (
     <div className="min-w-0">
       <div className="mb-2 text-[13px] font-medium text-text-faint">{side === 'out' ? 'Sell' : 'Buy'}</div>
       <div className="flex items-center gap-3">
-        <div className="relative shrink-0">
-          <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className="h-14 w-11" muted={side === 'out'} />
-          {crest && <img src={crest} alt="" className="absolute -bottom-1 -right-1 size-5 rounded-full bg-panel ring-2 ring-panel" />}
-        </div>
+        <Face code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} size="md" muted={side === 'out'} />
         <div className="min-w-0">
           <Link to={`/player/${p.player_id}`} className={`block truncate font-display text-xl font-semibold leading-tight hover:text-pitch-green ${side === 'into' ? 'text-text' : 'text-text-muted'}`}>
             {p.name}
@@ -86,13 +82,60 @@ function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; 
   )
 }
 
-export function MoveCard({ m, horizon, fixtures }: { m: WeekPlanMove; horizon: number; fixtures?: FixtureContext }) {
+/** Expected points gameweek by gameweek for both players, as paired bars with the incoming club's opponent underneath: where
+ * the gain comes from (a soft run, a double, an away game that lands in week four), not just how much. */
+function GwCompare({ m, fixtures, startEvent }: { m: WeekPlanMove; fixtures?: FixtureContext; startEvent: number }) {
+  const out = m.out.xp_by_gw ?? []
+  const inn = m.into.xp_by_gw ?? []
+  if (out.length === 0 || inn.length === 0) return null
+  const top = Math.max(...out, ...inn, 1)
+  const run = m.into.team_code !== null ? fixtures?.[String(m.into.team_code)] : undefined
+  const accent = clubColors(m.into.team_code).accent
+  const H = 76
+  return (
+    <div className="mt-5 rounded-lg bg-void/40 px-4 pb-3 pt-3">
+      <div className="mb-2 flex items-center justify-between text-[12px] text-text-faint">
+        <span>Expected points by gameweek</span>
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-text-faint/50" />{m.out.name}</span>
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: accent }} />{m.into.name}</span>
+        </span>
+      </div>
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${inn.length}, minmax(0, 1fr))` }}>
+        {inn.map((v, i) => {
+          const f = run?.find((x) => x.event === startEvent + i)
+          return (
+            <div key={i} className="flex flex-col items-center">
+              <div className="flex items-end gap-1" style={{ height: H }}>
+                <div className="flex flex-col items-center justify-end">
+                  <span className="tabular mb-0.5 text-[11px] text-text-faint">{(out[i] ?? 0).toFixed(1)}</span>
+                  <div className="w-4 rounded-t-sm bg-text-faint/45" style={{ height: `${((out[i] ?? 0) / top) * (H - 16)}px` }} />
+                </div>
+                <div className="flex flex-col items-center justify-end">
+                  <span className="tabular mb-0.5 text-[11px] font-semibold text-text">{v.toFixed(1)}</span>
+                  <div className="w-4 rounded-t-sm" style={{ height: `${(v / top) * (H - 16)}px`, background: accent }} />
+                </div>
+              </div>
+              <div className="mt-1.5 text-center text-[11px] leading-tight text-text-faint">
+                <div className="font-semibold">GW{startEvent + i}</div>
+                <div>{f ? `${f.opponent_short} ${f.is_home ? 'H' : 'A'}` : 'no game'}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export function MoveCard({ m, horizon, fixtures, startEvent }: { m: WeekPlanMove; horizon: number; fixtures?: FixtureContext; startEvent: number }) {
   return (
     <div className="rounded-lg border border-divider bg-void/40 p-5">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Side p={m.out} side="out" fixtures={fixtures} />
         <Side p={m.into} side="into" fixtures={fixtures} />
       </div>
+      <GwCompare m={m} fixtures={fixtures} startEvent={startEvent} />
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-divider pt-3 text-[13px] text-text-muted">
         <div className="min-w-0">
           {(m.alternatives ?? []).length > 0 ? (

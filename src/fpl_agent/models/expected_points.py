@@ -1516,7 +1516,13 @@ def expected_points_window(
 
     breakdowns = []
     next_event = _reference_event(conn)
-    for i, fixture in enumerate(fixtures):
+    seen_in_event: dict[int, int] = {}
+    for fixture in fixtures:
+        # Rotation damping is for the second match of a double gameweek. It used to be indexed by position in the whole
+        # window, so a five-gameweek window of single fixtures damped its fifth gameweek by 0.9^4 = 34% (appearance, minutes
+        # and every per-minute component), and the horizon totals shown beside moves ran about 18% under their weekly numbers.
+        i = seen_in_event.get(fixture["event"], 0)
+        seen_in_event[fixture["event"]] = i + 1
         team_goals, opp_goals = _fixture_goals_for(conn, fixture, rates["team_id"])
         # Only the nearest fixture(s) in a multi-GW window could plausibly
         # have a real confirmed teamsheet, or real anytime-scorer odds,
