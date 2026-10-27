@@ -27,6 +27,7 @@ const PreviewsScreen = lazy(() => import('@/screens/Previews/PreviewsScreen').th
 const DeskScreen = lazy(() => import('@/screens/Desk/DeskScreen').then((m) => ({ default: m.DeskScreen })))
 const ScoutScreen = lazy(() => import('@/screens/Scout/ScoutScreen').then((m) => ({ default: m.ScoutScreen })))
 const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').then((m) => ({ default: m.AdvancedScreen })))
+const LeaguesScreen = lazy(() => import('@/screens/Leagues/LeaguesScreen').then((m) => ({ default: m.LeaguesScreen })))
 const LiveScreen = lazy(() => import('@/screens/Live/LiveScreen').then((m) => ({ default: m.LiveScreen })))
 
 function RouteFallback() {
@@ -71,6 +72,7 @@ function App() {
             <Route path="/scout" element={<ScoutScreen />} />
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />
+            <Route path="/leagues" element={<LeaguesScreen />} />
           </Routes>
           </Suspense>
           </div>

@@ -364,6 +364,22 @@ def sync_news_cmd(limit: int | None):
         raise SystemExit(1)
 
 
+@cli.command("sync-leagues")
+@click.option("--force", is_flag=True, help="bypass the 3-hour throttle")
+def sync_leagues_cmd(force: bool):
+    """Your classic mini-leagues: standings and rivals' latest locked picks (public FPL endpoints, no login)."""
+    from fpl_agent.ingestion.leagues import sync_leagues
+
+    conn = get_connection()
+    try:
+        result = sync_leagues(conn, force=force)
+    finally:
+        conn.close()
+    click.echo(", ".join(f"{k} {v}" for k, v in result.items()))
+    if result.get("status") == "failed":
+        raise SystemExit(1)
+
+
 @cli.command("sync-media")
 @click.option("--force", is_flag=True, help="bypass the 30-minute throttle and fetch now")
 def sync_media_cmd(force: bool):
@@ -1869,6 +1885,15 @@ def run_scheduled(gated: bool):
             )
     except Exception:
         logger.exception("run-scheduled media sync failed - not fatal to the sync itself")
+
+    try:
+        from fpl_agent.ingestion.leagues import sync_leagues
+
+        league_result = sync_leagues(conn)
+        if league_result.get("status") == "ok":
+            logger.info("run-scheduled mini-leagues: %s", league_result)
+    except Exception:
+        logger.exception("run-scheduled mini-league sync failed - not fatal to the sync itself")
 
     # Real gap found 2026-08-26 (GW1-postmortem audit): backfill-odds/
     # backfill-xg were built and proven for historical seasons, but NEVER

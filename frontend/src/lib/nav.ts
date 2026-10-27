@@ -1,4 +1,4 @@
-import { Activity, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Activity, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -14,6 +14,7 @@ export const DESTINATIONS = [
   { to: '/compare', label: 'Compare', icon: Scale },
   { to: '/explorer', label: 'Explorer', icon: SlidersHorizontal },
   { to: '/desk', label: 'News', icon: Newspaper },
+  { to: '/leagues', label: 'Mini-leagues', icon: Medal },
   { to: '/field', label: 'Versus the field', icon: Telescope },
   { to: '/audit', label: 'Luck check', icon: ScanSearch },
   { to: '/receipts', label: 'Track record', icon: Receipt },
@@ -26,7 +27,7 @@ export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
   { label: 'This week', routes: ['/', '/my-team', '/plan', '/live'] },
   { label: 'The league', routes: ['/matchweek', '/table', '/previews', '/football', '/atlas'] },
   { label: 'Players', routes: ['/scout', '/compare', '/explorer', '/desk'] },
-  { label: 'How I am doing', routes: ['/field', '/audit', '/receipts'] },
+  { label: 'How I am doing', routes: ['/leagues', '/field', '/audit', '/receipts'] },
   { label: 'System', routes: ['/advanced'] },
 ]
 

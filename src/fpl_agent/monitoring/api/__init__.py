@@ -17,6 +17,7 @@ from fpl_agent.monitoring.api.command_payload import build_command_payload
 from fpl_agent.monitoring.api.field_payload import build_field_payload
 from fpl_agent.monitoring.api.explorer_payload import build_explorer_payload
 from fpl_agent.monitoring.api.football_payload import build_football_payload
+from fpl_agent.monitoring.api.leagues_payload import build_leagues_payload
 from fpl_agent.monitoring.api.livecone_payload import build_livecone_payload
 from fpl_agent.monitoring.api.livestory_payload import build_live_story
 from fpl_agent.monitoring.api.match_payload import build_match_report
@@ -57,6 +58,7 @@ API_BUILDERS = {
     "whatif": build_whatif_payload,
     "viewplan": build_view_plan,
     "squadnews": build_squad_news,
+    "leagues": build_leagues_payload,
     "livestory": build_live_story,
     "explorer": build_explorer_payload,
     "projection": build_projection_payload,

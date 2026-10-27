@@ -123,7 +123,7 @@ from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "doubtful-eases-4"
+PROJECTION_REVISION = "doubtful-eases-cup-bans-5"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9

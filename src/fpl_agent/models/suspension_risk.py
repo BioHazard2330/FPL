@@ -7,11 +7,13 @@ user's fifteen were on three yellows with ten club matches left before the first
 
 Forward pass over the club's remaining fixtures in kickoff order: the distribution of the player's yellow count and of
 ban matches still to serve. A ban is served in the club's next league match(es). In each match he is not banned he is
-booked with probability 1 - exp(-yellow rate per 90 x expected fraction of 90 minutes).
+booked with probability 1 - exp(-yellow rate per 90 x expected fraction of 90 minutes). A domestic ban is served in the
+club's next domestic matches, so a League Cup or FA Cup tie scheduled before the next league match takes one ban match
+(BBC, 2026-10-26: Palmer's red-card ban falls on Chelsea's League Cup tie, not the next league game).
 
 Assumptions, none fitted: the booking rate is the model's own shrunk card rate (`player_regression`, the same one the
-cards component uses) and is constant across fixtures; a ban is always served in league matches, never in a cup tie
-played in between; a red card is left to FPL's own flag (it suspends at once, so FPL already says so)."""
+cards component uses) and is constant across fixtures; only cup ties already stored count (a later round is unknown until
+drawn); a red card is left to FPL's own flag."""
 import math
 import sqlite3
 
@@ -28,6 +30,34 @@ def _current_yellows(conn: sqlite3.Connection, player_id: int) -> int | None:
     return None if row is None or row["yellow_cards"] is None else int(row["yellow_cards"])
 
 
+def _domestic_cups_before(conn: sqlite3.Connection, team_id: int, fixtures: list[tuple[int, int, bool]]) -> dict[int, int]:
+    """{league fixture_id: domestic cup ties the club plays after the previous league fixture and before this one}."""
+    try:
+        cups = [r["kickoff_utc"] for r in conn.execute(
+            "SELECT kickoff_utc FROM team_other_competition_fixtures WHERE team_id=? "
+            "AND (competition LIKE 'EFL Cup%' OR competition LIKE 'FA Cup%') AND kickoff_utc IS NOT NULL", (team_id,),
+        )]
+    except sqlite3.OperationalError:
+        return {}
+    if not cups:
+        return {}
+    kickoff = {r["id"]: r["kickoff_time"] for r in conn.execute(
+        "SELECT id, kickoff_time FROM fixtures WHERE team_h=? OR team_a=?", (team_id, team_id),
+    )}
+    out: dict[int, int] = {}
+    previous = None
+    for fixture_id, _, _ in fixtures:
+        k = kickoff.get(fixture_id)
+        if k is None:
+            continue
+        k = k.replace("Z", "+00:00")
+        n = sum(1 for c in cups if (previous is None or c.replace("Z", "+00:00") > previous) and c.replace("Z", "+00:00") < k)
+        if n:
+            out[fixture_id] = n
+        previous = k
+    return out
+
+
 def _club_fixtures(conn: sqlite3.Connection, team_id: int) -> list[tuple[int, int, bool]]:
     """(fixture_id, club match number, played) for every league fixture of the club, in kickoff order."""
     rows = conn.execute(
@@ -40,14 +70,24 @@ def _club_fixtures(conn: sqlite3.Connection, team_id: int) -> list[tuple[int, in
 
 
 def ban_schedule(
-    yellows: int, fixtures: list[tuple[int, int, bool]], p_booked: float,
+    yellows: int, fixtures: list[tuple[int, int, bool]], p_booked: float, cups_before: dict[int, int] | None = None,
 ) -> dict[int, float]:
-    """{fixture_id: probability he is serving a ban} over the unplayed fixtures."""
+    """{fixture_id: probability he is serving a ban} over the unplayed fixtures. `cups_before` counts the domestic cup
+    ties a club plays just before a league fixture; each serves one owed ban match."""
     state = {(min(yellows, _MAX_COUNT), 0): 1.0}
     out: dict[int, float] = {}
+    first = True
     for fixture_id, number, played in fixtures:
         if played:
             continue
+        cups = 0 if first else (cups_before or {}).get(fixture_id, 0)
+        first = False
+        if cups:
+            served: dict[tuple[int, int], float] = {}
+            for (count, owed), p in state.items():
+                key = (count, max(owed - cups, 0))
+                served[key] = served.get(key, 0.0) + p
+            state = served
         banned = sum(p for (_, owed), p in state.items() if owed > 0)
         out[fixture_id] = banned
         nxt: dict[tuple[int, int], float] = {}
@@ -78,7 +118,8 @@ def suspension_probabilities(conn: sqlite3.Connection, player_id: int, yellow90:
     if not any(yellows < limit and limit - yellows <= by_match - first + 1 for limit, by_match, _ in THRESHOLDS):
         return {}
     p_booked = 1 - math.exp(-yellow90 * minutes_fraction)
-    return {k: v for k, v in ban_schedule(yellows, fixtures, p_booked).items() if v > 0}
+    cups = _domestic_cups_before(conn, team["team_id"], fixtures)
+    return {k: v for k, v in ban_schedule(yellows, fixtures, p_booked, cups).items() if v > 0}
 
 
 def suspension_probability(

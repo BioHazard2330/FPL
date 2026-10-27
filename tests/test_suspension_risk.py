@@ -35,3 +35,10 @@ def test_ban_probability_builds_up_over_the_window_and_never_exceeds_one():
 
 def test_never_booked_never_banned():
     assert max(ban_schedule(4, _fixtures(played=8), p_booked=0.0).values()) == 0.0
+
+
+def test_a_cup_tie_before_the_next_league_match_serves_the_ban():
+    fixtures = _fixtures(played=8)
+    out = ban_schedule(4, fixtures, p_booked=1.0, cups_before={110: 1})
+    assert out[110] == 0.0
+    assert out[111] == 0.0

@@ -8,6 +8,7 @@
 import type {
   MatchStory,
   SquadNewsPayload,
+  LeaguesPayload,
   ViewPlanPayload,
   SignalsPayload,
   ExplorerPayload,
@@ -118,6 +119,10 @@ export function fetchLiveStory(matchId: number): Promise<{ story: MatchStory; mi
 
 export function fetchSquadNews(): Promise<SquadNewsPayload> {
   return getJson<SquadNewsPayload>('/api/squadnews')
+}
+
+export function fetchLeagues(): Promise<LeaguesPayload> {
+  return getJson<LeaguesPayload>('/api/leagues')
 }
 
 export function fetchViewPlan(scales: Record<number, number>): Promise<ViewPlanPayload> {

@@ -18,6 +18,7 @@ const ITEMS: Item[] = [
   { label: 'Football', hint: 'Match intelligence', to: '/football' },
   { label: 'Desk', hint: 'News, video, price board', to: '/desk' },
   { label: 'Previews', hint: 'Next gameweek, match by match', to: '/previews' },
+  { label: 'Mini-leagues', hint: 'Your leagues, rivals and head-to-heads', to: '/leagues' },
   { label: 'Field', hint: 'This week against everyone else', to: '/field' },
   { label: 'Audit', hint: 'Luck, deserved points, match rebuilds', to: '/audit' },
   { label: 'Compare', hint: 'Two players, side by side', to: '/compare' },

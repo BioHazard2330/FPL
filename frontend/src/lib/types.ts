@@ -2410,3 +2410,65 @@ export interface ChipPlan {
   this_week: number
   ladder: { event: number; worth: number; beyond_plan: boolean }[]
 }
+
+export interface LeaguePlayer {
+  player_id: number
+  name: string | null
+  team: string | null
+  team_code: number | null
+  position: string | null
+  xp: number
+  starts: number
+  captains: number
+  owned: boolean
+  photo_code?: number | null
+}
+
+export interface LeagueStanding {
+  entry_id: number
+  team: string
+  manager: string
+  rank: number
+  last_rank: number | null
+  total: number
+  gw_points: number | null
+  gap: number | null
+  me: boolean
+  followed: boolean
+  chip: string | null
+  hits: number | null
+  value: number | null
+  captain: number | null
+  captain_name?: string | null
+  projected: number | null
+  swing: number | null
+  overlap: number | null
+  url: string
+  xi: number[]
+}
+
+export interface MiniLeague {
+  id: number
+  name: string
+  size: number
+  my_rank: number | null
+  my_last_rank: number | null
+  followed: number
+  url: string
+  partial: boolean
+  standings: LeagueStanding[]
+  threats: LeaguePlayer[]
+  differentials: LeaguePlayer[]
+  template: LeaguePlayer[]
+  players: Record<string, LeaguePlayer>
+}
+
+export interface LeaguesPayload {
+  status: 'ready' | 'none'
+  entry_id?: number
+  locked_event?: number | null
+  next_event?: number | null
+  my_projection?: number | null
+  my_xi?: number[]
+  leagues: MiniLeague[]
+}

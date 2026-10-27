@@ -1,1 +1,0 @@
-import{z as e}from"./ScreenStates-LUILGBVk.js";var t=e();function n({right:e}){return e?(0,t.jsx)(`div`,{className:`bare tabular -mb-2 px-1 text-right text-[13px] text-text-faint`,children:e}):null}export{n as t};
