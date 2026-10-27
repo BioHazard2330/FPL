@@ -146,6 +146,23 @@ class MilpPlanResult:
     chips_modelled: tuple[str, ...] = ()
 
 
+def make_solver(time_limit_seconds: float):
+    """CBC unless `FPL_MILP_SOLVER=highs` and HiGHS (`highspy`) is installed. Measured 2026-10-27 on the real squad: the
+    five-gameweek plan solve took 1.1s on CBC and 4.0s on HiGHS (same proven optimum); an eleven-gameweek solve with the
+    bench boost hit a 120s limit on both, HiGHS with the better incumbent (664.9 against 657.3). The week plan runs dozens
+    of five-gameweek solves, so CBC stays the default."""
+    import os
+
+    if os.environ.get("FPL_MILP_SOLVER", "").lower() == "highs":
+        try:
+            solver = pulp.HiGHS(msg=False, timeLimit=time_limit_seconds)
+            if solver.available():
+                return solver
+        except Exception:
+            pass
+    return pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit_seconds)
+
+
 def _position_of(c: PlayerCandidate) -> str:
     return c.position
 
@@ -448,7 +465,7 @@ def plan_transfers_milp(
         prev_bank = bank_tenths if i == 0 else bank[events[i - 1]]
         prob += bank[t] == prev_bank + raised - spend
 
-    solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit_seconds)
+    solver = make_solver(time_limit_seconds)
     solve_started = time.monotonic()
     prob.solve(solver)
     status = pulp.LpStatus[prob.status]
