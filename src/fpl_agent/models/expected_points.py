@@ -123,7 +123,7 @@ from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "start-blend-and-returns-2"
+PROJECTION_REVISION = "start-blend-returns-yellow-bans-3"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -238,21 +238,23 @@ def _returning_probs(
 
 def _fixture_minutes_probs(
     conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities, first_event: int | None,
-    healthy: MinutesBucketProbabilities | None = None,
+    healthy: MinutesBucketProbabilities | None = None, yellow90: float | None = None,
 ) -> MinutesBucketProbabilities:
     """Per-fixture minutes distribution: a real confirmed bench wins outright,
     otherwise the player's own record is discounted by the predicted start
     percentage, decaying with distance from the next gameweek. An injured or
     suspended player (`healthy` given) is scaled by the chance he is back for
     this fixture instead of staying at zero for the whole window; the start
-    percentage is not applied on top, since it already prices the injury."""
+    percentage is not applied on top, since it already prices the injury.
+    Then the chance of serving a yellow-card ban in this fixture
+    (`models/suspension_risk.py`) moves that share of his minutes to zero."""
     returning = _returning_probs(conn, player_id, fixture_row, healthy) if healthy is not None else None
     base = returning if returning is not None else probs
     confirmed = _confirmed_bench_probs(conn, player_id, fixture_row, base)
     if confirmed is not base or fixture_row is None:
         return confirmed
     if returning is not None:
-        return returning
+        return _after_yellow_bans(conn, player_id, fixture_row, returning, probs, yellow90)
     event = fixture_row["event"]
     if event is None or first_event is None:
         return probs
@@ -260,7 +262,24 @@ def _fixture_minutes_probs(
     result = apply_start_probability(conn, player_id, probs, weight)
     if event == first_event:
         result = _after_last_sheet(conn, player_id, fixture_row, probs, result)
-    return result
+    return _after_yellow_bans(conn, player_id, fixture_row, result, probs, yellow90)
+
+
+def _after_yellow_bans(
+    conn: sqlite3.Connection, player_id: int, fixture_row, result: MinutesBucketProbabilities,
+    probs: MinutesBucketProbabilities, yellow90: float | None,
+) -> MinutesBucketProbabilities:
+    from fpl_agent.models.suspension_risk import suspension_probability
+
+    banned = suspension_probability(
+        conn, player_id, fixture_row["id"] if "id" in fixture_row.keys() else None, yellow90,
+        probs.p_partial / 3 + probs.p_full,
+    )
+    if banned <= 0:
+        return result
+    keep = 1 - banned
+    partial, full = result.p_partial * keep, result.p_full * keep
+    return MinutesBucketProbabilities(max(0.0, 1.0 - partial - full), partial, full, f"{result.source}+yellow_ban")
 
 
 def _after_last_sheet(
@@ -1471,7 +1490,9 @@ def expected_points(
     next_event = next((f["event"] for f in upcoming if f["event"] is not None), None)
     fixture_rates = [
         {
-            **rates, "minutes_probs": _fixture_minutes_probs(conn, player_id, f, probs, next_event, rates.get("minutes_probs_healthy")),
+            **rates, "minutes_probs": _fixture_minutes_probs(
+                conn, player_id, f, probs, next_event, rates.get("minutes_probs_healthy"), rates.get("shrunk_cards90"),
+            ),
             "player_share_per90": _market_blended_share(conn, player_id, f, goals_pairs[i][0], rates["player_share_per90"]),
         }
         for i, f in enumerate(fixtures)
@@ -1610,6 +1631,7 @@ def expected_points_window(
         fixture_rates = {
             **rates, "minutes_probs": _fixture_minutes_probs(
                 conn, player_id, fixture, rates["minutes_probs"], next_event, rates.get("minutes_probs_healthy"),
+                rates.get("shrunk_cards90"),
             ),
             "player_share_per90": _market_blended_share(conn, player_id, fixture, team_goals, rates["player_share_per90"]),
         }

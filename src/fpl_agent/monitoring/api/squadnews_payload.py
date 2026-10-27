@@ -7,7 +7,9 @@ One line per player who has something to say, each carrying where it came from:
 - the chance he is available for the next gameweek's first match and the gameweek he is likely back, from
   `models/return_forecast.py` (stated dates, FotMob's phrase, or how long such spells have lasted);
 - what the last sheet says about the next match, where `models/sheet_study.py` has measured it;
-- headlines from BBC, Sky and The Guardian in the last five days that name him and are about availability or selection.
+- headlines from BBC, Sky and The Guardian in the last five days that name him and are about availability or selection;
+- on three yellow cards or more, the chance of serving an accumulation ban in the next five gameweeks
+  (`models/suspension_risk.py`).
 
 Nothing here is generated. A headline is quoted as published with its outlet; a statement nobody made is never written. Reads
 stored rows only."""
@@ -28,6 +30,9 @@ _SELECTION_WORDS = re.compile(
 _HEADLINE_DAYS = 5
 _HEADLINES_PER_PLAYER = 2
 _POSITION = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+BAN_WINDOW_GW = 5
+BAN_MIN_YELLOWS = 3
+BAN_RISK_FLAG = 0.15
 
 
 def _event_context(conn) -> tuple[int | None, int | None]:
@@ -77,6 +82,30 @@ def _back_gameweek(conn, player_id: int, team_id: int, from_event: int | None, n
         if f.probability >= 0.5:
             return event, f.probability
     return None, None
+
+
+def _yellow_ban_risk(conn, player_id: int, from_event: int | None) -> tuple[int, float, int] | None:
+    """(yellows so far, chance of serving a ban in the next `BAN_WINDOW_GW` gameweeks, last gameweek of that window) from
+    `models/suspension_risk.py`, or None when no ban is within reach."""
+    from fpl_agent.models.expected_points import _player_match_rates
+    from fpl_agent.models.suspension_risk import _current_yellows, suspension_probabilities
+
+    if from_event is None:
+        return None
+    yellows = _current_yellows(conn, player_id)
+    if not yellows or yellows < BAN_MIN_YELLOWS:
+        return None
+    rates = _player_match_rates(conn, player_id)
+    probs = rates["minutes_probs"]
+    schedule = suspension_probabilities(
+        conn, player_id, round(rates["shrunk_cards90"], 4), round(probs.p_partial / 3 + probs.p_full, 3),
+    )
+    last = from_event + BAN_WINDOW_GW - 1
+    fixtures = {
+        r["id"] for r in conn.execute("SELECT id FROM fixtures WHERE event BETWEEN ? AND ?", (from_event, last))
+    }
+    chance = sum(v for k, v in schedule.items() if k in fixtures)
+    return (yellows, min(chance, 1.0), last) if chance >= 0.01 else None
 
 
 def _headlines(conn, player_ids: list[int]) -> dict[int, list[dict]]:
@@ -199,6 +228,17 @@ def build_squad_news(ctx=None, params: dict | None = None) -> dict:
                                     + (f"; likely back by GW{gw}" if gw and gw > upcoming else "")
                                     + f" ({f.detail}).",
                         })
+
+            ban = _yellow_ban_risk(conn, pid, upcoming)
+            if ban is not None:
+                yellows, chance, last_event = ban
+                facts.append({
+                    "source": "Discipline",
+                    "text": f"{yellows} yellow cards; five by his club's 19th match is a one-match ban. "
+                            f"{round(chance * 100)}% chance he serves one in GW{upcoming}-{last_event}.",
+                })
+                if chance >= BAN_RISK_FLAG:
+                    severity = max(severity, 1)
 
             heads = headlines.get(pid, [])
             if heads:

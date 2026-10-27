@@ -1840,6 +1840,7 @@ export interface WeekPlanPayload {
     blank_gameweeks: { event: number; teams: string[] }[]
     bench_boost_this_week: number
     horizon: number
+    plan?: ChipPlan[]
   } | null
   proven_optimal?: boolean
   notes?: string[]
@@ -2398,4 +2399,14 @@ export interface SignalsPayload {
   streak_pairs: number
   default_fraction: number
   method: string
+}
+
+export interface ChipPlan {
+  chip: string
+  event: number
+  worth: number
+  players: { player_id: number; name: string; xp: number }[]
+  window_ends: number
+  this_week: number
+  ladder: { event: number; worth: number; beyond_plan: boolean }[]
 }

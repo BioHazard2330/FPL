@@ -585,6 +585,7 @@ def build_road_ahead(
                 {"out": s.player_out_name, "into": s.player_in_name, "hit": bool(s.uses_hit)}
                 for s in plan.sequence.steps if s.event == e and s.player_in_id is not None
             ],
+            "squad_ids": list(next(s.resulting_squad_ids for s in plan.sequence.steps if s.event == e)),
         })
     banked = free_transfers
     for week in weeks:
@@ -595,6 +596,68 @@ def build_road_ahead(
         "proven": plan.proven_optimal and roll.proven_optimal, "weeks": weeks,
         "final_free_transfers": banked,
     }
+
+
+_PLANNED_CHIPS = ("bboost", "3xc")
+
+
+def _chip_window_end(conn: sqlite3.Connection, chip: str, event: int) -> int | None:
+    row = conn.execute(
+        "SELECT stop_event FROM chip_windows WHERE name=? AND start_event<=? AND stop_event>=? ORDER BY stop_event LIMIT 1",
+        (chip, event, event),
+    ).fetchone()
+    return row["stop_event"] if row is not None else None
+
+
+def build_chip_plan(
+    conn: sqlite3.Connection, event: int, squads_by_event: dict[int, list[int]], available: list[str],
+) -> list[dict]:
+    """When to play each bench boost or triple captain still in hand before its window closes.
+
+    Read along the plan of record: the squad the road ahead expects in each gameweek (its last squad beyond its horizon),
+    with the eleven, bench and armband picked from that gameweek's projections. A bench boost is worth the bench's points
+    that week, a triple captain the captain's once more; a chip that expires unused is worth nothing, so the best week in
+    the window is the recommendation and every week's value is kept to show how much the choice matters. Moves made only to
+    feed a chip (fodder bought for one bench boost) are outside this: the solver that would weigh them cannot prove an
+    answer over eleven gameweeks inside the run's time budget."""
+    from fpl_agent.optimization.squad import resolve_projected_xi
+
+    if not squads_by_event:
+        return []
+    last = max(squads_by_event)
+    xi_cache: dict[int, object] = {}
+
+    def xi_at(e: int):
+        if e not in xi_cache:
+            xi_cache[e] = resolve_projected_xi(conn, set(squads_by_event[min(e, last)]), e)
+        return xi_cache[e]
+
+    out = []
+    for chip in _PLANNED_CHIPS:
+        if chip not in available:
+            continue
+        end = _chip_window_end(conn, chip, event)
+        if end is None or end < event:
+            continue
+        ladder = []
+        for e in range(event, end + 1):
+            xi = xi_at(e)
+            if chip == "bboost":
+                chosen = list(xi.bench)
+            else:
+                chosen = [xi.captain] if xi.captain is not None else []
+            ladder.append({
+                "event": e, "worth": round(sum(c.xp for c in chosen), 2),
+                "players": [{"player_id": c.player_id, "name": c.web_name, "xp": round(c.xp, 2)} for c in chosen],
+                "beyond_plan": e > last,
+            })
+        best = max(ladder, key=lambda w: w["worth"])
+        out.append({
+            "chip": chip, "event": best["event"], "worth": best["worth"], "players": best["players"],
+            "window_ends": end, "this_week": ladder[0]["worth"],
+            "ladder": [{"event": w["event"], "worth": w["worth"], "beyond_plan": w["beyond_plan"]} for w in ladder],
+        })
+    return out
 
 
 def stress_moves(solve, pairs: list[tuple[int, int]], bar: float, event: int) -> list[MoveStress | None]:
@@ -881,6 +944,12 @@ def build_week_plan(
         _logger.exception("team outlook failed - the plan itself is unaffected")
 
     chip_outlook = build_chip_outlook(conn, event, sum(p.xp for p in lineup_after.bench))
+    squads_by_event = {w["event"]: w["squad_ids"] for w in road_ahead["weeks"]} if road_ahead else {event: sorted(squad_after)}
+    try:
+        chip_outlook["plan"] = build_chip_plan(conn, event, squads_by_event, chip_outlook["available"])
+    except Exception:
+        _logger.exception("chip plan failed - the plan itself is unaffected")
+        chip_outlook["plan"] = []
     ft_after = min(free_transfers - min(len(moves), free_transfers) + 1, FREE_TRANSFER_CAP)
     notes: list[str] = []
     if not ft_known:

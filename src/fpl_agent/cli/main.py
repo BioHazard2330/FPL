@@ -4429,6 +4429,13 @@ def week_plan_cmd(horizon: int, min_gain: float, save: bool):
             for week in ra["weeks"][1:]:
                 moves = ", ".join(f"{m['out']} -> {m['into']}" + (" (HIT)" if m["hit"] else "") for m in week["moves"])
                 click.echo(f"    GW{week['event']}: {moves or 'roll'}")
+        for chip in (plan.chip_outlook or {}).get("plan", []):
+            label = {"bboost": "bench boost", "3xc": "triple captain"}.get(chip["chip"], chip["chip"])
+            who = ", ".join(f"{p['name']} {p['xp']:.1f}" for p in chip["players"])
+            ladder = " ".join(f"{w['event']}:{w['worth']:.1f}" for w in chip["ladder"])
+            click.echo(f"  {label}: best GW{chip['event']} ({chip['worth']:.1f}: {who}); this week {chip['this_week']:.1f}; "
+                       f"expires after GW{chip['window_ends']}")
+            click.echo(f"    by gameweek {ladder}")
         for note in plan.notes:
             click.echo(f"  note: {note}")
         if save:

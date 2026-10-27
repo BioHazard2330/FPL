@@ -536,3 +536,37 @@ def test_nothing_is_started_when_the_plan_is_current(db_conn, monkeypatch):
     monkeypatch.setattr(wp, "refresh_reason", lambda conn: None)
     monkeypatch.setattr(cli, "DATA_DIR", __import__("pathlib").Path(__import__("tempfile").mkdtemp()))
     assert cli._maybe_trigger_week_plan_refresh(db_conn) is None and started == []
+
+
+def test_chip_plan_picks_the_best_week_in_the_window_along_the_planned_squads(db_conn, monkeypatch):
+    from types import SimpleNamespace
+
+    import fpl_agent.optimization.squad as squad_mod
+    from fpl_agent.optimization.week_plan import build_chip_plan
+
+    db_conn.execute(
+        "INSERT INTO chip_windows (name, number, start_event, stop_event, chip_type, season, updated_at) "
+        "VALUES ('bboost', 1, 1, 12, 'team', '2026-27', 't0')"
+    )
+    bench_by_event = {9: 10.0, 10: 14.0, 11: 9.0, 12: 12.0}
+    seen = []
+
+    def fake_xi(conn, squad, event, xp_cache=None):
+        seen.append((event, frozenset(squad)))
+        player = SimpleNamespace(player_id=1, web_name="Bench", xp=bench_by_event[event])
+        return SimpleNamespace(bench=[player], captain=player)
+
+    monkeypatch.setattr(squad_mod, "resolve_projected_xi", fake_xi)
+    plan = build_chip_plan(db_conn, 9, {9: [1, 2], 10: [1, 3]}, ["bboost"])
+    assert len(plan) == 1
+    chip = plan[0]
+    assert (chip["event"], chip["worth"], chip["this_week"], chip["window_ends"]) == (10, 14.0, 10.0, 12)
+    assert [w["beyond_plan"] for w in chip["ladder"]] == [False, False, True, True]
+    assert dict(seen)[12] == frozenset({1, 3})
+
+
+def test_chip_plan_skips_chips_already_played_or_out_of_window(db_conn):
+    from fpl_agent.optimization.week_plan import build_chip_plan
+
+    assert build_chip_plan(db_conn, 9, {9: [1]}, ["bboost"]) == []
+    assert build_chip_plan(db_conn, 9, {9: [1]}, []) == []

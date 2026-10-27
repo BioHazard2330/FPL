@@ -13,6 +13,10 @@ teach` setup still outstanding before the new frontend-design skills are
 usable. No application code changed as part of that pass except two new
 project-local skill files.
 
+## Where things stand (updated 2026-10-27, evening)
+
+Projections now carry yellow-card accumulation bans before FPL flags them (`models/suspension_risk.py`; Squad news shows the chance for players on 3+ yellows), and the PLAN chips panel prices the remaining bench boost in every week to its GW19 expiry along the road-ahead squads instead of telling the manager to wait for a double gameweek that is not scheduled. Three football hypotheses were re-measured and refused (European-tie rotation, key absences lowering team xG, re-splitting team goals over the expected eleven); per-player accuracy beats Solio on GW8. Account: `docs/history/64-session-2026-10-27-optimizer-upgrades-bans-chips-and-refused-football-factors.md`. Next candidates: fit the booking rate's tail (card-prone players under-predicted); a joint chip-and-transfer solve once it can be proven inside the time budget (smaller pool or warm start); second-half chips once GW20 opens.
+
 ## Where things stand (updated 2026-10-27)
 
 The start-percentage feed is blended 50/50 with a player's own record of 60-minute matches (fitted on 216 finished team matches; the old discount-only rule predicted 46% against 57% realised); only a regular left out of the squad is capped for the next match. `fpl start-calibration` pairs readings with each team's next official sheet and scores the rules (Brier). Account of you against the optimizer and how weak the projections are: `docs/history/63-session-2026-10-27-you-against-the-optimizer-and-the-start-percentage-blend.md`. Next candidates: refit the blend weight and its lead-time decay as readings accumulate; a per-gameweek cross-section report (Spearman among contenders, top-N realised, bias by position) from `prediction_outcomes`; goalkeeper and defender under-prediction (+1.2 and +0.7 a player in GW8).
