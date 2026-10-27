@@ -25,3 +25,7 @@ User: *"now do what you have to to improve the optimizer by any means necessary.
 - Chip weeks beyond the road ahead's eight assume the last planned squad.
 - `PROJECTION_REVISION` is `start-blend-returns-yellow-bans-3`, so stored plans rebuild.
 - Next: fit the booking rate's tail; a provable joint chip solve (warm start from the road ahead, or a smaller horizon window around the candidate weeks); second-half chips from GW20.
+
+## Follow-up: the doubtful flag eases
+
+User asked why Barry and not Evanilson or N.Jackson for João Pedro. Checking João Pedro (75% flag) found the doubtful damping (0.5) applied to all five gameweeks. Measured on 2026-27 GW4-8: flagged regulars 0.44x fit regulars' 60+ rate that gameweek (44), 0.65x the three after (72). Now the next gameweek keeps the flag and later ones use the healthy record x 0.65. João Pedro GW10-13 2.3 to 3.0. The week plan is unchanged (its marginal price of selling now is against selling next week, so only GW9 counts). What-if over 5 GW: JP->Barry +6.95, JP->Jackson +5.51, JP->Evanilson +4.08; Jackson or Evanilson with Calafiori->Gabriel is unaffordable (0.9m, 0.4m short); best Gibbs-White replacements Mbeumo +4.09, Rudoni +3.94.

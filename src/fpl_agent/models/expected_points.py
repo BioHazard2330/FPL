@@ -123,7 +123,7 @@ from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "start-blend-returns-yellow-bans-3"
+PROJECTION_REVISION = "doubtful-eases-4"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -236,9 +236,26 @@ def _returning_probs(
     return MinutesBucketProbabilities(max(0.0, 1.0 - partial - full), partial, full, f"return_forecast_{forecast.basis}")
 
 
+# A regular flagged doubtful (50% or 75%) before a deadline played 60+ minutes 0.44x as often as fit regulars that gameweek
+# (44 cases) and 0.65x over the three after (72 cases, 2026-27 GW4-8): the flag's discount applies in full to the next
+# gameweek and eases to this for the ones after, rather than holding for the whole horizon.
+DOUBTFUL_LATER_FACTOR = 0.65
+
+
+def _doubtful_later_probs(
+    flagged: MinutesBucketProbabilities, healthy: MinutesBucketProbabilities,
+) -> MinutesBucketProbabilities | None:
+    if healthy.p_full + healthy.p_partial <= 0:
+        return None
+    factor = max(DOUBTFUL_LATER_FACTOR, (flagged.p_full + flagged.p_partial) / (healthy.p_full + healthy.p_partial))
+    partial, full = healthy.p_partial * factor, healthy.p_full * factor
+    return MinutesBucketProbabilities(max(0.0, 1.0 - partial - full), partial, full, "doubtful_later")
+
+
 def _fixture_minutes_probs(
     conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities, first_event: int | None,
     healthy: MinutesBucketProbabilities | None = None, yellow90: float | None = None,
+    later: MinutesBucketProbabilities | None = None,
 ) -> MinutesBucketProbabilities:
     """Per-fixture minutes distribution: a real confirmed bench wins outright,
     otherwise the player's own record is discounted by the predicted start
@@ -258,6 +275,8 @@ def _fixture_minutes_probs(
     event = fixture_row["event"]
     if event is None or first_event is None:
         return probs
+    if later is not None and event > first_event:
+        probs = later
     weight = _START_PERCENT_DECAY_PER_EVENT ** max(event - first_event, 0)
     result = apply_start_probability(conn, player_id, probs, weight)
     if event == first_event:
@@ -914,8 +933,13 @@ def _player_match_rates(
         shrunk = player_shrunk_rates(conn, player_id, season, as_of_date, prior_overrides=hierarchical_priors)
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
     minutes_probs_healthy = None
+    minutes_probs_later = None
     if as_of_date is None and player["status"] in ("i", "s"):
         minutes_probs_healthy = minutes_bucket_probabilities(conn, player_id, season, as_of_date, healthy=True)
+    elif as_of_date is None and player["status"] == "d":
+        minutes_probs_later = _doubtful_later_probs(
+            minutes_probs, minutes_bucket_probabilities(conn, player_id, season, as_of_date, healthy=True),
+        )
 
     team_market_id = get_or_create_market_team(conn, "fpl", _fpl_team_name(conn, player["team_id"]))
     # Real, empirical fraction of a team's own goals that carry a credited
@@ -1145,6 +1169,7 @@ def _player_match_rates(
         "saves_pts_rule": (get_rule(conn, rules_season, "scoring.saves", 0) or 0) if position == "GKP" else 0,
         "historical_minutes_fraction": minutes_fraction,
         "bonus90": bonus90, "minutes_probs": minutes_probs, "minutes_probs_healthy": minutes_probs_healthy,
+        "minutes_probs_later": minutes_probs_later,
         "defcon_actions90": defcon_actions90, "defcon_pts_rule": defcon_pts_rule,
         "season": season, "rules_season": rules_season, "goals_source": goals_source,
     }
@@ -1492,6 +1517,7 @@ def expected_points(
         {
             **rates, "minutes_probs": _fixture_minutes_probs(
                 conn, player_id, f, probs, next_event, rates.get("minutes_probs_healthy"), rates.get("shrunk_cards90"),
+                rates.get("minutes_probs_later"),
             ),
             "player_share_per90": _market_blended_share(conn, player_id, f, goals_pairs[i][0], rates["player_share_per90"]),
         }
@@ -1631,7 +1657,7 @@ def expected_points_window(
         fixture_rates = {
             **rates, "minutes_probs": _fixture_minutes_probs(
                 conn, player_id, fixture, rates["minutes_probs"], next_event, rates.get("minutes_probs_healthy"),
-                rates.get("shrunk_cards90"),
+                rates.get("shrunk_cards90"), rates.get("minutes_probs_later"),
             ),
             "player_share_per90": _market_blended_share(conn, player_id, fixture, team_goals, rates["player_share_per90"]),
         }

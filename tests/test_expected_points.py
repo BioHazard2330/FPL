@@ -1433,3 +1433,16 @@ def test_a_match_already_played_is_not_the_next_fixture(db_conn):
     after_whistle = expected_points(db_conn, 1)
 
     assert after_whistle.median >= baseline.median * 0.5
+
+
+def test_a_doubtful_flag_eases_after_the_next_gameweek_to_the_measured_factor():
+    from fpl_agent.models.expected_points import DOUBTFUL_LATER_FACTOR, _doubtful_later_probs
+    from fpl_agent.models.minutes_distribution import MinutesBucketProbabilities
+
+    healthy = MinutesBucketProbabilities(0.0, 0.3, 0.7, "empirical")
+    flagged = MinutesBucketProbabilities(0.5, 0.15, 0.35, "empirical")
+    later = _doubtful_later_probs(flagged, healthy)
+    assert abs(later.p_full - 0.7 * DOUBTFUL_LATER_FACTOR) < 1e-9
+    assert abs(later.p_zero + later.p_partial + later.p_full - 1) < 1e-9
+    lightly = MinutesBucketProbabilities(0.15, 0.255, 0.595, "empirical")
+    assert abs(_doubtful_later_probs(lightly, healthy).p_full - 0.595) < 1e-9
