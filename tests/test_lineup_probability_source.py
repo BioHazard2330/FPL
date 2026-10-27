@@ -150,3 +150,24 @@ def test_readings_are_set_against_who_started_next_and_counted_once_per_match(db
     assert out["pairs"] == 2
     assert by_band["85-100%"]["n"] == 1 and by_band["85-100%"]["started"] == 1
     assert by_band["10-30%"]["n"] == 1 and by_band["10-30%"]["started"] == 0
+
+
+def test_a_changed_figure_inside_the_same_clock_tick_is_still_kept(db_conn, monkeypatch):
+    import fpl_agent.ingestion.lineup_probability_source as mod
+
+    _seed_two_players(db_conn)
+    frozen = "2026-10-27T12:00:00+00:00"
+
+    class _Clock:
+        @staticmethod
+        def now(tz=None):
+            from datetime import datetime
+            return datetime.fromisoformat(frozen)
+
+    monkeypatch.setattr(mod, "fetch_team_news_html", lambda url=mod.TEAM_NEWS_URL: _HTML)
+    monkeypatch.setattr(mod, "datetime", type("D", (), {"now": _Clock.now, "fromisoformat": staticmethod(__import__("datetime").datetime.fromisoformat)}))
+    sync_lineup_probabilities(db_conn)
+    monkeypatch.setattr(mod, "fetch_team_news_html", lambda url=mod.TEAM_NEWS_URL: _HTML.replace("95%", "50%"))
+    sync_lineup_probabilities(db_conn)
+    rows = db_conn.execute("SELECT start_percent FROM player_start_probability_history WHERE player_id = 1 ORDER BY fetched_at").fetchall()
+    assert [r[0] for r in rows] == [95, 50]

@@ -133,8 +133,15 @@ def _append_history(conn, team_id: int, rows: list[tuple], now: str) -> None:
         )
     }
     stale_before = (datetime.fromisoformat(now) - timedelta(days=1)).isoformat()
+    def stamp(pid: int) -> str:
+        # Two syncs inside one clock tick share `now`, and the (player, fetched_at) key would silently drop the second
+        # reading; a changed figure must always land, so it goes in a microsecond after the last one stored.
+        if pid in last and last[pid][1] >= now:
+            return (datetime.fromisoformat(last[pid][1]) + timedelta(microseconds=1)).isoformat()
+        return now
+
     fresh = [
-        (pid, tid, pct, now) for pid, tid, _pos, pct, _t in rows
+        (pid, tid, pct, stamp(pid)) for pid, tid, _pos, pct, _t in rows
         if pid not in last or last[pid][0] != pct or last[pid][1] < stale_before
     ]
     if fresh:
