@@ -1792,6 +1792,7 @@ export interface LineupChanges {
 }
 
 export interface WeekPlanPayload {
+  matchups?: MatchupBoardData
   form_board?: (FormReading & { player_id: number; name: string; position: string | null })[]
   status: 'none' | 'current' | 'stale'
   new_results?: number
@@ -2471,4 +2472,32 @@ export interface LeaguesPayload {
   my_projection?: number | null
   my_xi?: number[]
   leagues: MiniLeague[]
+}
+
+export interface TeamFormLine {
+  matches: number
+  xg_for: number
+  xg_against: number
+  xg_for_recent: number
+  xg_against_recent: number
+  conceded: number
+  clean_sheets: number
+}
+
+export interface MatchupFixture {
+  event: number
+  opponent: string
+  opponent_code: number
+  home: boolean
+  xg_for: number
+  xg_against: number
+  cs: number
+  market: boolean
+  opponent_form: TeamFormLine | null
+  tilt: { source: string; shift: number } | null
+}
+
+export interface MatchupBoardData {
+  league: { xg_for: number; xg_against: number }
+  teams: Record<string, { short: string; fixtures: MatchupFixture[]; form: TeamFormLine | null }>
 }

@@ -3,7 +3,8 @@ import { Face } from '@/components/ui/Face'
 import { clubColors } from '@/lib/clubs'
 import { FixtureRun } from '@/components/football/FixtureRun'
 import { money } from '@/components/ui/kit'
-import type { FixtureContext, WeekPlanMove, WeekPlanPlayer } from '@/lib/types'
+import type { FixtureContext, MatchupBoardData, MatchupFixture, WeekPlanMove, WeekPlanPlayer } from '@/lib/types'
+import { crestUrl } from '@/lib/api'
 import { plain } from '@/lib/text'
 
 type Note = { tone: 'red' | 'gold' | 'green' | 'plain'; text: string }
@@ -128,7 +129,110 @@ function GwCompare({ m, fixtures, startEvent }: { m: WeekPlanMove; fixtures?: Fi
   )
 }
 
-export function MoveCard({ m, horizon, fixtures, startEvent }: { m: WeekPlanMove; horizon: number; fixtures?: FixtureContext; startEvent: number }) {
+const DEFENSIVE = new Set(['GKP', 'DEF'])
+
+function attackTone(xg: number) {
+  if (xg >= 1.85) return 'bg-pitch-green/30 text-pitch-green'
+  if (xg >= 1.55) return 'bg-pitch-green/15 text-pitch-green'
+  if (xg >= 1.25) return 'bg-raised text-text'
+  return 'bg-alert-red/15 text-alert-red'
+}
+
+function defenceTone(cs: number) {
+  if (cs >= 0.4) return 'bg-pitch-green/30 text-pitch-green'
+  if (cs >= 0.3) return 'bg-pitch-green/15 text-pitch-green'
+  if (cs >= 0.2) return 'bg-raised text-text'
+  return 'bg-alert-red/15 text-alert-red'
+}
+
+function leaky(xga: number, league: number) {
+  if (xga >= league * 1.25) return { label: 'leaky', cls: 'text-pitch-green' }
+  if (xga <= league * 0.8) return { label: 'tight', cls: 'text-alert-red' }
+  return null
+}
+
+const TILT: Record<string, string> = { 'open play': 'open play', corners: 'corners', 'set pieces': 'set pieces', 'fast breaks': 'breaks', penalties: 'pens' }
+
+function MatchupCell({ f, defensive, league }: { f: MatchupFixture; defensive: boolean; league: number }) {
+  const opp = f.opponent_form
+  const recent = opp ? (defensive ? opp.xg_for_recent : opp.xg_against_recent) : null
+  const tag = opp && !defensive ? leaky(opp.xg_against_recent, league) : null
+  const crest = crestUrl(f.opponent_code)
+  return (
+    <div
+      className={`min-w-0 rounded-md px-1.5 py-1.5 ${defensive ? defenceTone(f.cs) : attackTone(f.xg_for)}`}
+      title={`${f.opponent} ${f.home ? 'at home' : 'away'}: ${defensive ? `${Math.round(f.cs * 100)}% clean-sheet chance` : `${f.xg_for.toFixed(2)} team goals expected`}${
+        recent !== null ? `; ${f.opponent} ${defensive ? 'create' : 'concede'} ${recent.toFixed(1)} xG a game over their last four` : ''
+      }${f.tilt ? `; matchup tilts toward ${f.tilt.source}` : ''}`}
+    >
+      <div className="flex items-center gap-1">
+        {crest && <img src={crest} alt="" className="size-3.5 shrink-0" />}
+        <span className="truncate text-[11.5px] font-semibold text-text">{f.opponent}</span>
+        <span className="text-[10.5px] text-text-faint">{f.home ? 'H' : 'A'}</span>
+      </div>
+      <div className="mt-0.5 font-display text-[17px] font-bold leading-none tabular-nums">{defensive ? `${Math.round(f.cs * 100)}%` : f.xg_for.toFixed(2)}</div>
+      {recent !== null && (
+        <div className="mt-1 truncate text-[10.5px] leading-tight text-text-muted">
+          {recent.toFixed(1)} {defensive ? 'made' : 'let in'}
+          {tag && <span className={`ml-1 font-semibold ${tag.cls}`}>{tag.label}</span>}
+        </div>
+      )}
+      {f.tilt && <div className="truncate text-[10.5px] leading-tight text-broadcast-gold">+{TILT[f.tilt.source] ?? f.tilt.source}</div>}
+    </div>
+  )
+}
+
+/** Both clubs' next fixtures side by side, read the way a football eye reads them: who they play, the team's expected goals
+ * (or, for a defender or keeper, the clean-sheet chance) in that fixture, how many chances the opponent has let in or made
+ * over its last four, and the kind of chance the matchup tilts toward. Green favours the player, red is against him. Two
+ * players from one club share a row. */
+function MatchupBoard({ m, board, startEvent, horizon }: { m: WeekPlanMove; board?: MatchupBoardData; startEvent: number; horizon: number }) {
+  if (!board) return null
+  const events = Array.from({ length: horizon }, (_, i) => startEvent + i)
+  const sameClub = m.out.team_id === m.into.team_id
+  const rows = (sameClub ? [m.into] : [m.out, m.into]).map((p) => ({ p, team: board.teams[String(p.team_id)] }))
+  if (rows.some((r) => !r.team)) return null
+  return (
+    <div className="mt-5 rounded-lg bg-void/40 px-3 pb-3 pt-3">
+      <div className="mb-2 text-[12px] text-text-faint">
+        Fixture by fixture <span className="text-text-faint/80">· opponents over their last four · league average {board.league.xg_for.toFixed(2)} goals a team</span>
+      </div>
+      <div className="grid gap-1" style={{ gridTemplateColumns: `5.5rem repeat(${events.length}, minmax(0, 1fr))` }}>
+        <div />
+        {events.map((e) => (
+          <div key={e} className="text-center text-[11px] font-semibold text-text-faint">
+            GW{e}
+          </div>
+        ))}
+        {rows.flatMap(({ p, team }) => {
+          const defensive = DEFENSIVE.has(p.position)
+          return [
+            <div key={`${p.player_id}-h`} className="flex min-w-0 flex-col justify-center pr-1">
+              <span className={`truncate text-[12.5px] font-semibold ${p === m.into ? 'text-text' : 'text-text-muted'}`}>
+                {sameClub ? `${team!.short}, both` : p.name}
+              </span>
+              <span className="text-[10.5px] leading-tight text-text-faint">{defensive ? 'clean-sheet chance' : 'team goals expected'}</span>
+            </div>,
+            ...events.map((e) => {
+              const fs = team!.fixtures.filter((f) => f.event === e)
+              return (
+                <div key={`${p.player_id}-${e}`} className="flex min-w-0 flex-col gap-1">
+                  {fs.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-md bg-alert-red/10 text-[11px] text-alert-red">blank</div>
+                  ) : (
+                    fs.map((f) => <MatchupCell key={`${f.opponent}-${f.home}`} f={f} defensive={defensive} league={board.league.xg_against} />)
+                  )}
+                </div>
+              )
+            }),
+          ]
+        })}
+      </div>
+    </div>
+  )
+}
+
+export function MoveCard({ m, horizon, fixtures, startEvent, board }: { m: WeekPlanMove; horizon: number; fixtures?: FixtureContext; startEvent: number; board?: MatchupBoardData }) {
   return (
     <div className="rounded-lg border border-divider bg-void/40 p-5">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -136,6 +240,7 @@ export function MoveCard({ m, horizon, fixtures, startEvent }: { m: WeekPlanMove
         <Side p={m.into} side="into" fixtures={fixtures} />
       </div>
       <GwCompare m={m} fixtures={fixtures} startEvent={startEvent} />
+      <MatchupBoard m={m} board={board} startEvent={startEvent} horizon={horizon} />
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-divider pt-3 text-[13px] text-text-muted">
         <div className="min-w-0">
           {(m.alternatives ?? []).length > 0 ? (

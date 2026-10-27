@@ -9,10 +9,13 @@ A plan the squad has outgrown is still served, marked stale with the reasons,
 because blanking the screen would hide that a recommendation once existed. The
 client decides how loudly to say so.
 """
+import logging
 from datetime import datetime, timezone
 
 from fpl_agent.monitoring.api.photos import attach_photo_codes
 from fpl_agent.monitoring.dashboard.context import DashboardContext
+
+_logger = logging.getLogger("fpl_agent.weekplan_payload")
 
 
 def _team_codes(conn, team_ids: set[int]) -> dict[int, int]:
@@ -126,6 +129,21 @@ def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
         "xp_gain": round(best["xp_total"] - as_set["xp_total"], 2),
         "worth_changing": bool(swaps_in) or as_set["captain_id"] != best["captain_id"],
     }
+
+
+def _attach_matchups(conn, payload: dict, detail: dict) -> None:
+    """The fixture-by-fixture board for both clubs in every recommended and declined move (`models/fixture_matchups`)."""
+    try:
+        from fpl_agent.models.fixture_matchups import matchup_board
+
+        teams = {
+            side["team_id"] for m in detail.get("moves", []) + detail.get("declined", [])
+            for side in (m.get("out"), m.get("into")) if isinstance(side, dict) and side.get("team_id") is not None
+        }
+        if teams:
+            payload["matchups"] = matchup_board(conn, teams, detail["event"], detail.get("horizon") or 5)
+    except Exception:
+        _logger.exception("matchup board failed - the plan is unaffected")
 
 
 def build_week_plan_payload(ctx: DashboardContext) -> dict:
@@ -243,6 +261,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "captain": captain_block(lineup_after),
             "fixtures": fixture_context_by_team_code(conn, team_ids),
         }
+        _attach_matchups(conn, payload, detail)
         _attach_luck(conn, payload)
         _attach_analyst(conn, payload)
         _attach_form(conn, payload, list(detail.get("squad_ids", [])))
