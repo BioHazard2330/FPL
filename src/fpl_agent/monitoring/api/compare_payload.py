@@ -224,6 +224,13 @@ def _build_compare(ctx: DashboardContext, params: dict | None = None) -> dict:
             "model_mae": mae,
             "as_transfer": _as_transfer(conn, a, b),
         }
+        try:
+            from fpl_agent.models.scouting import scouting_report
+
+            for side in (a, b):
+                side["scouting"] = scouting_report(conn, side["player_id"])
+        except Exception:
+            pass
         return attach_photo_codes(conn, payload)
     finally:
         conn.close()

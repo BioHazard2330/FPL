@@ -15,3 +15,10 @@ User: *"i just want the dashboard to look amazing, the site as a whole with tons
 - A leakage-free replay of the week plan over past seasons (the plan has a record only from GW7).
 - Precomputed screen payloads written by `run-scheduled` so no screen waits on a cold build.
 - Rival projections assume an unchanged team; once picks lock after the deadline the next sync replaces them.
+
+## Later: the scouting report and the plan replay
+
+User: *"i expect greatness. many optimizers use numbers and stats. i want the football eye. every player and how they play and how good they're at their craft."*
+
+- **Scouting report (`models/scouting.py`).** Every player ranked within his FPL position (270+ minutes) on quality measures and described by style, with profile labels that are rules over the percentiles (e.g. Barry: penalty-box finisher, goal threat, aerial threat; 0.80 non-penalty xG per 90, 100th percentile; 52% of shots headers; 2.1 goals under his xG; xG+xA down 31% over his last five). Keepers get goals prevented from on-target xG faced (Kinsky -2.2, 23rd percentile). On player pages, both sides of every transfer card, and side by side on Compare.
+- **Plan replay (`backtesting/plan_replay.py`, `fpl plan-replay`).** The week plan's MILP policy (5-gameweek horizon, banking to 5, hits allowed, 1.5-point bar per transfer) against one swap per decision over a 2.0 bar and never transferring, from the same round-0 squad, on `season_backtest`'s leakage-free inputs (walk-forward core projections, historical prices and clubs). Rounds are 10 match dates (about three gameweeks), one free transfer per round. First run flawed: players with no in-season record kept last season's rate (Maddison, Gabriel Jesus bought while injured); after four rounds such players are now out of the pool and squad members who drop out are valued at zero, for every policy. Result: plan 1039/1208/1435/1194/882 against swap 1006/969/1236/1118/790 and hold 963/969/1179/1068/737 (2021-22 to 2025-26), ahead in all five, +639 over the swap and +842 over hold, hits included. Limits: core points only (no fixtures, clean sheets, bonus, defensive points), no chips, no auto-subs.

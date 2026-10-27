@@ -210,6 +210,7 @@ def _build_receipts_payload_uncached(ctx: DashboardContext) -> dict:
         return {
             "has_record": True,
             "calibration": calibration,
+            "replay": _replay_block(),
             "headline": {
                 "your_total": totals.your_total,
                 "your_total_all_events": totals.your_total_all_events,
@@ -256,3 +257,28 @@ def _build_receipts_payload_uncached(ctx: DashboardContext) -> dict:
 
 # Reads its own tables only - never waits on the full dashboard context.
 build_receipts_payload.needs_context = False  # type: ignore[attr-defined]
+
+
+def _replay_block() -> dict | None:
+    """The week plan's policy replayed over past seasons (`fpl plan-replay`, `backtesting/plan_replay.py`), if it has run."""
+    import json
+
+    from fpl_agent.config import DATA_DIR
+
+    path = DATA_DIR / "plan_replay.json"
+    if not path.exists():
+        return None
+    try:
+        seasons = json.loads(path.read_text(encoding="utf-8")).get("seasons", [])
+    except (OSError, ValueError):
+        return None
+    if not seasons:
+        return None
+    total = {k: sum(s["totals"][k] for s in seasons) for k in ("plan", "swap", "hold")}
+    return {
+        "seasons": [{k: s[k] for k in ("season", "rounds", "totals", "transfers", "hits")} for s in seasons],
+        "total": total,
+        "beat_swap": sum(1 for s in seasons if s["totals"]["plan"] > s["totals"]["swap"]),
+        "beat_hold": sum(1 for s in seasons if s["totals"]["plan"] > s["totals"]["hold"]),
+    }
+

@@ -4403,6 +4403,29 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
         conn.close()
 
 
+@cli.command("plan-replay")
+@click.option("--season", "seasons", multiple=True, help="season to replay (repeatable; default 2021-22 to 2025-26)")
+def plan_replay_cmd(seasons: tuple[str, ...]):
+    """The week plan's transfer policy replayed over past seasons against a single swap a week and never transferring
+    (leakage-free core projections; see backtesting/plan_replay.py). Writes data/plan_replay.json for the dashboard."""
+    import json
+
+    from fpl_agent.backtesting.plan_replay import run_plan_replay
+
+    conn = get_connection()
+    out = []
+    try:
+        for season in seasons or ("2021-22", "2022-23", "2023-24", "2024-25", "2025-26"):
+            r = run_plan_replay(conn, season)
+            out.append({"season": r.season, "rounds": r.rounds, "totals": r.totals, "transfers": r.transfers, "hits": r.hits,
+                        "unproven_solves": r.unproven_solves, "per_round": r.per_round})
+            click.echo(f"{season}: plan {r.totals['plan']:.0f}  single swap {r.totals['swap']:.0f}  hold {r.totals['hold']:.0f}  "
+                       f"(transfers {r.transfers['plan']}/{r.transfers['swap']}, hits {r.hits['plan']})")
+    finally:
+        conn.close()
+    (DATA_DIR / "plan_replay.json").write_text(json.dumps({"seasons": out}, indent=1), encoding="utf-8")
+
+
 @cli.command("exclude-club")
 @click.argument("clubs", nargs=-1)
 @click.option("--clear", is_flag=True, help="buy from every club again")

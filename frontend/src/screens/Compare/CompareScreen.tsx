@@ -243,6 +243,88 @@ function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
   )
 }
 
+/** HOW THEY PLAY, side by side: each player's profile and his percentile on every quality measure both are ranked on,
+ * as mirrored bars, then the style lines. Percentiles are within each player's own position (stated). */
+function CraftCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
+  const sa = a.scouting
+  const sb = b.scouting
+  if (!sa || !sb) return null
+  const byKey = new Map(sb.measures.map((m) => [m.key, m]))
+  const shared = sa.measures.filter((m) => m.kind === 'quality' && byKey.has(m.key))
+  const tone = (p: number | null) => (p === null ? 'bg-text-faint/40' : p >= 75 ? 'bg-pitch-green' : p <= 25 ? 'bg-alert-red' : 'bg-broadcast-blue')
+  return (
+    <section className="border-b border-divider px-10 py-7">
+      <div className="mb-1 flex flex-wrap items-baseline gap-3">
+        <span className="font-display text-2xl font-bold text-text">How they play</span>
+        <span className="text-[13px] text-text-faint">
+          percentiles within each player's position this season ({sa.position} {sa.minutes} min · {sb.position} {sb.minutes} min)
+        </span>
+      </div>
+      <div className="mb-4 mt-3 grid grid-cols-2 gap-10">
+        {[sa, sb].map((s, i) => (
+          <div key={i} className={`flex flex-wrap gap-1.5 ${i === 1 ? 'justify-end' : ''}`}>
+            {s.profile.length ? (
+              s.profile.map((t) => (
+                <span key={t} className="rounded-full border border-pitch-green/35 bg-pitch-green/10 px-2.5 py-0.5 text-[12.5px] font-semibold text-pitch-green">
+                  {t}
+                </span>
+              ))
+            ) : (
+              <span className="text-[13px] text-text-faint">no profile above the bar</span>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="space-y-1">
+        {shared.map((ma) => {
+          const mb = byKey.get(ma.key)!
+          const pa = ma.percentile ?? 0
+          const pb = mb.percentile ?? 0
+          return (
+            <div key={ma.key} className="grid grid-cols-[3.5rem_minmax(0,1fr)_11rem_minmax(0,1fr)_3.5rem] items-center gap-3 py-1">
+              <span className={`text-right font-display text-lg font-bold tabular-nums ${pa > pb ? 'text-text' : 'text-text-muted'}`}>{ma.display}</span>
+              <div className="flex h-2.5 justify-end rounded-full bg-raised">
+                <div className={`bar-draw h-full rounded-full ${tone(ma.percentile)}`} style={{ width: `${Math.max(3, pa)}%` }} />
+              </div>
+              <div className="text-center">
+                <div className="text-[13px] font-semibold text-text">{ma.label}</div>
+                <div className="text-[11px] text-text-faint">
+                  {ma.percentile ?? '–'} · {ma.unit} · {mb.percentile ?? '–'}
+                </div>
+              </div>
+              <div className="h-2.5 rounded-full bg-raised">
+                <div className={`bar-draw h-full rounded-full ${tone(mb.percentile)}`} style={{ width: `${Math.max(3, pb)}%` }} />
+              </div>
+              <span className={`font-display text-lg font-bold tabular-nums ${pb > pa ? 'text-text' : 'text-text-muted'}`}>{mb.display}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-10 text-[13.5px] leading-snug text-text-muted">
+        {[sa, sb].map((s, i) => (
+          <ul key={i} className={`space-y-1 ${i === 1 ? 'text-right' : ''}`}>
+            {s.style.map((m) => (
+              <li key={m.key}>
+                {m.label}: <span className="font-semibold text-text">{m.display}</span>
+                {m.median_display && <span className="text-text-faint"> (median {m.median_display})</span>}
+              </li>
+            ))}
+            {s.finishing && (
+              <li>
+                {s.finishing.np_goals} non-penalty goals from {s.finishing.npxg.toFixed(2)} xG{' '}
+                <span className={s.finishing.difference >= 0 ? 'text-pitch-green' : 'text-alert-red'}>
+                  ({s.finishing.difference >= 0 ? '+' : ''}
+                  {s.finishing.difference.toFixed(2)})
+                </span>
+              </li>
+            )}
+          </ul>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export function CompareScreen() {
   const [params, setParams] = useSearchParams()
   const a = Number(params.get('a')) || null
@@ -295,6 +377,7 @@ export function CompareScreen() {
             {compare.data.rows.map((r) => <Row key={r.key} r={r} />)}
           </section>
           <Components a={compare.data.a} b={compare.data.b} />
+          <CraftCompare a={compare.data.a} b={compare.data.b} />
           <section className="grid grid-cols-2 gap-10 px-10 py-7">
             {[compare.data.a, compare.data.b].map((p) => (
               <div key={p.player_id}>

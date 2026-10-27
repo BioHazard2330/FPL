@@ -1506,6 +1506,12 @@ export interface CalibrationBlock {
 }
 
 export interface ReceiptsPayload {
+  replay?: {
+    seasons: { season: string; rounds: number; totals: { plan: number; swap: number; hold: number }; transfers: { plan: number; swap: number; hold: number }; hits: { plan: number } }[]
+    total: { plan: number; swap: number; hold: number }
+    beat_swap: number
+    beat_hold: number
+  } | null
   has_record: boolean
   reason?: string
   calibration?: CalibrationBlock | null
@@ -2071,6 +2077,7 @@ export interface PlayerIndexRow {
 }
 
 export interface ComparePlayer {
+  scouting?: ScoutingReportData | null
   player_id: number
   photo_code?: number | null
   name: string

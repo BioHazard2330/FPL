@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { fetchReceiptsPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import type { ReceiptsPayload } from '@/lib/types'
 
 /** THE PLAN'S RECORD in three numbers: what its recommended squad scored with its own eleven and armband over the gameweeks
  * it has been the decision of record, what last week's team scored left untouched, and what you scored as you played. Read from the counterfactual ledger, so a week
@@ -9,7 +10,8 @@ export function TrackRecord() {
   const state = useFetch(fetchReceiptsPayload, [])
   if (state.status !== 'ready') return null
   const h = state.data.headline
-  if (!h || !h.plan_events || h.plan_total == null || h.plan_roll_total == null || h.plan_your_total == null) return null
+  const replay = state.data.replay
+  if (!h || !h.plan_events || h.plan_total == null || h.plan_roll_total == null || h.plan_your_total == null) return replay ? <Replay r={replay} /> : null
   const vsRoll = h.plan_total - h.plan_roll_total
   const vsYou = h.plan_total - h.plan_your_total
   const figs: [string, number, string][] = [
@@ -36,6 +38,43 @@ export function TrackRecord() {
         you finished <span className="font-semibold text-text">{vsYou <= 0 ? `${-vsYou} ahead of` : `${vsYou} behind`}</span> it.{' '}
         <Link to="/receipts" className="text-text-faint hover:text-text">Full record &rarr;</Link>
       </div>
+      {replay && <Replay r={replay} />}
     </section>
+  )
+}
+
+/** The same transfer policy replayed over past seasons, leakage-free (`fpl plan-replay`). */
+function Replay({ r }: { r: NonNullable<ReceiptsPayload['replay']> }) {
+  const n = r.seasons.length
+  const max = Math.max(...r.seasons.flatMap((s) => [s.totals.plan, s.totals.swap, s.totals.hold]))
+  const min = Math.min(...r.seasons.flatMap((s) => [s.totals.plan, s.totals.swap, s.totals.hold]))
+  const w = (v: number) => `${8 + ((v - min) / Math.max(1, max - min)) * 92}%`
+  return (
+    <div className="mt-1 w-full border-t border-divider pt-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="text-[13px] text-text-muted">
+          <span className="font-semibold text-text">Replayed on {n} past seasons:</span> the plan's transfer policy beat a single swap a decision in{' '}
+          <span className="font-semibold text-pitch-green">{r.beat_swap} of {n}</span> (+{Math.round(r.total.plan - r.total.swap)} points) and never transferring in{' '}
+          <span className="font-semibold text-pitch-green">{r.beat_hold} of {n}</span> (+{Math.round(r.total.plan - r.total.hold)}), hits included.
+        </div>
+        <span className="text-[12px] text-text-faint">walk-forward core projections, a decision every three gameweeks, no fixtures or chips</span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-5">
+        {r.seasons.map((s) => (
+          <div key={s.season} className="rounded-lg bg-void/40 px-3 py-2">
+            <div className="mb-1.5 text-[12px] font-semibold text-text-muted">{s.season}</div>
+            {([['plan', 'Plan', 'bg-pitch-green'], ['swap', 'Swap', 'bg-broadcast-blue'], ['hold', 'Hold', 'bg-text-faint/60']] as const).map(([k, label, tone]) => (
+              <div key={k} className="flex items-center gap-2 text-[11px] text-text-faint">
+                <span className="w-8">{label}</span>
+                <span className="h-1.5 flex-1 rounded-full bg-raised">
+                  <span className={`bar-draw block h-full rounded-full ${tone}`} style={{ width: w(s.totals[k]) }} />
+                </span>
+                <span className="w-9 text-right tabular-nums text-text-muted">{Math.round(s.totals[k])}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
