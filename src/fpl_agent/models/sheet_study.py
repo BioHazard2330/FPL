@@ -7,8 +7,11 @@ against the minutes model's own leak-free chance of 60+ minutes for that next ma
 
 First read (2026-10-25, 75 sheets, this season only): regulars who started went on to 60+ minutes 81% of the time against a
 model 76%; those on the bench and used 43%, unused 32%, against a model 57%; those left out of the squad while not flagged
-injured 36% (11 cases). `SHEET_FACTOR` = 0.8 is that gap shrunk toward 1 with 30 pseudo-matches, applied to the chance of 60+
-minutes in the next fixture only and never stacked on the start-percentage discount (the lower of the two is kept)."""
+injured 36% (11 cases). `SHEET_FACTOR` = 0.8 (that gap shrunk toward 1 with 30 pseudo-matches) was first applied after a bench
+seat as well. Revised 2026-10-27 once the start percentage was blended into the minutes (`apply_start_probability`): on 216
+pairs the blend already predicts 30% for players who were on the bench last match against 32% realised (74 cases), and the cap
+made that worse (Brier 0.186 against 0.177); for players left out of the squad it predicts 41% against 20% realised (15 cases),
+so the cap now applies to NOT_IN_SQUAD only, to the next gameweek's fixture, keeping the lower chance of 60+ minutes."""
 import sqlite3
 from collections import defaultdict
 
@@ -49,7 +52,7 @@ def sheet_study(conn: sqlite3.Connection) -> dict:
         FROM players p
         JOIN match_intelligence mi ON (mi.home_team_id = p.team_id OR mi.away_team_id = p.team_id)
         LEFT JOIN player_match_state s ON s.match_id = mi.id AND s.player_id = p.id
-        WHERE mi.status = 'FULL_TIME' AND mi.lineup_type != 'predicted' AND p.removed = 0
+        WHERE mi.status = 'FULL_TIME' AND COALESCE(mi.lineup_type, '') != 'predicted' AND p.removed = 0
         ORDER BY p.id, mi.kickoff_utc
         """
     ).fetchall()

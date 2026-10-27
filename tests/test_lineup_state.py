@@ -252,14 +252,14 @@ def test_squad_lineup_states_batches_correctly(db_conn):
     assert states[4].state == "CONFIRMED_BENCHED"
 
 
-def test_a_regular_left_on_the_bench_last_match_is_capped_for_the_next(db_conn):
+def test_only_a_regular_left_out_of_the_squad_is_capped_for_the_next_match(db_conn):
     from fpl_agent.models.expected_points import _after_last_sheet
     from fpl_agent.models.minutes_distribution import MinutesBucketProbabilities
     from fpl_agent.models.sheet_study import SHEET_FACTOR
 
     _seed_teams(db_conn)
-    _seed_player(db_conn, 1, 1)
-    _seed_player(db_conn, 2, 1)
+    for pid in (1, 2, 3):
+        _seed_player(db_conn, pid, 1)
     _seed_fixture(db_conn, 100, 1, 1, 2)
     _seed_match_intelligence(db_conn, 1, 100, 1, 2, status="FULL_TIME", lineup_type="standard")
     db_conn.execute("UPDATE match_intelligence SET kickoff_utc='2026-08-22T14:00:00Z' WHERE id=1")
@@ -268,15 +268,15 @@ def test_a_regular_left_on_the_bench_last_match_is_capped_for_the_next(db_conn):
     next_fixture = db_conn.execute("SELECT '2026-08-29T14:00:00Z' AS kickoff_time").fetchone()
     probs = MinutesBucketProbabilities(0.05, 0.05, 0.9, "empirical")
 
-    benched = _after_last_sheet(db_conn, 1, next_fixture, probs, probs)
-    assert benched.p_full == pytest.approx(0.9 * SHEET_FACTOR)
-    assert benched.p_partial == 0.05 and benched.p_zero == pytest.approx(1 - 0.05 - benched.p_full)
+    assert _after_last_sheet(db_conn, 1, next_fixture, probs, probs) is probs  # bench: the start percentage already carries it
+    assert _after_last_sheet(db_conn, 2, next_fixture, probs, probs) is probs  # started
 
-    started = _after_last_sheet(db_conn, 2, next_fixture, probs, probs)
-    assert started is probs
+    left_out = _after_last_sheet(db_conn, 3, next_fixture, probs, probs)
+    assert left_out.p_full == pytest.approx(0.9 * SHEET_FACTOR)
+    assert left_out.p_partial == 0.05 and left_out.p_zero == pytest.approx(1 - 0.05 - left_out.p_full)
 
     already_lower = MinutesBucketProbabilities(0.4, 0.1, 0.5, "x")
-    assert _after_last_sheet(db_conn, 1, next_fixture, probs, already_lower) is already_lower
+    assert _after_last_sheet(db_conn, 3, next_fixture, probs, already_lower) is already_lower
 
     far = db_conn.execute("SELECT '2026-09-20T14:00:00Z' AS kickoff_time").fetchone()
-    assert _after_last_sheet(db_conn, 1, far, probs, probs) is probs
+    assert _after_last_sheet(db_conn, 3, far, probs, probs) is probs

@@ -929,6 +929,33 @@ def start_calibration_cmd():
     for b in out["bands"]:
         rate = "   n/a" if b["rate"] is None else f"{b['rate'] * 100:5.1f}%"
         click.echo(f"  reading {b['band']:<8} n={b['n']:<5} started {rate}")
+    rules = out.get("rules")
+    if rules:
+        click.echo(f"60+ minutes, Brier on {rules['n']} pairs (realised {rules['played_60'] * 100:.0f}%): record {rules['record']}, reading {rules['reading']}, blend in use {rules['blend']}, old discount {rules['old_discount']}")
+
+
+@cli.command("gw-skill")
+@click.option("--event", type=int, default=None, help="gameweek (default: the latest one with settled predictions)")
+def gw_skill_cmd(event):
+    """How good the projections were for one finished gameweek (models/gw_skill.py)."""
+    from fpl_agent.models.gw_skill import gameweek_skill
+
+    conn = get_connection()
+    try:
+        if event is None:
+            row = conn.execute(
+                "SELECT MAX(event) AS e FROM prediction_outcomes WHERE actual_points IS NOT NULL AND model_version IS NOT NULL "
+                "GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1"
+            ).fetchone()
+            event = row["e"] if row else None
+        out = gameweek_skill(conn, event) if event is not None else None
+    finally:
+        conn.close()
+    if out is None:
+        click.echo("no settled gameweek with enough predictions")
+        return
+    for k, v in out.items():
+        click.echo(f"  {k:<30} {v}")
 
 
 @cli.command("sheet-study")

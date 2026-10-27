@@ -1,3 +1,4 @@
+import pytest
 from fpl_agent.models.minutes_distribution import (
     apply_start_probability,
     expected_appearance_points,
@@ -131,22 +132,41 @@ def test_a_low_predicted_start_discounts_a_nailed_players_empirical_minutes(db_c
     _set_start_percent(db_conn, 24)
     rotated = apply_start_probability(db_conn, 1, baseline)
 
-    assert rotated.p_full < baseline.p_full * 0.6
+    assert rotated.p_full < baseline.p_full * 0.7
     assert rotated.p_partial > baseline.p_partial
     assert abs((rotated.p_zero + rotated.p_partial + rotated.p_full) - 1.0) < 1e-9
 
 
-def test_the_sources_ceiling_of_90_is_not_treated_as_a_rotation_risk(db_conn):
+def test_the_blend_lands_halfway_between_the_record_and_the_reading(db_conn):
+    from fpl_agent.ingestion.lineup_probability_source import START_BLEND_WEIGHT
+
     _seed(db_conn, [90, 90, 90, 90, 90, 90, 90])
+    baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    _set_start_percent(db_conn, 40)
+
+    blended = apply_start_probability(db_conn, 1, baseline)
+
+    assert blended.p_full == pytest.approx(baseline.p_full + START_BLEND_WEIGHT * (0.40 - baseline.p_full))
+
+
+def test_a_high_predicted_start_raises_a_players_thin_record(db_conn):
+    """Kudus: 80% on the feed, 47% in his own record. The feed knows a role the record does not show."""
+    _seed(db_conn, [0, 0, 0, 0, 0, 0, 90])
     baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
     _set_start_percent(db_conn, 90)
 
-    assert apply_start_probability(db_conn, 1, baseline).p_full == baseline.p_full
+    raised = apply_start_probability(db_conn, 1, baseline)
+
+    assert raised.p_full > baseline.p_full
+    assert abs((raised.p_zero + raised.p_partial + raised.p_full) - 1.0) < 1e-9
+    assert min(raised.p_zero, raised.p_partial, raised.p_full) >= 0
 
 
-def test_a_high_predicted_start_never_raises_minutes_above_the_players_own_record(db_conn):
+def test_a_reading_cannot_undo_an_availability_doubt(db_conn):
     _seed(db_conn, [0, 0, 0, 0, 0, 0, 90])
     baseline = minutes_bucket_probabilities(db_conn, player_id=1, season="2024-25")
+    db_conn.execute("UPDATE players SET status='i' WHERE id=1")
+    db_conn.commit()
     _set_start_percent(db_conn, 90)
 
     assert apply_start_probability(db_conn, 1, baseline).p_full == baseline.p_full

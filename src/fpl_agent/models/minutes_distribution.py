@@ -384,28 +384,62 @@ _CAMEO_SHARE_OF_REMOVED_STARTS = 0.4
 def apply_start_probability(
     conn: sqlite3.Connection, player_id: int, probs: MinutesBucketProbabilities, weight: float = 1.0,
 ) -> MinutesBucketProbabilities:
-    """The empirical branch is built from past minutes and cannot see a
-    freshly predicted rotation: Gvardiol, 90 minutes in every recent match,
-    was carrying a 24% predicted start with a 90-minute projection. Removed
-    full-match probability moves to a substitute appearance at
-    `_CAMEO_SHARE_OF_REMOVED_STARTS`, the rest to zero.
+    """Blend the player's own chance of 60+ minutes toward the lineup feed's start percentage.
 
-    `weight` is how much of the discount applies to this fixture. A predicted
-    start percentage is a statement about the next match; the caller decays it
-    for later gameweeks rather than carrying a one-week rotation across a whole
-    planning horizon. Live callers only - never a historical replay."""
-    from fpl_agent.ingestion.lineup_probability_source import get_start_percent, start_percent_minutes_factor
+    The empirical branch is built from past minutes and cannot see a freshly predicted rotation (Gvardiol, 90 minutes in
+    every recent match, carried a 24% predicted start with a 90-minute projection) - and the feed also knows who is
+    returning to a role the record does not show (Kudus, 80% on the feed, 47% in his own record).
 
-    factor = start_percent_minutes_factor(get_start_percent(conn, player_id))
-    effective = 1.0 - max(0.0, min(weight, 1.0)) * (1.0 - factor)
-    if effective >= 1.0:
+    Until 2026-10-27 this only discounted. Set against 216 finished team-match pairs (`fpl start-calibration`,
+    `models/start_calibration.py`) the discount-only rule predicted 60+ minutes 46% of the time against 57% realised and
+    scored worse (Brier 0.186) than the player's record alone (0.179); the reading as a probability scored 0.179 and a
+    50/50 blend 0.168, closest to the realised rate in every band. `START_BLEND_WEIGHT` is that blend. A reading raises the
+    chance only as far as the player's availability allows: a doubtful player's record already carries his discount, and the
+    reading is not allowed to undo it.
+
+    `weight` is how much of the blend applies to this fixture. A start percentage is a statement about the next match; the
+    caller decays it for later gameweeks rather than carrying a one-week call across a whole planning horizon. Live
+    callers only - never a historical replay."""
+    from fpl_agent.ingestion.lineup_probability_source import START_BLEND_WEIGHT, get_start_percent
+
+    percent = get_start_percent(conn, player_id)
+    if percent is None:
         return probs
-    new_full = probs.p_full * effective
-    removed = probs.p_full - new_full
+    w = START_BLEND_WEIGHT * max(0.0, min(weight, 1.0))
+    reading = max(0.0, min(percent / 100.0, 1.0))
+    delta = w * (reading - probs.p_full)
+    if delta == 0:
+        return probs
+    if delta > 0:
+        delta *= _availability_factor(conn, player_id)
+        room = probs.p_zero + probs.p_partial
+        delta = min(delta, room)
+        if delta <= 0:
+            return probs
+        from_partial = delta * (probs.p_partial / room) if room > 0 else 0.0
+        return MinutesBucketProbabilities(
+            max(0.0, probs.p_zero - (delta - from_partial)), max(0.0, probs.p_partial - from_partial),
+            probs.p_full + delta, probs.source,
+        )
+    new_full = probs.p_full + delta
+    removed = -delta
     new_partial = min(probs.p_partial + removed * _CAMEO_SHARE_OF_REMOVED_STARTS, 1.0 - new_full)
     return MinutesBucketProbabilities(
         max(0.0, 1.0 - new_full - new_partial), new_partial, new_full, probs.source,
     )
+
+
+def _availability_factor(conn: sqlite3.Connection, player_id: int) -> float:
+    player = conn.execute("SELECT status FROM players WHERE id=?", (player_id,)).fetchone()
+    if player is None:
+        return 1.0
+    snapshot = conn.execute(
+        "SELECT chance_of_playing_this_round, chance_of_playing_next_round FROM player_stats_snapshot "
+        "WHERE player_id=? ORDER BY retrieved_at DESC LIMIT 1", (player_id,),
+    ).fetchone()
+    chance_this = snapshot["chance_of_playing_this_round"] if snapshot else None
+    chance_next = snapshot["chance_of_playing_next_round"] if snapshot else None
+    return _AVAILABILITY_DAMPING[classify(player["status"], chance_this, chance_next)]
 
 
 def minutes_bucket_probabilities(

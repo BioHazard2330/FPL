@@ -205,6 +205,9 @@ def sync_lineup_probabilities(conn, url: str = TEAM_NEWS_URL) -> dict:
 
 START_PERCENT_CEILING = 90
 START_PERCENT_TRUST = 0.75
+# Weight of the feed's reading against the player's own record when both speak about the next match (see
+# `models/minutes_distribution.apply_start_probability`): fitted 2026-10-27 on 216 finished team-match pairs, 0.5 minimised Brier.
+START_BLEND_WEIGHT = 0.5
 
 
 def start_percent_minutes_factor(start_percent: int | None) -> float:

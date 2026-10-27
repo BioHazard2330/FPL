@@ -123,7 +123,7 @@ from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "match-by-match-returns-and-squad-sheets-1"
+PROJECTION_REVISION = "start-blend-and-returns-2"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -267,16 +267,17 @@ def _after_last_sheet(
     conn: sqlite3.Connection, player_id: int, fixture_row, probs: MinutesBucketProbabilities,
     result: MinutesBucketProbabilities,
 ) -> MinutesBucketProbabilities:
-    """A regular who was on the bench or out of the squad last match is less likely to play 60 minutes next (models/
-    sheet_study.py, measured). Discount-only and never stacked on the start-percentage discount: the lower chance of 60+
-    minutes is kept."""
+    """A regular left out of the matchday squad last match is less likely to play 60 minutes next (models/sheet_study.py,
+    measured: 25% realised against a model 64%, 16 cases). A bench seat is not capped: once the start percentage is blended
+    in, players who were on the bench last match are already predicted at 30% against 32% realised (74 cases, 2026-10-27),
+    and the cap made them worse. Discount-only; the lower chance of 60+ minutes is kept."""
     from datetime import datetime, timedelta
 
-    from fpl_agent.models.matchday_status import STARTING, latest_sheet_roles
+    from fpl_agent.models.matchday_status import NOT_IN_SQUAD, latest_sheet_roles
     from fpl_agent.models.sheet_study import SHEET_FACTOR
 
     last = latest_sheet_roles(conn).get(player_id)
-    if last is None or last[0] == STARTING:
+    if last is None or last[0] != NOT_IN_SQUAD:
         return result
     kickoff = fixture_row["kickoff_time"] if "kickoff_time" in fixture_row.keys() else None
     if not kickoff:

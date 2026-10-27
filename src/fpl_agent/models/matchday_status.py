@@ -135,7 +135,7 @@ def latest_sheet_roles(conn: sqlite3.Connection) -> dict[int, tuple[str, str]]:
         FROM players p
         JOIN match_intelligence mi ON (mi.home_team_id = p.team_id OR mi.away_team_id = p.team_id)
         LEFT JOIN player_match_state s ON s.match_id = mi.id AND s.player_id = p.id
-        WHERE mi.status = 'FULL_TIME' AND mi.lineup_type != 'predicted' AND p.removed = 0
+        WHERE mi.status = 'FULL_TIME' AND COALESCE(mi.lineup_type, '') != 'predicted' AND p.removed = 0
           AND EXISTS (SELECT 1 FROM player_match_state t WHERE t.match_id = mi.id AND t.team_id = p.team_id)
         ORDER BY mi.kickoff_utc
         """
