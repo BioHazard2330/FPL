@@ -1505,12 +1505,22 @@ export interface CalibrationBlock {
   note: string
 }
 
+export interface ReplayTotals {
+  plan: number
+  plan_count?: number
+  plan_fixture?: number
+  swap: number
+  hold: number
+}
+
 export interface ReceiptsPayload {
   replay?: {
-    seasons: { season: string; rounds: number; totals: { plan: number; swap: number; hold: number }; transfers: { plan: number; swap: number; hold: number }; hits: { plan: number } }[]
-    total: { plan: number; swap: number; hold: number }
+    seasons: { season: string; rounds: number; totals: ReplayTotals; transfers: ReplayTotals; hits: Partial<ReplayTotals> }[]
+    total: ReplayTotals
+    lead?: 'plan' | 'plan_fixture'
     beat_swap: number
     beat_hold: number
+    beat_blind?: number | null
   } | null
   has_record: boolean
   reason?: string

@@ -9,12 +9,13 @@ const USED: [string, string][] = [
   ['When an injured player is back', "FPL's stated return date, else FotMob's phrase, else how long injuries of this kind have lasted in this database: each match is weighed on its own, not zero for the whole window."],
   ['Yellow-card bans', "Five bookings by a club's 19th league match is a one-match ban (ten by the 32nd, two). Each player's booking rate and remaining fixtures give the chance he serves a ban in each match, and that share of his minutes is taken out before it happens, not after FPL flags it."],
   ['When to play the chips', 'A bench boost or triple captain still in hand is priced in every gameweek left in its window along the squad the plan expects to hold; the best week is the recommendation. A chip that expires unused is worth nothing.'],
-  ['What a fixture is worth', 'Goals expected for both sides, correlated in one simulated match: clean sheets, goals conceded, saves, bonus, defensive contributions. Doubles and blanks are summed or zeroed.'],
+  ['What a fixture is worth', 'Goals expected for both sides, correlated in one simulated match: clean sheets, goals conceded, saves, bonus, defensive contributions. Doubles and blanks are summed or zeroed. Replayed over five past seasons, reading how many matches each club plays added 420 points to the same transfer plan, and the opponent on top of that another 58 (ahead in 13 of 20 season runs across four planning horizons).'],
   ['Roles', 'Penalty, corner and free-kick duty from FPL\'s own notes, and role changes the match analyst has seen in two or more matches, at the size measured on 22,000 player-matches.'],
   ['The market', "Tonight's price change from a model fitted on the transfer and price history, and the cost of selling at FPL's half-rise rule."],
 ]
 
 const TESTED: [string, string][] = [
+  ['Planning further ahead', 'Replayed with the plan looking 3, 6, 9 and 15 gameweeks ahead: 6,588, 6,658, 6,688 and 6,811 points over five seasons. Six against nine is inside the noise, and fifteen is further than a projection holds up live, so the decision stays at five gameweeks with an eight-gameweek road ahead.'],
   ['Recent form beating the season rate', 'Weighting recent matches more made the forecast worse at every half-life from 365 days to 30.'],
   ['A dip in the last three matches', 'Realised 0.97 to 1.05 times baseline next match. Only a collapse below a quarter of earlier output has carried.'],
   ['Scoring above or below xG', 'Does not carry from one match to the next (r +0.03). Chance creation does (r +0.48).'],

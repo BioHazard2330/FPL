@@ -116,6 +116,13 @@ def reconstruct_actual_points(conn, row, season: str) -> float | None:
 def predict_player_round_points(
     conn, player_id: int, season: str, as_of_date: str, position: str,
 ) -> float | None:
+    parts = predict_player_round_parts(conn, player_id, season, as_of_date, position)
+    return None if parts is None else parts[0] + parts[1]
+
+
+def predict_player_round_parts(
+    conn, player_id: int, season: str, as_of_date: str, position: str,
+) -> tuple[float, float, float] | None:
     """Real, leakage-safe per-player predicted "core" points for one round -
     factored out 2026-09-07 from `run_backtest`'s own inline loop (below) so
     `season_backtest.py`'s squad-level simulation can share the IDENTICAL
@@ -123,7 +130,9 @@ def predict_player_round_points(
     when `minutes_bucket_probabilities` can't stay inside `as_of_date` on its
     real empirical path (see module docstring's LEAKAGE EXCLUSION section) -
     the caller decides how to treat a player it can't yet honestly predict
-    for, never silently substituted with 0."""
+    for, never silently substituted with 0. Split as (appearance + cards,
+    goals + assists, P(60+ minutes)) so a caller can scale the attacking part
+    and add clean sheets by fixture."""
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date=as_of_date)
     if minutes_probs.source != "empirical":
         return None
@@ -141,9 +150,10 @@ def predict_player_round_points(
 
     return (
         appearance
-        + shrunk["goals"].shrunk_per90 * effective_minutes_fraction * goals_rate
-        + shrunk["assists"].shrunk_per90 * effective_minutes_fraction * assists_rate
-        + shrunk["cards"].shrunk_per90 * effective_minutes_fraction * yellow_card_rate
+        + shrunk["cards"].shrunk_per90 * effective_minutes_fraction * yellow_card_rate,
+        shrunk["goals"].shrunk_per90 * effective_minutes_fraction * goals_rate
+        + shrunk["assists"].shrunk_per90 * effective_minutes_fraction * assists_rate,
+        minutes_probs.p_full,
     )
 
 

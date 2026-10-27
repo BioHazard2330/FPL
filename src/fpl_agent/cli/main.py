@@ -4419,8 +4419,10 @@ def plan_replay_cmd(seasons: tuple[str, ...]):
             r = run_plan_replay(conn, season)
             out.append({"season": r.season, "rounds": r.rounds, "totals": r.totals, "transfers": r.transfers, "hits": r.hits,
                         "unproven_solves": r.unproven_solves, "per_round": r.per_round})
-            click.echo(f"{season}: plan {r.totals['plan']:.0f}  single swap {r.totals['swap']:.0f}  hold {r.totals['hold']:.0f}  "
-                       f"(transfers {r.transfers['plan']}/{r.transfers['swap']}, hits {r.hits['plan']})")
+            click.echo(f"{season}: plan {r.totals['plan']:.0f}  +match count {r.totals['plan_count']:.0f}  "
+                       f"+fixtures {r.totals['plan_fixture']:.0f}  single swap {r.totals['swap']:.0f}  hold {r.totals['hold']:.0f}  "
+                       f"(transfers {r.transfers['plan']}/{r.transfers['plan_count']}/{r.transfers['plan_fixture']}/{r.transfers['swap']}, "
+                       f"hits {r.hits['plan']}/{r.hits['plan_count']}/{r.hits['plan_fixture']})")
     finally:
         conn.close()
     (DATA_DIR / "plan_replay.json").write_text(json.dumps({"seasons": out}, indent=1), encoding="utf-8")

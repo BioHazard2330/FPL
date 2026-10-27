@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { fetchReceiptsPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
-import type { ReceiptsPayload } from '@/lib/types'
+import type { ReceiptsPayload, ReplayTotals } from '@/lib/types'
 
 /** THE PLAN'S RECORD in three numbers: what its recommended squad scored with its own eleven and armband over the gameweeks
  * it has been the decision of record, what last week's team scored left untouched, and what you scored as you played. Read from the counterfactual ledger, so a week
@@ -46,30 +46,42 @@ export function TrackRecord() {
 /** The same transfer policy replayed over past seasons, leakage-free (`fpl plan-replay`). */
 function Replay({ r }: { r: NonNullable<ReceiptsPayload['replay']> }) {
   const n = r.seasons.length
-  const max = Math.max(...r.seasons.flatMap((s) => [s.totals.plan, s.totals.swap, s.totals.hold]))
-  const min = Math.min(...r.seasons.flatMap((s) => [s.totals.plan, s.totals.swap, s.totals.hold]))
+  const lead = r.lead ?? 'plan'
+  const rows = (lead === 'plan_fixture'
+    ? [['plan_fixture', 'Plan', 'bg-pitch-green', 'reads each club\'s matches and opponents'], ['plan', 'Blind', 'bg-broadcast-gold/70', 'same plan, every week one average match'], ['swap', 'Swap', 'bg-broadcast-blue', 'one swap a decision, old 2-point bar'], ['hold', 'Hold', 'bg-text-faint/60', 'never transfers']]
+    : [['plan', 'Plan', 'bg-pitch-green', 'the week plan\'s solver'], ['swap', 'Swap', 'bg-broadcast-blue', 'one swap a decision'], ['hold', 'Hold', 'bg-text-faint/60', 'never transfers']]) as [keyof ReplayTotals, string, string, string][]
+  const values = r.seasons.flatMap((s) => rows.map(([k]) => s.totals[k] ?? 0))
+  const max = Math.max(...values)
+  const min = Math.min(...values)
   const w = (v: number) => `${8 + ((v - min) / Math.max(1, max - min)) * 92}%`
+  const total = (k: keyof ReplayTotals) => r.total[k] ?? 0
   return (
     <div className="mt-1 w-full border-t border-divider pt-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="text-[13px] text-text-muted">
           <span className="font-semibold text-text">Replayed on {n} past seasons:</span> the plan's transfer policy beat a single swap a decision in{' '}
-          <span className="font-semibold text-pitch-green">{r.beat_swap} of {n}</span> (+{Math.round(r.total.plan - r.total.swap)} points) and never transferring in{' '}
-          <span className="font-semibold text-pitch-green">{r.beat_hold} of {n}</span> (+{Math.round(r.total.plan - r.total.hold)}), hits included.
+          <span className="font-semibold text-pitch-green">{r.beat_swap} of {n}</span> (+{Math.round(total(lead) - total('swap'))} points) and never transferring in{' '}
+          <span className="font-semibold text-pitch-green">{r.beat_hold} of {n}</span> (+{Math.round(total(lead) - total('hold'))}), hits included.
+          {r.beat_blind != null && (
+            <>
+              {' '}Reading fixtures (how many matches, against whom) added{' '}
+              <span className="font-semibold text-pitch-green">+{Math.round(total(lead) - total('plan'))}</span> over the same plan blind to them, ahead in {r.beat_blind} of {n}.
+            </>
+          )}
         </div>
-        <span className="text-[12px] text-text-faint">walk-forward core projections, a decision every three gameweeks, no fixtures or chips</span>
+        <span className="text-[12px] text-text-faint">walk-forward projections (appearance, goals, assists, cards, clean sheets), a decision every three gameweeks, no bonus or chips</span>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-5">
         {r.seasons.map((s) => (
           <div key={s.season} className="rounded-lg bg-void/40 px-3 py-2">
             <div className="mb-1.5 text-[12px] font-semibold text-text-muted">{s.season}</div>
-            {([['plan', 'Plan', 'bg-pitch-green'], ['swap', 'Swap', 'bg-broadcast-blue'], ['hold', 'Hold', 'bg-text-faint/60']] as const).map(([k, label, tone]) => (
-              <div key={k} className="flex items-center gap-2 text-[11px] text-text-faint">
-                <span className="w-8">{label}</span>
+            {rows.map(([k, label, tone, hint]) => (
+              <div key={k} className="flex items-center gap-2 text-[11px] text-text-faint" title={hint}>
+                <span className="w-9">{label}</span>
                 <span className="h-1.5 flex-1 rounded-full bg-raised">
-                  <span className={`bar-draw block h-full rounded-full ${tone}`} style={{ width: w(s.totals[k]) }} />
+                  <span className={`bar-draw block h-full rounded-full ${tone}`} style={{ width: w(s.totals[k] ?? 0) }} />
                 </span>
-                <span className="w-9 text-right tabular-nums text-text-muted">{Math.round(s.totals[k])}</span>
+                <span className="w-9 text-right tabular-nums text-text-muted">{Math.round(s.totals[k] ?? 0)}</span>
               </div>
             ))}
           </div>

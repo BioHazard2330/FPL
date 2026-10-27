@@ -53,6 +53,7 @@ COMMON_TEAM_NAME_ALIASES = {
     "coventry": "Coventry City",
     "hull": "Hull City",
     "ipswich": "Ipswich Town",
+    "sheffield utd": "Sheffield United",
     # Real gap found 2026-08-26: FotMob's real GW1 payload names this club
     # "AFC Bournemouth" - no alias existed, so away_team_id silently stayed
     # NULL for the entire real Man City v Bournemouth match (match_intelligence

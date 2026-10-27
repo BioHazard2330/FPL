@@ -27,3 +27,14 @@ User: *"i expect greatness. many optimizers use numbers and stats. i want the fo
 
 - **Snapshots (`live/payload_snapshots.py`, migration 0054).** First loads measured cold: System 27s (53s while the context built alongside), Market 12s, Football 9s, Track record 6-46s, Command/My team/Plan behind a 6s shared context. Each heavy screen now answers from its last JSON (memory, then `payload_snapshot`) and rebuilds once in the background when the copy is over 90s old; after a restart System answered in 6ms, Market, Football and Command under 10ms. Served copies carry `_snapshot_age_seconds`.
 - **Style against opponent.** `scouting.source_mix` (share of a player's non-penalty shot xG from open play, corners, set pieces, breaks) weighed by each opponent's shrunk concession ratio by source (`matchup_lab`) per fixture on the transfer card: "suits him" at x1.1 or more, "bad fit" at x0.9 or less. Untested as a predictor (one season of FotMob shots, about 2,250 non-penalty shots); a lens only.
+
+## 2026-10-28: fixtures in the plan replay
+
+The replay valued every round as one match at the player's projection, so it tested how many transfers and when, never fixture planning. Changes:
+
+- `harness.predict_player_round_parts` splits the walk-forward core projection into (appearance + cards, goals + assists, P(60+)); `predict_player_round_points` is their sum, unchanged.
+- `plan_replay` maps historical club codes to `match_results_history` ids by name (`market_identity` gained "Sheffield Utd"), lists each round's matches, and at every decision fits Dixon-Coles on results before the round. Each match: attack x (club's expected goals / its own average against this season's clubs), clean sheet exp(-opponent expected goals). Values are divided by the season's mean matches per club per round so the 1.5-point bar means the same in every variant.
+- Clean sheets added to the projection (P(60+) x 4 for GKP/DEF, 1 for MID x chance) and to the scoring (60+ minutes, club conceded none). Saliba 2023-24: 18, his FPL count.
+- Three plan variants run side by side: blind, match count, match count + opponent.
+
+Results (five seasons, horizon 5 rounds): blind 6,333; count 6,753; fixtures 6,811; swap 5,810; hold 5,528. Without clean sheets in the replay the opponent added nothing on top of the count (-11), which is why they were added: a defender's fixture is mostly his clean-sheet chance. Horizons 1/2/3 rounds: fixtures 6,588/6,658/6,688, opponent over count +76/+97/+164. Live `HORIZON_GW` kept at 5 (see CLAUDE.md blocker entry). Command's track record leads with the fixture-reading plan; the System screen's ledger carries both findings.

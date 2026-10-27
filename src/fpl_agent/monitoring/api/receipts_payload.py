@@ -274,11 +274,15 @@ def _replay_block() -> dict | None:
         return None
     if not seasons:
         return None
-    total = {k: sum(s["totals"][k] for s in seasons) for k in ("plan", "swap", "hold")}
+    keys = [k for k in ("plan_fixture", "plan_count", "plan", "swap", "hold") if all(k in s["totals"] for s in seasons)]
+    lead = "plan_fixture" if "plan_fixture" in keys else "plan"
+    total = {k: sum(s["totals"][k] for s in seasons) for k in keys}
     return {
         "seasons": [{k: s[k] for k in ("season", "rounds", "totals", "transfers", "hits")} for s in seasons],
         "total": total,
-        "beat_swap": sum(1 for s in seasons if s["totals"]["plan"] > s["totals"]["swap"]),
-        "beat_hold": sum(1 for s in seasons if s["totals"]["plan"] > s["totals"]["hold"]),
+        "lead": lead,
+        "beat_swap": sum(1 for s in seasons if s["totals"][lead] > s["totals"]["swap"]),
+        "beat_hold": sum(1 for s in seasons if s["totals"][lead] > s["totals"]["hold"]),
+        "beat_blind": sum(1 for s in seasons if s["totals"][lead] > s["totals"]["plan"]) if lead != "plan" else None,
     }
 

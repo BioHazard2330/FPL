@@ -15,7 +15,11 @@ project-local skill files.
 
 ## Where things stand (updated 2026-10-27, late)
 
-Scouting reports on every player (`models/scouting.py`: percentiles within position on chances, chance quality, placement, creation, defensive work, rating, a keeper's goals prevented; style and profile labels; on player pages, transfer cards and Compare), a style-against-opponent lens on the fixture board, the week plan replayed over five past seasons (`fpl plan-replay`: ahead of a single swap and of holding in 5 of 5, +639 and +842), and heavy screens served from snapshots (`live/payload_snapshots.py`). Account: `docs/history/65-...`. Next candidates: fixture difficulty in the replay (as-of Dixon-Coles per round); test whether the style fit predicts anything once a second season of FotMob shots exists; second-half chips from GW20.
+Scouting reports on every player (`models/scouting.py`: percentiles within position on chances, chance quality, placement, creation, defensive work, rating, a keeper's goals prevented; style and profile labels; on player pages, transfer cards and Compare), a style-against-opponent lens on the fixture board, the week plan replayed over five past seasons (`fpl plan-replay`: ahead of a single swap and of holding in 5 of 5, +639 and +842), and heavy screens served from snapshots (`live/payload_snapshots.py`). Account: `docs/history/65-...`. Next candidates: test whether the style fit predicts anything once a second season of FotMob shots exists; second-half chips from GW20.
+
+## 2026-10-28
+
+The plan replay now reads fixtures and scores clean sheets: blind 6,333, counting each club's matches 6,753, plus the opponent 6,811 over five seasons (single swap 5,810, hold 5,528). Match count carries most of it; the opponent adds +58 (13 of 20 season runs positive across four horizons). A longer planning horizon was tested and not adopted. Command's track record leads with the fixture-reading plan and shows the blind one beside it. Account: `docs/history/65-...` (2026-10-28 section).
 
 ## Where things stand (updated 2026-10-27, night)
 
