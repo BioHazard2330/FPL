@@ -106,6 +106,12 @@ def _upsert_transfers(conn: sqlite3.Connection, entry_id: int, transfers: list[d
             ),
         )
         n += cur.rowcount
+    conn.execute(
+        "DELETE FROM my_team_transfers WHERE retrieved_at='manual' AND entry_id=? AND EXISTS ("
+        "SELECT 1 FROM my_team_transfers t WHERE t.entry_id=my_team_transfers.entry_id AND t.event=my_team_transfers.event "
+        "AND t.element_in=my_team_transfers.element_in AND t.element_out=my_team_transfers.element_out AND t.retrieved_at!='manual')",
+        (entry_id,),
+    )
     return n
 
 
@@ -342,6 +348,55 @@ def get_latest_squad(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list
     if not rows:
         return None
     return rows[0]["event"], [r["player_id"] for r in rows]
+
+
+MANUAL = "manual"
+
+
+def record_manual_transfer(conn: sqlite3.Connection, out_id: int, in_id: int) -> dict:
+    """A transfer the manager says he has made for the coming gameweek. FPL's public log lists a transfer only after
+    that gameweek's deadline (every stored transfer was first seen after it: GW3 +51 minutes, GW4 +53, GW5 the next
+    morning), so without this the squad, bank and free transfers stay as they were until then. Stored in the same log
+    with `retrieved_at` 'manual' and replaced by FPL's own row when it arrives (`_upsert_transfers`). Sold at the
+    purchase price plus half the rise, as FPL pays; bought at the current price. Raises ValueError for a move that
+    cannot be made from the current squad."""
+    from fpl_agent.models.fixtures import _reference_event
+    from fpl_agent.optimization.week_plan import _strict_sell_shortfall_tenths, light_squad_state
+
+    entry_id = get_my_team_entry_id(conn)
+    state = light_squad_state(conn)
+    if entry_id is None or state is None:
+        raise ValueError("no synced squad")
+    if out_id not in state["squad_ids"]:
+        raise ValueError(f"player {out_id} is not in the squad")
+    if in_id in state["squad_ids"]:
+        raise ValueError(f"player {in_id} is already in the squad")
+    positions = {
+        r["id"]: r["element_type"] for r in conn.execute("SELECT id, element_type FROM players WHERE id IN (?, ?)", (out_id, in_id))
+    }
+    if len(positions) != 2 or positions[out_id] != positions[in_id]:
+        raise ValueError("the two players must be known and play the same position")
+    price = {
+        r["player_id"]: r["value_tenths"] for r in conn.execute(
+            "SELECT player_id, value_tenths FROM player_price_history WHERE valid_until IS NULL AND player_id IN (?, ?)", (out_id, in_id),
+        )
+    }
+    sale = price[out_id] - _strict_sell_shortfall_tenths(conn, [out_id])
+    event = _reference_event(conn)
+    conn.execute(
+        "INSERT INTO my_team_transfers (entry_id, event, element_in, element_in_cost, element_out, element_out_cost, "
+        "transfer_time, retrieved_at) VALUES (?,?,?,?,?,?,?,?)",
+        (entry_id, event, in_id, price[in_id], out_id, sale, datetime.now(timezone.utc).isoformat(), MANUAL),
+    )
+    conn.commit()
+    return {"event": event, "out": out_id, "in": in_id, "sale_tenths": sale, "cost_tenths": price[in_id],
+            "bank_tenths": state["bank_tenths"] + sale - price[in_id]}
+
+
+def remove_manual_transfers(conn: sqlite3.Connection) -> int:
+    n = conn.execute("DELETE FROM my_team_transfers WHERE retrieved_at=?", (MANUAL,)).rowcount
+    conn.commit()
+    return n
 
 
 def apply_pending_transfers(conn: sqlite3.Connection, entry_id: int, event: int, picks: list) -> tuple[list[dict], int, list[dict]]:

@@ -210,3 +210,48 @@ def test_a_transfer_made_before_the_deadline_is_in_the_squad_and_the_bank_not_on
     assert bank == (79 - 67) + (67 - 62)
     assert len(applied) == 2
     assert picks[1]["player_id"] == 2
+
+
+def _seed_market(conn):
+    now = "2026-01-01T00:00:00Z"
+    conn.execute(f"INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'Team A','TMA','{now}')")
+    for et, short in ((1, "FWD"), (2, "MID")):
+        conn.execute(
+            "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, "
+            f"squad_max_play, squad_select, updated_at) VALUES ({et},'{short}','{short}','{short}s',1,3,3,'{now}')"
+        )
+    for pid, et, price in ((1, 1, 79), (2, 1, 67), (3, 2, 50)):
+        conn.execute(
+            "INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) "
+            f"VALUES ({pid},{pid},'P{pid}',1,{et},'a',0,'{now}')"
+        )
+        conn.execute(f"INSERT INTO player_price_history (player_id, value_tenths, valid_from, valid_until) VALUES ({pid},{price},'{now}',NULL)")
+    conn.execute(
+        "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+        f"VALUES (9,'GW9','2026-10-31T11:00:00Z',0,0,0,0,1,'{now}')"
+    )
+    conn.execute("INSERT OR REPLACE INTO app_meta (key, value, updated_at) VALUES ('my_team_entry_id', '7378572', 't0')")
+    conn.commit()
+
+
+def test_a_transfer_the_manager_records_counts_until_fpl_logs_its_own(db_conn, monkeypatch):
+    import pytest
+
+    from fpl_agent.ingestion import my_team
+    from fpl_agent.optimization import week_plan
+
+    _seed_market(db_conn)
+    monkeypatch.setattr(week_plan, "light_squad_state", lambda conn: {"squad_ids": [1, 3], "bank_tenths": 3})
+    monkeypatch.setattr(week_plan, "_strict_sell_shortfall_tenths", lambda conn, ids: 2)
+    with pytest.raises(ValueError):
+        my_team.record_manual_transfer(db_conn, 3, 2)
+    r = my_team.record_manual_transfer(db_conn, 1, 2)
+    assert (r["event"], r["sale_tenths"], r["cost_tenths"], r["bank_tenths"]) == (9, 77, 67, 13)
+    assert count_pending_transfers(db_conn, 7378572, 9) == 1
+    picks, bank, _ = my_team.apply_pending_transfers(db_conn, 7378572, 8, [{"player_id": 1}, {"player_id": 3}])
+    assert [p["player_id"] for p in picks] == [2, 3] and bank == 10
+
+    my_team._upsert_transfers(db_conn, 7378572, [{"event": 9, "element_in": 2, "element_in_cost": 67, "element_out": 1,
+                                                 "element_out_cost": 78, "time": "2026-10-31T11:00:01Z"}], "t1")
+    rows = db_conn.execute("SELECT retrieved_at, element_out_cost FROM my_team_transfers WHERE event=9").fetchall()
+    assert [(r["retrieved_at"], r["element_out_cost"]) for r in rows] == [("t1", 78)]

@@ -4428,6 +4428,45 @@ def plan_replay_cmd(seasons: tuple[str, ...]):
     (DATA_DIR / "plan_replay.json").write_text(json.dumps({"seasons": out}, indent=1), encoding="utf-8")
 
 
+@cli.command("made-transfer")
+@click.argument("out_player", required=False)
+@click.argument("in_player", required=False)
+@click.option("--undo", is_flag=True, help="forget every transfer recorded this way")
+def made_transfer_cmd(out_player: str | None, in_player: str | None, undo: bool):
+    """Tell the app about a transfer you made in FPL for the coming gameweek (names or ids). FPL's public log only
+    shows it after the deadline; until then the squad, bank and free transfers come from this. FPL's own row replaces
+    it when it arrives."""
+    from fpl_agent.ingestion.my_team import record_manual_transfer, remove_manual_transfers
+
+    conn = get_connection()
+    try:
+        if undo:
+            click.echo(f"removed {remove_manual_transfers(conn)} recorded transfer(s)")
+            return
+        if not out_player or not in_player:
+            raise click.UsageError("give the player out and the player in, or --undo")
+
+        def resolve(text: str) -> int:
+            if text.isdigit():
+                return int(text)
+            rows = conn.execute(
+                "SELECT id FROM players WHERE removed=0 AND (LOWER(web_name)=LOWER(?) OR LOWER(second_name)=LOWER(?))", (text, text),
+            ).fetchall()
+            if len(rows) != 1:
+                raise click.UsageError(f"'{text}' matches {len(rows)} players; use the id")
+            return rows[0]["id"]
+
+        try:
+            r = record_manual_transfer(conn, resolve(out_player), resolve(in_player))
+        except ValueError as e:
+            raise click.UsageError(str(e))
+        names = {row["id"]: row["web_name"] for row in conn.execute("SELECT id, web_name FROM players WHERE id IN (?, ?)", (r["out"], r["in"]))}
+        click.echo(f"GW{r['event']}: {names[r['out']]} out at £{r['sale_tenths'] / 10:.1f}m, {names[r['in']]} in at "
+                   f"£{r['cost_tenths'] / 10:.1f}m; bank £{r['bank_tenths'] / 10:.1f}m")
+    finally:
+        conn.close()
+
+
 @cli.command("exclude-club")
 @click.argument("clubs", nargs=-1)
 @click.option("--clear", is_flag=True, help="buy from every club again")
