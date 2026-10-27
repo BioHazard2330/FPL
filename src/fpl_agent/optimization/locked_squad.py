@@ -29,7 +29,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 
-from fpl_agent.ingestion.my_team import get_latest_squad_detail, get_my_team_entry_id
+from fpl_agent.ingestion.my_team import apply_pending_transfers, get_latest_squad_detail, get_my_team_entry_id
 
 _logger = logging.getLogger("fpl_agent.locked_squad")
 from fpl_agent.models.fixtures import live_or_reference_event
@@ -202,7 +202,8 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
             if latest is None:
                 return None
             event, picks = latest
-            return event, picks, _xi_from_real_picks(conn, event, entry_id, picks)
+            picks, bank_change, _ = apply_pending_transfers(conn, entry_id, event, picks)
+            return event, picks, _xi_from_real_picks(conn, event, entry_id, picks), bank_change
 
         # Retrying `_xi_from_real_picks` alone with the SAME already-fetched
         # `picks` would be pointless (it's a pure function of that list -
@@ -236,14 +237,14 @@ def get_locked_squad(conn: sqlite3.Connection) -> LockedSquadState | None:
             if result is not None and result[2] is not None and result[2].starting:
                 break
         if result is not None:
-            event, picks, xi = result
+            event, picks, xi, bank_change = result
             squad_ids = [r["player_id"] for r in picks]
             if xi is not None and xi.starting:
                 summary = conn.execute(
                     "SELECT bank_tenths, team_value_tenths FROM my_team_gw_summary WHERE entry_id=? AND event=?",
                     (entry_id, event),
                 ).fetchone()
-                bank_tenths = summary["bank_tenths"] if summary else None
+                bank_tenths = summary["bank_tenths"] + bank_change if summary and summary["bank_tenths"] is not None else None
                 value_tenths = summary["team_value_tenths"] if summary else sum(
                     c.price_tenths for c in xi.starting + xi.bench
                 )

@@ -183,3 +183,30 @@ def test_compute_current_free_transfers_never_goes_negative(db_conn):
     db_conn.commit()
 
     assert compute_current_free_transfers(db_conn, 7378572) == 0
+
+
+def test_a_transfer_made_before_the_deadline_is_in_the_squad_and_the_bank_not_only_the_count(db_conn):
+    from fpl_agent.ingestion.my_team import apply_pending_transfers
+
+    picks = [{"player_id": pid, "squad_slot": slot, "is_captain": int(pid == 2), "is_vice_captain": 0}
+             for slot, pid in enumerate((1, 2, 3), start=1)]
+    db_conn.execute(
+        "INSERT INTO my_team_transfers (entry_id, event, element_in, element_in_cost, element_out, element_out_cost, "
+        "transfer_time, retrieved_at) VALUES (7378572, 8, 9, 60, 1, 55, '2026-10-20T10:00:00Z', 't0')"
+    )
+    for event, element_in, element_out, in_cost, out_cost, time in (
+        (9, 20, 2, 67, 79, "2026-10-27T19:00:00Z"),
+        (9, 21, 20, 62, 67, "2026-10-27T19:05:00Z"),
+        (9, 22, 99, 50, 50, "2026-10-27T19:06:00Z"),
+    ):
+        db_conn.execute(
+            "INSERT INTO my_team_transfers (entry_id, event, element_in, element_in_cost, element_out, element_out_cost, "
+            "transfer_time, retrieved_at) VALUES (7378572, ?, ?, ?, ?, ?, ?, 't0')",
+            (event, element_in, in_cost, element_out, out_cost, time),
+        )
+    out, bank, applied = apply_pending_transfers(db_conn, 7378572, 8, picks)
+    assert [p["player_id"] for p in out] == [1, 21, 3]
+    assert out[1]["squad_slot"] == 2 and out[1]["is_captain"] == 0
+    assert bank == (79 - 67) + (67 - 62)
+    assert len(applied) == 2
+    assert picks[1]["player_id"] == 2

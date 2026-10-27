@@ -301,7 +301,8 @@ def resolve_tracked_squad_ids(conn: sqlite3.Connection) -> set[int]:
     if entry_id is not None:
         latest = get_latest_squad(conn, entry_id)
         if latest is not None:
-            return set(latest[1])
+            picks, _, _ = apply_pending_transfers(conn, entry_id, latest[0], [{"player_id": i} for i in latest[1]])
+            return {p["player_id"] for p in picks}
     row = conn.execute("SELECT value FROM app_meta WHERE key='tracked_squad_ids'").fetchone()
     if row and row["value"]:
         return {int(x) for x in row["value"].split(",") if x.strip()}
@@ -341,6 +342,31 @@ def get_latest_squad(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list
     if not rows:
         return None
     return rows[0]["event"], [r["player_id"] for r in rows]
+
+
+def apply_pending_transfers(conn: sqlite3.Connection, entry_id: int, event: int, picks: list) -> tuple[list[dict], int, list[dict]]:
+    """The locked picks for `event` with every transfer logged toward a later gameweek applied, in the order made.
+    FPL's public transfer log lists a transfer as soon as it is confirmed, before the deadline, while the picks only
+    publish once the gameweek locks; without this the free-transfer count fell (`count_pending_transfers`) while the
+    squad and bank stayed as they were. The player coming in takes the slot of the one going out, without the armband;
+    the bank moves by the sale price less the purchase price. Returns (picks, bank change in tenths, transfers applied).
+    A wildcard or free hit played for the coming gameweek is not visible until it locks."""
+    out = [dict(p) for p in picks]
+    rows = conn.execute(
+        "SELECT event, element_in, element_in_cost, element_out, element_out_cost, transfer_time FROM my_team_transfers "
+        "WHERE entry_id=? AND event>? ORDER BY transfer_time, rowid",
+        (entry_id, event),
+    ).fetchall()
+    bank = 0
+    applied = []
+    for t in rows:
+        slot = next((p for p in out if p["player_id"] == t["element_out"]), None)
+        if slot is None or any(p["player_id"] == t["element_in"] for p in out):
+            continue
+        slot.update(player_id=t["element_in"], is_captain=0, is_vice_captain=0)
+        bank += (t["element_out_cost"] or 0) - (t["element_in_cost"] or 0)
+        applied.append(dict(t))
+    return out, bank, applied
 
 
 def get_latest_squad_detail(conn: sqlite3.Connection, entry_id: int) -> tuple[int, list[sqlite3.Row]] | None:

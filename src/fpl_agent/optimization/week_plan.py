@@ -1106,7 +1106,7 @@ def light_squad_state(conn: sqlite3.Connection) -> dict | None:
     players, which refits the team-strength model - seconds per call on a fresh
     connection - and a staleness check that runs on every page load cannot
     afford that."""
-    from fpl_agent.ingestion.my_team import get_latest_squad_detail, get_my_team_entry_id
+    from fpl_agent.ingestion.my_team import apply_pending_transfers, get_latest_squad_detail, get_my_team_entry_id
     from fpl_agent.models.free_transfers import compute_current_free_transfers
 
     entry_id = get_my_team_entry_id(conn)
@@ -1116,6 +1116,7 @@ def light_squad_state(conn: sqlite3.Connection) -> dict | None:
     if latest is None:
         return None
     event, picks = latest
+    picks, bank_change, pending = apply_pending_transfers(conn, entry_id, event, picks)
     summary = conn.execute(
         "SELECT bank_tenths FROM my_team_gw_summary WHERE entry_id=? AND event=?", (entry_id, event),
     ).fetchone()
@@ -1123,8 +1124,9 @@ def light_squad_state(conn: sqlite3.Connection) -> dict | None:
     return {
         "event": event,
         "squad_ids": sorted(r["player_id"] for r in picks),
-        "bank_tenths": int(round(summary["bank_tenths"] or 0)) if summary else 0,
+        "bank_tenths": (int(round(summary["bank_tenths"] or 0)) if summary else 0) + bank_change,
         "free_transfers": free_transfers if free_transfers is not None else 1,
+        "pending_transfers": pending,
     }
 
 
