@@ -13,6 +13,10 @@ teach` setup still outstanding before the new frontend-design skills are
 usable. No application code changed as part of that pass except two new
 project-local skill files.
 
+## Where things stand (updated 2026-10-27, night)
+
+New: `/leagues` (mini-leagues from FPL's public endpoints: standings, rivals' locked teams, head-to-head, threats, differentials, links into FPL; `fpl sync-leagues`, in `run-scheduled` every 3h), a fixture-by-fixture matchup board on every transfer card (`models/fixture_matchups.py`), the plan's record on Command, `fpl exclude-club` (clubs the plan will not buy from; MUN set). Account: `docs/history/65-session-2026-10-27-mini-leagues-matchup-board-and-track-record.md`. Next candidates: a leakage-free replay of the week plan; precomputed screen payloads; second-half chips from GW20.
+
 ## Where things stand (updated 2026-10-27, evening)
 
 Projections now carry yellow-card accumulation bans before FPL flags them (`models/suspension_risk.py`; Squad news shows the chance for players on 3+ yellows), and the PLAN chips panel prices the remaining bench boost in every week to its GW19 expiry along the road-ahead squads instead of telling the manager to wait for a double gameweek that is not scheduled. Three football hypotheses were re-measured and refused (European-tie rotation, key absences lowering team xG, re-splitting team goals over the expected eleven); per-player accuracy beats Solio on GW8. Account: `docs/history/64-session-2026-10-27-optimizer-upgrades-bans-chips-and-refused-football-factors.md`. Next candidates: fit the booking rate's tail (card-prone players under-predicted); a joint chip-and-transfer solve once it can be proven inside the time budget (smaller pool or warm start); second-half chips once GW20 opens.

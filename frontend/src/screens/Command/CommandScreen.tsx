@@ -15,6 +15,7 @@ import { DecisionSheet } from '@/components/command/DecisionSheet'
 import { LiveStrip } from '@/components/command/LiveStrip'
 import { MoveCard } from '@/components/command/MoveCard'
 import { SeasonRibbon } from '@/components/command/SeasonRibbon'
+import { TrackRecord } from '@/components/command/TrackRecord'
 import { SquadNews } from '@/components/command/SquadNews'
 import { SquadPitch } from '@/components/command/SquadPitch'
 import { Panel } from '@/components/ui/kit'
@@ -206,6 +207,7 @@ export function CommandScreen() {
           </div>
         </div>
         <SeasonRibbon />
+        <TrackRecord />
         <EyeTest plan={plan} />
         <CaptainLadder plan={plan} />
         <DeadlineChecklist plan={plan} desk={desk} />
