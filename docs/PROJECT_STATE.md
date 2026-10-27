@@ -13,6 +13,10 @@ teach` setup still outstanding before the new frontend-design skills are
 usable. No application code changed as part of that pass except two new
 project-local skill files.
 
+## Where things stand (updated 2026-10-27, late)
+
+Scouting reports on every player (`models/scouting.py`: percentiles within position on chances, chance quality, placement, creation, defensive work, rating, a keeper's goals prevented; style and profile labels; on player pages, transfer cards and Compare), a style-against-opponent lens on the fixture board, the week plan replayed over five past seasons (`fpl plan-replay`: ahead of a single swap and of holding in 5 of 5, +639 and +842), and heavy screens served from snapshots (`live/payload_snapshots.py`). Account: `docs/history/65-...`. Next candidates: fixture difficulty in the replay (as-of Dixon-Coles per round); test whether the style fit predicts anything once a second season of FotMob shots exists; second-half chips from GW20.
+
 ## Where things stand (updated 2026-10-27, night)
 
 New: `/leagues` (mini-leagues from FPL's public endpoints: standings, rivals' locked teams, head-to-head, threats, differentials, links into FPL; `fpl sync-leagues`, in `run-scheduled` every 3h), a fixture-by-fixture matchup board on every transfer card (`models/fixture_matchups.py`), the plan's record on Command, `fpl exclude-club` (clubs the plan will not buy from; MUN set). Account: `docs/history/65-session-2026-10-27-mini-leagues-matchup-board-and-track-record.md`. Next candidates: a leakage-free replay of the week plan; precomputed screen payloads; second-half chips from GW20.
