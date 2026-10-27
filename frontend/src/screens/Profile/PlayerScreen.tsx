@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { ScoutingReport } from '@/components/football/ScoutingReport'
 import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
@@ -150,6 +151,8 @@ export function PlayerScreen() {
       )}
 
       <ProjectionBand playerId={pl.player_id} />
+
+      {p.scouting && <ScoutingReport r={p.scouting} name={pl.name} />}
 
       {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
       <div className="border-b border-divider px-10 py-8">

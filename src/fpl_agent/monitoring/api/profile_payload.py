@@ -324,9 +324,19 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "deadlines": deadlines,
             "stories": stories_for_player(conn, p["id"]),
             "analyst": analyst_for_player(conn, p["id"]),
+            "scouting": _scouting(conn, p["id"]),
         }
     finally:
         conn.close()
+
+
+def _scouting(conn, player_id: int) -> dict | None:
+    from fpl_agent.models.scouting import scouting_report
+
+    try:
+        return scouting_report(conn, player_id)
+    except Exception:
+        return None
 
 
 # Both profiles only read the locked squad's ids from the context, so they

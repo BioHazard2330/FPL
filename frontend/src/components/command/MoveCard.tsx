@@ -44,6 +44,36 @@ function notes(p: WeekPlanPlayer, side: 'out' | 'into'): Note[] {
   return out.slice(0, 4)
 }
 
+/** The scouting report in two lines: his profile, and the measures he ranks highest and lowest on among players in his
+ * position, each with its value and percentile. */
+function ScoutLine({ s }: { s: NonNullable<WeekPlanPlayer['scouting']> }) {
+  const parts = [...s.strengths.map((m) => ({ m, good: true })), ...s.weaknesses.map((m) => ({ m, good: false }))]
+  if (s.profile.length === 0 && parts.length === 0) return null
+  return (
+    <div className="mt-3 space-y-1.5" title={`Percentiles ${s.pool_note}`}>
+      {s.profile.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {s.profile.map((t) => (
+            <span key={t} className="rounded-full border border-pitch-green/35 bg-pitch-green/10 px-2 py-0.5 text-[11.5px] font-semibold text-pitch-green">
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+      {parts.length > 0 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-text-muted">
+          {parts.map(({ m, good }) => (
+            <span key={m.key}>
+              {m.label} <span className="font-semibold text-text">{m.display}</span>{' '}
+              <span className={good ? 'text-pitch-green' : 'text-alert-red'}>{m.percentile}th</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const INK = { red: 'text-alert-red', gold: 'text-broadcast-gold', green: 'text-pitch-green', plain: 'text-text-muted' }
 
 function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; fixtures?: FixtureContext }) {
@@ -70,6 +100,7 @@ function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; 
         </div>
         <FixtureRun fixtures={run} max={4} showEvent className="shrink-0 [&>span]:rounded-sm" />
       </div>
+      {p.scouting && <ScoutLine s={p.scouting} />}
       {ns.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-[13px] leading-snug">
           {ns.map((n) => (

@@ -131,6 +131,27 @@ def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
     }
 
 
+def _attach_scouting(conn, payload: dict) -> None:
+    """A short scouting line on both sides of every move: profile, best and worst measures, finishing (`models/scouting`)."""
+    try:
+        from fpl_agent.models.scouting import scouting_report
+
+        for m in payload.get("moves", []) + payload.get("declined", []):
+            for side in ("out", "into"):
+                p = m.get(side)
+                if not isinstance(p, dict) or p.get("player_id") is None:
+                    continue
+                r = scouting_report(conn, p["player_id"])
+                if r is None:
+                    continue
+                p["scouting"] = {
+                    "profile": r["profile"], "strengths": r["strengths"][:2], "weaknesses": r["weaknesses"][:1],
+                    "finishing": r["finishing"], "recent": r["recent"][:1], "pool_note": r["pool_note"], "minutes": r["minutes"],
+                }
+    except Exception:
+        _logger.exception("scouting lines failed - the plan is unaffected")
+
+
 def _attach_matchups(conn, payload: dict, detail: dict) -> None:
     """The fixture-by-fixture board for both clubs in every recommended and declined move (`models/fixture_matchups`)."""
     try:
@@ -262,6 +283,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "fixtures": fixture_context_by_team_code(conn, team_ids),
         }
         _attach_matchups(conn, payload, detail)
+        _attach_scouting(conn, payload)
         _attach_luck(conn, payload)
         _attach_analyst(conn, payload)
         _attach_form(conn, payload, list(detail.get("squad_ids", [])))

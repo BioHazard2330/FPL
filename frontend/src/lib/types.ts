@@ -1078,6 +1078,7 @@ export interface AnalystMatchFindings {
 }
 
 export interface PlayerProfilePayload {
+  scouting?: ScoutingReportData | null
   analyst?: AnalystMatchFindings[]
   stories?: Story[]
   player: {
@@ -1656,6 +1657,7 @@ export interface TablePayload {
  * marginal value, plus the lineup and armband. Produced by
  * `optimization/week_plan.py` and read from the decision journal. */
 export interface WeekPlanPlayer {
+  scouting?: ScoutingLine
   player_id: number
   photo_code?: number | null
   luck?: { luck: number; z: number; actual: number; deserved: number }
@@ -2500,4 +2502,46 @@ export interface MatchupFixture {
 export interface MatchupBoardData {
   league: { xg_for: number; xg_against: number }
   teams: Record<string, { short: string; fixtures: MatchupFixture[]; form: TeamFormLine | null }>
+}
+
+export interface ScoutingMeasure {
+  key: string
+  label: string
+  unit: string
+  kind: 'quality' | 'style'
+  value: number
+  display: string
+  percentile: number | null
+  median: number | null
+  median_display: string | null
+}
+
+export interface ScoutingReportData {
+  player_id: number
+  position: string
+  minutes: number
+  apps: number
+  shots: number
+  pool_note: string
+  ranked: boolean
+  profile: string[]
+  measures: ScoutingMeasure[]
+  strengths: ScoutingMeasure[]
+  weaknesses: ScoutingMeasure[]
+  style: ScoutingMeasure[]
+  finishing: { np_goals: number; npxg: number; difference: number } | null
+  penalties: number
+  prevented: number | null
+  recent: { key: string; label: string; recent: number; season: number; change: number }[]
+  last_season: { season: string; minutes: number; goals: number; assists: number; xg90: number; xa90: number; shots90: number; key_passes90: number } | null
+}
+
+export interface ScoutingLine {
+  profile: string[]
+  strengths: ScoutingMeasure[]
+  weaknesses: ScoutingMeasure[]
+  finishing: { np_goals: number; npxg: number; difference: number } | null
+  recent: { key: string; label: string; recent: number; season: number; change: number }[]
+  pool_note: string
+  minutes: number
 }
