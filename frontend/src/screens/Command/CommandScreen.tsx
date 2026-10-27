@@ -184,9 +184,11 @@ export function CommandScreen() {
       <div className="data-in">
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
-        <SquadNews />
         <div className="bare grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-          {plan.action_squad && <SquadPitch block={plan.action_squad} fixtures={plan.fixtures} title={`Your GW${plan.event} team`} sub={moves.length > 0 ? 'After the moves above, with the armband set.' : 'As it stands, with the armband set.'} />}
+          <div className="min-w-0 space-y-6">
+            {plan.action_squad && <SquadPitch block={plan.action_squad} fixtures={plan.fixtures} title={`Your GW${plan.event} team`} sub={moves.length > 0 ? 'After the moves above, with the armband set.' : 'As it stands, with the armband set.'} />}
+            <SquadNews />
+          </div>
           <div className="space-y-6">
             {moves.length > 0 && (
               <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>

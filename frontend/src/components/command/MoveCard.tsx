@@ -229,8 +229,8 @@ function MatchupCell({ f, defensive, league, mix }: { f: MatchupFixture; defensi
       )}
       {f.tilt && <div className="truncate text-[10.5px] leading-tight text-broadcast-gold">+{TILT[f.tilt.source] ?? f.tilt.source}</div>}
       {fit && (fit.value >= 1.1 || fit.value <= 0.9) && (
-        <div className={`truncate text-[10.5px] font-semibold leading-tight ${fit.value >= 1.1 ? 'text-pitch-green' : 'text-alert-red'}`} title={fit.detail}>
-          {fit.value >= 1.1 ? 'suits him' : 'bad fit'} ×{fit.value.toFixed(1)}
+        <div className={`truncate text-[10.5px] font-semibold leading-tight ${fit.value >= 1.1 ? 'text-pitch-green' : 'text-alert-red'}`} title={`×${fit.value.toFixed(2)}: ${fit.detail}`}>
+          {fit.value >= 1.1 ? 'suits him' : 'bad fit'}
         </div>
       )}
     </div>
