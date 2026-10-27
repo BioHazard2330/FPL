@@ -184,7 +184,26 @@ function leaky(xga: number, league: number) {
 
 const TILT: Record<string, string> = { 'open play': 'open play', corners: 'corners', 'set pieces': 'set pieces', 'fast breaks': 'breaks', penalties: 'pens' }
 
-function MatchupCell({ f, defensive, league }: { f: MatchupFixture; defensive: boolean; league: number }) {
+/** Where his chances come from, weighted by how much this opponent concedes from each source against the league. Above 1
+ * the opponent gives away the kind of chance he lives on; below 1 it shuts that kind out. A lens (Matchup Lab ratios), not
+ * part of the projection. */
+function styleFit(mix: Record<string, number> | null | undefined, concede: Record<string, number> | null | undefined) {
+  if (!mix || !concede) return null
+  let fit = 0
+  let weight = 0
+  for (const [source, share] of Object.entries(mix)) {
+    if (concede[source] === undefined) continue
+    fit += share * concede[source]
+    weight += share
+  }
+  if (weight < 0.5) return null
+  const value = fit / weight
+  const main = Object.entries(mix).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => `${Math.round(v * 100)}% ${k}`).join(', ')
+  return { value, detail: `his chances: ${main}; this opponent concedes ${Object.entries(concede).map(([k, v]) => `${k} ×${v.toFixed(2)}`).join(', ')}` }
+}
+
+function MatchupCell({ f, defensive, league, mix }: { f: MatchupFixture; defensive: boolean; league: number; mix?: Record<string, number> | null }) {
+  const fit = styleFit(mix, f.opp_concede)
   const opp = f.opponent_form
   const recent = opp ? (defensive ? opp.xg_for_recent : opp.xg_against_recent) : null
   const tag = opp && !defensive ? leaky(opp.xg_against_recent, league) : null
@@ -209,6 +228,11 @@ function MatchupCell({ f, defensive, league }: { f: MatchupFixture; defensive: b
         </div>
       )}
       {f.tilt && <div className="truncate text-[10.5px] leading-tight text-broadcast-gold">+{TILT[f.tilt.source] ?? f.tilt.source}</div>}
+      {fit && (fit.value >= 1.1 || fit.value <= 0.9) && (
+        <div className={`truncate text-[10.5px] font-semibold leading-tight ${fit.value >= 1.1 ? 'text-pitch-green' : 'text-alert-red'}`} title={fit.detail}>
+          {fit.value >= 1.1 ? 'suits him' : 'bad fit'} ×{fit.value.toFixed(1)}
+        </div>
+      )}
     </div>
   )
 }
@@ -251,7 +275,7 @@ function MatchupBoard({ m, board, startEvent, horizon }: { m: WeekPlanMove; boar
                   {fs.length === 0 ? (
                     <div className="flex h-full items-center justify-center rounded-md bg-alert-red/10 text-[11px] text-alert-red">blank</div>
                   ) : (
-                    fs.map((f) => <MatchupCell key={`${f.opponent}-${f.home}`} f={f} defensive={defensive} league={board.league.xg_against} />)
+                    fs.map((f) => <MatchupCell key={`${f.opponent}-${f.home}`} f={f} defensive={defensive} league={board.league.xg_against} mix={p.scouting?.source_mix} />)
                   )}
                 </div>
               )

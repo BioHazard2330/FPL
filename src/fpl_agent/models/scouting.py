@@ -125,9 +125,23 @@ def season_table(conn: sqlite3.Connection) -> dict[int, dict]:
             "np_goals": sum(1 for s in np_shots if s["outcome"] == "Goal"),
             "npxg": sum(s["xg"] for s in np_shots),
             "pen_shots": sum(1 for s in shots.get(pid, []) if s["situation"] == "Penalty"),
+            "source_mix": _source_mix(np_shots) if n >= MIN_SHOTS else None,
         }
         out[pid] = m
     return out
+
+
+def _source_mix(np_shots: list) -> dict[str, float]:
+    """Share of his non-penalty shot xG by the Matchup Lab's chance sources."""
+    from fpl_agent.models.matchup_lab import _SOURCE_OF
+
+    total = sum(s["xg"] for s in np_shots) or 1.0
+    mix: dict[str, float] = defaultdict(float)
+    for s in np_shots:
+        source = _SOURCE_OF.get(s["situation"])
+        if source and source != "penalties":
+            mix[source] += s["xg"] / total
+    return {k: round(v, 3) for k, v in mix.items()}
 
 
 def _goals_prevented(conn: sqlite3.Connection) -> dict[int, tuple[float, int]]:
@@ -323,4 +337,5 @@ def scouting_report(conn: sqlite3.Connection, player_id: int) -> dict | None:
         "measures": measures, "strengths": strengths, "weaknesses": weaknesses, "style": style,
         "finishing": finishing, "penalties": m["pen_shots"], "prevented": round(m["prevented"], 2) if m.get("prevented") is not None else None,
         "recent": _recent(conn, player_id, m), "last_season": _last_season(conn, player_id),
+        "source_mix": m.get("source_mix"),
     }

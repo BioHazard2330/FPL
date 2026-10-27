@@ -2503,6 +2503,7 @@ export interface MatchupFixture {
   cs: number
   market: boolean
   opponent_form: TeamFormLine | null
+  opp_concede?: Record<string, number> | null
   tilt: { source: string; shift: number } | null
 }
 
@@ -2541,6 +2542,7 @@ export interface ScoutingReportData {
   prevented: number | null
   recent: { key: string; label: string; recent: number; season: number; change: number }[]
   last_season: { season: string; minutes: number; goals: number; assists: number; xg90: number; xa90: number; shots90: number; key_passes90: number } | null
+  source_mix?: Record<string, number> | null
 }
 
 export interface ScoutingLine {
@@ -2551,4 +2553,5 @@ export interface ScoutingLine {
   recent: { key: string; label: string; recent: number; season: number; change: number }[]
   pool_note: string
   minutes: number
+  source_mix?: Record<string, number> | null
 }

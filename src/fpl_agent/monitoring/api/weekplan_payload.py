@@ -147,6 +147,7 @@ def _attach_scouting(conn, payload: dict) -> None:
                 p["scouting"] = {
                     "profile": r["profile"], "strengths": r["strengths"][:2], "weaknesses": r["weaknesses"][:1],
                     "finishing": r["finishing"], "recent": r["recent"][:1], "pool_note": r["pool_note"], "minutes": r["minutes"],
+                    "source_mix": r.get("source_mix"),
                 }
     except Exception:
         _logger.exception("scouting lines failed - the plan is unaffected")

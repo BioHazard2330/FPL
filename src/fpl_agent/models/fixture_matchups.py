@@ -1,11 +1,15 @@
 """Each fixture in a club's next gameweeks set out the way a football eye reads it: who the opponent is, how many chances
 they give away and create (season and last four matches, FotMob shot xG), the club's expected goals for and against in
-that fixture (the same odds-blended goals the projections use, `fixture_outlook`), the clean-sheet chance, and the kind
-of chance the matchup tilts toward (`matchup_lab`, a lens, not an input).
+that fixture (the same odds-blended goals the projections use, `fixture_outlook`), the clean-sheet chance, the kind
+of chance the matchup tilts toward, and how much the opponent concedes from each chance source against the league
+(`matchup_lab`, shrunk ratios; a lens, not an input), which the transfer card sets against where a player's own chances
+come from (`scouting.source_mix`).
 
 Read-only; used beside each transfer so a move can be judged fixture by fixture, not on season totals."""
 import sqlite3
 from collections import defaultdict
+
+from fpl_agent.models.matchup_lab import SOURCES, shrunk_ratio
 
 FORM_MATCHES = 4
 
@@ -62,8 +66,13 @@ def matchup_board(conn: sqlite3.Connection, team_ids: set[int], event: int, wind
                 opp = by_short.get(f["opponent"])
                 lens = side_lens(profiles, means, tid, opp) if opp is not None else []
                 tilt = max(lens, key=lambda r: r["shift"]) if lens else None
+                opp_profile = profiles.get(opp) if opp is not None else None
+                concede = {
+                    source: round(shrunk_ratio(opp_profile["against"].get(source, 0.0), opp_profile["matches"], means.get(source, 0.0)), 2)
+                    for source in SOURCES if source != "penalties"
+                } if opp_profile else None
                 fixtures.append({
-                    **f, "event": ev, "opponent_form": form.get(opp),
+                    **f, "event": ev, "opponent_form": form.get(opp), "opp_concede": concede,
                     "tilt": {"source": tilt["source"], "shift": tilt["shift"]} if tilt and tilt["shift"] > 0.03 else None,
                 })
         out[str(tid)] = {"short": row["short"], "fixtures": fixtures, "form": form.get(tid)}
