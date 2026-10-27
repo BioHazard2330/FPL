@@ -4378,6 +4378,29 @@ def milp_plan_cmd(horizon: int, pool_per_position: int, time_limit: int, compare
         conn.close()
 
 
+@cli.command("exclude-club")
+@click.argument("clubs", nargs=-1)
+@click.option("--clear", is_flag=True, help="buy from every club again")
+def exclude_club_cmd(clubs: tuple[str, ...], clear: bool):
+    """Clubs the week plan will not buy from (short names, e.g. MUN). Owned players stay sellable."""
+    from fpl_agent.optimization.week_plan import excluded_team_ids, set_excluded_team_ids
+
+    conn = get_connection()
+    try:
+        current = set() if clear else excluded_team_ids(conn)
+        by_short = {r["short_name"].upper(): r["id"] for r in conn.execute("SELECT id, short_name FROM teams")}
+        unknown = [c for c in clubs if c.upper() not in by_short]
+        if unknown:
+            click.echo(f"unknown club(s): {', '.join(unknown)}; use short names like {', '.join(sorted(by_short)[:4])}", err=True)
+            raise SystemExit(1)
+        current |= {by_short[c.upper()] for c in clubs}
+        set_excluded_team_ids(conn, current)
+        names = sorted(s for s, t in by_short.items() if t in current)
+        click.echo(f"not buying from: {', '.join(names) if names else 'nobody'} (rebuild with `fpl week-plan`)")
+    finally:
+        conn.close()
+
+
 @cli.command("week-plan")
 @click.option("--horizon", default=5, type=int, help="gameweeks the moves are judged over (default 5)")
 @click.option("--min-gain", default=1.5, type=float, help="least a move must add over the horizon to be recommended (default 1.5)")

@@ -570,3 +570,18 @@ def test_chip_plan_skips_chips_already_played_or_out_of_window(db_conn):
 
     assert build_chip_plan(db_conn, 9, {9: [1]}, ["bboost"]) == []
     assert build_chip_plan(db_conn, 9, {9: [1]}, []) == []
+
+
+def test_excluded_clubs_are_kept_out_of_the_buyable_pool_but_owned_players_stay(db_conn, monkeypatch):
+    from types import SimpleNamespace
+
+    import fpl_agent.optimization.week_plan as wp
+
+    league = [SimpleNamespace(player_id=1, team_id=7), SimpleNamespace(player_id=2, team_id=7), SimpleNamespace(player_id=3, team_id=8)]
+    monkeypatch.setattr(wp, "build_player_pool", lambda conn, n_gw: league)
+    assert wp.excluded_team_ids(db_conn) == set()
+    wp.set_excluded_team_ids(db_conn, {7})
+    assert wp.excluded_team_ids(db_conn) == {7}
+    assert [c.player_id for c in wp._buyable_pool(db_conn, 5, [2])] == [2, 3]
+    wp.set_excluded_team_ids(db_conn, set())
+    assert len(wp._buyable_pool(db_conn, 5, [])) == 3

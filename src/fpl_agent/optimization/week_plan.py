@@ -777,6 +777,36 @@ def compact_team_outlook(conn: sqlite3.Connection, event: int) -> dict[str, dict
     return out
 
 
+EXCLUDED_CLUBS_KEY = "plan_excluded_team_ids"
+
+
+def excluded_team_ids(conn: sqlite3.Connection) -> set[int]:
+    """Clubs the manager will not buy from (`fpl exclude-club`). A preference, not a projection: players already owned
+    can still be kept or sold, nobody from these clubs is bought."""
+    row = conn.execute("SELECT value FROM app_meta WHERE key=?", (EXCLUDED_CLUBS_KEY,)).fetchone()
+    if row is None or not row["value"]:
+        return set()
+    return {int(t) for t in row["value"].split(",") if t.strip().isdigit()}
+
+
+def set_excluded_team_ids(conn: sqlite3.Connection, team_ids: set[int]) -> None:
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (EXCLUDED_CLUBS_KEY, ",".join(str(t) for t in sorted(team_ids)), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def _buyable_pool(conn: sqlite3.Connection, horizon: int, squad_ids: list[int]) -> list[PlayerCandidate]:
+    excluded = excluded_team_ids(conn)
+    league = build_player_pool(conn, n_gw=horizon)
+    if not excluded:
+        return league
+    owned = set(squad_ids)
+    return [c for c in league if c.team_id not in excluded or c.player_id in owned]
+
+
 @scoped
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
@@ -792,7 +822,7 @@ def build_week_plan(
     ft_known = locked.free_transfers is not None
     free_transfers = locked.free_transfers if ft_known else 1
 
-    pool = build_player_pool(conn, n_gw=horizon)
+    pool = _buyable_pool(conn, horizon, squad_ids)
     by_id = {c.player_id: c for c in pool}
     cache: dict = {}
 
@@ -954,6 +984,12 @@ def build_week_plan(
     notes: list[str] = []
     if not ft_known:
         notes.append("Free transfers could not be derived from synced history; one is assumed.")
+    excluded = excluded_team_ids(conn)
+    if excluded:
+        names = [r["short_name"] for r in conn.execute(
+            f"SELECT short_name FROM teams WHERE id IN ({','.join('?' * len(excluded))}) ORDER BY short_name", sorted(excluded),
+        )]
+        notes.append(f"Not buying from {', '.join(names)} (your setting).")
     if free_transfers >= 5 and not moves:
         notes.append("Rolling at the cap discards a free transfer: next week you hold five either way.")
 
@@ -989,7 +1025,7 @@ def plan_with_view(
     event = locked.event + 1
     bank = int(round(locked.bank_tenths or 0))
     free_transfers = locked.free_transfers if locked.free_transfers is not None else 1
-    pool = build_player_pool(conn, n_gw=horizon)
+    pool = _buyable_pool(conn, horizon, squad_ids)
     cache: dict = {}
     clean = {int(k): float(v) for k, v in scales.items() if v is not None and abs(float(v) - 1.0) > 1e-9}
 
