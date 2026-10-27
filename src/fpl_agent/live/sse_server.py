@@ -364,6 +364,23 @@ def make_handler(
             # now opt in by declaring a `params` argument. Builders that do not
             # declare one are called exactly as before, unchanged.
             params = {k: v[0] for k, v in parse_qs(query).items() if v}
+            from fpl_agent.live.payload_snapshots import SNAPSHOT_SCREENS, serve
+
+            if screen in SNAPSHOT_SCREENS and not params:
+                def build(c):
+                    if getattr(builder, "needs_context", True):
+                        return builder(get_cached_dashboard_context(c))
+                    from fpl_agent.monitoring.dashboard.context import light_context
+                    return builder(light_context(c))
+
+                try:
+                    body = serve(screen, build, conn_factory)
+                except Exception:
+                    _logger.exception("building the '%s' API payload failed", screen)
+                    self.send_error(500, "payload build failed - see server log")
+                    return
+                self._send_api_body(body)
+                return
             conn = conn_factory()
             try:
                 # A builder that sets `needs_context = False` gets a light
@@ -392,7 +409,9 @@ def make_handler(
                 return
             finally:
                 conn.close()
-            body = json.dumps(payload, default=str).encode("utf-8")
+            self._send_api_body(json.dumps(payload, default=str).encode("utf-8"))
+
+        def _send_api_body(self, body: bytes) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             # Real, deliberate wildcard (same posture as `/events` above -
