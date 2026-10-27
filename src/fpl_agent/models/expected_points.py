@@ -113,6 +113,7 @@ from fpl_agent.models.player_regression import (
     fpl_assist_position_factors,
     real_assisted_goal_rate,
     season_shrunk_rate,
+    shrink_rate,
 )
 from fpl_agent.models.promoted_team_calibration import augment_model_with_promoted_teams
 from fpl_agent.models.rules import current_season, get_rule
@@ -123,7 +124,7 @@ from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "doubtful-eases-cup-bans-5"
+PROJECTION_REVISION = "doubtful-eases-cup-bans-own-cards-6"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -755,6 +756,25 @@ _HIERARCHICAL_PRIOR_STAT_COLUMNS = {"goals": "goals_scored", "xa": "expected_ass
 # minutes, and the backtest now confirms the same bar for goals/xa/share
 # too. See `_player_match_rates`'s own call sites for the full account.
 _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR = 4
+CARDS_OWN_PRIOR_STRENGTH = 60
+
+
+def _cards_toward_own_record(conn: sqlite3.Connection, player_id: int, season: str | None, current):
+    """Booking rate: this season's yellows shrunk toward his own last-season rate (itself shrunk toward the position
+    average), weighted as `CARDS_OWN_PRIOR_STRENGTH` matches, instead of toward the position average. Walk-forward over
+    2022-23 to 2025-26 (1,948 player cut-points at 20, 40 and 60 match dates, yellows over the rest of the season):
+    Poisson deviance 1.473 toward the position average at strength 10 (the old rule), 1.216 toward his own record at
+    60, flat from 40 to 100. Both forecast about 6% more yellows than were shown. Unchanged when he has no last season."""
+    previous = prior_season(season) if season else None
+    if not previous:
+        return current
+    own = player_shrunk_rates(conn, player_id, previous, as_of_date=None)["cards"]
+    if own.matches_played <= 0:
+        return current
+    return shrink_rate(
+        current.raw_per90 * current.matches_played, current.matches_played * 90, own.shrunk_per90,
+        prior_strength=CARDS_OWN_PRIOR_STRENGTH,
+    )
 
 
 def _hierarchical_prior_rates(
@@ -931,6 +951,7 @@ def _player_match_rates(
     if 0 < shrunk["goals"].matches_played < _MIN_MATCHES_FOR_HIERARCHICAL_PRIOR:
         hierarchical_priors = _hierarchical_prior_rates(conn, player_id, season, as_of_date)
         shrunk = player_shrunk_rates(conn, player_id, season, as_of_date, prior_overrides=hierarchical_priors)
+    shrunk["cards"] = _cards_toward_own_record(conn, player_id, season, shrunk["cards"])
     minutes_probs = minutes_bucket_probabilities(conn, player_id, season, as_of_date)
     minutes_probs_healthy = None
     minutes_probs_later = None

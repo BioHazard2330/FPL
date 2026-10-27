@@ -1446,3 +1446,29 @@ def test_a_doubtful_flag_eases_after_the_next_gameweek_to_the_measured_factor():
     assert abs(later.p_zero + later.p_partial + later.p_full - 1) < 1e-9
     lightly = MinutesBucketProbabilities(0.15, 0.255, 0.595, "empirical")
     assert abs(_doubtful_later_probs(lightly, healthy).p_full - 0.595) < 1e-9
+
+
+def test_booking_rate_leans_on_his_own_last_season_not_the_position_average(db_conn):
+    from fpl_agent.models.expected_points import CARDS_OWN_PRIOR_STRENGTH, _cards_toward_own_record
+    from fpl_agent.models.player_regression import player_shrunk_rates
+    from fpl_agent.models.squad_churn import prior_season
+
+    season, arsenal, _ = _seed_two_team_world(db_conn)
+    current = player_shrunk_rates(db_conn, 1, season)["cards"]
+    assert _cards_toward_own_record(db_conn, 1, season, current) == current
+
+    last = prior_season(season)
+    for i in range(30):
+        db_conn.execute(
+            "INSERT INTO player_match_stats_history (understat_match_id, understat_player_id, player_id, market_team_id, "
+            "season, match_date, minutes, goals, assists, shots, xg, xa, key_passes, yellow_cards, red_cards, retrieved_at) "
+            "VALUES (?, 'u1', 1, ?, ?, ?, 90, 0, 0, 1, 0.1, 0.1, 1, 0, 0, 't0')",
+            (f"old{i}", arsenal, last, f"2025-{1 + i // 28:02d}-{1 + i % 28:02d}"),
+        )
+    db_conn.commit()
+    own = player_shrunk_rates(db_conn, 1, last)["cards"]
+    blended = _cards_toward_own_record(db_conn, 1, season, current)
+    expected = (current.matches_played * current.raw_per90 + CARDS_OWN_PRIOR_STRENGTH * own.shrunk_per90) / (
+        current.matches_played + CARDS_OWN_PRIOR_STRENGTH)
+    assert abs(blended.shrunk_per90 - expected) < 1e-3
+    assert blended.shrunk_per90 < current.shrunk_per90
