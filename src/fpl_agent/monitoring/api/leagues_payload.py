@@ -12,6 +12,7 @@ Per league:
 - your differentials: players in your eleven that few of them start.
 
 Reads stored rows only; no network."""
+import logging
 import sqlite3
 
 from fpl_agent.monitoring.api.photos import attach_photo_codes
@@ -22,6 +23,8 @@ THREATS = 8
 DIFFERENTIAL_SHARE = 0.34
 _POSITION = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
+
+_logger = logging.getLogger(__name__)
 
 def _players(conn: sqlite3.Connection, ids: set[int]) -> dict[int, dict]:
     if not ids:
@@ -83,16 +86,21 @@ def build_leagues_payload(ctx=None, params: dict | None = None) -> dict:
         my_squad = set(state["squad_ids"]) if state else set()
         plan = latest_week_plan(conn)
         my_xi: list[int] = []
+        my_bench: list[int] = []
         my_captain = None
+        my_vice = None
         my_projection = None
         if plan is not None:
             after = plan[0].get("lineup_after") or {}
             my_xi = [p["player_id"] for p in after.get("starting", [])]
+            my_bench = [p["player_id"] for p in after.get("bench", [])]
             my_captain = after.get("captain_id")
+            my_vice = after.get("vice_id")
             my_projection = after.get("xp_total")
             my_squad = set(my_xi) | {p["player_id"] for p in after.get("bench", [])} or my_squad
 
         out_leagues = []
+        shared_trials: dict = {}
         with projection_memo(conn):
             xp_cache: dict[int, float] = {}
 
@@ -173,6 +181,39 @@ def build_leagues_payload(ctx=None, params: dict | None = None) -> dict:
                     if row["captain"]:
                         row["captain_name"] = info.get(row["captain"], {}).get("name")
 
+                odds = None
+                if next_event and my_xi and followed:
+                    try:
+                        from fpl_agent.models.league_odds import ARMBAND_OPTIONS, league_odds, team_players
+                        from fpl_agent.models.rank_engine import simulate_players
+
+                        options = sorted(my_xi, key=lambda p: -xp_cache.get(p, 0.0))[:ARMBAND_OPTIONS]
+                        if my_captain in my_xi and my_captain not in options:
+                            options = [my_captain] + options[:-1]
+                        known = [t for t in teams.values() if t["xi"]]
+                        me = {"xi": my_xi, "bench": my_bench, "captain": my_captain, "vice": my_vice}
+                        if not shared_trials:
+                            union = set(my_xi) | set(my_bench)
+                            for other in leagues:
+                                entries = [r["entry_id"] for r in conn.execute(
+                                    "SELECT entry_id FROM fpl_league_standing WHERE league_id=?", (other["id"],)) if r["entry_id"] != entry_id]
+                                union |= team_players(me, [t for t in _rival_teams(conn, entries, locked).values() if t["xi"]])
+                            shared_trials.update(simulate_players(conn, next_event, sorted(union)))
+                        odds = league_odds(
+                            conn, next_event, me, teams, {r["entry_id"]: r["total"] for r in rows}, entry_id,
+                            full_table=len(known) == len(rows) - 1, captain_options=options, trials=shared_trials,
+                        )
+                        odds["unknown_rivals"] = len(rows) - 1 - len(known)
+                        info.update(_players(conn, set(options) - set(info)))
+                        for a in odds.get("armband", []):
+                            a["name"] = info.get(a["captain"], {}).get("name")
+                            a["chosen"] = a["captain"] == my_captain
+                        for row in standings:
+                            row["odds"] = odds.get("h2h", {}).get(str(row["entry_id"]))
+                            row["sim_mean"] = odds.get("rival_mean", {}).get(str(row["entry_id"]))
+                    except Exception:
+                        _logger.exception("league odds failed for %s", lg["id"])
+
                 out_leagues.append({
                     "id": lg["id"], "name": lg["name"], "size": lg["rank_count"], "my_rank": lg["entry_rank"],
                     "my_last_rank": lg["entry_last_rank"], "followed": n,
@@ -183,6 +224,7 @@ def build_leagues_payload(ctx=None, params: dict | None = None) -> dict:
                     "differentials": [card(p) for p in differential_ids],
                     "template": [card(p) for p in template_ids],
                     "players": {str(p): card(p) for p in everyone | set(my_xi)},
+                    "odds": {k: v for k, v in odds.items() if k not in ("h2h", "rival_mean")} if odds else None,
                 })
         return attach_photo_codes(conn, {
             "status": "ready", "entry_id": entry_id, "locked_event": locked, "next_event": next_event,

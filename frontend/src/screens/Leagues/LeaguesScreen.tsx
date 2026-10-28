@@ -92,13 +92,72 @@ function Hero({ league, me }: { league: MiniLeague; me: LeagueStanding }) {
         tone="text-text"
         sub={above ? `${above.team}${below ? ` · ${me.total - below.total} clear of ${below.team}` : ''}` : below ? below.team : ''}
       />
-      <HeroFig
-        label="Next gameweek, projected"
-        value={`${wins}/${followed.length}`}
-        tone={wins >= followed.length / 2 ? 'text-pitch-green' : 'text-broadcast-gold'}
-        sub="rivals you outscore if they keep last week's eleven"
-      />
+      {league.odds?.p_lead != null ? (
+        <HeroFig
+          label="Chance you lead after this gameweek"
+          value={pct(league.odds.p_lead)}
+          tone={league.odds.p_lead >= 0.5 ? 'text-pitch-green' : league.odds.p_lead >= 0.2 ? 'text-broadcast-gold' : 'text-text-muted'}
+          sub={`${(league.odds.trials ?? 0).toLocaleString()} simulated gameweeks, rivals on last week's teams`}
+        />
+      ) : (
+        <HeroFig
+          label="Next gameweek, projected"
+          value={`${wins}/${followed.length}`}
+          tone={wins >= followed.length / 2 ? 'text-pitch-green' : 'text-broadcast-gold'}
+          sub="rivals you outscore if they keep last week's eleven"
+        />
+      )}
     </section>
+  )
+}
+
+const pct = (p: number) => `${Math.round(p * 100)}%`
+
+function OddsCell({ r, max }: { r: LeagueStanding; max: number }) {
+  if (!r.odds) return <SwingBar swing={r.swing} max={max} />
+  const p = r.odds.p_beat_gw
+  const tone = p >= 0.55 ? 'text-pitch-green' : p <= 0.45 ? 'text-alert-red' : 'text-broadcast-gold'
+  return (
+    <span className="flex items-center gap-2" title={`Mean margin ${signed(r.odds.margin_gw, 1)}; ahead of him after the gameweek in ${pct(r.odds.p_ahead_after)} of trials`}>
+      <span className="relative h-1.5 w-16 rounded-full bg-raised">
+        <span className={`bar-draw absolute inset-y-0 left-0 rounded-full ${p >= 0.5 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${p * 100}%` }} />
+        <span className="absolute inset-y-[-2px] left-1/2 w-px bg-text-faint/60" />
+      </span>
+      <span className={`w-9 text-right text-[13px] font-semibold tabular-nums ${tone}`}>{pct(p)}</span>
+      <span className="text-[12px] tabular-nums text-text-faint">{signed(r.odds.margin_gw, 1)}</span>
+    </span>
+  )
+}
+
+/** The armband against this league: the same simulated gameweeks with each of your likeliest captains. */
+function ArmbandOdds({ league }: { league: MiniLeague }) {
+  const opts = league.odds?.armband ?? []
+  if (opts.length === 0) return null
+  const lead = league.odds?.p_lead != null
+  const best = Math.max(...opts.map((o) => (lead ? o.p_lead ?? 0 : o.p_beat_avg)))
+  return (
+    <Panel
+      title="The armband against this league"
+      sub={lead ? 'Your chance of leading after the gameweek with each captain, everything else as planned.' : 'Your average chance of outscoring each followed rival with each captain.'}
+    >
+      <div className="grid gap-3 md:grid-cols-4">
+        {opts.map((o) => {
+          const v = lead ? o.p_lead ?? 0 : o.p_beat_avg
+          const p = league.players[String(o.captain)]
+          return (
+            <div key={o.captain} className={`rounded-lg px-4 py-3 ${o.chosen ? 'bg-pitch-green/10 ring-1 ring-pitch-green/40' : 'bg-void/40'}`}>
+              <div className="flex items-center gap-2">
+                {p && <Face code={p.photo_code} teamCode={p.team_code} size="sm" isGkp={p.position === 'GKP'} />}
+                <span className="truncate font-semibold text-text">{o.name ?? p?.name}</span>
+                {o.chosen && <span className="ml-auto text-[11px] font-semibold text-pitch-green">the plan's</span>}
+              </div>
+              <div className={`mt-2 font-display text-3xl font-bold tabular-nums ${v === best ? 'text-pitch-green' : 'text-text'}`}>{pct(v)}</div>
+              <div className="text-[12px] text-text-faint">{o.mean.toFixed(1)} points on average</div>
+            </div>
+          )
+        })}
+      </div>
+    </Panel>
   )
 }
 
@@ -166,7 +225,7 @@ function Standings({ league, picked, onPick }: { league: MiniLeague; picked: num
         <span>Last GW</span>
         <span>Armband</span>
         <span className="text-right">Next GW</span>
-        <span>Against you</span>
+        <span>You beat him this GW</span>
         <span>Shared</span>
       </div>
       {league.standings.map((r) => {
@@ -213,7 +272,7 @@ function Standings({ league, picked, onPick }: { league: MiniLeague; picked: num
               )}
             </span>
             <span className="text-right font-semibold tabular-nums text-text">{r.projected?.toFixed(1) ?? '–'}</span>
-            <span>{r.me ? <span className="text-[12px] text-pitch-green">you, after the plan</span> : <SwingBar swing={r.swing} max={max} />}</span>
+            <span>{r.me ? <span className="text-[12px] text-pitch-green">you, after the plan</span> : <OddsCell r={r} max={max} />}</span>
             <span>{r.me ? null : <OverlapRing value={r.overlap} />}</span>
           </button>
         )
@@ -338,8 +397,10 @@ function Body({ d }: { d: LeaguesPayload }) {
       <Standings league={league} picked={picked} onPick={setPicked} />
       <p className="-mt-3 text-[13px] text-text-faint">
         Rivals' next gameweek is their GW{d.locked_event} eleven and armband unchanged (FPL hides their picks until the deadline); yours is the plan
-        after its moves. The swing reads in your favour until their GW{d.next_event} teams lock.
+        after its moves. Chances come from {league.odds?.trials?.toLocaleString() ?? 'several thousand'} simulated gameweeks with shared scorelines, so a rival who owns your captain rises and falls with you.
+        They read in your favour until their GW{d.next_event} teams lock.
       </p>
+      <ArmbandOdds league={league} />
       {rival && me && <HeadToHead league={league} rival={rival} myXi={d.my_xi ?? []} locked={d.locked_event} />}
       <div className="grid gap-6 xl:grid-cols-2">
         <Board

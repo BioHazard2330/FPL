@@ -2477,6 +2477,27 @@ export interface LeagueStanding {
   overlap: number | null
   url: string
   xi: number[]
+  odds?: { p_beat_gw: number; margin_gw: number; p_ahead_after: number } | null
+  sim_mean?: number | null
+}
+
+export interface LeagueArmbandOption {
+  captain: number
+  name?: string | null
+  mean: number
+  p_lead: number | null
+  p_beat_avg: number
+  chosen: boolean
+  h2h: Record<string, number>
+}
+
+export interface LeagueOdds {
+  status: 'ready' | 'none'
+  trials?: number
+  mean?: number
+  p_lead?: number | null
+  unknown_rivals?: number
+  armband?: LeagueArmbandOption[]
 }
 
 export interface MiniLeague {
@@ -2493,6 +2514,7 @@ export interface MiniLeague {
   differentials: LeaguePlayer[]
   template: LeaguePlayer[]
   players: Record<string, LeaguePlayer>
+  odds?: LeagueOdds | null
 }
 
 export interface LeaguesPayload {
