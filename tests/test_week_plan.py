@@ -18,6 +18,7 @@ def _solver(totals_by_k, moves_by_k):
 
     def solve(k, forced_in, forced_out):
         calls.append((k, forced_in, forced_out))
+        k = min(k, max(totals_by_k))
         return _plan(totals_by_k[k], moves_by_k[k])
 
     return solve, calls
@@ -71,6 +72,29 @@ def test_the_curve_reports_gain_over_rolling_for_every_count_tried():
     assert [(c.moves, c.gain_vs_roll) for c in selection.curve] == [(0, 0.0), (1, 5.0), (2, 7.0), (3, 7.4)]
 
 
+def test_a_sale_that_only_pays_by_funding_the_next_purchase_is_kept_as_a_set():
+    solve, _ = _solver(
+        {0: 100.0, 1: 100.9, 2: 104.2, 3: 104.5},
+        {0: [], 1: [(1, 11)], 2: [(1, 11), (2, 12)], 3: [(1, 11), (2, 12), (3, 13)]},
+    )
+
+    selection = select_moves(solve, EVENT, min_move_gain=1.5)
+
+    assert [(o, i) for o, i, _ in selection.accepted] == [(1, 11), (2, 12)]
+    assert [g for _, _, g in selection.accepted] == [2.1, 2.1]
+    assert selection.joints == [{"moves": [(1, 11), (2, 12)], "gain": 4.2, "first_alone": 0.9}]
+    assert [(o, i) for o, i, _ in selection.declined] == [(3, 13)]
+
+
+def test_a_set_that_does_not_clear_the_bar_for_every_move_in_it_is_still_a_roll():
+    solve, _ = _solver({0: 100.0, 1: 100.9, 2: 102.8, 3: 104.0}, {0: [], 1: [(1, 11)], 2: [(1, 11), (2, 12)], 3: [(1, 11), (2, 12), (3, 13)]})
+
+    selection = select_moves(solve, EVENT, min_move_gain=1.5)
+
+    assert selection.accepted == [] and selection.joints == []
+    assert selection.declined == [(1, 11, 0.9)]
+
+
 def test_an_unsolvable_roll_gives_no_plan():
     def solve(k, forced_in, forced_out):
         return SimpleNamespace(sequence=None, proven_optimal=False)
@@ -82,7 +106,7 @@ def test_the_plan_is_only_proven_if_every_solve_was():
     plans = {0: _plan(100.0, [], True), 1: _plan(105.0, [(1, 11)], False), 2: _plan(105.2, [(1, 11), (2, 12)], True)}
 
     def solve(k, forced_in, forced_out):
-        return plans[k]
+        return plans[min(k, 2)]
 
     assert select_moves(solve, EVENT, min_move_gain=1.5).proven is False
 

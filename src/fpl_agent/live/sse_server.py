@@ -312,11 +312,55 @@ def make_handler(
             # A custom header makes this a non-simple cross-origin request, which
             # a browser will not send without a CORS preflight this server never
             # answers - so a page on another origin cannot trigger a sync.
-            if path != "/api/refresh" or self.headers.get("X-FPL-Refresh") != "1":
+            if self.headers.get("X-FPL-Refresh") != "1":
+                self.send_error(404)
+                return
+            if path == "/api/made-transfer" and conn_factory is not None:
+                self._made_transfer()
+                return
+            if path != "/api/refresh":
                 self.send_error(404)
                 return
             outcome = refresh_job.start()
             self._send_json({"result": outcome, **refresh_job.status()})
+
+        def _made_transfer(self) -> None:
+            """Record transfers made in FPL before the deadline (`?moves=OUT:IN,...`), or forget them all (`?undo=1`); the
+            squad screens are rebuilt and a plan refresh is started (`my_team.record_manual_transfer`)."""
+            from urllib.parse import parse_qs
+
+            from fpl_agent.cli.main import _maybe_trigger_week_plan_refresh
+            from fpl_agent.ingestion.my_team import record_manual_transfer, remove_manual_transfers
+            from fpl_agent.live.payload_snapshots import invalidate
+
+            query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            conn = conn_factory()
+            try:
+                recorded: list[dict] = []
+                if query.get("undo") == ["1"]:
+                    result = {"status": "undone", "removed": remove_manual_transfers(conn)}
+                else:
+                    try:
+                        pairs = [tuple(int(x) for x in pair.split(":")) for pair in query["moves"][0].split(",") if pair]
+                        recorded = []
+                        for out_id, in_id in pairs:
+                            recorded.append(record_manual_transfer(conn, out_id, in_id))
+                    except (KeyError, ValueError) as e:
+                        for r in recorded:
+                            conn.execute(
+                                "DELETE FROM my_team_transfers WHERE retrieved_at='manual' AND event=? AND element_out=? AND element_in=?",
+                                (r["event"], r["out"], r["in"]),
+                            )
+                        conn.commit()
+                        self._send_json({"status": "refused", "reason": str(e)})
+                        return
+                    result = {"status": "recorded", "moves": recorded,
+                              "bank_tenths": recorded[-1]["bank_tenths"] if recorded else None}
+                invalidate(conn, {"command", "myteam", "plan"})
+                result["plan_refresh"] = _maybe_trigger_week_plan_refresh(conn)
+            finally:
+                conn.close()
+            self._send_json(result)
 
         def _send_json(self, payload: dict) -> None:
             body = json.dumps(payload, default=str).encode("utf-8")

@@ -123,3 +123,13 @@ def serve(screen: str, build, conn_factory) -> bytes:
 def clear_memory() -> None:
     with _lock:
         _memory.clear()
+
+
+def invalidate(conn: sqlite3.Connection, screens: set[str]) -> None:
+    """Forget the stored copies of `screens` so the next request builds afresh (the squad changed under them)."""
+    with _lock:
+        for screen in screens:
+            _memory.pop(screen, None)
+    marks = ",".join("?" * len(screens))
+    conn.execute(f"DELETE FROM payload_snapshot WHERE screen IN ({marks})", tuple(screens))
+    conn.commit()

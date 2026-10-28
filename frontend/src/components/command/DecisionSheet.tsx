@@ -5,6 +5,7 @@ import { Face } from '@/components/ui/Face'
 import { NextFixture } from '@/components/football/FixtureRun'
 import { clubColors } from '@/lib/clubs'
 import type { WeekPlanMove, WeekPlanPayload } from '@/lib/types'
+import { MadeItButton, RecordedStrip } from '@/components/command/MadeTransfer'
 
 const ago = (hours: number) => (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min ago` : hours < 48 ? `${Math.round(hours)}h ago` : `${Math.round(hours / 24)}d ago`)
 
@@ -66,7 +67,10 @@ function Moves({ plan }: { plan: WeekPlanPayload }) {
                 {moves.length > 1 && <span className="tabular font-semibold text-pitch-green">+{m.gain.toFixed(1)} pts</span>}
                 <span className="tabular">{m.cost_tenths > 0 ? `costs ${money(m.cost_tenths)}` : m.cost_tenths < 0 ? `frees ${money(-m.cost_tenths)}` : 'like for like'}</span>
               </div>
-              <div className="mt-1.5">{confidence(m)}</div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-3">
+                {confidence(m)}
+                <MadeItButton outId={m.out.player_id} inId={m.into.player_id} decisionId={plan.decision_id} />
+              </div>
             </div>
           </div>
         ))}
@@ -235,6 +239,8 @@ export function DecisionSheet({ plan, chips }: { plan: WeekPlanPayload; chips: s
           </a>
         </div>
       </header>
+
+      <RecordedStrip plan={plan} />
 
       {stale && (
         <div className="border-b border-divider bg-alert-red/10 px-6 py-3 text-[14px] text-text-muted">

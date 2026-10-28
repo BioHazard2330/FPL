@@ -227,8 +227,11 @@ def _build_compare(ctx: DashboardContext, params: dict | None = None) -> dict:
         try:
             from fpl_agent.models.scouting import scouting_report
 
+            from fpl_agent.models.football_read import football_read
+
             for side in (a, b):
                 side["scouting"] = scouting_report(conn, side["player_id"])
+                side["football_read"] = football_read(conn, side["player_id"])
         except Exception:
             pass
         return attach_photo_codes(conn, payload)

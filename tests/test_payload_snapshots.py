@@ -37,7 +37,7 @@ def test_first_request_builds_then_serves_the_copy_and_survives_a_restart(tmp_pa
 def test_a_stale_copy_is_served_at_once_and_rebuilt_behind_it(tmp_path, monkeypatch):
     snap.clear_memory()
     factory = _factory(tmp_path / "s.db")
-    monkeypatch.setattr(snap, "FRESH_SECONDS", 0.0)
+    monkeypatch.setattr(snap, "FRESH_SECONDS", -1.0)
     calls = []
 
     def build(conn):
@@ -47,8 +47,8 @@ def test_a_stale_copy_is_served_at_once_and_rebuilt_behind_it(tmp_path, monkeypa
     snap.serve("advanced", build, factory)
     stale = json.loads(snap.serve("advanced", build, factory))
     assert stale["n"] == 1 and "_snapshot_age_seconds" in stale
-    for _ in range(50):
-        if len(calls) == 2 and "advanced" not in snap._building:
+    for _ in range(400):
+        if len(calls) == 2 and "advanced" not in snap._building and json.loads(snap._memory["advanced"][0])["n"] == 2:
             break
         time.sleep(0.05)
     assert json.loads(snap._memory["advanced"][0])["n"] == 2

@@ -4,6 +4,7 @@ import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchPlayersIndex, fetchWhatIf } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import type { PlayerIndexRow, WhatIfBrief } from '@/lib/types'
+import { MadeTheseButton } from '@/components/command/MadeTransfer'
 
 /** TRY YOUR OWN MOVES - up to three transfers typed in, priced the way the week
  * plan prices its own: best eleven, doubled captain, discounted bench, over the
@@ -170,6 +171,9 @@ export function WhatIf() {
               {r.hits ? <><span className="font-bold text-alert-red">{r.hits} hit{r.hits === 1 ? '' : 's'} (−{r.hit_cost})</span>. </> : 'Within your free transfers. '}
               Bank after: <span className="tabular font-bold text-text">£{((r.bank_after_tenths ?? 0) / 10).toFixed(1)}m</span> at strict sale prices.
             </p>
+            {(r.problems ?? []).length === 0 && (
+              <MadeTheseButton pairs={r.moves.map((m) => ({ outId: m.out.player_id, inId: m.into.player_id }))} />
+            )}
           </div>
           <div>
             <div className="flex items-end gap-6">

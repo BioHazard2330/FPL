@@ -132,8 +132,9 @@ def lineup_changes(as_set: dict | None, best: dict) -> dict | None:
 
 
 def _attach_scouting(conn, payload: dict) -> None:
-    """A short scouting line on both sides of every move: profile, best and worst measures, finishing (`models/scouting`)."""
+    """A short scouting line and the football read on both sides of every move (`models/scouting`, `models/football_read`)."""
     try:
+        from fpl_agent.models.football_read import football_read
         from fpl_agent.models.scouting import scouting_report
 
         for m in payload.get("moves", []) + payload.get("declined", []):
@@ -141,6 +142,7 @@ def _attach_scouting(conn, payload: dict) -> None:
                 p = m.get(side)
                 if not isinstance(p, dict) or p.get("player_id") is None:
                     continue
+                p["football_read"] = football_read(conn, p["player_id"])
                 r = scouting_report(conn, p["player_id"])
                 if r is None:
                     continue
@@ -151,6 +153,20 @@ def _attach_scouting(conn, payload: dict) -> None:
                 }
     except Exception:
         _logger.exception("scouting lines failed - the plan is unaffected")
+
+
+def _recorded_transfers(conn) -> list[dict]:
+    """Transfers the manager recorded as made in FPL that FPL has not published yet (`fpl made-transfer`, the dashboard's
+    "I've made it"): FPL's public log only shows a transfer after the deadline."""
+    from fpl_agent.models.fixtures import _reference_event
+
+    rows = conn.execute(
+        "SELECT t.event, t.element_out, po.web_name AS out_name, t.element_out_cost, t.element_in, pi.web_name AS in_name, t.element_in_cost "
+        "FROM my_team_transfers t JOIN players po ON po.id = t.element_out JOIN players pi ON pi.id = t.element_in "
+        "WHERE t.retrieved_at = 'manual' AND t.event >= ? ORDER BY t.transfer_time",
+        (_reference_event(conn),),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _attach_matchups(conn, payload: dict, detail: dict) -> None:
@@ -282,6 +298,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "action_squad": squad_block(lineup_after),
             "captain": captain_block(lineup_after),
             "fixtures": fixture_context_by_team_code(conn, team_ids),
+            "recorded_transfers": _recorded_transfers(conn),
         }
         _attach_matchups(conn, payload, detail)
         _attach_scouting(conn, payload)

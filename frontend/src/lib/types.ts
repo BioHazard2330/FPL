@@ -1079,6 +1079,7 @@ export interface AnalystMatchFindings {
 
 export interface PlayerProfilePayload {
   scouting?: ScoutingReportData | null
+  football_read?: FootballReadData | null
   analyst?: AnalystMatchFindings[]
   stories?: Story[]
   player: {
@@ -1674,6 +1675,7 @@ export interface TablePayload {
  * `optimization/week_plan.py` and read from the decision journal. */
 export interface WeekPlanPlayer {
   scouting?: ScoutingLine
+  football_read?: FootballReadData | null
   player_id: number
   photo_code?: number | null
   luck?: { luck: number; z: number; actual: number; deserved: number }
@@ -1810,6 +1812,15 @@ export interface LineupChanges {
 }
 
 export interface WeekPlanPayload {
+  recorded_transfers?: {
+    event: number
+    element_out: number
+    out_name: string
+    element_out_cost: number
+    element_in: number
+    in_name: string
+    element_in_cost: number
+  }[]
   matchups?: MatchupBoardData
   form_board?: (FormReading & { player_id: number; name: string; position: string | null })[]
   status: 'none' | 'current' | 'stale'
@@ -2088,6 +2099,7 @@ export interface PlayerIndexRow {
 
 export interface ComparePlayer {
   scouting?: ScoutingReportData | null
+  football_read?: FootballReadData | null
   player_id: number
   photo_code?: number | null
   name: string
@@ -2564,4 +2576,20 @@ export interface ScoutingLine {
   pool_note: string
   minutes: number
   source_mix?: Record<string, number> | null
+}
+
+export interface FootballReadLine {
+  topic: string
+  text: string
+  weight: 'carries' | 'context' | 'noise'
+  lean: -1 | 0 | 1
+}
+
+export interface FootballReadData {
+  player_id: number
+  name: string
+  position: string
+  event: number
+  verdict: { label: 'backs him' | 'against him' | 'mixed'; score: number; text: string }
+  lines: FootballReadLine[]
 }

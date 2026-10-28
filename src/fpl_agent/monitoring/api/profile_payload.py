@@ -23,6 +23,7 @@ browser would render as a profile full of blanks.
 
 Read-only, HTTP request path only. Nothing here runs in `run_scheduled`.
 """
+import logging
 import sqlite3
 
 from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
@@ -34,6 +35,8 @@ _MATCH_LOG_LIMIT = 20
 _PRICE_LIMIT = 30
 _SEASON = "2026-27"
 
+
+_logger = logging.getLogger(__name__)
 
 def _int_param(params: dict, key: str) -> int:
     raw = (params or {}).get(key)
@@ -325,9 +328,20 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "stories": stories_for_player(conn, p["id"]),
             "analyst": analyst_for_player(conn, p["id"]),
             "scouting": _scouting(conn, p["id"]),
+            "football_read": _football_read(conn, p["id"]),
         }
     finally:
         conn.close()
+
+
+def _football_read(conn, player_id: int) -> dict | None:
+    from fpl_agent.models.football_read import football_read
+
+    try:
+        return football_read(conn, player_id)
+    except Exception:
+        _logger.exception("football read failed for %s", player_id)
+        return None
 
 
 def _scouting(conn, player_id: int) -> dict | None:

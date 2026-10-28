@@ -484,6 +484,7 @@ class _Selection:
     proven: bool
     roll_total: float
     first_moves: object
+    joints: list = field(default_factory=list)
 
 
 def _first_moves(result, event: int) -> list[tuple[int, int]]:
@@ -491,13 +492,20 @@ def _first_moves(result, event: int) -> list[tuple[int, int]]:
     return [(s.player_out_id, s.player_in_id) for s in steps]
 
 
+JOINT_LOOKAHEAD = 2
+
+
 def select_moves(solve, event: int, min_move_gain: float, max_moves: int = 5) -> _Selection | None:
     """Builds the move list one transfer at a time. `solve(k, forced_in,
     forced_out)` must return the best plan that makes at most `k` first-
     gameweek transfers and includes the forced ones; `solve(0)` is rolling now.
     A move is kept while the plan it produces beats the previous plan by at
-    least `min_move_gain`. The first move that does not is reported as
-    declined, never silently dropped."""
+    least `min_move_gain`. When the next move does not, up to `JOINT_LOOKAHEAD`
+    more are tried as a set and kept together if the set clears the bar for
+    every move in it: a sale that only pays by funding the next purchase is
+    worth nothing alone and a lot as a pair, and stopping at the first move
+    under the bar could never see it. The first move or set that does not
+    clear is reported as declined, never silently dropped."""
     roll = solve(0, frozenset(), frozenset())
     if roll.sequence is None:
         return None
@@ -505,12 +513,14 @@ def select_moves(solve, event: int, min_move_gain: float, max_moves: int = 5) ->
     proven = roll.proven_optimal
     accepted: list[tuple[int, int, float]] = []
     declined: list[tuple[int, int, float]] = []
+    joints: list[dict] = []
     curve = [CurveStep(0, roll_total, 0.0)]
     previous_total = roll_total
     final = roll
     forced_in: frozenset[int] = frozenset()
     forced_out: frozenset[int] = frozenset()
-    for k in range(1, max_moves + 1):
+    k = 1
+    while k <= max_moves:
         trial = solve(k, forced_in, forced_out)
         proven = proven and trial.proven_optimal
         if trial.sequence is None:
@@ -521,16 +531,40 @@ def select_moves(solve, event: int, min_move_gain: float, max_moves: int = 5) ->
         new = [m for m in _first_moves(trial, event) if m[1] not in forced_in]
         if not new:
             break
+        step = trial
+        added = new[:1]
         if gain < min_move_gain:
-            declined.append((new[0][0], new[0][1], round(gain, 2)))
-            break
-        accepted.append((new[0][0], new[0][1], round(gain, 2)))
-        pairs = _first_moves(trial, event)
+            step = None
+            for extra in range(1, JOINT_LOOKAHEAD + 1):
+                if k + extra > max_moves:
+                    break
+                wider = solve(k + extra, forced_in, forced_out)
+                proven = proven and wider.proven_optimal
+                if wider.sequence is None:
+                    break
+                wider_new = [m for m in _first_moves(wider, event) if m[1] not in forced_in]
+                if len(wider_new) < extra + 1:
+                    break
+                wider_gain = wider.sequence.total_net_ev - previous_total
+                curve.append(CurveStep(k + extra, wider.sequence.total_net_ev, round(wider.sequence.total_net_ev - roll_total, 2)))
+                if wider_gain >= (extra + 1) * min_move_gain:
+                    step, added = wider, wider_new
+                    joints.append({"moves": [(o, i) for o, i in wider_new], "gain": round(wider_gain, 2), "first_alone": round(gain, 2)})
+                    break
+            if step is None:
+                declined.append((new[0][0], new[0][1], round(gain, 2)))
+                break
+            gain = step.sequence.total_net_ev - previous_total
+        share = round(gain / len(added), 2)
+        accepted.extend((o, i, share if len(added) > 1 else round(gain, 2)) for o, i in added)
+        pairs = _first_moves(step, event)
         forced_in = frozenset(i for _, i in pairs)
         forced_out = frozenset(o for o, _ in pairs)
-        previous_total = total
-        final = trial
-    return _Selection(accepted, declined, curve, final, proven, roll_total, lambda result: _first_moves(result, event))
+        previous_total = step.sequence.total_net_ev
+        final = step
+        k = len(pairs) + 1
+    curve = sorted({c.moves: c for c in curve}.values(), key=lambda c: c.moves)
+    return _Selection(accepted, declined, curve, final, proven, roll_total, lambda result: _first_moves(result, event), joints)
 
 
 def build_chip_outlook(conn: sqlite3.Connection, event: int, bench_xp_this_week: float, horizon: int = LONG_HORIZON_GW) -> dict:
@@ -992,6 +1026,16 @@ def build_week_plan(
         notes.append(f"Not buying from {', '.join(names)} (your setting).")
     if free_transfers >= 5 and not moves:
         notes.append("Rolling at the cap discards a free transfer: next week you hold five either way.")
+    for joint in selection.joints:
+        names = {r["id"]: r["web_name"] for r in conn.execute(
+            f"SELECT id, web_name FROM players WHERE id IN ({','.join('?' * (2 * len(joint['moves'])))})",
+            [p for pair in joint["moves"] for p in pair],
+        )}
+        listed = " and ".join(f"{names.get(o, o)} -> {names.get(i, i)}" for o, i in joint["moves"])
+        notes.append(
+            f"Made together: {listed} add {joint['gain']:+.1f} over {horizon} gameweeks; the first alone adds "
+            f"{joint['first_alone']:+.1f}, under the {min_move_gain} bar, so they are kept as a set."
+        )
 
     return WeekPlan(
         event=event, horizon=horizon, free_transfers=free_transfers, free_transfers_known=ft_known,

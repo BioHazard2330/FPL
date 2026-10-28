@@ -48,6 +48,32 @@ export function fetchCommandPayload(): Promise<CommandPayload> {
   return getJson<CommandPayload>('/api/command')
 }
 
+export interface MadeTransferResult {
+  status: 'recorded' | 'undone' | 'refused'
+  reason?: string
+  event?: number
+  bank_tenths?: number
+  plan_refresh?: string | null
+}
+
+async function postMadeTransfer(query: string): Promise<MadeTransferResult> {
+  try {
+    const res = await fetch(`/api/made-transfer?${query}`, { method: 'POST', headers: { 'X-FPL-Refresh': '1' } })
+    if (!res.ok) return { status: 'refused', reason: `server said ${res.status}` }
+    return (await res.json()) as MadeTransferResult
+  } catch {
+    return { status: 'refused', reason: 'the dashboard server is not reachable' }
+  }
+}
+
+export function recordMadeTransfers(pairs: { outId: number; inId: number }[]): Promise<MadeTransferResult> {
+  return postMadeTransfer(`moves=${pairs.map((p) => `${p.outId}:${p.inId}`).join(',')}`)
+}
+
+export function undoMadeTransfers(): Promise<MadeTransferResult> {
+  return postMadeTransfer('undo=1')
+}
+
 export function fetchWeekPlanPayload(): Promise<WeekPlanPayload> {
   return getJson<WeekPlanPayload>('/api/weekplan')
 }

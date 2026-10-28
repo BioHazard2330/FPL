@@ -350,3 +350,10 @@ python -m http.server 8899 --directory data
 #    should I do for GW2, and why" within 5 seconds of opening the page?
 ./.venv/Scripts/fpl.exe transfer-analysis
 ```
+
+### 2026-10-28, later
+
+- **The football read** (`models/football_read.py`): every player's craft, chances, creation, finishing, duties, recent spell, minutes, discipline and fixtures in sentences with their numbers, each line marked by whether that kind of evidence has held up from match to match, and a verdict counting only the ones that do or are context. On player pages, transfer cards (both sides, expandable) and Compare (side by side).
+- **"Made it in FPL"**: on the Command card's moves and What-if; a strip on Command lists what was recorded with Undo. `POST /api/made-transfer`.
+- **Joint moves**: the plan now tries a sale and the purchase it funds as a set when the sale alone fails the bar (GW9: two moves +2.64 and three +3.51, both short, so still a roll).
+- Flaky snapshot test fixed (Windows clock tick).

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { Face } from '@/components/ui/Face'
 import { clubColors } from '@/lib/clubs'
 import { FixtureRun } from '@/components/football/FixtureRun'
+import { FootballReadInline } from '@/components/football/FootballRead'
 import { money } from '@/components/ui/kit'
 import type { FixtureContext, MatchupBoardData, MatchupFixture, WeekPlanMove, WeekPlanPlayer } from '@/lib/types'
 import { crestUrl } from '@/lib/api'
@@ -101,6 +102,7 @@ function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; 
         <FixtureRun fixtures={run} max={4} showEvent className="shrink-0 [&>span]:rounded-sm" />
       </div>
       {p.scouting && <ScoutLine s={p.scouting} />}
+      {p.football_read && <FootballReadInline r={p.football_read} />}
       {ns.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-[13px] leading-snug">
           {ns.map((n) => (

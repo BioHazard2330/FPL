@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { FootballReadInline } from '@/components/football/FootballRead'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
@@ -245,6 +246,27 @@ function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
 
 /** HOW THEY PLAY, side by side: each player's profile and his percentile on every quality measure both are ranked on,
  * as mirrored bars, then the style lines. Percentiles are within each player's own position (stated). */
+/** Both football reads side by side: the verdict and every line, each marked by whether it holds up match to match. */
+function ReadCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
+  if (!a.football_read || !b.football_read) return null
+  return (
+    <section className="border-b border-divider px-10 py-7">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
+        <span className="font-display text-2xl font-bold text-text">The football read</span>
+        <span className="text-[13px] text-text-faint">each line marked by whether that kind of evidence holds up from match to match</span>
+      </div>
+      <div className="grid grid-cols-2 gap-10">
+        {[a.football_read, b.football_read].map((r) => (
+          <div key={r.player_id} className="min-w-0">
+            <div className="mb-1 font-display text-lg font-semibold text-text">{r.name}</div>
+            <FootballReadInline r={r} open />
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function CraftCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   const sa = a.scouting
   const sb = b.scouting
@@ -377,6 +399,7 @@ export function CompareScreen() {
             {compare.data.rows.map((r) => <Row key={r.key} r={r} />)}
           </section>
           <Components a={compare.data.a} b={compare.data.b} />
+          <ReadCompare a={compare.data.a} b={compare.data.b} />
           <CraftCompare a={compare.data.a} b={compare.data.b} />
           <section className="grid grid-cols-2 gap-10 px-10 py-7">
             {[compare.data.a, compare.data.b].map((p) => (
