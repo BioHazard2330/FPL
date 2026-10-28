@@ -2357,6 +2357,22 @@ export interface WhatIfPayload {
   per_gw?: { event: number; before: number; after: number }[]
   totals?: { before: number; after: number; gain_gross: number; gain_net: number } | null
   plan?: { gain: number | null; moves: string[] } | null
+  leagues?: WhatIfLeague[]
+}
+
+export interface WhatIfLeagueOdds {
+  p_lead: number | null
+  mean: number | null
+  p_beat_avg: number | null
+}
+
+export interface WhatIfLeague {
+  id: number
+  name: string
+  size: number
+  followed: number
+  full: boolean
+  odds: { before: WhatIfLeagueOdds; after: WhatIfLeagueOdds }
 }
 
 export interface ExplorerPlayer {

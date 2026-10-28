@@ -15,6 +15,8 @@ Reads stored rows only; no network."""
 import logging
 import sqlite3
 
+from fpl_agent.models.league_odds import rival_teams as _rival_teams
+
 from fpl_agent.monitoring.api.photos import attach_photo_codes
 
 FPL_LEAGUE_URL = "https://fantasy.premierleague.com/leagues/{id}/standings/c"
@@ -36,28 +38,6 @@ def _players(conn: sqlite3.Connection, ids: set[int]) -> dict[int, dict]:
             f"FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id IN ({marks})", sorted(ids),
         )
     }
-
-
-def _rival_teams(conn: sqlite3.Connection, entry_ids: list[int], event: int) -> dict[int, dict]:
-    if not entry_ids:
-        return {}
-    marks = ",".join("?" * len(entry_ids))
-    teams: dict[int, dict] = {
-        r["entry_id"]: {**dict(r), "xi": [], "bench": [], "captain": None, "vice": None}
-        for r in conn.execute(f"SELECT * FROM rival_event WHERE event=? AND entry_id IN ({marks})", (event, *entry_ids))
-    }
-    for r in conn.execute(
-        f"SELECT * FROM rival_pick WHERE event=? AND entry_id IN ({marks}) ORDER BY position", (event, *entry_ids),
-    ):
-        t = teams.get(r["entry_id"])
-        if t is None:
-            continue
-        (t["xi"] if r["position"] <= 11 else t["bench"]).append(r["player_id"])
-        if r["is_captain"]:
-            t["captain"] = r["player_id"]
-        if r["is_vice_captain"]:
-            t["vice"] = r["player_id"]
-    return teams
 
 
 def _projection(xi: list[int], captain: int | None, xp: dict[int, float]) -> float:

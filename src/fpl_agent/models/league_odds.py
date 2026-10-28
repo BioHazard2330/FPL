@@ -28,6 +28,28 @@ def _positions(conn: sqlite3.Connection, ids: set[int]) -> dict[int, str]:
         f"SELECT id, element_type FROM players WHERE id IN ({marks})", sorted(ids))}
 
 
+def rival_teams(conn: sqlite3.Connection, entry_ids: list[int], event: int) -> dict[int, dict]:
+    if not entry_ids:
+        return {}
+    marks = ",".join("?" * len(entry_ids))
+    teams: dict[int, dict] = {
+        r["entry_id"]: {**dict(r), "xi": [], "bench": [], "captain": None, "vice": None}
+        for r in conn.execute(f"SELECT * FROM rival_event WHERE event=? AND entry_id IN ({marks})", (event, *entry_ids))
+    }
+    for r in conn.execute(
+        f"SELECT * FROM rival_pick WHERE event=? AND entry_id IN ({marks}) ORDER BY position", (event, *entry_ids),
+    ):
+        t = teams.get(r["entry_id"])
+        if t is None:
+            continue
+        (t["xi"] if r["position"] <= 11 else t["bench"]).append(r["player_id"])
+        if r["is_captain"]:
+            t["captain"] = r["player_id"]
+        if r["is_vice_captain"]:
+            t["vice"] = r["player_id"]
+    return teams
+
+
 def team_players(mine: dict, rivals) -> set[int]:
     out = set(mine["xi"]) | set(mine["bench"])
     for t in rivals:
@@ -92,3 +114,54 @@ def league_odds(
         "h2h": {str(k): v for k, v in base["h2h"].items()}, "armband": armband,
         "rival_mean": {str(k): round(float(v.mean()), 1) for k, v in rival_scores.items()},
     }
+
+
+def odds_for_squads(conn: sqlite3.Connection, event: int, squads: dict[str, list[int]]) -> list[dict]:
+    """Every tracked league's odds for each named fifteen (e.g. "before" and "after" a set of moves): each squad fields
+    its best eleven and armband for `event` (`pick_starting_xi`), against the same rivals on the same simulated
+    gameweeks. Per league: the lead chance (when every rival's team is known) and the average chance of outscoring a
+    followed rival, per squad."""
+    from fpl_agent.ingestion.my_team import get_my_team_entry_id
+    from fpl_agent.models.rank_engine import simulate_players
+    from fpl_agent.optimization.squad import build_player_pool_for_ids, pick_starting_xi
+
+    entry_id = get_my_team_entry_id(conn)
+    locked = conn.execute("SELECT MAX(event) AS e FROM rival_event").fetchone()["e"]
+    if entry_id is None or locked is None:
+        return []
+    lineups = {}
+    for label, ids in squads.items():
+        xi = pick_starting_xi(conn, build_player_pool_for_ids(conn, set(ids), event))
+        lineups[label] = {
+            "xi": [c.player_id for c in xi.starting], "bench": [c.player_id for c in xi.bench],
+            "captain": xi.captain.player_id if xi.captain else None,
+            "vice": xi.vice_captain.player_id if xi.vice_captain else None,
+        }
+    leagues = []
+    for lg in conn.execute("SELECT id, name, rank_count FROM fpl_league WHERE tracked=1 ORDER BY rank_count, name").fetchall():
+        rows = conn.execute("SELECT entry_id, total FROM fpl_league_standing WHERE league_id=?", (lg["id"],)).fetchall()
+        teams = {e: t for e, t in rival_teams(conn, [r["entry_id"] for r in rows if r["entry_id"] != entry_id], locked).items() if t["xi"]}
+        if teams:
+            leagues.append((lg, rows, teams))
+    if not leagues:
+        return []
+    union: set[int] = set()
+    for team in lineups.values():
+        union |= team_players(team, [])
+    for _, _, teams in leagues:
+        union |= team_players({"xi": [], "bench": []}, teams.values())
+    trials = simulate_players(conn, event, sorted(union))
+    out = []
+    for lg, rows, teams in leagues:
+        totals = {r["entry_id"]: r["total"] for r in rows}
+        full = len(teams) == len(rows) - 1
+        per = {}
+        for label, team in lineups.items():
+            o = league_odds(conn, event, team, teams, totals, entry_id, full_table=full, trials=trials)
+            h2h = o.get("h2h", {})
+            per[label] = {
+                "p_lead": o.get("p_lead"), "mean": o.get("mean"),
+                "p_beat_avg": round(sum(v["p_beat_gw"] for v in h2h.values()) / len(h2h), 3) if h2h else None,
+            }
+        out.append({"id": lg["id"], "name": lg["name"], "size": lg["rank_count"], "followed": len(teams), "full": full, "odds": per})
+    return out

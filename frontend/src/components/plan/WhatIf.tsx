@@ -207,6 +207,34 @@ export function WhatIf() {
                 )
               })}
             </div>
+            {(r.leagues ?? []).length > 0 && (
+              <div className="mt-5 rounded-lg bg-void/40 px-4 py-3">
+                <div className="mb-2 text-[12px] text-text-faint">This gameweek in your mini-leagues, best eleven and armband before and after the moves</div>
+                {(r.leagues ?? []).map((l) => {
+                  const before = l.full ? l.odds.before.p_lead : l.odds.before.p_beat_avg
+                  const after = l.full ? l.odds.after.p_lead : l.odds.after.p_beat_avg
+                  if (before === null || after === null) return null
+                  const d = after - before
+                  return (
+                    <div key={l.id} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-divider/60 py-1.5 text-[13px] last:border-0">
+                      <span className="text-text-muted">
+                        <span className="font-semibold text-text">{l.name}</span>{' '}
+                        {l.full ? 'chance you lead after it' : `chance you outscore a rival (${l.followed} followed)`}
+                      </span>
+                      <span className="tabular">
+                        <span className="text-text-muted">{Math.round(before * 100)}%</span>
+                        <span className="text-text-faint"> &rarr; </span>
+                        <span className="font-bold text-text">{Math.round(after * 100)}%</span>
+                        <span className={`ml-2 font-semibold ${d > 0.005 ? 'text-pitch-green' : d < -0.005 ? 'text-alert-red' : 'text-text-faint'}`}>
+                          {d >= 0 ? '+' : ''}{Math.round(d * 100)}
+                        </span>
+                      </span>
+                    </div>
+                  )
+                })}
+                <p className="mt-2 text-[11.5px] text-text-faint">Rivals on their last locked teams; 4,000 simulated gameweeks, so a point or two either way is noise.</p>
+              </div>
+            )}
             {r.plan && r.plan.gain !== null && (
               <p className="mt-4 text-[13px] leading-relaxed text-text-faint">
                 The week plan&apos;s own moves ({r.plan.moves.join(', ') || 'roll'}) are worth {r.plan.gain >= 0 ? '+' : ''}{r.plan.gain.toFixed(1)}, but against rolling the transfer to next week, which would make the same move a week later. That gap is about one gameweek of the difference, so it is smaller than the figure here by design.

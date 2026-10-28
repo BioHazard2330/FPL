@@ -161,6 +161,9 @@ def build_squad_news(ctx=None, params: dict | None = None) -> dict:
         sheets = squad_matchday_status(conn, ids, sheet_event) if sheet_event is not None else {}
         roles = latest_sheet_roles(conn)
         headlines = _headlines(conn, ids)
+        from fpl_agent.models.news_warning import fresh_warnings, warning_sentence
+
+        warnings = fresh_warnings(conn, ids, now)
 
         marks = ",".join("?" * len(ids))
         players = {
@@ -239,6 +242,12 @@ def build_squad_news(ctx=None, params: dict | None = None) -> dict:
                 })
                 if chance >= BAN_RISK_FLAG:
                     severity = max(severity, 1)
+
+            warning = warnings.get(pid)
+            if warning is not None:
+                facts.append({"source": "Early warning", "text": warning_sentence(warning)})
+                rate = (warning.get("rate") or {}).get("rate") or 0
+                severity = max(severity, 2 if rate >= 0.4 else 1)
 
             heads = headlines.get(pid, [])
             if heads:

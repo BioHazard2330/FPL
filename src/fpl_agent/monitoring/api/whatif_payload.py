@@ -21,6 +21,7 @@ the same fifteen; the hit is 4 points a move beyond the free transfers; chips
 are not modelled. The week plan's own gain, shown beside the result, is over
 its longer horizon with free re-planning each week, so the two are comparable
 in direction and not in size."""
+import logging
 import sqlite3
 
 from fpl_agent.models.projection_memo import projection_memo
@@ -32,6 +33,8 @@ MAX_MOVES = 3
 HIT = 4.0
 _SHAPE = {"GKP": 2, "DEF": 5, "MID": 5, "FWD": 3}
 
+
+_logger = logging.getLogger(__name__)
 
 def _briefs(conn: sqlite3.Connection, ids: list[int]) -> dict[int, dict]:
     if not ids:
@@ -160,6 +163,13 @@ def build_whatif_payload(ctx: DashboardContext, params: dict | None = None) -> d
             "gain_gross": round(after_total - before_total, 2),
             "gain_net": round(after_total - before_total - hits * HIT, 2),
         }
+        try:
+            from fpl_agent.models.league_odds import odds_for_squads
+
+            result["leagues"] = odds_for_squads(conn, event, {"before": squad, "after": after})
+        except Exception:
+            _logger.exception("league odds for the what-if failed - the pricing is unaffected")
+            result["leagues"] = []
         return attach_photo_codes(conn, result)
     finally:
         memo.__exit__(None, None, None)

@@ -358,3 +358,5 @@ python -m http.server 8899 --directory data
 - **Joint moves**: the plan now tries a sale and the purchase it funds as a set when the sale alone fails the bar (GW9: two moves +2.64 and three +3.51, both short, so still a roll).
 - Flaky snapshot test fixed (Windows clock tick).
 - **Mini-league odds** (`models/league_odds.py`): chance to beat each rival this gameweek, to be ahead of him after it, to lead the league, and how each captain moves those (GW9 Pending Moderation: 37% to lead after GW9 with Haaland, 36% Palmer). One simulation shared across leagues, 1.8s.
+- **What-if in your leagues**: every typed set of moves also shows each mini-league's chance (lead, or beat a rival) before and after, this gameweek. Gibbs-White -> Rudoni with Calafiori -> Gabriel: Pending Moderation 36% -> 45%.
+- **Early injury warnings** (`models/news_warning.py`): injury headlines for available players, with the measured follow-through (65%, 11h ahead of FPL).

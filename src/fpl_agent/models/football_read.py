@@ -186,6 +186,14 @@ def _minutes(conn: sqlite3.Connection, player_id: int) -> list[dict]:
                       "NOT_IN_SQUAD": "left out of the last matchday squad"}.get(role[0], role[0].lower()))
         if role[0] == "NOT_IN_SQUAD":
             lean = -1
+    from fpl_agent.models.news_warning import fresh_warnings
+
+    warning = fresh_warnings(conn, [player_id]).get(player_id)
+    if warning is not None:
+        rate = warning.get("rate") or {}
+        parts.append(f"an injury headline in the last three days (\"{warning['title']}\")"
+                     + (f", followed by an FPL flag {rate['rate']:.0%} of the time" if rate.get("rate") else ""))
+        lean = -1
     rows = conn.execute(
         "SELECT event, SUM(minutes) AS m FROM player_gw_stats WHERE player_id=? GROUP BY event ORDER BY event DESC LIMIT 3", (player_id,),
     ).fetchall()
