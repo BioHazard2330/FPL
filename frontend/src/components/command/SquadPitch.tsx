@@ -43,7 +43,7 @@ export function SquadPitch({ block, fixtures, title, sub }: { block: ActionSquad
   const total = block.starting.reduce((s, p) => s + p.median, 0)
 
   return (
-    <section className="rounded-xl border border-divider bg-panel">
+    <section className="slab">
       <header className="flex flex-wrap items-baseline justify-between gap-2 px-6 pb-3 pt-5">
         <div>
           <h2 className="font-display text-xl font-semibold leading-tight text-text">{title}</h2>

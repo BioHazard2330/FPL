@@ -117,7 +117,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
           scored exactly what doing nothing scored spent a free transfer for
           no return, and no win/loss framing would ever surface it. */}
       {row.worthless_vs_roll && row.optimizer_points !== null && (
-        <div className="mt-3 border-l border-alert-red pl-3 text-xs text-alert-red">
+        <div className="tone border-alert-red mt-3 text-xs text-alert-red">
           Its transfer scored no more than rolling would have
           {row.roll_points !== null && row.optimizer_points === row.roll_points
             ? ` (${row.optimizer_points} either way)`
@@ -125,7 +125,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
         </div>
       )}
       {row.note && (
-        <div className="mt-3 border-l border-broadcast-gold pl-3 text-xs text-broadcast-gold">{row.note}</div>
+        <div className="tone border-broadcast-gold mt-3 text-xs text-broadcast-gold">{row.note}</div>
       )}
     </div>
   )
@@ -205,7 +205,7 @@ export function ReceiptsScreen() {
                 {h.delta > 0 ? '+' : ''}{h.delta}
               </div>
               <div className="mt-2 max-w-[16rem] text-[13px] text-text-faint">
-                {behind ? 'points it would have COST you' : 'points it would have gained you'}
+                {behind ? 'points it would have cost you' : 'points it would have gained you'}
               </div>
             </div>
           )}

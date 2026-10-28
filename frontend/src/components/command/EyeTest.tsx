@@ -99,9 +99,14 @@ export function EyeTest({ plan }: { plan: WeekPlanPayload }) {
       sub="How the players in your moves and squad have looked over their last three matches, and what history says follows a dip like that. Set what you believe and the planner re-solves with it."
     >
       {evidence.length > 0 && (
-        <div className="mb-5 rounded-lg bg-void/50 px-4 py-3">
-          <div className="mb-2 text-[13px] text-text-muted">
-            What followed, over every stored season: midfielders and forwards, last three matches against the rest of their season, then the next match against a baseline that already includes the dip.
+        <details className="group mb-5 rounded-lg bg-void/50 px-4 py-3">
+          <summary className="cursor-pointer list-none text-[13px] text-text-muted">
+            <span className="mr-1.5 text-text-faint group-open:hidden">▸</span>
+            <span className="mr-1.5 hidden text-text-faint group-open:inline">▾</span>
+            Form spells have not carried into the next match in any band but a collapse: the evidence, over every stored season
+          </summary>
+          <div className="mb-2 mt-2 text-[13px] text-text-muted">
+            Midfielders and forwards, last three matches against the rest of their season, then the next match against a baseline that already includes the dip.
           </div>
           <table className="w-full text-[13px]">
             <thead>
@@ -125,7 +130,7 @@ export function EyeTest({ plan }: { plan: WeekPlanPayload }) {
             </tbody>
           </table>
           <div className="mt-2 text-[12px] text-text-faint">1.00x means the player did exactly what his season already implied. A range that straddles 1.00 means the spell told us nothing.</div>
-        </div>
+        </details>
       )}
 
       <div className="divide-y divide-divider border-y border-divider">
@@ -168,7 +173,7 @@ export function EyeTest({ plan }: { plan: WeekPlanPayload }) {
         {busy && <span className="text-[12px] text-text-faint">The planner takes 10 to 40 seconds.</span>}
       </div>
 
-      {error && <p className="mt-3 border-l-4 border-alert-red bg-void/50 px-4 py-2 text-sm text-text-muted">{error}</p>}
+      {error && <p className="mt-3 tone border-alert-red bg-void/50 px-4 py-2 text-sm text-text-muted">{error}</p>}
 
       {result && (
         <div className="mt-5 rounded-lg border border-broadcast-gold/40 bg-void/50 px-5 py-4">

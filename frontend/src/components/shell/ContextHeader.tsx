@@ -30,10 +30,10 @@ export function ContextHeader() {
   const urgent = phase.phase === 'FINAL_CALL' || phase.phase === 'IMMINENT'
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-4 whitespace-nowrap border-b border-divider bg-void px-5">
+    <header className="flex h-14 shrink-0 items-center gap-4 whitespace-nowrap border-b border-divider bg-panel/80 px-5 shadow-[0_8px_24px_-16px_rgba(0,0,0,0.9)] backdrop-blur-none">
       <SidebarTrigger />
       <dest.icon strokeWidth={2} className="size-4 text-text-faint" />
-      <h1 className="font-display text-xl font-semibold leading-none text-text">{dest.label}</h1>
+      <h1 className="font-display text-xl font-semibold uppercase leading-none tracking-[0.04em] text-text">{dest.label}</h1>
 
       <div className="ml-4 flex items-center gap-3 border-l border-divider pl-4 text-[13px]">
         {matches.length > 0 ? (

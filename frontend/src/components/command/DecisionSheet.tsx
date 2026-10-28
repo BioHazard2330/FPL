@@ -44,6 +44,16 @@ function Moves({ plan }: { plan: WeekPlanPayload }) {
           No transfer adds {plan.min_move_gain} points or more over {horizon} gameweeks.{' '}
           {(plan.free_transfers ?? 0) >= 5 ? 'You hold the maximum of five, so rolling still costs you one.' : `Rolling banks a free transfer: ${Math.min((plan.free_transfers ?? 0) + 1, 5)} next week.`}
         </p>
+        {(plan.curve ?? []).filter((c) => c.moves > 0).length > 0 && (
+          <p className="mt-2 text-[13px] leading-snug text-text-faint">
+            Closest it came:{' '}
+            {(plan.curve ?? [])
+              .filter((c) => c.moves > 0)
+              .map((c) => `${c.moves} move${c.moves === 1 ? '' : 's'} ${c.gain_vs_roll >= 0 ? '+' : ''}${c.gain_vs_roll.toFixed(1)} (needs ${(c.moves * (plan.min_move_gain ?? 1.5)).toFixed(1)})`)
+              .join(' · ')}
+            .
+          </p>
+        )}
       </>
     )
   }
@@ -221,7 +231,7 @@ export function DecisionSheet({ plan, chips }: { plan: WeekPlanPayload; chips: s
   const ft = plan.free_transfers ?? 0
   const moves = plan.moves ?? []
   return (
-    <section className="overflow-hidden rounded-xl border border-divider bg-panel">
+    <section className="overflow-hidden slab">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-6 py-4">
         <div className="flex items-baseline gap-3">
           <h2 className="font-display text-2xl font-semibold leading-none text-text">GW{plan.event}: what to do</h2>

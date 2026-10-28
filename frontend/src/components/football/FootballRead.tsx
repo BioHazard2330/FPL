@@ -42,7 +42,7 @@ export function FootballRead({ r }: { r: FootballReadData }) {
   return (
     <div className="border-b border-divider px-10 py-8">
       <div className="mb-1 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">The football read</span>
+        <h2 className="font-display text-2xl font-bold text-text">The football read</h2>
         <span className="text-[13px] text-text-faint">what the stored evidence says about him, and which of it has held up from match to match</span>
       </div>
       <p className={`mb-4 mt-3 text-[16px] font-semibold ${VERDICT_TONE[r.verdict.label]}`}>{r.verdict.text}</p>

@@ -140,7 +140,7 @@ export function MatchCard({ m }: { m: LiveMatch }) {
   const hasStats = hs !== null || as !== null
 
   return (
-    <div className={`bg-void border-l-4 ${m.is_squad_match ? 'border-broadcast-gold' : 'border-divider'}`}>
+    <div className={`bg-void tone ${m.is_squad_match ? 'border-broadcast-gold' : 'border-divider'}`}>
       <div className="flex items-center gap-4 px-6 py-5">
         <Link to={`/club/${m.home_team_id}`} className="flex flex-1 items-center justify-end gap-3 hover:opacity-80">
           <span className="font-display text-xl font-bold text-text">{m.home_short}</span>

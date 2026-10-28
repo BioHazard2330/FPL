@@ -205,32 +205,41 @@ one the code actually follows, and it is the right one.
 
 ## 4. Elevation and separation
 
-**Frames, not slabs.** Every top-level band of a screen sits in one frame
-(`.screen-frame` in `index.css`): a centred column no wider than 1400px, a
-20px gap, and each band a `panel` surface with a 1px `divider` edge and a 14px
-corner. Screens still compose their own bands; the frame gives them the same
-edge, rhythm and width. Small filled blocks (tags, chips, cells) take a 6px
-corner by default; `rounded-full` is for pills and `rounded-none` is still
-available where a block must meet a neighbour square.
+**Slabs on a pitch (2026-10-28 rebuild, replacing "frames, not slabs").** The uniform rounded, outlined card on every
+band made every screen read as a stack of identical boxes - the generic dark dashboard section 1 rejects - and the user
+called it out as AI slop. Every top-level band of a screen (`.screen-frame > * > *`) and every `Panel`/`Disclosure`
+(`.slab`) is now a broadcast slab: `panel` surface, a 6px corner, no outline, a lit top edge (1px inset highlight and a
+faint top-down sheen) and real depth beneath (a tight contact shadow and a long soft one). The canvas behind them
+carries faint horizontal mowing stripes (`main`, 1.4% contrast bands of 140px) - the one texture on the page, and a
+football one. Gap between bands 28px; column up to 1440px.
 
 Layering is:
 
 1. surface colour (`void` -> `panel` -> `raised`),
-2. a 1px rule (`border-b border-divider`) between rows and inside a frame,
-3. a `gap-px` grid over a `bg-divider` parent, which draws hairline rules
-   between cells with no borders at all,
-4. a left accent rule (`border-l-4`) to mark a row's category or severity.
+2. depth (slab shadow) between bands,
+3. a 1px rule (`border-b border-divider`) between rows inside a slab,
+4. a `gap-px` grid over a `bg-divider` parent for hairline cell rules,
+5. a **tone** (`.tone` plus a `border-<colour>` class): a tinted, softly outlined block in that colour to mark a note's
+   category or severity. **No side tabs.** `border-l-4`/`border-l-2` colour bars down one side of a card are the most
+   recognisable AI-UI tell and were removed everywhere (19 sites); a thin `border-l border-divider` between columns is
+   a divider and stays.
 
-No drop shadows on content, and no glow. Overlays (menus, popovers) may
-carry a soft shadow because they float. The pitch (`.pitch-surface`) has two
-quiet turf tones and a soft vignette so the tiles on it carry the contrast.
+**Section titles are chyrons.** Every section `h2.font-display` inside the frame or a slab is the display face in
+capitals, tracked 0.035em, 1.3rem, behind an angled pitch-green slash (a clip-path parallelogram drawn by `::before`).
+A title that is a `span` does not get it, so section titles are `h2`. The small bold grey caption above a block
+(`text-[13px] font-bold text-text-faint`) is set as tracked small capitals at 11px by one rule in `index.css`.
+
+**Labels, not capsules.** `Pill` is small capitals behind a slanted colour tick, no filled capsule, so a row of them
+reads as captions rather than a scatter of buttons.
+
+**The matchday bug** (`components/command/MatchdayHeader.tsx`) opens Command: the week's call on the angled
+pitch-green `.verdict-block`, then the deadline, overall rank, season points and the mini-league lead chance as
+oversized figures. `clip-path` is now used for the verdict slab, the chyron slash, the sidebar wordmark and the active
+nav marker - all the same angled-cut family.
 
 **The `gap-px` grid has one failure mode, and it is a rule:** an empty grid
 track renders as a solid grey block. Column counts must follow the number of
 children that genuinely have data.
-
-**`clip-path` is used exactly once**, on `.verdict-block` - the angled cut
-under the hero verdict. One screen, one element.
 
 **Type sizes.** The floor is 11px for uppercase mono/label text and 12-13px for
 everything a person reads; `text-xs` is 13px and `text-sm` 15px in the theme.
@@ -505,7 +514,7 @@ Tables are analytical instruments, not content inside a card.
 
 - No wrapping box. Thick header rule, hairline row rules, dense rows.
 - `<th scope>` on headers and row headers; a `<caption class="sr-only">`.
-- A state marker in the row gutter (a 1.5px dot, a `border-l-4`), not a
+- A state marker in the row gutter (a 1.5px dot or a thin coloured rule beside the rank), not a
   badge per cell.
 - Sticky header when the body scrolls; `overflow-x-auto` on the wrapper so
   the page body never scrolls horizontally.

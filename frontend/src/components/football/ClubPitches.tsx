@@ -66,7 +66,7 @@ export function ClubPitches({ shotsFor, shotsAgainst }: { shotsFor: AtlasShot[];
     <div className="relative grid grid-cols-2 gap-px bg-divider">
       <div className="bg-void px-8 py-6">
         <div className="mb-3 flex items-baseline gap-3">
-          <span className="font-display text-2xl font-bold text-text">Where they shoot</span>
+          <h2 className="font-display text-2xl font-bold text-text">Where they shoot</h2>
           <span className="text-[13px] text-text-faint">every shot this season</span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_200px] gap-5">
@@ -76,7 +76,7 @@ export function ClubPitches({ shotsFor, shotsAgainst }: { shotsFor: AtlasShot[];
       </div>
       <div className="bg-void px-8 py-6">
         <div className="mb-3 flex items-baseline gap-3">
-          <span className="font-display text-2xl font-bold text-text">Where they concede</span>
+          <h2 className="font-display text-2xl font-bold text-text">Where they concede</h2>
           <span className="text-[13px] text-text-faint">every shot faced, from the opponent's end</span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_200px] gap-5">

@@ -121,7 +121,7 @@ function Body({ d }: { d: FieldPayload }) {
         <Header />
         {options.map((o) => <EdgeRow key={o.key} label={o.label} e={o.edge} mean={o.mean_points} highlight={o.key === 'plan'} />)}
         {d.model_bias && (
-          <p className="mt-3 max-w-3xl border-l-4 border-broadcast-gold bg-panel px-4 py-2 text-xs leading-relaxed text-text-muted">
+          <p className="mt-3 max-w-3xl tone border-broadcast-gold bg-panel px-4 py-2 text-xs leading-relaxed text-text-muted">
             The model runs cool: across {d.model_bias.n} of its past predictions for your players they scored {d.model_bias.bias_per_player.toFixed(1)} points
             (plus or minus {d.model_bias.standard_error.toFixed(1)}) more than predicted. That applies to the field's players too, so the edge, a gap
             between equal numbers of slots, is mostly unaffected. The pts column is not: add roughly {(d.model_bias.bias_per_player * 12).toFixed(0)} for what a team like this tends to score.

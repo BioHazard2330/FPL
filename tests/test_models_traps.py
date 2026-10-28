@@ -68,7 +68,7 @@ def test_injured_status_flagged_regardless_of_minutes(db_conn, monkeypatch):
     result = traps_mod.find_traps(db_conn, min_ownership=10.0)
 
     assert len(result) == 1
-    assert any("availability" in r for r in result[0].reasons)
+    assert any("unavailable" in r or "injur" in r for r in result[0].reasons)
 
 
 def test_price_falling_is_flagged(db_conn, monkeypatch):

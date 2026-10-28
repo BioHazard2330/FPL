@@ -616,7 +616,8 @@ def build_road_ahead(
         weeks.append({
             "event": e,
             "moves": [
-                {"out": s.player_out_name, "into": s.player_in_name, "hit": bool(s.uses_hit)}
+                {"out": s.player_out_name, "into": s.player_in_name, "hit": bool(s.uses_hit),
+                 "out_id": s.player_out_id, "in_id": s.player_in_id}
                 for s in plan.sequence.steps if s.event == e and s.player_in_id is not None
             ],
             "squad_ids": list(next(s.resulting_squad_ids for s in plan.sequence.steps if s.event == e)),
@@ -624,12 +625,40 @@ def build_road_ahead(
     banked = free_transfers
     for week in weeks:
         banked = min(banked - min(len(week["moves"]), banked) + 1, FREE_TRANSFER_CAP)
+    try:
+        _why_later(conn, weeks, event, bank, pairs, cache)
+    except Exception:
+        _logger.exception("why-later notes failed - the road ahead is unaffected")
     return {
         "horizon": horizon, "total": plan.sequence.total_net_ev, "roll_total": roll.sequence.total_net_ev,
         "gain_vs_roll": round(plan.sequence.total_net_ev - roll.sequence.total_net_ev, 2),
         "proven": plan.proven_optimal and roll.proven_optimal, "weeks": weeks,
         "final_free_transfers": banked,
     }
+
+
+def _why_later(conn: sqlite3.Connection, weeks: list[dict], event: int, bank: int, pairs: list[tuple[int, int]], cache: dict) -> None:
+    """For every move the road ahead makes after this week: what it would add this week and in its own week (the
+    player's points in that gameweek alone, `_gw_xp`), and whether it could be paid for now on its own, at strict
+    sale prices after this week's moves. The reasons a solver waits, set out; the solve itself is unchanged."""
+    from fpl_agent.optimization.milp_planner import _gw_xp
+
+    def price(pid: int) -> int:
+        row = conn.execute("SELECT value_tenths FROM player_price_history WHERE player_id=? AND valid_until IS NULL", (pid,)).fetchone()
+        return row["value_tenths"] if row else 0
+
+    bank_now = bank + sum(price(o) - _strict_sell_shortfall_tenths(conn, [o]) - price(i) for o, i in pairs)
+    for week in weeks:
+        if week["event"] == event:
+            continue
+        for m in week["moves"]:
+            o, i = m["out_id"], m["in_id"]
+            short = price(i) - (price(o) - _strict_sell_shortfall_tenths(conn, [o])) - bank_now
+            m["why_later"] = {
+                "gain_this_week": round(_gw_xp(conn, i, event, cache) - _gw_xp(conn, o, event, cache), 2),
+                "gain_in_its_week": round(_gw_xp(conn, i, week["event"], cache) - _gw_xp(conn, o, week["event"], cache), 2),
+                "short_now_tenths": max(0, short),
+            }
 
 
 _PLANNED_CHIPS = ("bboost", "3xc")

@@ -248,7 +248,7 @@ export function Findings({ findings, limit = 10 }: { findings: StoryFinding[]; l
             <Link to={`/club/${f.subject_id}`} className="font-bold text-text hover:text-pitch-green">{f.name ?? 'Club'}</Link>
           )
         return (
-          <div key={i} className={`border-l-4 bg-panel px-4 py-3 ${DIRECTION_RULE[f.fpl_direction ?? 'NEUTRAL']}`}>
+          <div key={i} className={`tone bg-panel px-4 py-3 ${DIRECTION_RULE[f.fpl_direction ?? 'NEUTRAL']}`}>
             <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-bold text-text-faint">
               <span className="text-[13px] normal-case tracking-normal">{subject}</span>
               <span>{f.observation_type.replace(/_/g, ' ').toLowerCase()}</span>

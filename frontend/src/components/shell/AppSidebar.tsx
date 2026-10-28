@@ -30,19 +30,19 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r border-divider">
       <SidebarHeader className="border-b border-divider">
         <div className="px-3 py-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-8 items-center justify-center rounded-lg bg-pitch-green font-display text-base font-bold text-pitch-green-ink">F</span>
-            <span className="font-display text-xl font-semibold text-text">FPL AGENT</span>
+          <div className="flex items-stretch">
+            <span className="flex items-center bg-pitch-green py-1 pl-2.5 pr-4 font-display text-[1.35rem] font-bold leading-none tracking-wide text-pitch-green-ink [clip-path:polygon(0_0,100%_0,82%_100%,0_100%)]">FPL</span>
+            <span className="ml-1.5 flex items-center font-display text-[1.35rem] font-semibold uppercase leading-none tracking-[0.06em] text-text">Agent</span>
           </div>
-          <div className="mt-1.5 text-[12px] text-text-faint">
-            {gwLabel ?? '—'} &middot; 2026/27 season
+          <div className="mt-2 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text-faint">
+            {gwLabel ?? '—'} &middot; 2026/27
           </div>
         </div>
       </SidebarHeader>
       <SidebarContent>
         {NAV_SECTIONS.map((section) => (
           <SidebarGroup key={section.label} className="px-0 py-1">
-            <SidebarGroupLabel className="px-4 text-[12px] font-bold text-text-faint">
+            <SidebarGroupLabel className="px-4 text-[10.5px] font-bold uppercase tracking-[0.16em] text-text-faint/80">
               {section.label}
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -57,8 +57,8 @@ export function AppSidebar() {
                         tooltip={d.label}
                         className={
                           isActive
-                            ? 'rounded-lg bg-raised font-semibold text-text hover:bg-raised hover:text-text'
-                            : 'rounded-lg text-text-muted hover:bg-raised/50 hover:text-text'
+                            ? 'relative rounded-sm bg-gradient-to-r from-pitch-green/15 to-transparent font-semibold text-text before:absolute before:inset-y-1 before:left-0 before:w-[5px] before:bg-pitch-green before:[clip-path:polygon(0_0,100%_0,60%_100%,0_100%)] hover:bg-raised hover:text-text'
+                            : 'rounded-sm text-text-muted hover:bg-raised/50 hover:text-text'
                         }
                         render={
                           <NavLink to={d.to} end={'end' in d ? d.end : false}>

@@ -106,7 +106,7 @@ function Side({ p, side, fixtures }: { p: WeekPlanPlayer; side: 'out' | 'into'; 
       {ns.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-[13px] leading-snug">
           {ns.map((n) => (
-            <li key={n.text} className={`border-l-2 pl-2.5 ${n.tone === 'red' ? 'border-alert-red' : n.tone === 'gold' ? 'border-broadcast-gold' : n.tone === 'green' ? 'border-pitch-green' : 'border-divider'} ${INK[n.tone]}`}>
+            <li key={n.text} className={`tone pl-2.5 ${n.tone === 'red' ? 'border-alert-red' : n.tone === 'gold' ? 'border-broadcast-gold' : n.tone === 'green' ? 'border-pitch-green' : 'border-divider'} ${INK[n.tone]}`}>
               <span className="line-clamp-2" title={n.text}>{n.text}</span>
             </li>
           ))}

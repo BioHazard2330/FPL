@@ -45,7 +45,7 @@ export function ProjectionBand({ playerId }: { playerId: number }) {
   return (
     <div className="border-b border-divider px-10 py-8">
       <div className="mb-4 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">What the model expects</span>
+        <h2 className="font-display text-2xl font-bold text-text">What the model expects</h2>
         <span className="text-[13px] text-text-faint">the same projection every screen uses</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-12">

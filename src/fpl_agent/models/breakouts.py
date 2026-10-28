@@ -73,9 +73,9 @@ def find_breakouts(
 
         reasons = []
         if value_ratio >= min_value_ratio:
-            reasons.append(f"value ratio {value_ratio:.2f} xP/£m")
+            reasons.append(f"{value_ratio:.2f} xP per £m")
         if _recent_setpiece_gain(conn, r["id"]):
-            reasons.append("recently gained a set-piece role")
+            reasons.append("new set-piece duty")
         if _price_rising(conn, r["id"]):
             reasons.append("price rising")
 

@@ -89,7 +89,7 @@ interface ScreenErrorProps {
 export function ScreenError({ title, description, message }: ScreenErrorProps) {
   return (
     <div className="px-10 py-10">
-      <div className="border-l-4 border-alert-red bg-panel px-6 py-5" role="alert">
+      <div className="tone border-alert-red bg-panel px-6 py-5" role="alert">
         <div className="font-display text-xl font-bold text-alert-red">{title}</div>
         <div className="mt-2 max-w-xl text-sm text-text-muted">{description}</div>
         <p className="mt-2 font-mono text-[13px] text-text-faint">{message}</p>

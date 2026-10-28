@@ -48,7 +48,7 @@ export function ScoutingReport({ r, name }: { r: ScoutingReportData; name: strin
   return (
     <div className="border-b border-divider px-10 py-8">
       <div className="mb-1 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">Scouting report</span>
+        <h2 className="font-display text-2xl font-bold text-text">Scouting report</h2>
         <span className="text-[13px] text-text-faint">
           {r.minutes} minutes, {r.shots} shots this season · percentiles {r.pool_note}
         </span>

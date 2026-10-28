@@ -20,7 +20,7 @@ export function TrackRecord() {
     ['You, as you played', h.plan_your_total, 'text-text'],
   ]
   return (
-    <section className="flex flex-wrap items-center gap-x-10 gap-y-3 rounded-xl border border-divider bg-panel px-6 py-4">
+    <section className="flex flex-wrap items-center gap-x-10 gap-y-3 slab px-6 py-4">
       <div className="min-w-0">
         <div className="text-[13px] font-semibold text-text-faint">The plan's record</div>
         <div className="text-[13px] text-text-muted">

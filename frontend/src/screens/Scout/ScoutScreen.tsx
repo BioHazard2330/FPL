@@ -15,37 +15,46 @@ const SORT_LABEL: Record<SortKey, string> = { total_points: 'Pts', price_m: 'Pri
 const PRICE_FLOOR = 3.5
 const PRICE_CEIL = 16.0
 
-const CONFIDENCE_COLOR: Record<string, string> = {
-  HIGH: 'text-pitch-green', VERY_HIGH: 'text-pitch-green', MEDIUM: 'text-broadcast-gold', LOW: 'text-alert-red', VERY_LOW: 'text-alert-red',
-}
-
 const POSITION_ROW_LABEL: Record<string, string> = { GKP: 'GK', DEF: 'DEF', MID: 'MID', FWD: 'FWD' }
 
-const OPP_KIND_ACCENT: Record<string, string> = {
-  Breakout: 'border-l border-pitch-green',
-  Value: 'border-l border-broadcast-blue',
-  Trap: 'border-l border-alert-red bg-alert-red/[0.06]',
-  'Role change': 'border-l border-broadcast-gold',
+const OPP_KIND: Record<string, { ink: string; bar: string; blurb: string }> = {
+  Breakout: { ink: 'text-pitch-green', bar: 'bg-pitch-green', blurb: 'cheap, owned by few, projecting well' },
+  Value: { ink: 'text-[#8fb0ff]', bar: 'bg-broadcast-blue', blurb: 'points per pound' },
+  Trap: { ink: 'text-alert-red', bar: 'bg-alert-red', blurb: 'owned widely, likely to disappoint' },
+  'Role change': { ink: 'text-broadcast-gold', bar: 'bg-broadcast-gold', blurb: 'a new job on the pitch' },
 }
 
-/** Real per-category market-board row (art-direction pass, 2026-09-08 v2) -
- * Trap gets a warning wash (this is the one category where the real risk
- * text matters more than the xP number), everything else keeps its own
- * accent color so the four boards read as distinct market segments rather
- * than one repeated row template. */
+const CONFIDENCE_WORD: Record<string, string> = { HIGH: 'strong evidence', MEDIUM: 'some evidence', LOW: 'thin evidence' }
+
+/** One market board row: who, what he costs, what he projects, and the one reason he is on the board. Trap rows carry
+ * a red wash because the risk is the point; the evidence strength is a word, not a shouted label. */
 function OpportunityRowView({ r, kind }: { r: OpportunityRow; kind: string }) {
   const crest = crestUrl(r.team_code)
   const isTrap = kind === 'Trap'
+  const reason = isTrap ? r.risk ?? r.why_now : r.why_now
   return (
-    <div className={`flex flex-wrap items-baseline gap-3 py-2.5 pl-3 text-sm ${OPP_KIND_ACCENT[kind] ?? 'border-l border-divider'}`}>
-      {crest && <img src={crest} alt="" className="h-4 w-4 shrink-0 rounded-full" />}
-      <span className="font-bold text-text">{r.name}</span>
-      <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{r.position}</span>
-      {r.price_m !== null && <span className="tabular text-text-muted">£{r.price_m.toFixed(1)}m</span>}
-      {r.xp !== null && <span className="tabular font-semibold text-pitch-green">{r.xp.toFixed(1)} xP</span>}
-      <span className={isTrap ? 'font-semibold text-text' : 'text-text-muted'}>{isTrap ? r.risk ?? r.why_now : r.why_now}</span>
-      {!isTrap && r.risk && <span className="italic text-broadcast-gold">{r.risk}</span>}
-      <span className={`ml-auto shrink-0 text-[12px] font-bold ${CONFIDENCE_COLOR[r.confidence] ?? 'text-text-faint'}`}>{r.confidence}</span>
+    <div className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-3 py-2.5 ${isTrap ? 'bg-alert-red/[0.07]' : 'hover:bg-raised/50'}`}>
+      {crest ? <img src={crest} alt="" className="size-5" /> : <span />}
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-[15px] font-semibold text-text">{r.name}</span>
+          <span className="text-[12px] text-text-faint">
+            {r.position}
+            {r.price_m !== null && <> · £{r.price_m.toFixed(1)}m</>}
+          </span>
+        </div>
+        <div className="truncate text-[12.5px] text-text-muted" title={[reason, !isTrap ? r.risk : null].filter(Boolean).join(' · ')}>
+          {reason}
+          {!isTrap && r.risk && <span className="text-text-faint"> · {r.risk}</span>}
+          <span className="text-text-faint"> · {CONFIDENCE_WORD[r.confidence] ?? r.confidence.toLowerCase()}</span>
+        </div>
+      </div>
+      {r.xp !== null && (
+        <div className="text-right">
+          <div className={`font-display text-2xl font-bold leading-none tabular ${isTrap ? 'text-alert-red' : 'text-text'}`}>{r.xp.toFixed(1)}</div>
+          <div className="text-[10.5px] uppercase tracking-wider text-text-faint">xP</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -309,8 +318,12 @@ export function ScoutScreen() {
         <div className="grid grid-cols-1 gap-x-10 gap-y-8 px-8 py-6 lg:grid-cols-2">
           {oppCategories.map((c) => (
             <div key={c.label}>
-              <div className="mb-2 text-[13px] font-bold text-text-faint">{c.label}</div>
-              <div className="divide-y divide-divider">
+              <div className="mb-3 flex items-baseline gap-3">
+                <span className={`h-4 w-[7px] self-center ${OPP_KIND[c.label]?.bar ?? 'bg-text-faint'} [clip-path:polygon(35%_0,100%_0,65%_100%,0_100%)]`} />
+                <span className={`font-display text-lg font-semibold uppercase tracking-[0.05em] ${OPP_KIND[c.label]?.ink ?? 'text-text'}`}>{c.label}</span>
+                <span className="text-[12.5px] text-text-faint">{OPP_KIND[c.label]?.blurb}</span>
+              </div>
+              <div className="space-y-1">
                 {c.rows.map((r, i) => <OpportunityRowView key={i} r={r} kind={c.label} />)}
               </div>
             </div>

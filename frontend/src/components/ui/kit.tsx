@@ -22,12 +22,12 @@ export function Panel({
   flush?: boolean
 }) {
   return (
-    <section className={`rounded-xl border border-divider bg-panel ${className}`}>
+    <section className={`slab ${className}`}>
       {(title || right) && (
         <header className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-6 pb-1 pt-5">
           <div className="min-w-0">
             {title && <h2 className="font-display text-xl font-semibold leading-tight text-text">{title}</h2>}
-            {sub && <p className="mt-1 max-w-3xl text-[14px] leading-snug text-text-muted">{sub}</p>}
+            {sub && <p className="mt-1.5 max-w-3xl text-[13.5px] leading-snug text-text-faint">{sub}</p>}
           </div>
           {right && <div className="shrink-0 text-[13px] text-text-faint">{right}</div>}
         </header>
@@ -39,17 +39,20 @@ export function Panel({
 
 type Tone = 'neutral' | 'green' | 'gold' | 'red' | 'blue'
 
-const PILL: Record<Tone, string> = {
-  neutral: 'bg-raised text-text-muted',
-  green: 'bg-pitch-green/15 text-pitch-green',
-  gold: 'bg-broadcast-gold/15 text-broadcast-gold',
-  red: 'bg-alert-red/15 text-alert-red',
-  blue: 'bg-broadcast-blue/20 text-[#8fb0ff]',
+const PILL: Record<Tone, { ink: string; bar: string }> = {
+  neutral: { ink: 'text-text-muted', bar: 'bg-text-faint' },
+  green: { ink: 'text-pitch-green', bar: 'bg-pitch-green' },
+  gold: { ink: 'text-broadcast-gold', bar: 'bg-broadcast-gold' },
+  red: { ink: 'text-alert-red', bar: 'bg-alert-red' },
+  blue: { ink: 'text-[#8fb0ff]', bar: 'bg-broadcast-blue' },
 }
 
+/** A label, not a capsule: small capitals behind a slanted colour tick, so a row of them reads as captions rather than
+ * a scatter of buttons. */
 export function Pill({ tone = 'neutral', children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
   return (
-    <span title={title} className={`inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-semibold leading-4 ${PILL[tone]}`}>
+    <span title={title} className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[10.5px] font-bold uppercase leading-4 tracking-[0.12em] ${PILL[tone].ink}`}>
+      <span className={`h-2.5 w-[4px] shrink-0 ${PILL[tone].bar} [clip-path:polygon(40%_0,100%_0,60%_100%,0_100%)]`} />
       {children}
     </span>
   )
@@ -79,14 +82,15 @@ export function Disclosure({
   defaultOpen?: boolean
 }) {
   return (
-    <details open={defaultOpen} className="group rounded-xl border border-divider bg-panel">
+    <details open={defaultOpen} className="group slab">
       <summary className="flex cursor-pointer list-none items-baseline justify-between gap-6 px-6 py-4 [&::-webkit-details-marker]:hidden">
-        <span className="min-w-0">
-          <span className="font-display text-xl font-semibold text-text">{title}</span>
-          {summary && <span className="ml-4 text-[14px] text-text-muted">{summary}</span>}
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
+          <h2 className="font-display text-xl font-semibold text-text">{title}</h2>
+          {summary && <span className="text-[13.5px] text-text-faint">{summary}</span>}
         </span>
-        <span aria-hidden className="shrink-0 text-text-faint transition-transform group-open:rotate-90">
-          &#9656;
+        <span aria-hidden className="shrink-0 rounded-sm bg-raised px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.12em] text-text-muted group-hover:text-text">
+          <span className="group-open:hidden">Open</span>
+          <span className="hidden group-open:inline">Close</span>
         </span>
       </summary>
       <div className="border-t border-divider px-6 pb-6 pt-5">{children}</div>

@@ -1862,7 +1862,17 @@ export interface WeekPlanPayload {
     gain_vs_roll: number
     proven: boolean
     final_free_transfers: number
-    weeks: { event: number; moves: { out: string; into: string; hit: boolean }[] }[]
+    weeks: {
+      event: number
+      moves: {
+        out: string
+        into: string
+        hit: boolean
+        out_id?: number
+        in_id?: number
+        why_later?: { gain_this_week: number; gain_in_its_week: number; short_now_tenths: number }
+      }[]
+    }[]
   } | null
   chip_outlook?: {
     available: string[]

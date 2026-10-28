@@ -160,7 +160,7 @@ export function PlayerScreen() {
       {/* WHERE HE SHOOTS - his season on the Atlas pitch, over the league. */}
       <div className="border-b border-divider px-10 py-8">
         <div className="mb-4 flex flex-wrap items-baseline gap-3">
-          <span className="font-display text-2xl font-bold text-text">Where he shoots</span>
+          <h2 className="font-display text-2xl font-bold text-text">Where he shoots</h2>
           <span className="text-[13px] text-text-faint">every shot FotMob recorded for him this season · dot area is xG · filled only for a goal</span>
         </div>
         <PlayerShots playerId={pl.player_id} name={pl.name} teamShort={pl.team_short} shots={p.shots} mine={pl.is_mine} />
@@ -170,7 +170,7 @@ export function PlayerScreen() {
       {p.career.length > 1 && (
         <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
-            <span className="font-display text-2xl font-bold text-text">The race</span>
+            <h2 className="font-display text-2xl font-bold text-text">The race</h2>
             <span className="text-[13px] text-text-faint">what his chances were worth against what he made of them, every match this database holds</span>
           </div>
           <XgRace career={p.career} thisSeason={p.match_log[0]?.season ?? null} />
@@ -181,7 +181,7 @@ export function PlayerScreen() {
       {(p.ownership.length > 1 || p.momentum.length > 1) && (
         <div className="border-b border-divider px-10 py-8">
           <div className="mb-4 flex flex-wrap items-baseline gap-3">
-            <span className="font-display text-2xl font-bold text-text">The market</span>
+            <h2 className="font-display text-2xl font-bold text-text">The market</h2>
             <span className="text-[13px] text-text-faint">ownership as it moved, and the transfer counters each gameweek, as sampled</span>
           </div>
           <MarketPulse ownership={p.ownership} momentum={p.momentum} deadlines={p.deadlines} />
@@ -270,7 +270,7 @@ export function PlayerScreen() {
                 </Link>
                 <div className="mt-1.5 space-y-px bg-divider">
                   {m.findings.map((f, i) => (
-                    <div key={i} className={`border-l-4 bg-panel px-4 py-2.5 ${f.fpl_direction === 'POSITIVE' ? 'border-pitch-green' : f.fpl_direction === 'NEGATIVE' ? 'border-alert-red' : f.fpl_direction === 'WATCH' ? 'border-broadcast-gold' : 'border-divider'}`}>
+                    <div key={i} className={`tone bg-panel px-4 py-2.5 ${f.fpl_direction === 'POSITIVE' ? 'border-pitch-green' : f.fpl_direction === 'NEGATIVE' ? 'border-alert-red' : f.fpl_direction === 'WATCH' ? 'border-broadcast-gold' : 'border-divider'}`}>
                       <p className="text-sm text-text">{f.observed}</p>
                       {f.inferred && <p className="mt-0.5 text-[13px] text-text-muted">{f.inferred}</p>}
                       {f.reliability && (

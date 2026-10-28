@@ -125,21 +125,21 @@ def assess_projection_confidence(
 
     if matches_played >= _DATA_VERY_HIGH_MATCHES:
         data_confidence = "VERY_HIGH"
-        reasons.append(f"{matches_played} real current-season match-equivalents - well-evidenced own goals/assists rate")
+        reasons.append(f"{matches_played:.0f} full matches of his own this season")
     elif matches_played >= _DATA_HIGH_MATCHES:
         data_confidence = "HIGH"
-        reasons.append(f"{matches_played} real current-season match-equivalents - a real, if still growing, own sample")
+        reasons.append(f"{matches_played:.0f} full matches of his own this season, still a small sample")
     elif matches_played >= _DATA_MEDIUM_MATCHES:
         data_confidence = "MEDIUM"
-        reasons.append(f"{matches_played} real current-season match-equivalents - real but thin own sample")
+        reasons.append(f"only {matches_played:.0f} full matches of his own this season")
     elif matches_played > 0:
         # Real evidence exists but is barely more than a cameo (e.g. a
         # sub appearance) - genuinely weaker than the MEDIUM case above,
         # but still real current-season signal, never "no data".
         data_confidence = "LOW"
-        reasons.append(f"only {matches_played} real current-season match-equivalents - a very thin own sample")
+        reasons.append(f"only {matches_played:.1f} full matches of his own this season")
         if prior_row_present and prior_is_stale:
-            reasons.append(f"the only real prior is also stale ({prior_row['season_name']}, 5+ season gap)")
+            reasons.append(f"his last record is from {prior_row['season_name']}, five or more seasons ago")
     elif not prior_row_present:
         cross = get_cross_league_prior(conn, player_id)
         if cross is not None:

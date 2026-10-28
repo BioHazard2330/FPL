@@ -61,7 +61,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
       </div>
 
       {audit.cross_check_note && (
-        <div className="relative mx-10 mb-6 border-l-4 border-broadcast-gold bg-panel px-5 py-3">
+        <div className="relative mx-10 mb-6 tone border-broadcast-gold bg-panel px-5 py-3">
           <span className="text-[12px] font-bold text-broadcast-gold">Methodology conflict</span>
           <p className="mt-1 text-sm text-text-muted">{audit.cross_check_note}</p>
           <p className="mt-1 text-[13px] italic text-text-faint">
@@ -103,7 +103,7 @@ export function DecisionAudit({ audit }: { audit: DecisionAuditBlock }) {
           ) : (
             <div className="mt-4 space-y-3">
               {flipping.map((t, i) => (
-                <div key={`f${i}`} className="border-l-4 border-alert-red bg-panel px-4 py-2.5">
+                <div key={`f${i}`} className="tone border-alert-red bg-panel px-4 py-2.5">
                   <span className="text-[12px] font-bold text-alert-red">Flips the call</span>
                   <p className="mt-0.5 text-sm leading-snug text-text">{t.note ?? '—'}</p>
                 </div>

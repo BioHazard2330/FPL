@@ -39,7 +39,7 @@ def test_high_value_ratio_is_a_breakout(db_conn, monkeypatch):
     result = breakouts_mod.find_breakouts(db_conn, max_ownership=10.0)
 
     assert len(result) == 1
-    assert any("value ratio" in r for r in result[0].reasons)
+    assert any("xP per £m" in r for r in result[0].reasons)
 
 
 def test_low_value_ratio_and_no_other_signal_is_not_a_breakout(db_conn, monkeypatch):

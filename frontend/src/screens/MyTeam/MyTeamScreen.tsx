@@ -403,7 +403,7 @@ export function MyTeamScreen() {
           {doctor?.worth_changing && (
             <Link
               to="/"
-              className="mb-4 block border-l-4 border-broadcast-gold bg-panel px-4 py-3 hover:bg-raised"
+              className="mb-4 block tone border-broadcast-gold bg-panel px-4 py-3 hover:bg-raised"
             >
               <span className="text-[13px] font-semibold text-broadcast-gold">Your lineup is not the best one from this squad</span>
               <span className="mt-1 block text-sm text-text-muted">
@@ -512,7 +512,7 @@ export function MyTeamScreen() {
               <div className="mt-0.5 text-[12px] text-text-faint">one note per player, the most worrying first</div>
               <div className="mt-3 space-y-3">
                 {p.analyst.slice(0, 5).map((n) => (
-                  <Link key={n.player_id} to={`/match/${n.match_id}`} className={`block border-l-2 pl-3 hover:bg-raised/40 ${n.direction === 'NEGATIVE' ? 'border-alert-red' : n.direction === 'WATCH' ? 'border-broadcast-gold' : n.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
+                  <Link key={n.player_id} to={`/match/${n.match_id}`} className={`block tone pl-3 hover:bg-raised/40 ${n.direction === 'NEGATIVE' ? 'border-alert-red' : n.direction === 'WATCH' ? 'border-broadcast-gold' : n.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
                     <div className="text-sm font-bold text-text">{n.name ?? 'Player'} <span className="text-[12px] font-bold text-text-faint">{n.match}</span></div>
                     <p className="text-[13px] leading-snug text-text-muted">{plain(n.observed)}</p>
                   </Link>
@@ -526,7 +526,9 @@ export function MyTeamScreen() {
               <div className="text-[12px] font-bold text-broadcast-gold">Things to watch</div>
               <div className="mt-3 space-y-3">
                 {p.risks.map((r, i) => (
-                  <p key={i} className="border-l border-broadcast-gold/50 pl-3 text-sm leading-relaxed text-text-muted">{r}</p>
+                  <p key={i} className="tone border-broadcast-gold text-sm leading-relaxed text-text-muted">
+                    {r.replace(/: ([A-Z][A-Z _]+)$/, (_m: string, st: string) => ` - ${st.toLowerCase().replace(/_/g, ' ')}`)}
+                  </p>
                 ))}
               </div>
             </div>

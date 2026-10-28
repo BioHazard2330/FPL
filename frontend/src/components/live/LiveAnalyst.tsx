@@ -18,7 +18,7 @@ function SuspectStrip({ subs, names }: { subs: StorySub[]; names: { home: string
   return (
     <div className="mb-4 space-y-1">
       {flagged.map((s, i) => (
-        <div key={i} className="border-l-4 border-alert-red bg-alert-red/10 px-3 py-2 text-sm text-text">
+        <div key={i} className="tone border-alert-red bg-alert-red/10 px-3 py-2 text-sm text-text">
           <span className="mr-2 text-[12px] font-bold text-alert-red">probable injury</span>
           <span className="font-bold">{s.off}</span> off at minute {s.minute} for {s.on} ({s.side === 'home' ? names.home : names.away}). <span className="text-text-muted">{s.note}.</span>
         </div>

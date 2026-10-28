@@ -43,3 +43,19 @@ def test_a_player_already_flagged_gets_no_warning(db_conn, monkeypatch):
     out = nw.fresh_warnings(db_conn, [1, 2], now)
     assert set(out) == {1}
     assert "65% of the time (52 of 80)" in nw.warning_sentence(out[1])
+
+
+def test_an_injury_headline_for_a_squad_player_raises_one_high_event(db_conn, monkeypatch):
+    from fpl_agent.ingestion.change_detection import detect_injury_headlines
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(nw, "fresh_warnings", lambda conn, ids, now=None: {
+        1: {"title": "Haaland knock", "source": "BBC", "published_at": "2026-10-28T10:00:00+00:00",
+            "rate": {"followed": 52, "fresh": 80, "rate": 0.65, "median_lead_hours": 11}},
+        2: {"title": "Saka injury", "source": "BBC", "published_at": "2026-10-28T11:00:00+00:00",
+            "rate": {"followed": 52, "fresh": 80, "rate": 0.65, "median_lead_hours": 11}},
+    })
+    assert detect_injury_headlines(db_conn, {1, 2}, {1}, now.isoformat()) == 2
+    assert detect_injury_headlines(db_conn, {1, 2}, {1}, now.isoformat()) == 0
+    rows = {r["entity_id"]: r["severity"] for r in db_conn.execute("SELECT entity_id, severity FROM change_events WHERE event_type='injury_headline'")}
+    assert rows == {1: "HIGH", 2: "MEDIUM"}

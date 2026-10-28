@@ -175,7 +175,7 @@ function Reading({ f }: { f: PreviewFixture }) {
       <div className="mb-2 text-[12px] font-bold text-text-faint">The analyst&rsquo;s read of the form</div>
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
         {items.map((s, i) => (
-          <div key={i} className={`border-l-4 bg-panel px-3 py-2 ${READING_RULE[s.tone]}`}>
+          <div key={i} className={`tone bg-panel px-3 py-2 ${READING_RULE[s.tone]}`}>
             <p className="text-[13px] leading-snug text-text-muted">{s.text}</p>
             {s.weight && <p className="mt-0.5 text-[12px] font-bold text-text-faint">{s.weight}</p>}
           </div>

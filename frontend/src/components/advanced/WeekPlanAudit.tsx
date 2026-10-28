@@ -31,7 +31,7 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
       </p>
 
       {audit.stale_reasons.length > 0 && (
-        <div className="mt-3 max-w-2xl border-l-4 border-alert-red bg-panel px-4 py-2 text-sm text-text-muted">
+        <div className="mt-3 max-w-2xl tone border-alert-red bg-panel px-4 py-2 text-sm text-text-muted">
           Out of date: {audit.stale_reasons.join('; ')}.
         </div>
       )}

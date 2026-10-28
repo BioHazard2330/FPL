@@ -24,7 +24,7 @@ export function LiveCone() {
   return (
     <section className="border-b border-divider px-10 py-8">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-5">
-        <span className="font-display text-2xl font-bold text-text">Where GW{d.event} ends</span>
+        <h2 className="font-display text-2xl font-bold text-text">Where GW{d.event} ends</h2>
         <span className="text-[12px] text-text-faint">
           {d.fixtures_left} match{d.fixtures_left === 1 ? '' : 'es'} still to finish · {d.fixtures_live} live · simulated from the current score and minute
         </span>

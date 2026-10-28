@@ -471,3 +471,27 @@ def detect_upcoming_kickoffs(
         )
         fired += 1
     return fired
+
+
+def detect_injury_headlines(conn: sqlite3.Connection, watched_ids: set[int], squad_ids: set[int], now: str) -> int:
+    """An injury headline about a player FPL still lists as available, for the squad and the plan's targets
+    (`models/news_warning.py`), once per (player, headline). HIGH for a squad player when such headlines have been
+    followed by an FPL flag at least 40% of the time, MEDIUM otherwise."""
+    from fpl_agent.models.news_warning import fresh_warnings, warning_sentence
+
+    fired = 0
+    for pid, w in fresh_warnings(conn, sorted(watched_ids)).items():
+        if conn.execute(
+            "SELECT 1 FROM change_events WHERE event_type='injury_headline' AND entity_id=? AND old_value=?",
+            (pid, w["published_at"]),
+        ).fetchone():
+            continue
+        rate = (w.get("rate") or {}).get("rate") or 0
+        name = conn.execute("SELECT web_name FROM players WHERE id=?", (pid,)).fetchone()
+        record_event(
+            conn, "injury_headline", "player", pid, w["published_at"], w["title"], now, w["source"] or "news", "REPORTED",
+            "HIGH" if pid in squad_ids and rate >= 0.4 else "MEDIUM",
+            fpl_impact=f"{name['web_name'] if name else pid}: {warning_sentence(w)}",
+        )
+        fired += 1
+    return fired

@@ -43,7 +43,7 @@ function FixtureTicker({ rows }: { rows: FixtureTickerRow[] }) {
   return (
     <div className="border-b border-divider py-6">
       <div className="mb-4 flex flex-wrap items-baseline gap-3 px-10">
-        <span className="text-[13px] font-bold text-text-faint">Fixture ticker</span>
+        <h2 className="font-display text-xl font-semibold text-text">Fixture ticker</h2>
         <span className="text-[13px] text-text-faint">my clubs &middot; easiest run first &middot; next {width} gameweeks</span>
       </div>
       <div>
@@ -186,7 +186,7 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
 
   return (
     <div
-      className={`min-w-[300px] flex-1 border-l-4 bg-panel px-6 py-5 ${CATEGORY_ACCENT[s.category] ?? 'border-text-faint'} ${large ? 'basis-full py-7' : ''}`}
+      className={`min-w-[300px] flex-1 tone bg-panel px-6 py-5 ${CATEGORY_ACCENT[s.category] ?? 'border-text-faint'} ${large ? 'basis-full py-7' : ''}`}
     >
       <div className="flex items-center gap-2">
         {crest && <img src={crest} alt="" className="h-4 w-4 rounded-full" />}

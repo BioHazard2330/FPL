@@ -360,3 +360,4 @@ python -m http.server 8899 --directory data
 - **Mini-league odds** (`models/league_odds.py`): chance to beat each rival this gameweek, to be ahead of him after it, to lead the league, and how each captain moves those (GW9 Pending Moderation: 37% to lead after GW9 with Haaland, 36% Palmer). One simulation shared across leagues, 1.8s.
 - **What-if in your leagues**: every typed set of moves also shows each mini-league's chance (lead, or beat a rival) before and after, this gameweek. Gibbs-White -> Rudoni with Calafiori -> Gabriel: Pending Moderation 36% -> 45%.
 - **Early injury warnings** (`models/news_warning.py`): injury headlines for available players, with the measured follow-through (65%, 11h ahead of FPL).
+- **Why later**: each road-ahead move shows its gain this week, in its own week, and how far short the bank is now (GW10 Calafiori -> Gabriel: GW9 +2.9, GW10 +3.2, £0.9m short now).

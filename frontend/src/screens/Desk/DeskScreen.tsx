@@ -94,7 +94,7 @@ function Lead({ a }: { a: DeskArticle }) {
 function WireRow({ a }: { a: DeskArticle }) {
   const rail = a.relevance >= 2 ? 'border-l-pitch-green' : a.relevance === 1 ? 'border-l-broadcast-gold' : 'border-l-transparent'
   return (
-    <article className={`grid grid-cols-[132px_minmax(0,1fr)] gap-4 border-b border-l-4 border-divider py-3 pl-3 ${rail}`}>
+    <article className={`grid grid-cols-[132px_minmax(0,1fr)] gap-4 border-b tone border-divider py-3 pl-3 ${rail}`}>
       <Picture src={a.image} label={a.source} className="h-[78px] w-[132px]" />
       <div className="min-w-0">
         <Kicker>

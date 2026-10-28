@@ -71,11 +71,11 @@ def find_traps(conn: sqlite3.Connection, min_ownership: float = MIN_OWNERSHIP_PE
         reasons = []
         classification = classify(r["status"], r["chance_of_playing_this_round"], r["chance_of_playing_next_round"])
         if classification != "FIT":
-            reasons.append(f"availability: {classification}")
+            reasons.append(classification.lower().replace("_", " "))
 
         em = expected_minutes(conn, r["id"])
         if em.expected_minutes < LOW_MINUTES_THRESHOLD:
-            reasons.append(f"minutes risk: {em.expected_minutes:.0f} expected")
+            reasons.append(f"{em.expected_minutes:.0f} minutes expected")
 
         if _price_falling(conn, r["id"]):
             reasons.append("price falling")

@@ -186,7 +186,7 @@ function MatchweekBlockView({ block }: { block: MatchweekBlock }) {
   return (
     <div className="px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">Gameweek {block.event}</span>
+        <h2 className="font-display text-2xl font-bold text-text">Gameweek {block.event}</h2>
         <span className="text-[13px] font-bold text-text-faint">
           {block.complete ? 'complete' : block.is_next ? 'next up' : 'to come'}
         </span>
@@ -277,7 +277,7 @@ export function MatchweekScreen() {
 
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">
-          <span className="font-display text-xl font-semibold text-text">League table</span>
+          <h2 className="font-display text-xl font-semibold text-text">League table</h2>
           <span className="text-[13px] text-text-faint">
             blue is the top four, red is relegation; xG and xGA are per match
           </span>

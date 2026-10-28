@@ -205,7 +205,7 @@ function AsTransfer({ d }: { d: ComparePayload }) {
   return (
     <section className="border-b border-divider bg-void px-10 py-6">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-        <span className="font-display text-xl font-bold text-text">As a transfer</span>
+        <h2 className="font-display text-xl font-bold text-text">As a transfer</h2>
         <span className="text-sm text-text-muted">
           {out.name} out, {into.name} in:{' '}
           <span className="tabular font-bold text-pitch-green">{t.gain_window >= 0 ? '+' : ''}{t.gain_window.toFixed(1)}</span> xP over {d.window} fixtures,{' '}
@@ -252,7 +252,7 @@ function ReadCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   return (
     <section className="border-b border-divider px-10 py-7">
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">The football read</span>
+        <h2 className="font-display text-2xl font-bold text-text">The football read</h2>
         <span className="text-[13px] text-text-faint">each line marked by whether that kind of evidence holds up from match to match</span>
       </div>
       <div className="grid grid-cols-2 gap-10">
@@ -277,7 +277,7 @@ function CraftCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   return (
     <section className="border-b border-divider px-10 py-7">
       <div className="mb-1 flex flex-wrap items-baseline gap-3">
-        <span className="font-display text-2xl font-bold text-text">How they play</span>
+        <h2 className="font-display text-2xl font-bold text-text">How they play</h2>
         <span className="text-[13px] text-text-faint">
           percentiles within each player's position this season ({sa.position} {sa.minutes} min · {sb.position} {sb.minutes} min)
         </span>

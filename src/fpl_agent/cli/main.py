@@ -1866,6 +1866,18 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled news sync failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.change_detection import detect_injury_headlines
+        from fpl_agent.optimization.week_plan import plan_target_ids
+
+        squad_now = set(tracked_squad_ids or set())
+        fired = detect_injury_headlines(conn, squad_now | plan_target_ids(conn), squad_now, datetime.now(timezone.utc).isoformat())
+        conn.commit()
+        if fired:
+            logger.info("run-scheduled injury headlines: %d", fired)
+    except Exception:
+        logger.exception("run-scheduled injury-headline detection failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.gw_stats import sync_gw_stats
 
         gw_result = sync_gw_stats(conn)

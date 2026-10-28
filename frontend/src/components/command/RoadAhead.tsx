@@ -1,6 +1,8 @@
 import { Panel } from '@/components/ui/kit'
 import type { WeekPlanPayload } from '@/lib/types'
 
+const signed = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
+
 /** BEYOND THIS WEEK - how the plan continues, a gameweek per column. Only the next three are shown: past that the planner is
  * guessing at injuries and prices that do not exist yet, and a row of empty "roll" columns says nothing. Every column after
  * this week is a projection, re-solved each week; the quiet weeks are shown because a roll is how free transfers are banked. */
@@ -35,10 +37,19 @@ export function RoadAhead({ plan, title = 'Beyond this week (indicative)', lead 
             ) : (
               <div className="space-y-2">
                 {w.moves.slice(0, 3).map((m) => (
-                  <div key={`${m.out}-${m.into}`} className="border-l-2 border-pitch-green pl-2.5 text-[13px] leading-tight">
+                  <div key={`${m.out}-${m.into}`} className="tone border-pitch-green pl-2.5 text-[13px] leading-tight">
                     <div className="truncate text-text-muted">{m.out}</div>
                     <div className="truncate font-semibold text-text">&rarr; {m.into}</div>
                     {m.hit && <div className="text-[12px] font-semibold text-alert-red">costs a hit</div>}
+                    {m.why_later && (
+                      <div
+                        className="mt-0.5 text-[11.5px] leading-snug text-text-faint"
+                        title="What this move adds in each gameweek alone, and whether it can be paid for now on its own at strict sale prices"
+                      >
+                        GW{plan.event} {signed(m.why_later.gain_this_week)} · GW{w.event} {signed(m.why_later.gain_in_its_week)}
+                        {m.why_later.short_now_tenths > 0 && <span className="text-broadcast-gold"> · £{(m.why_later.short_now_tenths / 10).toFixed(1)}m short now</span>}
+                      </div>
+                    )}
                   </div>
                 ))}
                 {w.moves.length > 3 && <div className="text-[12px] text-text-faint">and {w.moves.length - 3} more</div>}
