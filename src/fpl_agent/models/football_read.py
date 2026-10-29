@@ -278,6 +278,40 @@ def _verdict(lines: list[dict]) -> dict:
     return {"label": label, "score": round(score, 1), "text": text + "."}
 
 
+WATCHERS_UP = 7.5
+WATCHERS_DOWN = 5.5
+
+
+def _watchers(conn: sqlite3.Connection, player_id: int) -> list[dict]:
+    """What people who watched him said (`ingestion/watcher_ratings`): the BBC reporter's score and verdict and the fans'
+    average over his last rated matches. Measured 2026-10-29 on 203 rated player-matches: neither score predicted the
+    next gameweek's points beyond his points and chances so far, so the line is context and never a projection input;
+    it leans the verdict (and through it the plan's eye gate) when the watchers were clearly impressed or not."""
+    try:
+        from fpl_agent.ingestion.watcher_ratings import watchers_for_player
+
+        rated = watchers_for_player(conn, player_id, limit=3)
+    except Exception:
+        return []
+    if not rated:
+        return []
+    latest = rated[0]
+    scores = [x for r in rated for x in (r["reporter"], r["fans"]) if x is not None]
+    mean = sum(scores) / len(scores) if scores else None
+    bits = []
+    if latest["reporter"] is not None:
+        bits.append(f"BBC reporter {latest['reporter']:g}/10" + (f" (\"{latest['note']}\")" if latest["note"] else ""))
+    if latest["fans"] is not None:
+        bits.append(f"fans {latest['fans']:.2f}")
+    if latest["potm"]:
+        bits.append("fans' player of the match")
+    text = f"GW{latest['event']} {'v' if latest['home'] else 'at'} {latest['opponent']}: " + ", ".join(bits)
+    if len(rated) > 1 and mean is not None:
+        text += f". Average over his last {len(rated)} rated matches {mean:.1f}"
+    lean = 1 if mean is not None and mean >= WATCHERS_UP else -1 if mean is not None and mean <= WATCHERS_DOWN else 0
+    return [_line("Watchers", text + ".", "context", lean)]
+
+
 def football_read(conn: sqlite3.Connection, player_id: int, event: int | None = None) -> dict | None:
     from fpl_agent.models.fixtures import _reference_event
     from fpl_agent.models.form_watch import form_watch
@@ -295,6 +329,7 @@ def football_read(conn: sqlite3.Connection, player_id: int, event: int | None = 
     lines += _duties(conn, player_id, report)
     if position in ("MID", "FWD"):
         lines += _spell(form_watch(conn, [player_id]).get(player_id))
+    lines += _watchers(conn, player_id)
     lines += _minutes(conn, player_id) + _discipline(conn, player_id, event)
     lines += _fixtures(conn, p["team_id"], position, event, report.get("source_mix") if report else None)
     return {"player_id": player_id, "name": p["web_name"], "position": position, "event": event,

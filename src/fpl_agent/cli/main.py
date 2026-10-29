@@ -1929,6 +1929,15 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled mini-league sync failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.watcher_ratings import sync_watcher_ratings
+
+        watcher_result = sync_watcher_ratings(conn)
+        if watcher_result.get("articles"):
+            logger.info("run-scheduled watcher ratings: %s", watcher_result)
+    except Exception:
+        logger.exception("run-scheduled watcher-ratings sync failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.rank_threshold import sync_rank_thresholds
 
         threshold_result = sync_rank_thresholds(conn)
