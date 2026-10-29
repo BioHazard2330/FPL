@@ -9,6 +9,7 @@ import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
+import { useCrowd } from '@/lib/crowd'
 import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
 import type { LiveMatchEvent, UpcomingMatch } from '@/lib/types'
@@ -64,6 +65,8 @@ function LiveSkeleton() {
 
 export function LiveScreen() {
   const state = useFetch(fetchLiveSnapshot, [], 10000)
+  const ready = state.status === 'ready' ? state.data : null
+  const crowd = useCrowd(ready?.match_events ?? [], ready?.squad?.find((s) => s.is_captain)?.player_id ?? null)
 
   if (state.status === 'loading') return <LiveSkeleton />
   if (state.status === 'error') {
@@ -111,7 +114,15 @@ export function LiveScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead right={<span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>} />
+      <Masthead right={
+        <span className="flex items-center gap-4">
+          <button type="button" onClick={crowd.toggle} title="A synthesised crowd: a murmur, and a roar when one of your players scores or assists"
+            className={`border-2 border-ink px-2.5 py-0.5 font-display text-[13px] font-black uppercase tracking-[0.06em] ${crowd.on ? 'bg-spot text-ink' : 'bg-paper text-ink'}`}>
+            {crowd.on ? 'Crowd on' : 'Crowd off'}
+          </button>
+          <span className="text-text-faint">Snapshot {relativeTime(p.generated_at) ?? '—'}</span>
+        </span>
+      } />
 
       {snapshotOld && (
         <div className="border-b border-divider bg-panel px-10 py-3">
