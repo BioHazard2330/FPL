@@ -15,23 +15,29 @@
    registers). The old dashboard (`data/dashboard.html`) keeps its own
    original CSS untouched - this file only ever governed the React app. */
 :root {
-  --void: #0b0e13;
-  --panel: #12161d;
-  --raised: #1a1f28;
-  --divider: #262d38;
-  --text: #edf0f5;
-  --text-muted: #a3adbb;
-  --text-faint: #6e7a8a;
+  /* THE MATCHDAY PROGRAMME (2026-10-29): newsprint, black ink and spot colours, replacing the dark navy and mint
+     that read as every AI dashboard. Token names are kept so every component follows; their meaning is unchanged
+     (pitch-green is still "good", alert-red still "bad"), only the ink they print in. */
+  --void: #e9e0cc;
+  --panel: #f6f0e2;
+  --raised: #e2d7bf;
+  --divider: #c7b99c;
+  --text: #17130e;
+  --text-muted: #463e32;
+  --text-faint: #7d715d;
+  --ink: #17130e;
+  --paper: #f6f0e2;
+  --spot: #ff4614;
 
-  --pitch-green: #3ecf8e;
-  --pitch-green-deep: #2aa974;
-  --pitch-green-ink: #04140d;
-  --broadcast-gold: #e8b65a;
-  --broadcast-gold-ink: #1a1204;
-  --broadcast-blue: #4a7be8;
-  --broadcast-blue-ink: #f5f7fb;
-  --alert-red: #f0594a;
-  --alert-red-ink: #fff7f6;
+  --pitch-green: #0b7d40;
+  --pitch-green-deep: #075c2e;
+  --pitch-green-ink: #fbf6ea;
+  --broadcast-gold: #b97900;
+  --broadcast-gold-ink: #17130e;
+  --broadcast-blue: #1c3fd1;
+  --broadcast-blue-ink: #fbf6ea;
+  --alert-red: #d82b17;
+  --alert-red-ink: #fbf6ea;
 
   --fs-label: 0.6875rem;
   --fs-body: 0.9375rem;
@@ -39,7 +45,7 @@
   --fs-headline: 1.75rem;
   --fs-display: clamp(3.5rem, 8vw, 7rem);
 
-  color-scheme: dark;
+  color-scheme: light;
 
   /* Real shadcn/Radix semantic tokens, mapped to the real palette above.
      Sharp by default (`--radius: 0`) - this system is flat color blocks,
@@ -68,25 +74,25 @@
   --chart-3: var(--broadcast-gold);
   --chart-4: var(--alert-red);
   --chart-5: var(--text-muted);
-  --sidebar: var(--void);
-  --sidebar-foreground: var(--text);
+  --sidebar: var(--ink);
+  --sidebar-foreground: var(--paper);
   --sidebar-primary: var(--pitch-green);
   --sidebar-primary-foreground: var(--pitch-green-ink);
-  --sidebar-accent: var(--raised);
-  --sidebar-accent-foreground: var(--text);
-  --sidebar-border: var(--divider);
+  --sidebar-accent: #2a241b;
+  --sidebar-accent-foreground: var(--paper);
+  --sidebar-border: #2a241b;
   --sidebar-ring: var(--pitch-green);
   --radius: 10px;
   --radius-md: 8px; /* shadcn button.tsx references this directly - keep it sharp, not undefined */
 }
 
-/* Deliberately no `prefers-color-scheme: light` branch (2026-09-08 redesign
-   decision, DESIGN.md's own "let the redesign decide" theme call) - a
-   broadcast-truck-dark canvas is the real, considered choice for this
-   product (checked at a desk, sometimes at night before a deadline), not a
-   default. Single-theme, committed. */
+/* Single theme, committed: the printed matchday programme (2026-10-29). The dark broadcast-truck canvas it replaces
+   read, to the one person who uses this, as the generic AI dashboard. */
 
 @theme inline {
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-spot: var(--spot);
   --color-void: var(--void);
   --color-panel: var(--panel);
   --color-raised: var(--raised);
@@ -139,7 +145,8 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --font-display: "Big Shoulders Display", "Oswald", "Arial Narrow", sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
 
   --text-label: var(--fs-label);
   --text-body: var(--fs-body);
@@ -176,6 +183,39 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/ibm-plex-sans.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Big Shoulders Display";
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url("/fonts/big-shoulders-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Big Shoulders Display";
+  font-style: normal;
+  font-weight: 500 900;
+  font-display: swap;
+  src: url("/fonts/big-shoulders-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-italic.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-italic-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 @font-face {
@@ -249,7 +289,7 @@ body,
    =================================================================== */
 :root {
   --ease-broadcast: cubic-bezier(0.16, 1, 0.3, 1);
-  --pitch-line: color-mix(in srgb, var(--text) 11%, transparent);
+  --pitch-line: color-mix(in srgb, var(--ink) 34%, transparent);
 }
 
 /* 1. DATA ARRIVAL. A screen's content replaces its skeleton exactly once,
@@ -342,18 +382,10 @@ body,
    Part 6's own "keep the pitch, make it the dominant visual object." */
 .pitch-surface {
   position: relative;
-  border-radius: 12px;
+  border-radius: 0;
   overflow: hidden;
-  background:
-    radial-gradient(120% 90% at 50% 40%, transparent 55%, color-mix(in srgb, var(--void) 55%, transparent) 100%),
-    repeating-linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--pitch-green) 11%, var(--void)) 0,
-      color-mix(in srgb, var(--pitch-green) 11%, var(--void)) 56px,
-      color-mix(in srgb, var(--pitch-green) 7%, var(--void)) 56px,
-      color-mix(in srgb, var(--pitch-green) 7%, var(--void)) 112px
-    );
-  border: 1px solid color-mix(in srgb, var(--pitch-green) 18%, var(--divider));
+  background: repeating-linear-gradient(180deg, #cfe2c3 0, #cfe2c3 56px, #c2d9b5 56px, #c2d9b5 112px);
+  border: 2px solid var(--ink);
 }
 .pitch-surface::before {
   content: "";
@@ -361,8 +393,8 @@ body,
   left: 0;
   right: 0;
   top: 50%;
-  height: 1px;
-  background: color-mix(in srgb, var(--text) 14%, transparent);
+  height: 2px;
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
 }
 .pitch-surface::after {
   content: "";
@@ -371,7 +403,7 @@ body,
   top: 50%;
   width: 130px;
   height: 130px;
-  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  border: 2px solid color-mix(in srgb, var(--ink) 30%, transparent);
   border-radius: 999px;
   transform: translate(-50%, -50%);
 }
@@ -388,11 +420,10 @@ body,
    carries the faint mowing stripes of a pitch. Section titles become chyrons (see below). */
 main {
   background-color: var(--void);
-  background-image: repeating-linear-gradient(
-    180deg,
-    transparent 0 140px,
-    color-mix(in srgb, var(--text) 1.4%, transparent) 140px 280px
-  );
+  background-image:
+    radial-gradient(color-mix(in srgb, var(--ink) 9%, transparent) 0.9px, transparent 1.4px),
+    linear-gradient(180deg, color-mix(in srgb, var(--spot) 7%, transparent) 0, transparent 340px);
+  background-size: 7px 7px, 100% 100%;
 }
 .screen-frame {
   width: 100%;
@@ -408,13 +439,9 @@ main {
 }
 .screen-frame > * > * {
   background-color: var(--panel);
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--text) 2.6%, transparent) 0, transparent 160px);
-  border: 0;
-  border-radius: 6px;
-  box-shadow:
-    inset 0 1px 0 0 color-mix(in srgb, var(--text) 7%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.5),
-    0 22px 44px -26px rgba(0, 0, 0, 0.9);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 0 var(--ink);
   overflow: hidden;
 }
 .screen-frame > * > *:empty {
@@ -438,7 +465,7 @@ main {
   [class*="bg-broadcast-blue"],
   [class*="bg-alert-red"],
   [class*="bg-panel"] {
-    border-radius: 6px;
+    border-radius: 2px;
   }
 }
 
@@ -487,20 +514,20 @@ main {
    lower-third a broadcast puts over a replay. */
 .screen-frame h2.font-display {
   text-transform: uppercase;
-  letter-spacing: 0.035em;
-  font-weight: 600;
-  font-size: 1.3rem;
-  line-height: 1.1;
+  letter-spacing: 0.005em;
+  font-weight: 900;
+  font-size: 2.05rem;
+  line-height: 0.92;
 }
 .screen-frame h2.font-display::before {
   content: "";
   display: inline-block;
-  width: 9px;
-  height: 0.95em;
-  margin-right: 11px;
-  vertical-align: -0.1em;
-  background: var(--pitch-green);
-  clip-path: polygon(35% 0, 100% 0, 65% 100%, 0 100%);
+  width: 0.55em;
+  height: 0.72em;
+  margin-right: 0.3em;
+  vertical-align: 0.02em;
+  background: var(--spot);
+  clip-path: polygon(30% 0, 100% 0, 70% 100%, 0 100%);
 }
 .screen-frame h2.font-display + p,
 .screen-frame header h2.font-display ~ p {
@@ -511,28 +538,26 @@ main {
 /* A slab outside the screen frame's own bands (a Panel inside a grid): the same lit edge and depth. */
 .slab {
   background-color: var(--panel);
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--text) 2.6%, transparent) 0, transparent 160px);
-  border-radius: 6px;
-  box-shadow:
-    inset 0 1px 0 0 color-mix(in srgb, var(--text) 7%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.5),
-    0 22px 44px -26px rgba(0, 0, 0, 0.9);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 0 var(--ink);
 }
 .slab h2.font-display {
   text-transform: uppercase;
-  letter-spacing: 0.035em;
-  font-size: 1.3rem;
-  line-height: 1.1;
+  letter-spacing: 0.005em;
+  font-weight: 900;
+  font-size: 2.05rem;
+  line-height: 0.92;
 }
 .slab h2.font-display::before {
   content: "";
   display: inline-block;
-  width: 9px;
-  height: 0.95em;
-  margin-right: 11px;
-  vertical-align: -0.1em;
-  background: var(--pitch-green);
-  clip-path: polygon(35% 0, 100% 0, 65% 100%, 0 100%);
+  width: 0.55em;
+  height: 0.72em;
+  margin-right: 0.3em;
+  vertical-align: 0.02em;
+  background: var(--spot);
+  clip-path: polygon(30% 0, 100% 0, 70% 100%, 0 100%);
 }
 
 /* A toned note: what used to be a coloured bar down one side is a tinted, softly outlined block in the same colour. */
@@ -550,9 +575,9 @@ main {
 /* Charts: the tooltip is the app's own panel, not ApexCharts' default box. */
 .apexcharts-tooltip {
   background: var(--panel) !important;
-  border: 1px solid var(--divider) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+  border: 2px solid var(--ink) !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 4px 0 var(--ink) !important;
   color: var(--text) !important;
   overflow: hidden;
 }
@@ -598,4 +623,53 @@ main {
 }
 @media (prefers-reduced-motion: reduce) {
   .ticker-track { animation: none; }
+}
+
+/* The display face is a stadium-signage condensed; at the semibold weight most components ask for it reads thin on
+   paper, so display text is set heavy everywhere. */
+.font-display.font-semibold { font-weight: 800; }
+.font-display.font-bold { font-weight: 900; }
+.font-display.font-medium { font-weight: 700; }
+
+/* Editorial verdict lines: the serif italic, the programme's voice. */
+.voice {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+
+/* Programme page numbers: every band on a screen carries its running number, printed large and faint behind its
+   content in the top-right corner. Decorative and honest - it encodes order on the page, nothing else. */
+.screen-frame > * {
+  counter-reset: band;
+}
+.screen-frame > * > *:not(.bare) {
+  counter-increment: band;
+  position: relative;
+  isolation: isolate;
+}
+.screen-frame > * > *:not(.bare)::after {
+  content: counter(band, decimal-leading-zero);
+  position: absolute;
+  top: -0.12em;
+  right: 0.12em;
+  z-index: -1;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 6.5rem;
+  line-height: 1;
+  color: color-mix(in srgb, var(--ink) 6%, transparent);
+  pointer-events: none;
+}
+
+/* Print corners: inside the frame nothing is softly rounded; pills, avatars and rings (rounded-full) keep their shape. */
+.screen-frame .rounded-xl,
+.screen-frame .rounded-lg,
+.screen-frame .rounded-md {
+  border-radius: 2px !important;
+}
+/* A collapsed section is a single line; its page number would sit under the Open tab. */
+.screen-frame > * > details::after {
+  display: none;
 }

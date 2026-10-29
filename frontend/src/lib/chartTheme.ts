@@ -68,7 +68,7 @@ export function baseChart(overrides: ApexOptions = {}): ApexOptions {
       bar: { borderRadius: 5, borderRadiusApplication: 'end', columnWidth: '52%', ...(overrides.plotOptions?.bar ?? {}) },
     },
     tooltip: {
-      theme: 'dark',
+      theme: 'light',
       style: { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" },
       ...(overrides.tooltip ?? {}),
     },

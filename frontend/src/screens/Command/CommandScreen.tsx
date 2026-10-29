@@ -197,17 +197,21 @@ export function CommandScreen() {
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <MatchdayHeader plan={plan} />
         <CommandStage plan={plan} />
-        <nav className="bare flex items-end gap-1 border-b border-divider" aria-label="Command sections">
-          {tabs.map((t) => (
+        <nav className="bare -mb-4 flex items-end gap-2 border-b-[3px] border-ink" aria-label="Command sections">
+          {tabs.map((t, i) => (
             <button
               key={t.key}
               type="button"
               onClick={() => setTab(t.key)}
-              className={`group relative px-5 pb-3 pt-2 text-left transition-colors ${tab === t.key ? 'text-text' : 'text-text-faint hover:text-text-muted'}`}
+              className={`relative -mb-[3px] border-[3px] border-b-0 px-6 pb-2.5 pt-2 text-left transition-transform ${
+                tab === t.key
+                  ? 'border-ink bg-ink text-paper'
+                  : 'border-ink/25 bg-paper text-text-muted hover:-translate-y-1 hover:border-ink hover:text-ink'
+              }`}
             >
-              <span className="block font-display text-lg font-semibold uppercase tracking-[0.05em]">{t.label}</span>
-              <span className="block text-[11.5px] uppercase tracking-[0.12em] opacity-70">{t.note}</span>
-              <span className={`absolute inset-x-3 -bottom-px h-[4px] bg-pitch-green [clip-path:polygon(3%_0,100%_0,97%_100%,0_100%)] transition-opacity ${tab === t.key ? 'opacity-100' : 'opacity-0 group-hover:opacity-30'}`} />
+              <span className={`absolute -top-3 left-3 font-display text-[13px] font-black ${tab === t.key ? 'text-spot' : 'text-text-faint'}`}>{String(i + 1).padStart(2, '0')}</span>
+              <span className="block font-display text-[1.6rem] font-black uppercase leading-none">{t.label}</span>
+              <span className={`voice block text-[15px] ${tab === t.key ? 'text-paper/70' : 'text-text-faint'}`}>{t.note}</span>
             </button>
           ))}
         </nav>

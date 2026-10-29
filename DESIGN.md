@@ -1,28 +1,28 @@
 ---
 name: FPL Agent
-description: A personal FPL decision terminal built as a live football broadcast package - a match-graphics truck, not a SaaS dashboard.
+description: A personal FPL decision terminal printed as a matchday programme - newsprint, black ink, one vermilion spot colour, stadium-signage type - not a SaaS dashboard.
 colors:
-  canvas-void: "#0B0E13"
-  surface-panel: "#12161D"
-  surface-raised: "#1A1F28"
-  pitch-green: "#3ECF8E"
-  pitch-green-deep: "#2AA974"
-  broadcast-gold: "#E8B65A"
-  broadcast-blue: "#4A7BE8"
-  alert-red: "#F0594A"
-  text-primary: "#EDF0F5"
-  text-muted: "#A3ADBB"
-  text-faint: "#6E7A8A"
-  divider: "#262D38"
+  paper-void: "#E9E0CC"
+  paper-panel: "#F6F0E2"
+  paper-raised: "#E2D7BF"
+  ink: "#17130E"
+  spot-vermilion: "#FF4614"
+  pitch-green: "#0B7D40"
+  broadcast-gold: "#B97900"
+  broadcast-blue: "#1C3FD1"
+  alert-red: "#D82B17"
+  text-muted: "#463E32"
+  text-faint: "#7D715D"
+  divider: "#C7B99C"
 typography:
   display:
-    fontFamily: "Oswald, 'Arial Narrow', sans-serif"
+    fontFamily: "'Big Shoulders Display', Oswald, 'Arial Narrow', sans-serif"
     fontSize: "clamp(3.5rem, 8vw, 7rem)"
     fontWeight: 700
     lineHeight: 0.92
     letterSpacing: "-0.01em"
   headline:
-    fontFamily: "Oswald, 'Arial Narrow', sans-serif"
+    fontFamily: "'Big Shoulders Display', Oswald, 'Arial Narrow', sans-serif"
     fontSize: "1.75rem"
     fontWeight: 600
     lineHeight: 1.05
@@ -136,56 +136,54 @@ at once rather than trading one for the other.
 
 ## 2. Colour
 
-Restrained and saturated in the right places. Neutrals carry the page; colour
-marks meaning and is never decoration. (2026-10-18 rebuild: the first palette
-was a hot orange-red and neon green on blue-black, and read as a toy next to
-the analytical sites it is meant to rival. The hues below are the same four
-meanings, pulled toward the calmer end: a mint, a champagne, an azure and a
-coral, on a graphite canvas.)
+**The matchday programme (2026-10-29, replacing the dark broadcast palette).** The graphite canvas with mint, champagne,
+azure and coral read, to the one person this is for, as every AI-generated dashboard ("i still dont like the colour,
+it still just looks so ai like"). The whole app is now printed: warm newsprint paper, near-black ink, and spot colours
+the way a club programme or fanzine uses them. Token names are unchanged so every component followed; their meanings
+are unchanged, only the ink.
 
 | Role | Token | Hex | Meaning |
 |---|---|---|---|
-| Verdict | `pitch-green` | `#3ECF8E` | the recommended action, positive delta, healthy, easy fixture |
-| Standout | `broadcast-gold` | `#E8B65A` | captaincy, premium pick, provisional/watch, "my squad" marker |
-| Neutral analytical | `broadcast-blue` | `#4A7BE8` | informational, the away side, non-verdict data |
-| Danger | `alert-red` | `#F0594A` | risk, fragile, unavailable, hard fixture, live |
-| Canvas | `void` | `#0B0E13` | base; graphite, never `#000` |
-| Surface | `panel` | `#12161D` | first layer - the framed bands of a screen |
-| Surface | `raised` | `#1A1F28` | second layer - tags, hover, nested cells |
-| Rule | `divider` | `#262D38` | separation: the 1px edge of every frame and row |
-| Ink | `text` / `muted` / `faint` | `#EDF0F5` / `#A3ADBB` / `#6E7A8A` | cool off-white, never `#fff` |
+| Brand spot | `spot` | `#FF4614` | the call (verdict slab), section marks, the active tab and nav number, the ticker label; never a data meaning |
+| Good | `pitch-green` | `#0B7D40` | the recommended direction, positive delta, easy fixture, availability |
+| Standout | `broadcast-gold` | `#B97900` | captaincy, "my squad", watch |
+| Neutral data | `broadcast-blue` | `#1C3FD1` | informational, away side, links |
+| Bad | `alert-red` | `#D82B17` | risk, unavailable, hard fixture, live |
+| Page | `void` | `#E9E0CC` | newsprint, with a 7px halftone dot and a vermilion wash at the top |
+| Surface | `panel` / `paper` | `#F6F0E2` | printed card |
+| Surface | `raised` | `#E2D7BF` | tags, nested cells, the bench strip |
+| Rule | `divider` | `#C7B99C` | light rules inside a card |
+| Ink | `ink` / `text` / `muted` / `faint` | `#17130E` / `#17130E` / `#463E32` / `#7D715D` | card borders, hard shadows, text |
 
-Status chips and phase labels are a tint of their colour (`bg-alert-red/15
-text-alert-red`), not a solid block; a solid fill is reserved for the one
-verdict per screen and for small filled tags.
+Text on a filled ink, green, blue or red block is `paper`; on gold or vermilion it is `ink`. Graphics that are pictures
+in their own right (the dark-turf shot maps, the club-colour photo plates) keep their own colours as inset plates.
 
-**Semantic discipline.** A colour means one thing per context and keeps
-meaning across screens. Green is the recommendation on Command, the home
-side in a match, and an easy fixture on a ticker — in all three it is "the
-good direction." Gold is never used to mean danger; red is never used for
-emphasis.
-
-**One category owns a section.** A chip-type verdict is blue throughout its
-band, not blue-plus-a-random-second-accent.
+**Semantic discipline** is unchanged: green is the good direction everywhere, red the bad, gold never means danger,
+and the vermilion spot never carries a data meaning at all.
 
 ---
 
 ## 3. Typography
 
-Four registers. Each has a job; using one outside its job is the drift this
+**2026-10-29:** display type is **Big Shoulders Display** (500-900, self-hosted in `public/fonts`, latin and latin-ext),
+the stadium-signage condensed, set heavy (semibold display text renders at 800, bold at 900 by one rule in `index.css`)
+and in capitals for titles. **Instrument Serif italic** is the programme's voice: verdict lines, tab notes, the
+sidebar's edition line (`.voice`, `font-serif`). Body and data stay IBM Plex Sans with tabular figures. Oswald remains
+only as a fallback. Check `document.fonts` after any change: the 2026-09-08 lesson was that a face named in CSS is not
+a face on screen.
+
+
+Five registers. Each has a job; using one outside its job is the drift this
 system watches for.
 
-- **Display** — Oswald 700, condensed, `clamp(3.5rem, 8vw, 7rem)`.
-  The single hero verdict per screen. `PLAY FREE HIT`. `ACT`. `FRAGILE`. A
-  scoreline. Nothing else earns this size.
-- **Headline** — Oswald 600–700, 1.1–2.5rem. Player names on a face-off,
-  section verdicts, a team's short name on a scoreline, formation strings.
-- **Label** — IBM Plex Sans 500, 12–13px, sentence case, no tracking. The
-  small caption above a number or beside a rule. (Until 2026-10-24 this was
-  700, 9–11px, tracked and uppercase, and was worn by about five hundred
-  elements; the screens read as shouting in a terminal, so it was calmed.
-  Floor is now 12px. Uppercase survives only where the text is itself an
-  abbreviation: club codes, FDR chips, positions.)
+- **Display** — Big Shoulders Display 900, capitals. The call, poster names (the armband spotlight, the player file),
+  the matchday figures. Nothing else earns poster size.
+- **Headline** — Big Shoulders Display 800-900, 1.3-2.1rem: section chyrons, tab names, the header screen name,
+  numbers in a figure.
+- **Voice** — Instrument Serif italic, 15-19px: the one editorial line under something (a verdict, a tab note,
+  "next best"). Never a number, never a label.
+- **Label** — IBM Plex Sans 500-700, 11-13px. Section captions above a block are tracked small capitals at 11px (one
+  rule in `index.css`); other labels sentence case.
 - **Body** — IBM Plex Sans 400, 0.9375rem, capped ~70ch. Reasoning,
   evidence, disclosure text.
 - **Data** — IBM Plex Sans 600 with `font-feature-settings: "tnum"` (the
@@ -205,37 +203,29 @@ one the code actually follows, and it is the right one.
 
 ## 4. Elevation and separation
 
-**Slabs on a pitch (2026-10-28 rebuild, replacing "frames, not slabs").** The uniform rounded, outlined card on every
-band made every screen read as a stack of identical boxes - the generic dark dashboard section 1 rejects - and the user
-called it out as AI slop. Every top-level band of a screen (`.screen-frame > * > *`) and every `Panel`/`Disclosure`
-(`.slab`) is now a broadcast slab: `panel` surface, a 6px corner, no outline, a lit top edge (1px inset highlight and a
-faint top-down sheen) and real depth beneath (a tight contact shadow and a long soft one). The canvas behind them
-carries faint horizontal mowing stripes (`main`, 1.4% contrast bands of 140px) - the one texture on the page, and a
-football one. Gap between bands 28px; column up to 1440px.
+**Printed cards (2026-10-29).** Every top-level band (`.screen-frame > * > *`) and every `Panel`/`Disclosure`/
+`.slab` is a paper card with a 2px ink border, square corners and a hard 6px ink offset shadow - the shadow of a printed
+sticker, not a glow. Inside the frame `rounded-md/lg/xl` are forced to 2px; `rounded-full` (avatars, rings) keeps its
+shape. Every band carries its running page number (01, 02...) printed large and faint in its top-right corner (a CSS
+counter, behind content; not on collapsed `details`). The sidebar is a solid ink spine with paper text, vermilion
+group labels and the active item as a paper slip with a vermilion offset; the header is paper on a 2px ink rule with
+the screen name in 2.1rem display capitals.
 
 Layering is:
 
-1. surface colour (`void` -> `panel` -> `raised`),
-2. depth (slab shadow) between bands,
-3. a 1px rule (`border-b border-divider`) between rows inside a slab,
+1. paper colour (`void` -> `panel` -> `raised`),
+2. ink border and hard offset shadow between bands,
+3. a 1px `divider` rule between rows inside a card,
 4. a `gap-px` grid over a `bg-divider` parent for hairline cell rules,
-5. a **tone** (`.tone` plus a `border-<colour>` class): a tinted, softly outlined block in that colour to mark a note's
-   category or severity. **No side tabs.** `border-l-4`/`border-l-2` colour bars down one side of a card are the most
-   recognisable AI-UI tell and were removed everywhere (19 sites); a thin `border-l border-divider` between columns is
-   a divider and stays.
+5. a **tone** (`.tone` plus a `border-<colour>` class): a tinted, outlined note in that colour. No side tabs.
 
-**Section titles are chyrons.** Every section `h2.font-display` inside the frame or a slab is the display face in
-capitals, tracked 0.035em, 1.3rem, behind an angled pitch-green slash (a clip-path parallelogram drawn by `::before`).
-A title that is a `span` does not get it, so section titles are `h2`. The small bold grey caption above a block
-(`text-[13px] font-bold text-text-faint`) is set as tracked small capitals at 11px by one rule in `index.css`.
+**Section titles** are `h2.font-display`: 2.05rem, weight 900, capitals, behind a vermilion parallelogram (`::before`).
+**Labels, not capsules:** `Pill` is small capitals behind a slanted colour tick.
 
-**Labels, not capsules.** `Pill` is small capitals behind a slanted colour tick, no filled capsule, so a row of them
-reads as captions rather than a scatter of buttons.
-
-**The matchday bug** (`components/command/MatchdayHeader.tsx`) opens Command: the week's call on the angled
-pitch-green `.verdict-block`, then the deadline, overall rank, season points and the mini-league lead chance as
-oversized figures. `clip-path` is now used for the verdict slab, the chyron slash, the sidebar wordmark and the active
-nav marker - all the same angled-cut family.
+**Command** opens on the matchday bar (the call on the vermilion `.verdict-block`, oversized figures, a rotated rubber
+stamp for a lineup gain), then the stage (`CommandStage.tsx`: a pinhole-projected printed pitch, upright shirts with
+ink name slips, an ink fixture ticker with a vermilion label, the armband spotlight as a club-colour photo plate with a
+halftone screen and a poster-sized name with a vermilion offset), then five folder tabs in ink.
 
 **The `gap-px` grid has one failure mode, and it is a rule:** an empty grid
 track renders as a solid grey block. Column counts must follow the number of

@@ -19,7 +19,7 @@ const POSITION_ROW_LABEL: Record<string, string> = { GKP: 'GK', DEF: 'DEF', MID:
 
 const OPP_KIND: Record<string, { ink: string; bar: string; blurb: string }> = {
   Breakout: { ink: 'text-pitch-green', bar: 'bg-pitch-green', blurb: 'cheap, owned by few, projecting well' },
-  Value: { ink: 'text-[#8fb0ff]', bar: 'bg-broadcast-blue', blurb: 'points per pound' },
+  Value: { ink: 'text-broadcast-blue', bar: 'bg-broadcast-blue', blurb: 'points per pound' },
   Trap: { ink: 'text-alert-red', bar: 'bg-alert-red', blurb: 'owned widely, likely to disappoint' },
   'Role change': { ink: 'text-broadcast-gold', bar: 'bg-broadcast-gold', blurb: 'a new job on the pitch' },
 }

@@ -5,11 +5,11 @@ import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
 import { clubColors } from '@/lib/clubs'
-import { Face } from '@/components/ui/Face'
 import { FixtureRun, RunPressure } from '@/components/football/FixtureRun'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { CHART_COLORS, areaFade, baseChart, lastPoint } from '@/lib/chartTheme'
 import { crestUrl, fetchPlayerProfile } from '@/lib/api'
+import { HeroPhoto } from '@/components/ui/HeroPhoto'
 import { ProjectionBand } from '@/components/shell/ProjectionBand'
 import { StoriesRail } from '@/components/shell/StoriesRail'
 import { PlayerShots } from '@/components/football/PlayerShots'
@@ -94,33 +94,36 @@ export function PlayerScreen() {
       {/* THE FILE HEAD - kit at real scale, identity, and the one thing that
           changes whether any of the rest matters: availability. */}
       <div
-        className="relative overflow-hidden border-b border-divider"
-        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(pl.team_code).primary} 38%, #0b0e13) 0%, #12161d 62%)` }}
+        className="relative min-h-[23rem] overflow-hidden"
+        style={{ background: `linear-gradient(120deg, ${clubColors(pl.team_code).primary} 0%, color-mix(in srgb, ${clubColors(pl.team_code).primary} 72%, #17130e) 100%)` }}
       >
-        <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          <Face code={pl.photo_code} teamCode={pl.team_code} isGkp={pl.position === 'GKP'} size="2xl" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-3">
-              {crest && <img src={crest} alt="" className="h-6 w-6" />}
-              <Link to={`/club/${pl.team_id}`} className="text-sm font-bold text-text-muted hover:text-text">
-                {pl.team_name}
-              </Link>
-              <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{pl.position}</span>
-              {pl.is_mine && <span className="bg-broadcast-gold px-1.5 py-0.5 text-[12px] font-bold text-broadcast-gold-ink">IN MY SQUAD</span>}
-              <Link to={`/compare?a=${pl.player_id}`} className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted hover:text-text">Compare</Link>
-            </div>
-            <div className="mt-1 font-display text-5xl font-bold leading-none text-text">{pl.name}</div>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              {pl.price_m !== null && (
-                <span className="tabular font-display text-2xl font-bold text-text">£{pl.price_m.toFixed(1)}m</span>
-              )}
-              {status && (
-                <span className={`px-2 py-0.5 text-[12px] font-bold ${status.fill}`}>{status.label}</span>
-              )}
-            </div>
-            {pl.news && <p className="mt-2 max-w-2xl text-sm text-broadcast-gold">{pl.news}</p>}
+        <div className="absolute inset-0 opacity-35 [background-image:radial-gradient(rgba(23,19,14,0.6)_1px,transparent_1.5px)] [background-size:6px_6px]" />
+        {crest && <img src={crest} alt="" className="absolute -left-16 -top-16 size-[26rem] opacity-[0.16] mix-blend-multiply" />}
+        <div className="absolute inset-y-0 right-0 w-3" style={{ background: clubColors(pl.team_code).accent }} />
+        <HeroPhoto
+          code={pl.photo_code}
+          teamCode={pl.team_code}
+          isGkp={pl.position === 'GKP'}
+          className="absolute bottom-0 right-[18%] h-[23rem] w-[23rem] drop-shadow-[10px_10px_0_rgba(23,19,14,0.35)]"
+        />
+        <div className="relative flex min-h-[23rem] flex-col justify-end px-10 pb-8 pt-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/club/${pl.team_id}`} className="bg-ink px-2 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-paper hover:bg-spot hover:text-ink">
+              {pl.team_name}
+            </Link>
+            <span className="bg-paper px-2 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-ink">{pl.position}</span>
+            {pl.is_mine && <span className="rotate-[-3deg] bg-broadcast-gold px-2 py-1 text-[12px] font-black uppercase tracking-[0.14em] text-broadcast-gold-ink shadow-[3px_3px_0_var(--ink)]">In my squad</span>}
+            <Link to={`/compare?a=${pl.player_id}`} className="border-2 border-ink bg-paper px-2 py-0.5 text-[12px] font-bold uppercase tracking-[0.14em] text-ink hover:bg-spot">Compare</Link>
           </div>
-          <div className="flex flex-col items-end gap-2">
+          <div className="mt-3 max-w-[60%] font-display text-[6.5rem] font-black uppercase leading-[0.8] text-paper [text-shadow:6px_6px_0_var(--ink)]">{pl.name}</div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {pl.price_m !== null && (
+              <span className="bg-paper px-3 py-1 font-display text-3xl font-black tabular text-ink shadow-[4px_4px_0_var(--ink)]">£{pl.price_m.toFixed(1)}m</span>
+            )}
+            {status && <span className={`px-2 py-1 text-[12px] font-bold uppercase tracking-wide ${status.fill}`}>{status.label}</span>}
+          </div>
+          {pl.news && <p className="voice mt-3 max-w-xl text-[19px] text-paper">{pl.news}</p>}
+          <div className="absolute right-6 top-6 flex flex-col items-end gap-2 bg-paper p-3 shadow-[4px_4px_0_var(--ink)]">
             <FixtureRun fixtures={p.fixtures} max={5} showEvent />
             <RunPressure fixtures={p.fixtures} max={5} />
           </div>

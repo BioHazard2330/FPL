@@ -107,7 +107,7 @@ export function ClubScreen() {
 
       <div
         className="relative overflow-hidden border-b border-divider"
-        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(c.code).primary} 42%, #0b0e13) 0%, #12161d 65%)` }}
+        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(c.code).primary} 34%, #f6f0e2) 0%, #f6f0e2 62%)` }}
       >
         <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
           {crest && <img src={crest} alt="" className="h-24 w-24 shrink-0 drop-shadow-lg" />}

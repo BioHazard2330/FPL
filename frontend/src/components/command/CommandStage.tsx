@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
-import { crestUrl, playerPhotoUrl, shirtUrl } from '@/lib/api'
+import { crestUrl, shirtUrl } from '@/lib/api'
+import { HeroPhoto } from '@/components/ui/HeroPhoto'
 import { clubColors } from '@/lib/clubs'
 import { fdrFill } from '@/lib/fdr'
 import type { ActionSquadBlock, ActionSquadPlayer, FixtureContext, WeekPlanPayload } from '@/lib/types'
@@ -49,20 +50,20 @@ function circle(cx: number, cy: number, r: number, from = 0, to = Math.PI * 2): 
 
 function Pitch() {
   const bands = Array.from({ length: 10 }, (_, i) => i)
-  const line = 'color-mix(in srgb, #edf0f5 34%, transparent)'
+  const line = 'color-mix(in srgb, #17130e 45%, transparent)'
   return (
     <svg viewBox={`0 0 ${VW} ${VH}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid meet" aria-hidden>
       <defs>
         <linearGradient id="stage-fade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#0b0e13" stopOpacity="0.85" />
-          <stop offset="0.35" stopColor="#0b0e13" stopOpacity="0" />
+          <stop offset="0" stopColor="#f6f0e2" stopOpacity="0.9" />
+          <stop offset="0.3" stopColor="#f6f0e2" stopOpacity="0" />
         </linearGradient>
       </defs>
       {bands.map((i) => (
         <path
           key={i}
           d={rect(-HALF_W - 3, i * 10.5, HALF_W + 3, (i + 1) * 10.5)}
-          fill={i % 2 === 0 ? '#16402c' : '#1b4a33'}
+          fill={i % 2 === 0 ? '#b9d6a8' : '#a9cc96'}
         />
       ))}
       <g fill="none" stroke={line} strokeWidth="1.6">
@@ -106,13 +107,13 @@ function Player({ p, block, fixtures, scale, moveIn }: { p: ActionSquadPlayer; b
   return (
     <div className="flex w-44 flex-col items-center" style={{ transform: `translate(-50%, -82%) scale(${scale})`, transformOrigin: '50% 82%' }}>
       <div className="relative">
-        {shirt && <img src={shirt} alt="" className="h-[3.6rem] w-[3.6rem] object-contain drop-shadow-[0_10px_8px_rgba(0,0,0,0.6)]" />}
-        {captain && <span className="absolute -right-2 top-1 flex size-6 items-center justify-center rounded-full bg-broadcast-gold font-display text-[13px] font-bold text-broadcast-gold-ink ring-2 ring-[#0b0e13]">C</span>}
-        {vice && <span className="absolute -right-2 top-1 flex size-6 items-center justify-center rounded-full bg-raised font-display text-[13px] font-bold text-text ring-2 ring-[#0b0e13]">V</span>}
+        {shirt && <img src={shirt} alt="" className="h-[3.6rem] w-[3.6rem] object-contain drop-shadow-[3px_4px_0_rgba(23,19,14,0.35)]" />}
+        {captain && <span className="absolute -right-2 top-1 flex size-6 items-center justify-center rounded-full bg-broadcast-gold font-display text-[13px] font-bold text-broadcast-gold-ink ring-2 ring-ink">C</span>}
+        {vice && <span className="absolute -right-2 top-1 flex size-6 items-center justify-center rounded-full bg-raised font-display text-[13px] font-bold text-text ring-2 ring-ink">V</span>}
         {p.is_new && <span className="absolute -left-3 top-1 bg-pitch-green px-1.5 font-display text-[12px] font-bold uppercase text-pitch-green-ink">in</span>}
       </div>
-      <Link to={`/player/${p.player_id}`} className="-mt-1 flex items-stretch whitespace-nowrap shadow-[0_8px_18px_-6px_rgba(0,0,0,0.8)] hover:brightness-125">
-        <span className="max-w-[5.6rem] truncate bg-[#0b0e13]/92 px-2 py-0.5 text-[13px] font-semibold text-text">{p.name}</span>
+      <Link to={`/player/${p.player_id}`} className="-mt-1 flex items-stretch whitespace-nowrap border-2 border-ink shadow-[3px_3px_0_var(--ink)] hover:-translate-y-px">
+        <span className="max-w-[5.6rem] truncate bg-ink px-2 py-0.5 text-[13px] font-semibold text-paper">{p.name}</span>
         <span className="bg-pitch-green px-1.5 py-0.5 font-display text-[14px] font-bold tabular text-pitch-green-ink">{p.median.toFixed(1)}</span>
         {next && (
           <span className={`flex items-center px-1.5 text-[10.5px] font-bold ${fdrFill(next.difficulty)}`}>
@@ -134,33 +135,32 @@ function Spotlight({ plan }: { plan: WeekPlanPayload }) {
   const second = plan.captain?.second
   return (
     <div
-      className="relative flex h-full min-h-[470px] flex-col justify-end overflow-hidden"
-      style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${c.primary} 78%, #0b0e13) 0%, color-mix(in srgb, ${c.primary} 30%, #0b0e13) 55%, #0b0e13 100%)` }}
+      className="relative flex h-full min-h-[470px] flex-col justify-end overflow-hidden border-l-2 border-ink"
+      style={{ background: `linear-gradient(165deg, ${c.primary} 0%, color-mix(in srgb, ${c.primary} 70%, #17130e) 100%)` }}
     >
-      {crest && <img src={crest} alt="" className="absolute -right-10 top-6 size-64 opacity-[0.13]" />}
-      <div className="absolute inset-y-0 left-0 w-[7px]" style={{ background: c.accent }} />
-      {cap.photo_code && (
-        <img
-          src={playerPhotoUrl(cap.photo_code, 'hero')}
-          alt=""
-          referrerPolicy="no-referrer"
-          className="absolute bottom-[7.5rem] right-0 h-[24rem] w-[24rem] object-contain object-bottom drop-shadow-[0_20px_30px_rgba(0,0,0,0.6)]"
-        />
-      )}
+      {crest && <img src={crest} alt="" className="absolute -right-10 top-6 size-64 opacity-[0.18] mix-blend-multiply" />}
+      <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(23,19,14,0.55)_1px,transparent_1.4px)] [background-size:6px_6px]" />
+      <div className="absolute inset-y-0 left-0 w-[10px]" style={{ background: c.accent }} />
+      <HeroPhoto
+        code={cap.photo_code}
+        teamCode={cap.team_code}
+        isGkp={cap.position === 'GKP'}
+        className="absolute bottom-[7.5rem] right-0 h-[24rem] w-[24rem] drop-shadow-[8px_8px_0_rgba(23,19,14,0.35)]"
+      />
       <div className="absolute left-6 top-5 flex items-center gap-2">
         <span className="flex size-8 items-center justify-center rounded-full bg-broadcast-gold font-display text-base font-bold text-broadcast-gold-ink">C</span>
-        <span className="text-[11.5px] font-bold uppercase tracking-[0.16em] text-text/80">The armband · GW{plan.event}</span>
+        <span className="bg-ink px-2 py-1 text-[11.5px] font-bold uppercase tracking-[0.16em] text-paper">The armband · GW{plan.event}</span>
       </div>
-      <div className="relative bg-gradient-to-t from-[#0b0e13] via-[#0b0e13]/90 to-transparent px-6 pb-5 pt-10">
-        <Link to={`/player/${cap.player_id}`} className="block font-display text-[3.6rem] font-bold uppercase leading-[0.85] text-text hover:text-pitch-green">
+      <div className="relative bg-ink px-6 pb-5 pt-4 text-paper">
+        <Link to={`/player/${cap.player_id}`} className="-mt-14 block font-display text-[4.6rem] font-black uppercase leading-[0.82] text-paper [text-shadow:4px_4px_0_var(--spot)] hover:text-spot">
           {cap.name}
         </Link>
         <div className="mt-3 flex items-baseline gap-4">
           <span className="font-display text-4xl font-bold tabular text-pitch-green">{cap.median.toFixed(1)}</span>
-          <span className="text-[13px] text-text-muted">expected points, doubled</span>
+          <span className="text-[13px] text-paper/70">expected points, doubled</span>
           {next && <span className={`ml-auto px-2 py-0.5 text-[12px] font-bold ${fdrFill(next.difficulty)}`}>{next.opponent_short} {next.is_home ? 'H' : 'A'}</span>}
         </div>
-        {second && <div className="mt-2 text-[13px] text-text-faint">Next best {second.name} on {second.median.toFixed(1)}</div>}
+        {second && <div className="mt-2 font-serif text-[17px] italic text-paper/75">next best, {second.name} on {second.median.toFixed(1)}</div>}
       </div>
     </div>
   )
@@ -175,23 +175,23 @@ function Ticker({ block, fixtures, event }: { block: ActionSquadBlock; fixtures?
     <div key={key} className="flex shrink-0 items-center">
       {items.map(({ p, next }) => (
         <span key={`${key}-${p.player_id}`} className="flex items-center gap-2 px-5 text-[13px]">
-          <span className="font-semibold text-text">{p.name}</span>
+          <span className="font-semibold text-paper">{p.name}</span>
           {next && (
             <>
               {crestUrl(next.opponent_code) && <img src={crestUrl(next.opponent_code)!} alt="" className="size-4" />}
-              <span className="text-text-muted">{next.is_home ? 'v' : '@'} {next.opponent_short}</span>
+              <span className="text-paper/60">{next.is_home ? 'v' : '@'} {next.opponent_short}</span>
             </>
           )}
-          <span className="font-display font-bold tabular text-pitch-green">{p.median.toFixed(1)}</span>
-          <span className="text-text-faint/50">/</span>
+          <span className="font-display text-[16px] font-black tabular text-[#7fe0a6]">{p.median.toFixed(1)}</span>
+          <span className="text-spot">&#9670;</span>
         </span>
       ))}
     </div>
   )
   return (
-    <div className="relative flex overflow-hidden border-b border-divider bg-[#0b0e13]/80 py-2">
-      <span className="absolute inset-y-0 left-0 z-10 flex items-center bg-[#0b0e13] pr-4">
-        <span className="flex h-full items-center bg-pitch-green px-3 pr-5 font-display text-[13px] font-bold uppercase tracking-[0.1em] text-pitch-green-ink [clip-path:polygon(0_0,100%_0,86%_100%,0_100%)]">
+    <div className="relative flex overflow-hidden border-b-2 border-ink bg-ink py-2 text-paper">
+      <span className="absolute inset-y-0 left-0 z-10 flex items-center bg-ink pr-4">
+        <span className="flex h-full items-center bg-spot px-3 pr-6 font-display text-[15px] font-black uppercase tracking-[0.06em] text-ink [clip-path:polygon(0_0,100%_0,86%_100%,0_100%)]">
           GW{event} fixtures
         </span>
       </span>
@@ -212,7 +212,7 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
     <section className="!p-0">
       <Ticker block={block} fixtures={plan.fixtures} event={plan.event} />
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_25rem]">
-        <div className="relative overflow-hidden bg-[radial-gradient(120%_80%_at_50%_0%,#13241c_0%,#0b0e13_70%)]">
+        <div className="relative overflow-hidden bg-panel">
           <div className="absolute left-6 top-5 z-10">
             <h2 className="font-display text-xl font-semibold text-text">Your GW{plan.event} eleven</h2>
             <div className="mt-1 text-[13px] text-text-muted">
@@ -229,7 +229,7 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
             ))}
           </div>
           {block.bench.length > 0 && (
-            <div className="flex items-center gap-4 border-t border-divider/70 bg-[#0b0e13]/70 px-6 py-3">
+            <div className="flex items-center gap-4 border-t-2 border-ink bg-raised px-6 py-3">
               <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint">Bench</span>
               {block.bench.map((p, i) => (
                 <Link key={p.player_id} to={`/player/${p.player_id}`} className="flex items-center gap-2 opacity-85 hover:opacity-100">

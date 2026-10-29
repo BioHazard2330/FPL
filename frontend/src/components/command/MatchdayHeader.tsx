@@ -13,7 +13,7 @@ function Figure({ label, value, sub, tone = 'text-text' }: { label: string; valu
   return (
     <div className="min-w-0 px-7 py-5">
       <div className="text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text-faint">{label}</div>
-      <div className={`mt-1.5 font-display text-[2.6rem] font-bold leading-none tabular ${tone}`}>{value}</div>
+      <div className={`mt-1.5 whitespace-nowrap font-display text-[clamp(2.1rem,3.3vw,3.4rem)] font-black leading-[0.85] tabular ${tone}`}>{value}</div>
       {sub && <div className="mt-2 line-clamp-2 text-[13px] leading-snug text-text-muted">{sub}</div>}
     </div>
   )
@@ -44,11 +44,17 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
   const captain = plan.captain?.best?.name
 
   return (
-    <section className="bare !overflow-visible">
-      <div className="grid grid-cols-[minmax(0,1.15fr)_repeat(4,minmax(0,1fr))] items-stretch overflow-hidden rounded-md bg-panel shadow-[inset_0_1px_0_0_rgba(237,240,245,0.07),0_22px_44px_-26px_rgba(0,0,0,0.9)]">
-        <div className="verdict-block relative bg-pitch-green px-8 py-5 pr-16 text-pitch-green-ink">
+    <section className="bare relative !overflow-visible">
+          {(plan.doctor?.xp_gain ?? 0) > 0.5 && (
+            <div className="absolute left-[18.5%] top-[68%] z-20 rotate-[-9deg] border-[3px] border-ink bg-paper px-2.5 py-1 text-center shadow-[3px_3px_0_var(--ink)]">
+              <div className="font-display text-[11px] font-black uppercase leading-none tracking-[0.14em] text-ink">set your eleven</div>
+              <div className="font-display text-[1.6rem] font-black leading-none text-pitch-green">+{(plan.doctor?.xp_gain ?? 0).toFixed(1)}</div>
+            </div>
+          )}
+      <div className="grid grid-cols-[minmax(0,1.15fr)_repeat(4,minmax(0,1fr))] items-stretch divide-x-2 divide-ink overflow-hidden border-2 border-ink bg-panel shadow-[6px_6px_0_var(--ink)]">
+        <div className="verdict-block relative bg-spot px-8 py-5 pr-16 text-ink">
           <div className="text-[11.5px] font-bold uppercase tracking-[0.16em] opacity-70">GW{plan.event} · the call</div>
-          <div className="mt-1 font-display text-[3.4rem] font-bold uppercase leading-[0.9]">{call}</div>
+          <div className="mt-1 font-display text-[clamp(3rem,4.4vw,4.4rem)] font-black uppercase leading-[0.82]">{call}</div>
           <div className="mt-2 text-[13px] font-semibold opacity-80">
             {callSub}
             {captain && <> · armband {captain}</>}

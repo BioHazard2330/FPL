@@ -27,22 +27,22 @@ export function AppSidebar() {
   const gwLabel = live?.gw?.event ? `GW${live.gw.event}` : null
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-divider">
-      <SidebarHeader className="border-b border-divider">
+    <Sidebar collapsible="icon" className="border-r-2 border-ink">
+      <SidebarHeader className="border-b border-[#2a241b]">
         <div className="px-3 py-3">
           <div className="flex items-stretch">
-            <span className="flex items-center bg-pitch-green py-1 pl-2.5 pr-4 font-display text-[1.35rem] font-bold leading-none tracking-wide text-pitch-green-ink [clip-path:polygon(0_0,100%_0,82%_100%,0_100%)]">FPL</span>
-            <span className="ml-1.5 flex items-center font-display text-[1.35rem] font-semibold uppercase leading-none tracking-[0.06em] text-text">Agent</span>
+            <span className="flex items-center bg-spot py-1 pl-2.5 pr-5 font-display text-[1.8rem] font-black leading-none text-ink [clip-path:polygon(0_0,100%_0,82%_100%,0_100%)]">FPL</span>
+            <span className="ml-1 flex items-center font-display text-[1.8rem] font-black uppercase leading-none text-paper">Agent</span>
           </div>
-          <div className="mt-2 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text-faint">
-            {gwLabel ?? '—'} &middot; 2026/27
+          <div className="mt-2 font-serif text-[15px] italic text-paper/60">
+            the {gwLabel ?? '—'} programme &middot; 2026/27
           </div>
         </div>
       </SidebarHeader>
       <SidebarContent>
         {NAV_SECTIONS.map((section) => (
           <SidebarGroup key={section.label} className="px-0 py-1">
-            <SidebarGroupLabel className="px-4 text-[10.5px] font-bold uppercase tracking-[0.16em] text-text-faint/80">
+            <SidebarGroupLabel className="px-4 text-[10.5px] font-bold uppercase tracking-[0.18em] text-spot">
               {section.label}
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -57,13 +57,13 @@ export function AppSidebar() {
                         tooltip={d.label}
                         className={
                           isActive
-                            ? 'relative rounded-sm bg-gradient-to-r from-pitch-green/15 to-transparent font-semibold text-text before:absolute before:inset-y-1 before:left-0 before:w-[5px] before:bg-pitch-green before:[clip-path:polygon(0_0,100%_0,60%_100%,0_100%)] hover:bg-raised hover:text-text'
-                            : 'rounded-sm text-text-muted hover:bg-raised/50 hover:text-text'
+                            ? 'rounded-none bg-paper font-semibold text-ink shadow-[3px_3px_0_var(--spot)] hover:bg-paper hover:text-ink'
+                            : 'rounded-none text-paper/75 hover:bg-[#2a241b] hover:text-paper'
                         }
                         render={
                           <NavLink to={d.to} end={'end' in d ? d.end : false}>
-                            <d.icon strokeWidth={2} className={`size-4 ${isActive ? 'text-pitch-green' : ''}`} />
-                            <span className="text-[14px] font-medium">{d.label}</span>
+                            <d.icon strokeWidth={2.2} className={`size-4 ${isActive ? 'text-spot' : ''}`} />
+                            <span className="font-display text-[17px] font-bold uppercase tracking-[0.02em]">{d.label}</span>
                           </NavLink>
                         }
                       />

@@ -44,7 +44,7 @@ const PILL: Record<Tone, { ink: string; bar: string }> = {
   green: { ink: 'text-pitch-green', bar: 'bg-pitch-green' },
   gold: { ink: 'text-broadcast-gold', bar: 'bg-broadcast-gold' },
   red: { ink: 'text-alert-red', bar: 'bg-alert-red' },
-  blue: { ink: 'text-[#8fb0ff]', bar: 'bg-broadcast-blue' },
+  blue: { ink: 'text-broadcast-blue', bar: 'bg-broadcast-blue' },
 }
 
 /** A label, not a capsule: small capitals behind a slanted colour tick, so a row of them reads as captions rather than

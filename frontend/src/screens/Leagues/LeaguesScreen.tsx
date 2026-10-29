@@ -69,7 +69,7 @@ function Hero({ league, me }: { league: MiniLeague; me: LeagueStanding }) {
   const followed = rows.filter((r) => !r.me && r.swing !== null)
   const wins = followed.filter((r) => (r.swing ?? 0) > 0).length
   return (
-    <section className="grid gap-px overflow-hidden rounded-xl border border-divider bg-divider md:grid-cols-[1.2fr_1fr_1fr_1fr]">
+    <section className="grid gap-[2px] overflow-hidden border-2 border-ink bg-ink md:grid-cols-[1.2fr_1fr_1fr_1fr]">
       <div className="bg-panel px-6 py-5">
         <div className="text-[13px] font-semibold text-text-faint">{league.name}</div>
         <div className="mt-1 flex items-baseline gap-3">
@@ -94,6 +94,7 @@ function Hero({ league, me }: { league: MiniLeague; me: LeagueStanding }) {
       />
       {league.odds?.p_lead != null ? (
         <HeroFig
+          spot
           label="Chance you lead after this gameweek"
           value={pct(league.odds.p_lead)}
           tone={league.odds.p_lead >= 0.5 ? 'text-pitch-green' : league.odds.p_lead >= 0.2 ? 'text-broadcast-gold' : 'text-text-muted'}
@@ -161,12 +162,12 @@ function ArmbandOdds({ league }: { league: MiniLeague }) {
   )
 }
 
-function HeroFig({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
+function HeroFig({ label, value, sub, tone, spot = false }: { label: string; value: string; sub: string; tone: string; spot?: boolean }) {
   return (
-    <div className="bg-panel px-6 py-5">
-      <div className="text-[13px] font-semibold text-text-faint">{label}</div>
-      <div className={`mt-2 font-display text-5xl font-bold leading-none tabular-nums ${tone}`}>{value}</div>
-      <div className="mt-2 truncate text-[13px] text-text-muted">{sub}</div>
+    <div className={`px-6 py-5 ${spot ? 'bg-spot text-ink' : 'bg-panel'}`}>
+      <div className={`text-[11.5px] font-bold uppercase tracking-[0.14em] ${spot ? 'text-ink/75' : 'text-text-faint'}`}>{label}</div>
+      <div className={`mt-2 font-display text-[4.5rem] font-black leading-[0.85] tabular-nums ${spot ? 'text-ink' : tone}`}>{value}</div>
+      <div className={`mt-2 line-clamp-2 text-[13px] ${spot ? 'text-ink/80' : 'text-text-muted'}`}>{sub}</div>
     </div>
   )
 }
