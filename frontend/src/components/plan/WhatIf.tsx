@@ -109,7 +109,7 @@ export function WhatIf() {
   const clear = () => { setOuts([null]); setIns([null]) }
 
   return (
-    <section className="allow-overflow px-6 pb-6 pt-5">
+    <section className="allow-overflow relative z-30 px-6 pb-6 pt-5">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-5">
         <h2 className="font-display text-xl font-semibold text-text">Try your own moves</h2>
         <span className="text-[13px] text-text-faint">

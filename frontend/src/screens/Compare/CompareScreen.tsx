@@ -5,6 +5,8 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
 import { FixtureRun } from '@/components/football/FixtureRun'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { HeroPhoto } from '@/components/ui/HeroPhoto'
+import { clubColors } from '@/lib/clubs'
 import { crestUrl, fetchComparePayload, fetchPlayersIndex, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import type { ComparePayload, ComparePlayer, PlayerIndexRow } from '@/lib/types'
@@ -42,9 +44,9 @@ function Picker({ label, selected, index, onPick, exclude }: {
   }, [q, index, exclude])
   return (
     <div className="relative">
-      <div className="mb-1 text-[12px] text-text-faint">{label}</div>
+      <div className="mb-1.5 font-display text-[15px] font-black uppercase tracking-[0.04em] text-text">{label}</div>
       {selected && !open ? (
-        <button type="button" onClick={() => { setOpen(true); setQ('') }} className="flex w-full items-center gap-2 bg-raised px-3 py-2 text-left">
+        <button type="button" onClick={() => { setOpen(true); setQ('') }} className="flex w-full items-center gap-2 border-2 border-ink bg-paper px-3 py-2 text-left shadow-[3px_3px_0_var(--ink)]">
           <span className="font-bold text-text">{selected.name}</span>
           <span className="text-xs text-text-muted">{selected.team_short} · {selected.position}</span>
           <span className="ml-auto text-[12px] text-text-faint">change</span>
@@ -56,11 +58,11 @@ function Picker({ label, selected, index, onPick, exclude }: {
           onChange={(e) => setQ(e.target.value)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="Search a player or club code"
-          className="w-full bg-raised px-3 py-2 text-sm text-text outline-none placeholder:text-text-faint"
+          className="w-full border-2 border-ink bg-paper px-3 py-2 text-sm text-text shadow-[3px_3px_0_var(--ink)] outline-none placeholder:text-text-faint focus:shadow-[3px_3px_0_var(--spot)]"
         />
       )}
       {hits.length > 0 && (
-        <div className="absolute z-20 mt-px w-full border border-divider bg-panel">
+        <div className="absolute z-40 mt-1 max-h-[26rem] w-full overflow-y-auto border-2 border-ink bg-panel shadow-[5px_5px_0_var(--ink)]">
           {hits.map((p) => (
             <button
               key={p.player_id}
@@ -80,37 +82,50 @@ function Picker({ label, selected, index, onPick, exclude }: {
   )
 }
 
+/** One side of the face-off: the player's club colours as a printed plate, his cut-out, his name as a poster line. */
 function Hero({ p, align }: { p: ComparePlayer; align: 'left' | 'right' }) {
   const crest = crestUrl(p.team_code)
   const right = align === 'right'
+  const club = clubColors(p.team_code)
+  const tag = 'border-2 border-ink px-1.5 font-display text-[13px] font-black uppercase leading-5 shadow-[2px_2px_0_var(--ink)]'
   return (
-    <div className={`flex items-end gap-6 ${right ? 'flex-row-reverse text-right' : ''}`}>
-      <div className="relative">
-        <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className="h-56 w-44" />
-        {crest && <img src={crest} alt="" className="absolute -bottom-2 -right-2 h-10 w-10 rounded-full bg-void ring-4 ring-void" />}
-      </div>
-      <div className="min-w-0 pb-1">
-        <Link to={`/player/${p.player_id}`} className="block font-display text-5xl font-bold leading-[0.95] text-text hover:text-pitch-green">{p.name}</Link>
-        <div className="mt-2 text-xs font-semibold text-text-muted">
-          {p.team_name} · {p.position}{p.price !== null ? ` · £${p.price.toFixed(1)}m` : ''}
-        </div>
-        <div className={`mt-2 flex flex-wrap gap-1.5 ${right ? 'justify-end' : ''}`}>
-          {p.is_mine && <span className="bg-pitch-green px-1.5 text-[12px] font-bold leading-5 text-pitch-green-ink">in your squad</span>}
+    <div
+      className="relative min-h-[21rem] overflow-hidden"
+      style={{ background: `linear-gradient(${right ? 240 : 120}deg, ${club.primary} 0%, color-mix(in srgb, ${club.primary} 70%, #17130e) 100%)` }}
+    >
+      <div className="absolute inset-0 opacity-35 [background-image:radial-gradient(rgba(23,19,14,0.6)_1px,transparent_1.5px)] [background-size:6px_6px]" />
+      {crest && <img src={crest} alt="" className={`absolute -top-14 size-[20rem] opacity-[0.18] mix-blend-multiply ${right ? '-left-16' : '-right-16'}`} />}
+      <HeroPhoto
+        code={p.photo_code}
+        teamCode={p.team_code}
+        isGkp={p.position === 'GKP'}
+        className={`absolute bottom-0 h-[19rem] w-[19rem] drop-shadow-[8px_8px_0_rgba(23,19,14,0.35)] ${right ? 'left-2' : 'right-2'}`}
+      />
+      <div className={`relative z-10 flex h-full min-h-[21rem] flex-col justify-end px-8 pb-7 pt-8 ${right ? 'items-end text-right' : ''}`}>
+        <div className="voice text-lg text-paper/85">{p.team_name} · {p.position}{p.price !== null ? ` · £${p.price.toFixed(1)}m` : ''}</div>
+        <Link
+          to={`/player/${p.player_id}`}
+          className="block max-w-[60%] font-display text-[4.2rem] font-black uppercase leading-[0.85] text-paper [text-shadow:5px_5px_0_var(--ink)] hover:text-broadcast-gold"
+        >
+          {p.name}
+        </Link>
+        <div className={`mt-3 flex max-w-[62%] flex-wrap gap-1.5 ${right ? 'justify-end' : ''}`}>
+          {p.is_mine && <span className={`${tag} bg-pitch-green text-pitch-green-ink`}>in your squad</span>}
           {p.status !== 'a' && p.news && (
-            <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold leading-5 text-broadcast-gold-ink" title={p.news}>
+            <span className={`${tag} bg-broadcast-gold text-broadcast-gold-ink`} title={p.news}>
               {p.chance !== null ? `${p.chance}% to play` : 'flagged'}
             </span>
           )}
           {p.start_percent !== null && p.start_percent < 70 && (
-            <span className="bg-alert-red px-1.5 text-[12px] font-bold leading-5 text-alert-red-ink">{p.start_percent}% to start</span>
+            <span className={`${tag} bg-alert-red text-alert-red-ink`}>{p.start_percent}% to start</span>
           )}
-          {p.price_trend === 'RISE_LIKELY' && <span className="bg-broadcast-gold px-1.5 text-[12px] font-bold leading-5 text-broadcast-gold-ink">price rising</span>}
-          {p.price_trend === 'FALL_LIKELY' && <span className="bg-alert-red px-1.5 text-[12px] font-bold leading-5 text-alert-red-ink">price falling</span>}
-          {p.duties.length > 0 && <span className="bg-raised px-1.5 text-[12px] font-bold leading-5 text-text-muted">{p.duties.join(' · ')}</span>}
+          {p.price_trend === 'RISE_LIKELY' && <span className={`${tag} bg-broadcast-gold text-broadcast-gold-ink`}>price rising</span>}
+          {p.price_trend === 'FALL_LIKELY' && <span className={`${tag} bg-alert-red text-alert-red-ink`}>price falling</span>}
+          {p.duties.length > 0 && <span className={`${tag} bg-paper text-text`}>{p.duties.join(' · ')}</span>}
         </div>
-        <div className={`mt-4 flex items-baseline gap-2 ${right ? 'justify-end' : ''}`}>
-          <span className="tabular font-display text-6xl font-bold leading-none text-pitch-green">{p.xp_window.toFixed(1)}</span>
-          <span className="text-[12px] font-bold text-text-faint">xP next {p.fixture_count || 5} fixtures</span>
+        <div className={`mt-4 inline-flex items-baseline gap-2 border-2 border-ink bg-paper px-3 py-1 shadow-[4px_4px_0_var(--ink)] ${right ? "self-end" : "self-start"}`}>
+          <span className="tabular font-display text-5xl font-black leading-none text-pitch-green">{p.xp_window.toFixed(1)}</span>
+          <span className="text-[12px] font-bold text-text-muted">xP next {p.fixture_count || 5}</span>
         </div>
       </div>
     </div>
@@ -228,18 +243,36 @@ function AsTransfer({ d }: { d: ComparePayload }) {
 function QuickPairs({ onPick }: { onPick: (a: number, b: number) => void }) {
   const plan = useFetch(fetchWeekPlanPayload, [])
   if (plan.status !== 'ready' || plan.data.status === 'none') return null
-  const pairs = [...(plan.data.moves ?? []), ...(plan.data.declined ?? [])].slice(0, 6)
-  if (pairs.length === 0) return null
+  const now = [...(plan.data.moves ?? []), ...(plan.data.declined ?? [])]
+    .slice(0, 6)
+    .map((m) => ({ out: m.out.player_id, into: m.into.player_id, label: [m.out.name, m.into.name], when: `GW${plan.data.event}` }))
+  const later = (plan.data.road_ahead?.weeks ?? [])
+    .flatMap((w) => w.moves.filter((m) => m.out_id && m.in_id).map((m) => ({ out: m.out_id!, into: m.in_id!, label: [m.out, m.into], when: `GW${w.event}` })))
+    .slice(0, 8)
+  const groups: [string, typeof now][] = [['This week, from your plan', now], ['Moves the plan has lined up for later weeks', later]]
+  if (now.length + later.length === 0) return null
   return (
-    <div className="mt-6">
-      <div className="mb-2 text-[12px] text-text-faint">From your week plan</div>
-      <div className="flex flex-wrap gap-2">
-        {pairs.map((m) => (
-          <button key={m.into.player_id} type="button" onClick={() => onPick(m.out.player_id, m.into.player_id)} className="bg-raised px-3 py-1.5 text-sm text-text hover:bg-divider">
-            {m.out.name} <span className="text-text-faint">vs</span> {m.into.name}
-          </button>
-        ))}
-      </div>
+    <div className="mt-6 space-y-5">
+      {groups.filter(([, list]) => list.length > 0).map(([title, list]) => (
+        <div key={title}>
+          <div className="mb-2 font-display text-[15px] font-black uppercase tracking-[0.04em] text-text">{title}</div>
+          <div className="flex flex-wrap gap-3">
+            {list.map((m) => (
+              <button
+                key={`${m.out}-${m.into}`}
+                type="button"
+                onClick={() => onPick(m.out, m.into)}
+                className="flex items-baseline gap-2 border-2 border-ink bg-paper px-3 py-1.5 text-sm text-text shadow-[3px_3px_0_var(--ink)] transition-transform hover:-translate-y-0.5 hover:shadow-[3px_3px_0_var(--spot)]"
+              >
+                <span className="font-display text-[12px] font-black text-text-faint">{m.when}</span>
+                <span className="font-semibold">{m.label[0]}</span>
+                <span className="voice text-text-faint">vs</span>
+                <span className="font-semibold">{m.label[1]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -365,7 +398,7 @@ export function CompareScreen() {
   return (
     <div className="data-in pb-16">
       <Masthead edition="Compare" title="Two players, on the numbers that decide a transfer" />
-      <div className="grid grid-cols-2 gap-10 border-b border-divider px-10 py-5">
+      <div className="allow-overflow relative z-30 grid grid-cols-2 gap-10 border-b border-divider px-10 py-5">
         <Picker label="Player A" selected={find(a)} index={rows} onPick={(id) => set('a', id)} exclude={b} />
         <Picker label="Player B" selected={find(b)} index={rows} onPick={(id) => set('b', id)} exclude={a} />
       </div>
@@ -389,9 +422,12 @@ export function CompareScreen() {
       )}
       {a && b && compare.status === 'ready' && compare.data && (
         <>
-          <section className="grid grid-cols-2 gap-10 border-b border-divider px-10 py-8">
+          <section className="relative grid grid-cols-2 gap-[2px] !bg-ink">
             <Hero p={compare.data.a} align="left" />
             <Hero p={compare.data.b} align="right" />
+            <span className="absolute left-1/2 top-1/2 z-20 flex size-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-ink bg-spot font-display text-4xl font-black text-ink shadow-[4px_4px_0_var(--ink)]">
+              VS
+            </span>
           </section>
           <Verdict d={compare.data} />
           <AsTransfer d={compare.data} />

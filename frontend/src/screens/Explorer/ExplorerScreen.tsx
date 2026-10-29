@@ -110,7 +110,7 @@ export function ExplorerScreen() {
         right={<span className="text-text-muted">{filtered.length} of {rows.length} players · GW{state.data.event} onward</span>}
       />
 
-      <section className="allow-overflow px-10 py-5">
+      <section className="allow-overflow relative z-30 px-10 py-5">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="flex gap-1">
             {POSITIONS.map((p) => (
