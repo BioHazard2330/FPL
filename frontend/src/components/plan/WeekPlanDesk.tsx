@@ -67,18 +67,18 @@ function ChipLadder({ plan }: { plan: ChipPlan }) {
       </div>
       <div className="mt-3 flex items-end gap-1.5" role="img" aria-label={`${chipName(plan.chip)} worth by gameweek`}>
         {plan.ladder.map((w) => (
-          <div key={w.event} className="flex w-10 flex-col items-center gap-1">
-            <span className="font-mono text-[11px] tabular-nums text-text-muted">{w.worth.toFixed(1)}</span>
-            <div className="flex h-16 w-full items-end">
+          <div key={w.event} className="flex w-12 flex-col items-center gap-1">
+            <span className={`tabular font-display text-[15px] font-black ${w.event === plan.event ? 'text-broadcast-gold' : 'text-text-muted'}`}>{w.worth.toFixed(1)}</span>
+            <div className="flex h-24 w-full items-end border-b-2 border-ink">
               <div
-                className={`bar-draw w-full rounded-t-sm ${
-                  w.event === plan.event ? 'bg-broadcast-gold' : w.beyond_plan ? 'bg-text-faint/30' : 'bg-text-faint/60'
+                className={`bar-draw w-full border-2 border-b-0 border-ink ${
+                  w.event === plan.event ? 'bg-broadcast-gold shadow-[3px_0_0_var(--ink)]' : w.beyond_plan ? '[background-image:repeating-linear-gradient(135deg,var(--text-faint)_0_2px,transparent_2px_6px)]' : 'bg-raised'
                 }`}
                 style={{ height: `${Math.max(6, (w.worth / max) * 100)}%` }}
                 title={w.beyond_plan ? 'Squad beyond the planned horizon: the last planned squad is assumed' : undefined}
               />
             </div>
-            <span className="text-[11px] text-text-faint">GW{w.event}</span>
+            <span className={`font-display text-[13px] font-black uppercase ${w.event === plan.event ? 'text-text' : 'text-text-faint'}`}>GW{w.event}</span>
           </div>
         ))}
       </div>

@@ -209,7 +209,7 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
   const total = block.starting.reduce((s, p) => s + p.median, 0)
   const formation = ['DEF', 'MID', 'FWD'].map((k) => block.starting.filter((p) => p.position === k).length).join('-')
   return (
-    <section className="!p-0">
+    <section className="no-tab !p-0">
       <Ticker block={block} fixtures={plan.fixtures} event={plan.event} />
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_25rem]">
         <div className="relative overflow-hidden bg-panel">

@@ -639,8 +639,9 @@ main {
   letter-spacing: -0.005em;
 }
 
-/* Programme page numbers: every band on a screen carries its running number, printed large and faint behind its
-   content in the top-right corner. Decorative and honest - it encodes order on the page, nothing else. */
+/* Programme page numbers: every band on a screen carries its running number as a small ink tab hung from its top
+   rule (a large faint numeral behind the content collided with short bands). It encodes order on the page, nothing
+   else. */
 .screen-frame > * {
   counter-reset: band;
 }
@@ -650,17 +651,25 @@ main {
   isolation: isolate;
 }
 .screen-frame > * > *:not(.bare)::after {
-  content: counter(band, decimal-leading-zero);
+  content: 'No.' counter(band, decimal-leading-zero);
   position: absolute;
-  top: -0.12em;
-  right: 0.12em;
-  z-index: -1;
+  top: 0;
+  right: 22px;
+  z-index: 3;
+  padding: 1px 8px 3px;
+  background: var(--ink);
+  color: var(--paper);
   font-family: var(--font-display);
   font-weight: 900;
-  font-size: 6.5rem;
-  line-height: 1;
-  color: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
   pointer-events: none;
+}
+
+/* A band that opens on its own ink strip (the Command stage's ticker) is already numbered by its position. */
+.screen-frame > * > .no-tab::after {
+  display: none;
 }
 
 /* Print corners: inside the frame nothing is softly rounded; pills, avatars and rings (rounded-full) keep their shape. */

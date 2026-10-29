@@ -23,9 +23,9 @@ const SIX_W = 18.32
 const SPOT = 11
 const R = 9.15
 const CY = W / 2
-const CHALK = 'rgba(245, 243, 238, 0.30)'
-const TURF_A = '#0d2f1f'
-const TURF_B = '#113a26'
+const CHALK = 'rgba(23, 19, 14, 0.55)'
+const TURF_A = '#efe7d5'
+const TURF_B = '#e7ddc7'
 
 const SIDE_INK: Record<StorySide, string> = { home: 'var(--pitch-green)', away: 'var(--broadcast-blue)' }
 
@@ -76,7 +76,7 @@ function Turf() {
             <rect x={sx0} y={CY - SIX_W / 2} width={SIX_D} height={SIX_W} {...line} />
             <circle cx={spot} cy={CY} r={0.35} fill={CHALK} />
             <path d={arcD(side)} {...line} />
-            <rect x={gx} y={CY - 3.66} width={1.8} height={7.32} stroke={CHALK} strokeWidth={0.18} fill="rgba(245,243,238,0.05)" />
+            <rect x={gx} y={CY - 3.66} width={1.8} height={7.32} stroke={CHALK} strokeWidth={0.18} fill="rgba(23,19,14,0.05)" />
           </g>
         )
       })}
@@ -283,7 +283,7 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
                       r={r}
                       fill={goal ? ink : ink}
                       fillOpacity={goal ? 1 : 0.28}
-                      stroke={goal ? '#fff' : post ? 'var(--broadcast-gold)' : ink}
+                      stroke={goal ? 'var(--ink)' : post ? 'var(--broadcast-gold)' : ink}
                       strokeWidth={goal ? 0.3 : post ? 0.32 : 0.2}
                     />
                   </g>
@@ -394,7 +394,7 @@ export function MatchReplay({ story, homeShort, awayShort }: Props) {
               const val = pts.filter(([m]) => m <= g.minute).slice(-1)[0]?.[1] ?? 0
               return (
                 <g key={`g${i}`} opacity={g.minute <= cur ? 1 : 0.35}>
-                  <circle cx={sx(g.minute)} cy={sy(val)} r={5.2} fill={g.own_goal ? 'var(--raised)' : SIDE_INK[g.side]} stroke="#fff" strokeWidth={1.4} />
+                  <circle cx={sx(g.minute)} cy={sy(val)} r={5.2} fill={g.own_goal ? 'var(--raised)' : SIDE_INK[g.side]} stroke="var(--ink)" strokeWidth={1.4} />
                   {g.own_goal && <text x={sx(g.minute)} y={sy(val) + 2.6} textAnchor="middle" fontSize={6.5} fontWeight={800} fill="var(--text)">OG</text>}
                 </g>
               )

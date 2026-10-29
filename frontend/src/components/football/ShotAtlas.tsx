@@ -49,12 +49,12 @@ const GOAL_W = 7.32
 const NET_D = 2.4
 const STRIPE = 5.7 // mown band width, metres
 
-const TURF_A = '#0d2f1f'
-const TURF_B = '#113a26'
-const CHALK = 'rgba(245, 243, 238, 0.28)'
-// Heat mode drains the turf so the density field is the only green on the pitch.
-const SLATE_A = '#111418'
-const SLATE_B = '#15191e'
+// Printed as a programme diagram: paper bands, ink lines, so green and blue dots carry the colour.
+const TURF_A = '#efe7d5'
+const TURF_B = '#e7ddc7'
+const CHALK = 'rgba(23, 19, 14, 0.55)'
+const SLATE_A = '#f3ecdd'
+const SLATE_B = '#ede5d3'
 
 function dArc(): string {
   const cx = L - SPOT
@@ -110,8 +110,7 @@ function HeatLayer({ shots, visible }: { shots: AtlasShot[]; visible: (s: AtlasS
       }
     }
     const img = ctx.createImageData(cw, ch)
-    // Flat three-stop ramp: transparent -> deep green (#12a552) -> pitch
-    // green (#1fce6b). The ramp IS the value; nothing glows.
+    // Ink ramp on paper: transparent -> pitch green -> deep green. The ramp IS the value.
     for (let i = 0; i < field.length; i++) {
       // Square-root compression: the six-yard box is an order of magnitude
       // denser than the edge of the area, and a linear ramp collapsed the
@@ -120,9 +119,9 @@ function HeatLayer({ shots, visible }: { shots: AtlasShot[]; visible: (s: AtlasS
       const t = peak > 0 ? Math.sqrt(Math.min(1, field[i] / peak)) : 0
       if (t < 0.06) { img.data[i * 4 + 3] = 0; continue }
       const k = t < 0.5 ? t * 2 : (t - 0.5) * 2
-      const r = t < 0.5 ? 18 * k : 18 + (31 - 18) * k
-      const g = t < 0.5 ? 165 * k : 165 + (206 - 165) * k
-      const b = t < 0.5 ? 82 * k : 82 + (107 - 82) * k
+      const r = t < 0.5 ? 11 : 11 + (7 - 11) * k
+      const g = t < 0.5 ? 125 : 125 + (92 - 125) * k
+      const b = t < 0.5 ? 64 : 64 + (46 - 64) * k
       img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b
       img.data[i * 4 + 3] = Math.round(200 * (t < 0.5 ? t * 2 : 1))
     }
@@ -167,7 +166,7 @@ export function ShotAtlas({ shots, visible, heroId, showHeat, onHover }: Props) 
   return (
     <svg
       viewBox={`${X0} 0 ${L - X0 + NET_D} ${W}`}
-      className="mx-auto block h-full w-auto max-h-[68vh] select-none"
+      className="mx-auto block h-full w-auto max-h-[68vh] max-w-full select-none"
       role="img"
       aria-label="Every shot this season, plotted on the attacking half"
       onMouseLeave={() => onHover(null)}
@@ -192,12 +191,12 @@ export function ShotAtlas({ shots, visible, heroId, showHeat, onHover }: Props) 
         <path d={`M ${L} ${W - 1} A 1 1 0 0 0 ${L - 1} ${W}`} />
       </g>
       <g>
-        <rect x={L} y={CY - GOAL_W / 2} width={NET_D} height={GOAL_W} fill="rgba(245,243,238,0.06)" stroke="rgba(245,243,238,0.7)" strokeWidth={0.28} />
+        <rect x={L} y={CY - GOAL_W / 2} width={NET_D} height={GOAL_W} fill="rgba(23,19,14,0.05)" stroke="rgba(23,19,14,0.8)" strokeWidth={0.28} />
         {Array.from({ length: 7 }, (_, i) => (
-          <line key={`nv${i}`} x1={L + 0.3 + i * 0.3} y1={CY - GOAL_W / 2} x2={L + 0.3 + i * 0.3} y2={CY + GOAL_W / 2} stroke="rgba(245,243,238,0.22)" strokeWidth={0.05} />
+          <line key={`nv${i}`} x1={L + 0.3 + i * 0.3} y1={CY - GOAL_W / 2} x2={L + 0.3 + i * 0.3} y2={CY + GOAL_W / 2} stroke="rgba(23,19,14,0.3)" strokeWidth={0.05} />
         ))}
         {Array.from({ length: 12 }, (_, i) => (
-          <line key={`nh${i}`} x1={L} y1={CY - GOAL_W / 2 + 0.6 * (i + 0.5)} x2={L + NET_D} y2={CY - GOAL_W / 2 + 0.6 * (i + 0.5)} stroke="rgba(245,243,238,0.22)" strokeWidth={0.05} />
+          <line key={`nh${i}`} x1={L} y1={CY - GOAL_W / 2 + 0.6 * (i + 0.5)} x2={L + NET_D} y2={CY - GOAL_W / 2 + 0.6 * (i + 0.5)} stroke="rgba(23,19,14,0.3)" strokeWidth={0.05} />
         ))}
       </g>
 
@@ -208,7 +207,7 @@ export function ShotAtlas({ shots, visible, heroId, showHeat, onHover }: Props) 
         const post = s.outcome === 'Post'
         const base = Math.max(0.3, Math.sqrt(Math.max(s.xg ?? 0.01, 0.01)) * 1.9)
         const r = isHero ? base * 1.55 + 0.25 : base
-        const stroke = isHero ? '#f5f3ee' : post ? 'var(--alert-red)' : s.mine ? 'var(--broadcast-gold)' : 'var(--broadcast-blue)'
+        const stroke = isHero ? 'var(--ink)' : post ? 'var(--alert-red)' : s.mine ? 'var(--broadcast-gold)' : 'var(--broadcast-blue)'
         // In heat mode the field is the reading; dots step back so it shows.
         const opacity = heroId !== null ? (isHero ? 1 : 0.05) : shown ? (showHeat ? 0.22 : 0.9) : 0.05
         const cx = Math.min(L - 0.3, Math.max(X0 + 0.3, s.x))
@@ -219,14 +218,14 @@ export function ShotAtlas({ shots, visible, heroId, showHeat, onHover }: Props) 
             style={{ opacity: entered ? opacity : 0, transition: `opacity 260ms ease-out ${Math.min(700, i * 0.6)}ms` }}
           >
             {isHero && goal && (
-              <circle cx={cx} cy={cy} r={r + 0.9} fill="none" stroke="#f5f3ee" strokeOpacity={0.55} strokeWidth={0.18} />
+              <circle cx={cx} cy={cy} r={r + 0.9} fill="none" stroke="var(--ink)" strokeOpacity={0.55} strokeWidth={0.18} />
             )}
             {isHero && heroBiggest === s && (
               <circle cx={cx} cy={cy} r={r + 1.8} fill="none" stroke="var(--broadcast-gold)" strokeWidth={0.22} strokeDasharray="0.6 0.5" />
             )}
             <circle
               cx={cx} cy={cy} r={r}
-              fill={goal ? (isHero ? '#f5f3ee' : stroke) : 'transparent'}
+              fill={goal ? (isHero ? 'var(--ink)' : stroke) : 'transparent'}
               fillOpacity={goal ? 0.92 : 0}
               stroke={stroke}
               strokeWidth={isHero ? 0.32 : post ? 0.45 : 0.25}
@@ -237,7 +236,7 @@ export function ShotAtlas({ shots, visible, heroId, showHeat, onHover }: Props) 
             {isHero && s.minute !== null && (
               <text
                 x={cx + r + 0.5} y={cy + 0.55}
-                fontSize={1.5} fontWeight={700} fill="#f5f3ee" fillOpacity={0.85}
+                fontSize={1.5} fontWeight={700} fill="var(--ink)" fillOpacity={0.85}
                 fontFamily="var(--font-display)"
                 className="pointer-events-none"
               >

@@ -105,38 +105,42 @@ export function ClubScreen() {
     <div className="data-in pb-16">
       <Masthead edition="Club File" title={c.name} right={<span className="text-text-faint">{p.results.length} played</span>} />
 
-      <div
-        className="relative overflow-hidden border-b border-divider"
-        style={{ background: `linear-gradient(105deg, color-mix(in srgb, ${clubColors(c.code).primary} 34%, #f6f0e2) 0%, #f6f0e2 62%)` }}
+      <section
+        className="relative overflow-hidden"
+        style={{ background: `linear-gradient(120deg, ${clubColors(c.code).primary} 0%, color-mix(in srgb, ${clubColors(c.code).primary} 70%, #17130e) 100%)` }}
       >
-        <div className="relative flex flex-wrap items-end gap-8 px-10 py-8">
-          {crest && <img src={crest} alt="" className="h-24 w-24 shrink-0 drop-shadow-lg" />}
+        <div className="absolute inset-0 opacity-35 [background-image:radial-gradient(rgba(23,19,14,0.6)_1px,transparent_1.5px)] [background-size:6px_6px]" />
+        {crest && <img src={crest} alt="" className="absolute -right-10 -top-24 size-[30rem] opacity-[0.22] mix-blend-multiply" />}
+        <div className="absolute inset-y-0 left-0 w-3" style={{ background: clubColors(c.code).accent }} />
+        <div className="relative flex flex-wrap items-end gap-8 px-10 pb-7 pt-9">
+          {crest && <img src={crest} alt="" className="size-32 shrink-0 drop-shadow-[6px_6px_0_rgba(23,19,14,0.45)]" />}
           <div className="min-w-0">
-            <div className="font-display text-5xl font-bold leading-none text-text">{c.name}</div>
-            <div className="mt-3 flex items-center gap-2">
+            <div className="voice text-xl text-paper/85">the club file · {p.results.length} played</div>
+            <div className="font-display text-[5.5rem] font-black uppercase leading-[0.82] text-paper [text-shadow:6px_6px_0_var(--ink)]">{c.name}</div>
+            <div className="mt-4 flex items-center gap-1.5">
               {form.length > 0 && (
                 <>
-                  <span className="text-[12px] font-bold text-text-faint">Form</span>
+                  <span className="mr-1 bg-ink px-2 py-0.5 font-display text-[13px] font-black uppercase tracking-[0.08em] text-paper">Form</span>
                   {form.map((r, i) => (
-                    <span key={i} className={`flex size-5 items-center justify-center text-[12px] font-bold ${RESULT_FILL[r]}`}>
+                    <span key={i} className={`flex size-6 items-center justify-center border-2 border-ink text-[12px] font-bold ${RESULT_FILL[r]}`}>
                       {r}
                     </span>
                   ))}
                 </>
               )}
               {p.owned_count > 0 && (
-                <span className="ml-3 bg-broadcast-gold px-2 py-0.5 text-[12px] font-bold text-broadcast-gold-ink">
+                <span className="ml-3 rotate-[-4deg] border-2 border-ink bg-broadcast-gold px-2.5 py-0.5 font-display text-[15px] font-black uppercase text-broadcast-gold-ink shadow-[3px_3px_0_var(--ink)]">
                   {p.owned_count} in my squad
                 </span>
               )}
             </div>
           </div>
-          <div className="ml-auto flex flex-col items-end gap-2">
+          <div className="ml-auto flex flex-col items-end gap-2 border-2 border-ink bg-paper px-4 py-3 shadow-[4px_4px_0_var(--ink)]">
             <FixtureRun fixtures={p.fixtures} max={6} showEvent />
             <RunPressure fixtures={p.fixtures} max={6} />
           </div>
         </div>
-      </div>
+      </section>
 
       {/* SEASON SHAPE - the same real results/xG the tables below already
           show, read instead as a timeline: a real single-strand spiral

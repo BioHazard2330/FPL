@@ -23,17 +23,19 @@ export function MarginalValue({ plan }: { plan: WeekPlanPayload }) {
       title="What each extra transfer buys"
       sub={`Points the next transfer adds over ${plan.horizon} gameweeks, on top of the ones before it. A transfer has to reach ${bar} to be recommended.${ft >= 5 ? ' You hold five free transfers, so using one costs nothing and rolling wastes one.' : ''}`}
     >
-      <div className="relative space-y-2.5 pt-1">
-        <div className="pointer-events-none absolute inset-y-0 border-l border-dashed border-broadcast-gold/70" style={{ left: `calc(3.5rem + (100% - 3.5rem - 3.5rem) * ${bar / scale})` }} />
+      <div className="relative space-y-3 pt-4">
+        <div className="pointer-events-none absolute -top-3 bottom-0 z-10 border-l-2 border-dashed border-ink" style={{ left: `calc(4.25rem + (100% - 8.5rem) * ${bar / scale})` }}>
+          <span className="absolute -top-2 left-1 whitespace-nowrap bg-ink px-1.5 font-display text-[12px] font-black uppercase text-paper">bar {bar}</span>
+        </div>
         {steps.map((s) => {
           const taken = s.k <= kept
           return (
             <div key={s.k} className="flex items-center gap-3">
-              <span className="w-[3.5rem] shrink-0 text-[13px] text-text-muted">{ORDINAL[s.k - 1] ?? `${s.k}th`}</span>
-              <div className="relative h-5 flex-1 rounded-sm bg-void/60">
-                <div className={`bar-draw h-full rounded-sm ${taken ? 'bg-pitch-green' : 'bg-text-faint/40'}`} style={{ width: `${Math.max(1.5, (Math.max(s.marginal, 0) / scale) * 100)}%` }} />
+              <span className="w-[3.5rem] shrink-0 font-display text-lg font-black uppercase text-text">{ORDINAL[s.k - 1] ?? `${s.k}th`}</span>
+              <div className="relative h-7 flex-1 border-2 border-ink bg-paper">
+                <div className={`bar-draw h-full ${taken ? 'bg-pitch-green' : '[background-image:repeating-linear-gradient(135deg,var(--text-faint)_0_2px,transparent_2px_7px)]'}`} style={{ width: `${Math.max(1.5, (Math.max(s.marginal, 0) / scale) * 100)}%` }} />
               </div>
-              <span className={`tabular w-[3.5rem] shrink-0 text-right font-display text-lg font-semibold ${taken ? 'text-pitch-green' : 'text-text-faint'}`}>
+              <span className={`tabular w-[3.5rem] shrink-0 text-right font-display text-2xl font-black ${taken ? 'text-pitch-green' : 'text-text-faint'}`}>
                 {s.marginal >= 0 ? '+' : ''}
                 {s.marginal.toFixed(1)}
               </span>

@@ -332,12 +332,12 @@ export function LiveScreen() {
                       <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
                         {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[12px] font-bold text-broadcast-gold-ink">C</span>}
                         {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[12px] font-bold text-text">V</span>}
-                        <Link to={`/player/${s.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">
+                        <Link to={`/player/${s.player_id}`} className="shrink-0 font-bold text-text hover:text-pitch-green">
                           {s.web_name}
                         </Link>
                         <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
                         {s.ownership_percent !== null && (
-                          <span className="shrink-0 text-[12px] text-text-faint">{s.ownership_percent.toFixed(1)}% owned</span>
+                          <span className="min-w-0 truncate text-[12px] text-text-faint">{s.ownership_percent.toFixed(1)}% owned</span>
                         )}
                         {isDiff && <span className="shrink-0 text-[12px] font-bold text-broadcast-gold">Diff</span>}
                         {s.classification && s.classification !== 'FIT' && (
