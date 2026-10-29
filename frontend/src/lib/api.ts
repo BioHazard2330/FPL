@@ -224,6 +224,7 @@ export function crestUrl(teamCode: number | null): string | null {
 
 /** Official Premier League headshot (transparent PNG), keyed by the FPL player
  * `code`. 110x140 for anything above a small avatar, 40x40 below. */
-export function playerPhotoUrl(code: number, size: 'large' | 'small' = 'large'): string {
-  return `https://resources.premierleague.com/premierleague25/photos/players/${size === 'small' ? '40x40' : '110x140'}/${code}.png`
+export function playerPhotoUrl(code: number, size: 'large' | 'small' | 'hero' = 'large'): string {
+  const dims = size === 'small' ? '40x40' : size === 'hero' ? '500x500' : '110x140'
+  return `https://resources.premierleague.com/premierleague25/photos/players/${dims}/${code}.png`
 }

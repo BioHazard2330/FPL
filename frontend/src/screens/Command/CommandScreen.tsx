@@ -17,8 +17,9 @@ import { MoveCard } from '@/components/command/MoveCard'
 import { SeasonRibbon } from '@/components/command/SeasonRibbon'
 import { TrackRecord } from '@/components/command/TrackRecord'
 import { SquadNews } from '@/components/command/SquadNews'
-import { SquadPitch } from '@/components/command/SquadPitch'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
+import { CommandStage } from '@/components/command/CommandStage'
+import { useState } from 'react'
 import { Panel } from '@/components/ui/kit'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -38,6 +39,8 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * package rather than a scrolling list of cards. Zero new backend data;
  * every number here traces to the same `CommandPayload` fields the
  * previous version already rendered. */
+
+type CommandTab = 'week' | 'ahead' | 'form' | 'season' | 'news'
 
 type SectionKey =
   | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk' | 'checklist' | 'field'
@@ -64,6 +67,7 @@ function orderSections(nodes: Record<SectionKey, React.ReactNode>, actionable: b
 }
 
 export function CommandScreen() {
+  const [tab, setTab] = useState<CommandTab>('week')
   const state = useFetch(fetchCommandPayload, [], 60000)
   const planState = useFetch(fetchWeekPlanPayload, [], 60000)
   const deskState = useFetch(fetchDeskPayload, [], 300000)
@@ -181,42 +185,75 @@ export function CommandScreen() {
 
   if (plan) {
     const moves = plan.moves ?? []
+    const tabs: { key: CommandTab; label: string; note: string }[] = [
+      { key: 'week', label: 'This week', note: moves.length === 0 ? 'roll' : `${moves.length} move${moves.length === 1 ? '' : 's'}` },
+      { key: 'ahead', label: 'The weeks ahead', note: 'armband & road' },
+      { key: 'form', label: 'Form', note: 'the eye test' },
+      { key: 'season', label: 'Season', note: 'rank & record' },
+      { key: 'news', label: 'News', note: 'the desk' },
+    ]
     return (
       <div className="data-in">
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <MatchdayHeader plan={plan} />
-        <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
-        <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-7">
-            {plan.action_squad && <SquadPitch block={plan.action_squad} fixtures={plan.fixtures} title={`Your GW${plan.event} team`} sub={moves.length > 0 ? 'After the moves above, with the armband set.' : 'As it stands, with the armband set.'} />}
-          </div>
-          <div className="min-w-0 space-y-7">
-            {moves.length > 0 && (
-              <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
-                <div className="space-y-4">
-                  {moves.map((m) => (
-                    <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} startEvent={plan.event ?? 0} board={plan.matchups} />
-                  ))}
-                  {(plan.declined ?? []).map((m) => (
-                    <p key={m.into.player_id} className="text-[13px] text-text-muted">
-                      <span className="font-semibold text-text">Left out:</span> {m.out.name} &rarr; {m.into.name} adds {m.gain >= 0 ? '+' : ''}
-                      {m.gain.toFixed(1)} over {plan.horizon} GW, under the {plan.min_move_gain} a move has to earn.
-                    </p>
-                  ))}
-                </div>
-              </Panel>
-            )}
-            <SquadNews />
-            <MarginalValue plan={plan} />
-            <DeadlineChecklist plan={plan} desk={desk} />
-          </div>
-        </div>
-        <CaptainLadder plan={plan} />
-        <RoadAhead plan={plan} compact />
-        <SeasonRibbon />
-        <TrackRecord />
-        <EyeTest plan={plan} />
-        <DeskStrip desk={desk} />
+        <CommandStage plan={plan} />
+        <nav className="bare flex items-end gap-1 border-b border-divider" aria-label="Command sections">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`group relative px-5 pb-3 pt-2 text-left transition-colors ${tab === t.key ? 'text-text' : 'text-text-faint hover:text-text-muted'}`}
+            >
+              <span className="block font-display text-lg font-semibold uppercase tracking-[0.05em]">{t.label}</span>
+              <span className="block text-[11.5px] uppercase tracking-[0.12em] opacity-70">{t.note}</span>
+              <span className={`absolute inset-x-3 -bottom-px h-[4px] bg-pitch-green [clip-path:polygon(3%_0,100%_0,97%_100%,0_100%)] transition-opacity ${tab === t.key ? 'opacity-100' : 'opacity-0 group-hover:opacity-30'}`} />
+            </button>
+          ))}
+        </nav>
+        {tab === 'week' && (
+          <>
+            <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
+            <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+              <div className="min-w-0 space-y-7">
+                {moves.length > 0 && (
+                  <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
+                    <div className="space-y-4">
+                      {moves.map((m) => (
+                        <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} startEvent={plan.event ?? 0} board={plan.matchups} />
+                      ))}
+                      {(plan.declined ?? []).map((m) => (
+                        <p key={m.into.player_id} className="text-[13px] text-text-muted">
+                          <span className="font-semibold text-text">Left out:</span> {m.out.name} &rarr; {m.into.name} adds {m.gain >= 0 ? '+' : ''}
+                          {m.gain.toFixed(1)} over {plan.horizon} GW, under the {plan.min_move_gain} a move has to earn.
+                        </p>
+                      ))}
+                    </div>
+                  </Panel>
+                )}
+                <SquadNews />
+              </div>
+              <div className="min-w-0 space-y-7">
+                <DeadlineChecklist plan={plan} desk={desk} />
+                <MarginalValue plan={plan} />
+              </div>
+            </div>
+          </>
+        )}
+        {tab === 'ahead' && (
+          <>
+            <CaptainLadder plan={plan} />
+            <RoadAhead plan={plan} compact />
+          </>
+        )}
+        {tab === 'form' && <EyeTest plan={plan} />}
+        {tab === 'season' && (
+          <>
+            <SeasonRibbon />
+            <TrackRecord />
+          </>
+        )}
+        {tab === 'news' && <DeskStrip desk={desk} />}
       </div>
     )
   }

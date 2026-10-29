@@ -582,3 +582,20 @@ main {
   letter-spacing: 0.13em;
   font-size: 11px;
 }
+
+/* The fixture crawl on Command's stage: the one looping motion, because a broadcast ticker loops. Two copies of the
+   row slide by exactly one copy's width so the seam never shows; it stops for anyone who has asked for less motion. */
+@keyframes ticker-crawl {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ticker-track {
+  animation: ticker-crawl 70s linear infinite;
+  will-change: transform;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track { animation: none; }
+}
