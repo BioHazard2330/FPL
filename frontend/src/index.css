@@ -704,3 +704,36 @@ main {
 @keyframes flap-fall { to { transform: rotateX(-90deg); } }
 @keyframes flap-land { to { transform: rotateX(0deg); } }
 @media (prefers-reduced-motion: reduce) { .flap-leaves { display: none; } }
+
+/* Album stickers held in the hand (Album/AlbumScreen.tsx): pointer tilt, a glare, and holographic foil on stickers the
+ * football read backs (gold for the armband). */
+.holo {
+  --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 50%; --pos: 50% 50%;
+  position: relative; transform: rotateX(var(--rx)) rotateY(var(--ry)); transform-style: preserve-3d;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.holo:hover { transition: transform 0.06s linear; }
+.holo::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 30; opacity: 0; transition: opacity 0.25s;
+  background: radial-gradient(circle at var(--mx) var(--my), rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 45%);
+  mix-blend-mode: soft-light;
+}
+.holo:hover::after { opacity: 1; }
+.holo-foil::before, .holo-gold::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 25; mix-blend-mode: color-dodge; opacity: 0.32;
+  background-size: 300% 300%, 200% 200%; background-position: var(--pos), var(--pos); transition: opacity 0.25s;
+}
+.holo-foil::before {
+  background-image:
+    repeating-linear-gradient(115deg, #ff5c8a 0%, #ffd36e 8%, #6effa8 16%, #63d4ff 24%, #b98cff 32%, #ff5c8a 40%),
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 6px);
+}
+.holo-gold::before {
+  opacity: 0.42;
+  background-image:
+    repeating-linear-gradient(115deg, #fff3b0 0%, #e8a800 10%, #fff8d6 20%, #b07a00 30%, #ffe680 40%),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.3) 0 2px, transparent 2px 6px);
+}
+.holo:hover .holo-foil::before { opacity: 0.6; }
+.holo:hover .holo-gold::before { opacity: 0.7; }
+@media (prefers-reduced-motion: reduce) { .holo { transform: none !important; } }

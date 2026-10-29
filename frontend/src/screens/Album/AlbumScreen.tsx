@@ -40,15 +40,35 @@ function Fate({ f }: { f: Sticker['fate'] }) {
   return <div className={`absolute -right-2 top-24 z-20 rotate-[4deg] border-2 border-ink px-2 py-0.5 font-display text-[13px] font-black uppercase shadow-[3px_3px_0_var(--ink)] ${tone}`}>{text}</div>
 }
 
+/** The sticker follows the pointer like a card tilted in the hand: a glare runs across it, and a sticker the football
+ * read backs is printed on foil (gold foil for the armband), so the shine is the read. */
+function tilt(e: React.PointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  const r = el.getBoundingClientRect()
+  const x = (e.clientX - r.left) / r.width
+  const y = (e.clientY - r.top) / r.height
+  el.style.setProperty('--mx', `${x * 100}%`)
+  el.style.setProperty('--my', `${y * 100}%`)
+  el.style.setProperty('--rx', `${(0.5 - y) * 16}deg`)
+  el.style.setProperty('--ry', `${(x - 0.5) * 20}deg`)
+  el.style.setProperty('--pos', `${x * 100}% ${y * 100}%`)
+}
+function untilt(e: React.PointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  el.style.setProperty('--rx', '0deg')
+  el.style.setProperty('--ry', '0deg')
+}
+
 function Card({ s, n }: { s: Sticker; n: number }) {
   const club = clubColors(s.team_code)
   const crest = crestUrl(s.team_code)
   const flagged = s.status !== 'a'
+  const foil = s.fate?.kind === 'captain' ? 'holo-gold' : s.verdict?.label === 'backs him' ? 'holo-foil' : ''
   return (
-    <div className="relative w-[17rem] shrink-0">
+    <div className="relative w-[17rem] shrink-0 [perspective:900px]">
       <Fate f={s.fate} />
-      <Link to={`/player/${s.player_id}`} className="block border-[3px] border-ink bg-paper shadow-[6px_6px_0_var(--ink)] transition-transform hover:-translate-y-1 hover:rotate-[-0.5deg]">
-        <div className="relative h-[13.5rem] overflow-hidden" style={{ background: `linear-gradient(150deg, ${club.primary} 0%, color-mix(in srgb, ${club.primary} 65%, #17130e) 100%)` }}>
+      <Link to={`/player/${s.player_id}`} onPointerMove={tilt} onPointerLeave={untilt} className="holo block border-[3px] border-ink bg-paper shadow-[6px_6px_0_var(--ink)]">
+        <div className={`relative h-[13.5rem] overflow-hidden ${foil}`} style={{ background: `linear-gradient(150deg, ${club.primary} 0%, color-mix(in srgb, ${club.primary} 65%, #17130e) 100%)` }}>
           <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(23,19,14,0.55)_1px,transparent_1.5px)] [background-size:5px_5px]" />
           {crest && <img src={crest} alt="" className="absolute -right-8 -top-6 size-40 opacity-25 mix-blend-multiply" />}
           <div className="absolute left-0 top-0 z-10 flex items-center gap-1.5 bg-ink px-2 py-1">
