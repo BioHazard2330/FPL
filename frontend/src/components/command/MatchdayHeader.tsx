@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Flap } from '@/components/ui/Flap'
 import { fetchLeagues } from '@/lib/api'
 import { formatCountdown, useCountdown } from '@/lib/clock'
 import { useFetch } from '@/lib/useFetch'
@@ -63,8 +64,9 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
         </div>
         <Figure
           label="Deadline"
-          value={countdown && !countdown.expired ? formatCountdown(countdown) : '—'}
-          tone={countdown && countdown.totalMs < 6 * 3600_000 ? 'text-alert-red' : 'text-text'}
+          value={countdown && !countdown.expired
+            ? <Flap text={formatCountdown(countdown)} className={`text-[0.66em] ${countdown.totalMs < 6 * 3600_000 ? '[&_.flap]:!text-[#ff4614]' : ''}`} stagger={30} />
+            : '—'}
           sub={live?.gw?.next_deadline_time ? new Date(live.gw.next_deadline_time).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : undefined}
         />
         <Figure

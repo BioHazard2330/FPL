@@ -4,6 +4,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
+import { DepartureBoard } from '@/components/live/DepartureBoard'
 import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
@@ -597,9 +598,6 @@ function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
     const day = new Date(m.kickoff_time).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })
     days.set(day, [...(days.get(day) ?? []), m])
   }
-  const first = new Date(matches[0].kickoff_time).getTime()
-  const hours = Math.max(0, (first - Date.now()) / 3_600_000)
-  const until = hours >= 24 ? `${Math.floor(hours / 24)}d ${Math.floor(hours % 24)}h` : `${Math.floor(hours)}h ${Math.floor((hours * 60) % 60)}m`
   const yours = matches.reduce((n, m) => n + m.players.filter((x) => x.slot === 'starting').length, 0)
   return (
     <section className="px-10 py-8">
@@ -608,11 +606,8 @@ function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
           <div className="voice text-lg text-text-muted">nothing in play · the match centre opens at kickoff</div>
           <h2 className="font-display text-text">GW{matches[0].event}: when your eleven play</h2>
         </div>
-        <div className="border-2 border-ink bg-ink px-4 py-2 text-right text-paper shadow-[4px_4px_0_var(--spot)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-paper/70">first kickoff in</div>
-          <div className="tabular font-display text-4xl font-black leading-none">{until}</div>
-        </div>
       </div>
+      <div className="mt-5"><DepartureBoard matches={matches} /></div>
       <div className="mt-2 text-[13px] text-text-faint">{yours} of your starters across {matches.length} matches</div>
       <div className="mt-5 grid gap-6 xl:grid-cols-2">
         {[...days.entries()].map(([day, list]) => (

@@ -682,3 +682,25 @@ main {
 .screen-frame > * > details::after {
   display: none;
 }
+
+/* Split-flap board (components/ui/Flap.tsx). Each cell is two leaves split at the hinge; a change folds the old top
+ * leaf down and lands the new bottom leaf. Size follows font-size. */
+.flap-row { display: inline-flex; gap: 0.08em; perspective: 6em; }
+.flap {
+  position: relative; display: inline-block; width: 0.78em; height: 1.18em; line-height: 1.18em;
+  font-family: 'Big Shoulders Display', Impact, sans-serif; font-weight: 900; text-align: center; color: #f6f0e2;
+  border-radius: 0.06em; box-shadow: 0 0.04em 0 rgba(0, 0, 0, 0.6);
+}
+.flap-half { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; background: #1b1d22; backface-visibility: hidden; }
+.flap-half > span { position: absolute; left: 0; right: 0; height: 1.18em; }
+.flap-top { top: 0; border-radius: 0.06em 0.06em 0 0; background: linear-gradient(#26292f, #1d2025); transform-origin: bottom; }
+.flap-top > span { top: 0; }
+.flap-bottom { bottom: 0; border-radius: 0 0 0.06em 0.06em; background: linear-gradient(#17191d, #1f2227); transform-origin: top; }
+.flap-bottom > span { bottom: 0; }
+.flap::after { content: ''; position: absolute; left: 0; right: 0; top: calc(50% - 0.5px); height: 1px; background: rgba(0, 0, 0, 0.85); z-index: 3; }
+.flap-leaves { position: absolute; inset: 0; z-index: 2; }
+.flap-fall { animation: flap-fall 55ms ease-in forwards; }
+.flap-land { transform: rotateX(90deg); animation: flap-land 55ms 50ms ease-out forwards; }
+@keyframes flap-fall { to { transform: rotateX(-90deg); } }
+@keyframes flap-land { to { transform: rotateX(0deg); } }
+@media (prefers-reduced-motion: reduce) { .flap-leaves { display: none; } }
