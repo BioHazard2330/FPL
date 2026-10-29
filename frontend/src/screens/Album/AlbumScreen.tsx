@@ -29,6 +29,7 @@ const STAMP: Record<string, string> = {
   'backs him': 'bg-pitch-green text-pitch-green-ink', mixed: 'bg-broadcast-gold text-ink', 'against him': 'bg-alert-red text-alert-red-ink',
 }
 const WEIGHT: Record<string, string> = { carries: 'text-pitch-green', noise: 'text-text-faint line-through decoration-1', context: 'text-text-muted' }
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 const POS_NAME: Record<string, string> = { GKP: 'Goalkeepers', DEF: 'Defenders', MID: 'Midfielders', FWD: 'Forwards' }
 
 function Fate({ f }: { f: Sticker['fate'] }) {
@@ -85,8 +86,8 @@ function Card({ s, n }: { s: Sticker; n: number }) {
           )}
           {(s.best.length > 0 || s.worst.length > 0) && (
             <div className="text-[11.5px] leading-snug text-text-muted">
-              {s.best.map((m) => <span key={m.label} className="mr-2"><span className="font-semibold text-pitch-green">{m.percentile}th</span> {m.label.toLowerCase()}</span>)}
-              {s.worst.map((m) => <span key={m.label}><span className="font-semibold text-alert-red">{m.percentile}th</span> {m.label.toLowerCase()}</span>)}
+              {s.best.map((m) => <span key={m.label} className="mr-2"><span className="font-semibold text-pitch-green">{ordinal(m.percentile)}</span> {m.label.toLowerCase()}</span>)}
+              {s.worst.map((m) => <span key={m.label}><span className="font-semibold text-alert-red">{ordinal(m.percentile)}</span> {m.label.toLowerCase()}</span>)}
             </div>
           )}
           {s.lines.slice(0, 2).map((l) => (
