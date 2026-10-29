@@ -7,6 +7,8 @@
 // built app is served from the same origin as that server.
 import type {
   ComponentsPayload,
+  ReviewPayload,
+  PricesPayload,
   MatchStory,
   SquadNewsPayload,
   LeaguesPayload,
@@ -155,6 +157,14 @@ export function fetchLeagues(): Promise<LeaguesPayload> {
 export function fetchViewPlan(scales: Record<number, number>): Promise<ViewPlanPayload> {
   const q = Object.entries(scales).map(([k, v]) => `${k}:${v}`).join(',')
   return getJson<ViewPlanPayload>(`/api/viewplan?scales=${encodeURIComponent(q)}`)
+}
+
+export function fetchPricesPayload(): Promise<PricesPayload> {
+  return getJson<PricesPayload>('/api/prices')
+}
+
+export function fetchReviewPayload(event: number | null): Promise<ReviewPayload> {
+  return getJson<ReviewPayload>(event ? `/api/review?event=${event}` : '/api/review')
 }
 
 export function fetchComponentsPayload(): Promise<ComponentsPayload> {

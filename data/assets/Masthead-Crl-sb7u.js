@@ -1,0 +1,1 @@
+import{G as e}from"./ScreenStates-Drwu7i_D.js";var t=e();function n({right:e}){return e?(0,t.jsx)(`div`,{className:`bare tabular -mb-2 px-1 text-right text-[13px] text-text-faint`,children:e}):null}export{n as t};

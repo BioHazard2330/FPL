@@ -886,6 +886,7 @@ export interface LiveSnapshot {
   squad: LiveSquadPlayer[]
   active_matches: LiveMatch[]
   upcoming?: UpcomingMatch[]
+  autosubs?: { out: number; into: number | null; status: 'made' | 'standby'; out_name: string | null; into_name: string | null }[]
   bonus_defcon: BonusDefconRow[]
   match_events: LiveMatchEvent[]
   recent_changes: LiveRecentChange[]
@@ -2681,3 +2682,29 @@ export interface Chase {
 /** Predicted against realised points per part of the projection (`models/component_skill.component_report`). */
 export interface ComponentRow { position: string; part: string; n: number; gameweeks: number; predicted: number; actual: number; gap: number }
 export interface ComponentsPayload { events: number[]; players: number; all: ComponentRow[]; contenders: ComponentRow[] }
+
+export interface ReviewPlayer {
+  player_id: number; name?: string; team_short?: string; team_code?: number; position?: string; photo_code?: number
+  slot: number; starting: boolean; multiplier: number; captain: boolean; vice: boolean; points: number; minutes: number
+  xg: number | null; xa: number | null; bonus: number; predicted: number | null; deserved: number | null; subbed_on?: boolean; subbed_off?: boolean
+}
+export interface ReviewSwing { player_id: number; name?: string; team_short?: string; team_code?: number; position?: string; photo_code?: number; points: number; yours: number; field_eo: number; swing: number }
+export interface ReviewRef { player_id: number | null; name?: string; team_short?: string; team_code?: number; position?: string; photo_code?: number; points: number }
+/** One finished gameweek read back (`models/gw_review.gameweek_review`). */
+export interface ReviewPayload {
+  status: 'ok' | 'none' | 'no_entry'
+  event: number; chip: string | null; points: number; raw_points: number; hits: number; average: number | null; highest: number | null
+  top10k_field: number | null; total: number; rank: number | null; previous_rank: number | null; bench_points: number | null
+  squad: ReviewPlayer[]; predicted: number; deserved: number; counted: number; subs: { out?: string; into?: string }[]
+  gains: ReviewSwing[]; losses: ReviewSwing[]
+  transfers: { into: ReviewRef & { price: number }; out: ReviewRef & { price: number } }[]
+  plan: { made_at: string; score: number; hits: number; captain: ReviewRef; moves: { out: ReviewRef; into: ReviewRef }[]; followed: boolean } | null
+  captain: { multiplier: number; captain: { player_id: number; name: string; actual: number; deserved: number }; best_actual: { player_id: number; name: string; actual: number }; best_deserved: { player_id: number; name: string; deserved: number }; cost: number; owed: number } | null
+  stars: ReviewRef[]
+  history: { event: number; points: number; rank: number | null; average: number | null }[]
+  events: number[]
+}
+
+export interface PriceRow { player_id: number; name: string | null; photo_code: number | null; team_short: string | null; team_code: number | null; position: string | null; price: number | null; owned: number | null; p_rise: number | null; when: string | null }
+/** Tonight's rise chances (`monitoring/api/prices_payload.py`). */
+export interface PricesPayload { status: 'ok' | 'no_model'; squad?: PriceRow[]; targets?: PriceRow[]; risers?: PriceRow[]; likely?: number; model?: { fitted_at: string; auc: number; holdout_rises: number } }

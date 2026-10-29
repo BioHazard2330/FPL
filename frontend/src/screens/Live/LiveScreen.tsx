@@ -306,6 +306,23 @@ export function LiveScreen() {
         </div>
       )}
 
+      {(p.autosubs ?? []).length > 0 && (
+        <section className="px-10 py-6">
+          <h2 className="font-display text-text">Auto-sub watch</h2>
+          <p className="mt-1 text-[13px] text-text-muted">Starters on 0 minutes and the bench player FPL brings on, in your bench order with a legal formation. Standby: his match is still to finish.</p>
+          <div className="mt-4 flex flex-wrap gap-4">
+            {(p.autosubs ?? []).map((a) => (
+              <div key={a.out} className={`flex items-center gap-3 border-2 border-ink px-4 py-2.5 shadow-[4px_4px_0_var(--ink)] ${a.status === 'made' ? 'bg-paper' : 'bg-raised'}`}>
+                <span className={`px-1.5 font-display text-[12px] font-black uppercase ${a.status === 'made' ? 'bg-ink text-paper' : 'border-2 border-dashed border-ink text-text'}`}>{a.status === 'made' ? 'made' : 'standby'}</span>
+                <span className="font-display text-lg font-black uppercase text-alert-red">{a.out_name} ▼</span>
+                <span className="text-text-faint">→</span>
+                <span className="font-display text-lg font-black uppercase text-pitch-green">{a.into_name ? `${a.into_name} ▲` : 'nobody eligible'}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* SQUAD IMPACT + LIVE BONUS/DEFCON - the two questions that only
           matter about MY squad during a live window, side by side. */}
       {squad.length > 0 && (
@@ -609,9 +626,9 @@ function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
                     {new Date(m.kickoff_time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
                   </span>
                   <span className="flex items-center gap-1.5 font-display text-[17px] font-black uppercase text-text">
-                    {home && <img src={home} alt="" className="size-5" />}{m.home}
+                    {home && <img src={home} alt="" className="size-5" onError={(e) => { e.currentTarget.style.display = 'none' }} />}{m.home}
                     <span className="text-text-faint">v</span>
-                    {m.away}{away && <img src={away} alt="" className="size-5" />}
+                    {m.away}{away && <img src={away} alt="" className="size-5" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
                   </span>
                   <span className="flex flex-wrap gap-1.5">
                     {m.players.map((x) => (

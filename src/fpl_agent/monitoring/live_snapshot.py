@@ -146,6 +146,33 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
     return out
 
 
+def _autosub_block(conn: sqlite3.Connection, squad: list[dict], live_payload: dict | None, event: int | None) -> list[dict]:
+    """Auto-sub watch while a gameweek is being played: each starter on 0 minutes, the bench player FPL would bring on,
+    and whether it is settled (his club's matches are over) or standby (`gw_review.autosub_watch`)."""
+    if live_payload is None or event is None or not squad:
+        return []
+    from fpl_agent.models.gw_review import autosub_watch
+    from fpl_agent.models.live_forecast import fixture_states
+
+    states = fixture_states(conn, event)
+    if not any(st.status != "pre" for st in states):
+        return []
+    team_done: dict[int, bool] = {}
+    for st in states:
+        for team in (st.home_id, st.away_id):
+            team_done[team] = team_done.get(team, True) and st.status == "done"
+    ids = [p["player_id"] for p in squad]
+    team_of = {r["id"]: r["team_id"] for r in conn.execute(f"SELECT id, team_id FROM players WHERE id IN ({','.join('?' * len(ids))})", ids)}
+    minutes = {e["id"]: (e.get("stats") or {}).get("minutes", 0) or 0 for e in live_payload.get("elements", []) if "id" in e}
+    rows = [{"player_id": p["player_id"], "position": p["position"], "starting": p["slot"] == "starting"} for p in squad]
+    done = {pid: team_done.get(team_of.get(pid), False) for pid in ids}
+    names = {p["player_id"]: p["web_name"] for p in squad}
+    return [
+        {**w, "out_name": names.get(w["out"]), "into_name": names.get(w["into"]) if w["into"] else None}
+        for w in autosub_watch(rows, minutes, done)
+    ]
+
+
 def _upcoming_block(conn: sqlite3.Connection, squad: list[dict], now_iso: str) -> list[dict]:
     """The next gameweek's matches still to kick off, in kickoff order, each with the squad players in it - what the
     Live screen shows when nothing is in play. Reads the fixture list only."""
@@ -656,6 +683,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "threats": _threats_block(conn, live_payload, squad_ids),
         "squad": squad_rows,
         "upcoming": _upcoming_block(conn, squad_rows, now),
+        "autosubs": _autosub_block(conn, squad_rows, live_payload, event),
         "active_matches": _active_matches_block(conn, squad_ids),
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),
         "match_events": _match_events_block(live_bonus_rows),

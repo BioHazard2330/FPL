@@ -17,6 +17,8 @@ import { MoveCard } from '@/components/command/MoveCard'
 import { SeasonRibbon } from '@/components/command/SeasonRibbon'
 import { TrackRecord } from '@/components/command/TrackRecord'
 import { SquadNews } from '@/components/command/SquadNews'
+import { TonightPrices } from '@/components/command/TonightPrices'
+import { LastReport } from '@/components/command/LastReport'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
 import { CommandStage } from '@/components/command/CommandStage'
 import { useState } from 'react'
@@ -197,6 +199,7 @@ export function CommandScreen() {
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <MatchdayHeader plan={plan} />
         <CommandStage plan={plan} />
+        <LastReport />
         <nav className="bare -mb-4 flex items-end gap-2 border-b-[3px] border-ink" aria-label="Command sections">
           {tabs.map((t, i) => (
             <button
@@ -240,6 +243,7 @@ export function CommandScreen() {
               </div>
               <div className="min-w-0 space-y-7">
                 <DeadlineChecklist plan={plan} desk={desk} />
+                <TonightPrices />
               </div>
             </div>
           </>

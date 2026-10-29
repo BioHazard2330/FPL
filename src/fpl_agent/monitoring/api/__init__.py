@@ -28,6 +28,8 @@ from fpl_agent.monitoring.api.previews_payload import build_previews_payload
 from fpl_agent.monitoring.api.profile_payload import build_club_profile, build_player_profile
 from fpl_agent.monitoring.api.receipts_payload import build_receipts_payload
 from fpl_agent.monitoring.api.components_payload import build_components_payload
+from fpl_agent.monitoring.api.prices_payload import build_prices_payload
+from fpl_agent.monitoring.api.review_payload import build_review_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
 from fpl_agent.monitoring.api.squadnews_payload import build_squad_news
@@ -45,6 +47,8 @@ API_BUILDERS = {
     "scout": build_scout_payload,
     "signals": build_signals_payload,
     "components": build_components_payload,
+    "review": build_review_payload,
+    "prices": build_prices_payload,
     "advanced": build_advanced_payload,
     "receipts": build_receipts_payload,
     "atlas": build_atlas_payload,
