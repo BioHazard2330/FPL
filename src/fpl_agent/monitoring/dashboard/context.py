@@ -662,6 +662,16 @@ class LightContext:
 
 
 def light_context(conn: sqlite3.Connection) -> LightContext:
+    """The squad's ids without the full context build, with transfers told to the app before the deadline already applied
+    (FPL's own picks show them only after it)."""
+    try:
+        from fpl_agent.optimization.week_plan import light_squad_state
+
+        state = light_squad_state(conn)
+        if state and state.get("squad_ids"):
+            return LightContext(set(state["squad_ids"]))
+    except Exception:
+        pass
     try:
         row = conn.execute("SELECT MAX(event) FROM my_team_picks").fetchone()
         event = row[0] if row else None

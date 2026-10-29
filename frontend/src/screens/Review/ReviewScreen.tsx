@@ -236,6 +236,25 @@ function Verdicts({ d }: { d: ReviewPayload }) {
               <li>Armband: {d.plan.captain.name} ({d.plan.captain.points}){d.plan.hits ? ` · ${d.plan.hits} in hits` : ''}</li>
             </ul>
             <p className="mt-2 text-[11.5px] text-text-faint">Its eleven on the real points, no automatic substitutions.</p>
+            {(d.ledger ?? []).length > 1 && (() => {
+              const L = d.ledger ?? []
+              const you = L.reduce((n, r) => n + r.you, 0), planned = L.reduce((n, r) => n + r.plan, 0)
+              return (
+                <div className="mt-3 border-t-2 border-ink pt-2">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">every week a plan existed</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                    {L.map((r) => (
+                      <span key={r.event} className="tabular text-[12.5px] text-text-muted">
+                        GW{r.event} <span className={r.plan > r.you ? 'font-semibold text-alert-red' : r.plan < r.you ? 'font-semibold text-pitch-green' : ''}>{r.you}–{r.plan}</span>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-1 font-display text-lg font-black text-text">
+                    you {you} · plan {planned} <span className={you >= planned ? 'text-pitch-green' : 'text-alert-red'}>({you >= planned ? '+' : ''}{you - planned} you)</span>
+                  </div>
+                </div>
+              )
+            })()}
           </>
         ) : <p className="mt-2 text-sm text-text-muted">No plan was stored before this deadline.</p>}
       </div>

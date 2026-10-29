@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { fetchPricesPayload } from '@/lib/api'
+import { useFetch } from '@/lib/useFetch'
 import { chipName } from '@/components/ui/kit'
 import type { WeekPlanPayload } from '@/lib/types'
 
@@ -7,7 +9,7 @@ const signed = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
 type Week = NonNullable<WeekPlanPayload['road_ahead']>['weeks'][number]
 type Move = Week['moves'][number]
 
-function MoveCard({ m, event, plan }: { m: Move; event: number; plan: WeekPlanPayload }) {
+function MoveCard({ m, event, plan, rise }: { m: Move; event: number; plan: WeekPlanPayload; rise?: number | null }) {
   const short = (m.why_later?.short_now_tenths ?? 0) > 0
   return (
     <div className="border-2 border-ink bg-paper shadow-[3px_3px_0_var(--ink)]">
@@ -24,6 +26,11 @@ function MoveCard({ m, event, plan }: { m: Move; event: number; plan: WeekPlanPa
         <div className="truncate text-[11.5px] text-text-faint line-through decoration-alert-red/60">{m.out}</div>
         <div className="truncate font-display text-[15px] font-black uppercase leading-tight text-text">{m.into}</div>
         {m.hit && <div className="text-[11px] font-bold uppercase text-alert-red">−4 hit</div>}
+        {rise !== null && rise !== undefined && rise >= 0.1 && (
+          <div className={`mt-0.5 inline-block px-1 text-[10.5px] font-bold uppercase ${rise >= 0.25 ? 'bg-broadcast-gold text-ink' : 'text-broadcast-gold'}`} title="Fitted chance he rises £0.1m at the next overnight price update">
+            rise tonight {Math.round(rise * 100)}%
+          </div>
+        )}
         {m.why_later && (
           <div className="mt-0.5 text-[10.5px] leading-snug text-text-faint" title="What this move adds in each gameweek alone, and whether it can be paid for now at strict sale prices">
             GW{plan.event} {signed(m.why_later.gain_this_week)} · GW{event} {signed(m.why_later.gain_in_its_week)}
@@ -40,9 +47,14 @@ function MoveCard({ m, event, plan }: { m: Move; event: number; plan: WeekPlanPa
  * now), and the rolls that bank a transfer. Every station after this week is re-solved each week with the injuries and
  * prices of the day; the map is a direction, not a promise. */
 export function RoadMap({ plan }: { plan: WeekPlanPayload }) {
+  const prices = useFetch(fetchPricesPayload, [])
   const road = plan.road_ahead
   if (!road || road.weeks.length === 0) return null
   const moves = plan.moves ?? []
+  const rise = new Map<number, number | null>()
+  if (prices.status === 'ready' && prices.data.status === 'ok') {
+    for (const r of [...(prices.data.targets ?? []), ...(prices.data.risers ?? []), ...(prices.data.squad ?? [])]) rise.set(r.player_id, r.p_rise)
+  }
   const totalMoves = road.weeks.reduce((n, w) => n + w.moves.length, 0)
   return (
     <section className="px-6 pb-7 pt-6">
@@ -93,7 +105,7 @@ export function RoadMap({ plan }: { plan: WeekPlanPayload }) {
                   {w.moves.length === 0 ? (
                     <div className="border-2 border-dashed border-ink/40 px-2 py-3 text-center font-display text-[15px] font-black uppercase text-text-faint">roll</div>
                   ) : (
-                    w.moves.map((m) => <MoveCard key={`${m.out}-${m.into}`} m={m} event={w.event} plan={plan} />)
+                    w.moves.map((m) => <MoveCard key={`${m.out}-${m.into}`} m={m} event={w.event} plan={plan} rise={m.in_id ? rise.get(m.in_id) : null} />)
                   )}
                 </div>
               </div>

@@ -121,6 +121,17 @@ export function PlayerScreen() {
               <span className="bg-paper px-3 py-1 font-display text-3xl font-black tabular text-ink shadow-[4px_4px_0_var(--ink)]">£{pl.price_m.toFixed(1)}m</span>
             )}
             {status && <span className={`px-2 py-1 text-[12px] font-bold uppercase tracking-wide ${status.fill}`}>{status.label}</span>}
+            {(p.top10k ?? []).length > 0 && (() => {
+              const t = (p.top10k ?? [])[(p.top10k ?? []).length - 1]
+              return (
+                <span className="flex items-baseline gap-2 border-2 border-ink bg-ink px-3 py-1 text-paper shadow-[4px_4px_0_var(--spot)]" title={`Top-10k sample, GW${t.event}: owned by ${Math.round(t.owned * 100)}%, captained by ${Math.round(t.captained * 100)}%, effective ownership ${t.eo.toFixed(2)}`}>
+                  <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-paper/70">top 10k</span>
+                  <span className="tabular font-display text-2xl font-black">{Math.round(t.owned * 100)}%</span>
+                  {t.captained >= 0.01 && <span className="tabular text-[12px] text-paper/80">· {Math.round(t.captained * 100)}% (C)</span>}
+                  <span className="tabular text-[12px] text-paper/80">· EO {t.eo.toFixed(2)}</span>
+                </span>
+              )
+            })()}
           </div>
           {pl.news && <p className="voice mt-3 max-w-xl text-[19px] text-paper">{pl.news}</p>}
           <div className="absolute right-6 top-6 flex flex-col items-end gap-2 bg-paper p-3 shadow-[4px_4px_0_var(--ink)]">

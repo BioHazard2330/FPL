@@ -1081,6 +1081,7 @@ export interface AnalystMatchFindings {
 
 export interface PlayerProfilePayload {
   scouting?: ScoutingReportData | null
+  top10k?: { event: number; owned: number; captained: number; eo: number }[]
   football_read?: FootballReadData | null
   analyst?: AnalystMatchFindings[]
   stories?: Story[]
@@ -2709,6 +2710,7 @@ export interface ReviewPayload {
   captain: { multiplier: number; captain: { player_id: number; name: string; actual: number; deserved: number }; best_actual: { player_id: number; name: string; actual: number }; best_deserved: { player_id: number; name: string; deserved: number }; cost: number; owed: number } | null
   stars: ReviewRef[]
   history: { event: number; points: number; rank: number | null; average: number | null }[]
+  ledger?: { event: number; plan: number; you: number }[]
   events: number[]
 }
 

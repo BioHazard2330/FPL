@@ -108,6 +108,30 @@ def autosub_watch(squad: list[dict], minutes: dict[int, int], done: dict[int, bo
     return result
 
 
+def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
+    """For every finished gameweek with a plan stored before its deadline: what that plan's eleven and armband scored on the
+    real points (no automatic substitutions, hits charged) against what you scored after hits."""
+    from fpl_agent.models.rules import current_season
+
+    season = current_season(conn)
+    out = []
+    for r in conn.execute("SELECT event, points, event_transfers_cost FROM my_team_gw_summary WHERE entry_id = ? ORDER BY event", (entry_id,)):
+        stored = plan_of_record(conn, r["event"])
+        if stored is None:
+            continue
+        pts = {x["player_id"]: x["total_points"] for x in conn.execute(
+            "SELECT player_id, total_points FROM player_gw_stats WHERE season = ? AND event = ?", (season, r["event"]))}
+        if not pts:
+            continue
+        mins = {x["player_id"]: x["minutes"] for x in conn.execute(
+            "SELECT player_id, minutes FROM player_gw_stats WHERE season = ? AND event = ?", (season, r["event"]))}
+        after = stored[0]["lineup_after"]
+        hits = max(0, len(stored[0].get("moves", [])) - (stored[0].get("free_transfers") or 0)) * 4
+        plan_score = _xi_score([p["player_id"] for p in after["starting"]], after.get("captain_id"), after.get("vice_id"), pts, mins) - hits
+        out.append({"event": r["event"], "plan": plan_score, "you": r["points"] - (r["event_transfers_cost"] or 0)})
+    return out
+
+
 def gameweek_review(conn: sqlite3.Connection, entry_id: int, event: int) -> dict | None:
     from fpl_agent.models.captain_autopsy import captain_autopsy
     from fpl_agent.models.rules import current_season
@@ -217,6 +241,7 @@ def gameweek_review(conn: sqlite3.Connection, entry_id: int, event: int) -> dict
         "subs": [{"out": names.get(o, {}).get("name"), "into": names.get(i, {}).get("name")} for o, i in subs],
         "gains": gains, "losses": losses, "transfers": transfers, "plan": plan, "captain": autopsy,
         "stars": [{"player_id": pid, **names.get(pid, {}), "points": p} for pid, p in top],
+        "ledger": plan_ledger(conn, entry_id),
         "history": [dict(r) for r in conn.execute(
             "SELECT s.event, s.points, s.overall_rank AS rank, e.average_entry_score AS average FROM my_team_gw_summary s "
             "LEFT JOIN events e ON e.id = s.event WHERE s.entry_id = ? ORDER BY s.event", (entry_id,))],

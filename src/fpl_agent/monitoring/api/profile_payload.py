@@ -185,6 +185,18 @@ def build_club_profile(ctx: DashboardContext, params: dict | None = None) -> dic
 # ------------------------------------------------------------------- player
 
 
+def _top10k_ownership(conn, player_id: int) -> list[dict]:
+    """This player in each top-10k ownership sample: the share owning him, captaining him, and his effective ownership."""
+    return [
+        {"event": r["event"], "owned": round(r["owned_count"] / r["sample_size"], 3), "captained": round(r["captained_count"] / r["sample_size"], 3),
+         "eo": round(r["sum_multiplier"] / r["sample_size"], 3)}
+        for r in conn.execute(
+            "SELECT event, sample_size, owned_count, captained_count, sum_multiplier FROM player_sample_ownership_history "
+            "WHERE player_id = ? AND season = (SELECT MAX(season) FROM player_sample_ownership_history) ORDER BY event", (player_id,),
+        )
+    ]
+
+
 def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> dict:
     from fpl_agent.database.connection import get_connection
     from fpl_agent.models.match_analyst import analyst_for_player
@@ -328,6 +340,7 @@ def build_player_profile(ctx: DashboardContext, params: dict | None = None) -> d
             "stories": stories_for_player(conn, p["id"]),
             "analyst": analyst_for_player(conn, p["id"]),
             "scouting": _scouting(conn, p["id"]),
+            "top10k": _top10k_ownership(conn, p["id"]),
             "football_read": _football_read(conn, p["id"]),
         }
     finally:
