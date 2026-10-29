@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { crestUrl, shirtUrl } from '@/lib/api'
 import { HeroPhoto } from '@/components/ui/HeroPhoto'
@@ -12,6 +13,8 @@ import type { ActionSquadBlock, ActionSquadPlayer, FixtureContext, WeekPlanPaylo
  * pitch run through a pinhole camera behind our goal (`project`), so the far end narrows and the stripes compress the
  * way they do on television. Players stand upright at their projected spot and shrink with distance. Every number on
  * it is the stored week plan's: expected points, the armband, the moves, the next opponent. */
+
+const Stadium3D = lazy(() => import('./Stadium3D').then((m) => ({ default: m.Stadium3D })))
 
 const VW = 960
 const VH = 540
@@ -202,32 +205,58 @@ function Ticker({ block, fixtures, event }: { block: ActionSquadBlock; fixtures?
 
 export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
   const block = plan.action_squad
+  const [floodlit, setFloodlit] = useState(false)
   if (!block || block.starting.length === 0) return null
   const moveIn: Record<number, string> = {}
   for (const m of plan.moves ?? []) moveIn[m.out.player_id] = m.into.name
   const placed = spots(block.starting)
   const total = block.starting.reduce((s, p) => s + p.median, 0)
   const formation = ['DEF', 'MID', 'FWD'].map((k) => block.starting.filter((p) => p.position === k).length).join('-')
+  const lit = block.starting.map((p) => ({
+    player_id: p.player_id, name: p.name, position: p.position, team_code: p.team_code, xp: p.median,
+    captain: p.player_id === block.captain_id, vice: p.player_id === block.vice_id,
+  }))
+  const skipper = block.starting.find((p) => p.player_id === block.captain_id)
+  const ticker = [
+    `GW${plan.event}`, `${total.toFixed(1)} xP from the eleven`,
+    ...(skipper ? [`Armband ${skipper.name}`, `${(skipper.median * 2).toFixed(1)} xP doubled`] : []),
+    ...(plan.moves ?? []).flatMap((m) => [`Out ${m.out.name}`, `In ${m.into.name}`]),
+    formation,
+  ]
   return (
     <section className="no-tab !p-0">
       <Ticker block={block} fixtures={plan.fixtures} event={plan.event} />
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_25rem]">
         <div className="relative overflow-hidden bg-panel">
-          <div className="absolute left-6 top-5 z-10">
+          <div className={`absolute left-6 top-5 z-10 ${floodlit ? '[&_*]:!text-paper' : ''}`}>
             <h2 className="font-display text-xl font-semibold text-text">Your GW{plan.event} eleven</h2>
             <div className="mt-1 text-[13px] text-text-muted">
               {formation} · <span className="font-semibold text-text">{total.toFixed(1)}</span> xP from the eleven
               {(plan.moves ?? []).length > 0 ? ' · after the moves' : ''}
             </div>
           </div>
-          <div className="relative mx-auto w-full" style={{ aspectRatio: `${VW} / ${VH}` }}>
-            <Pitch />
-            {placed.map(({ p, left, top, scale }) => (
-              <div key={p.player_id} className="absolute" style={{ left: `${left}%`, top: `${top}%`, zIndex: Math.round(top) }}>
-                <Player p={p} block={block} fixtures={plan.fixtures} scale={scale} moveIn={moveIn[p.player_id]} />
-              </div>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={() => setFloodlit((v) => !v)}
+            className="absolute right-5 top-5 z-20 border-2 border-ink bg-paper px-3 py-1 font-display text-[13px] font-black uppercase tracking-[0.08em] text-ink shadow-[3px_3px_0_var(--color-ink)] hover:bg-spot"
+            title="The eleven in a floodlit 3D stadium: drag to orbit, scroll to zoom, click a player for his file"
+          >
+            {floodlit ? 'Broadcast view' : 'Under the lights 3D'}
+          </button>
+          {floodlit ? (
+            <Suspense fallback={<div className="grid h-[560px] place-items-center bg-[#0a0d14] font-display text-paper">Switching on the floodlights</div>}>
+              <Stadium3D players={lit} ticker={ticker} />
+            </Suspense>
+          ) : (
+            <div className="relative mx-auto w-full" style={{ aspectRatio: `${VW} / ${VH}` }}>
+              <Pitch />
+              {placed.map(({ p, left, top, scale }) => (
+                <div key={p.player_id} className="absolute" style={{ left: `${left}%`, top: `${top}%`, zIndex: Math.round(top) }}>
+                  <Player p={p} block={block} fixtures={plan.fixtures} scale={scale} moveIn={moveIn[p.player_id]} />
+                </div>
+              ))}
+            </div>
+          )}
           {block.bench.length > 0 && (
             <div className="flex flex-wrap items-center gap-4 border-t-2 border-ink bg-raised px-6 py-3">
               <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint" title="Outfield order set for the most expected points from automatic substitutions">Bench</span>
