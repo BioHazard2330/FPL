@@ -974,6 +974,27 @@ def gw_skill_cmd(event):
         click.echo(f"  {k:<30} {v}")
 
 
+@cli.command("component-skill")
+@click.option("--event", type=int, default=None, help="one gameweek (default: every settled one)")
+@click.option("--contenders", is_flag=True, help="only the 150 highest projections of each gameweek")
+def component_skill_cmd(event, contenders):
+    """Predicted against realised points for each part of the projection, by position (models/component_skill.py)."""
+    from fpl_agent.models.component_skill import component_report
+
+    conn = get_connection()
+    try:
+        out = component_report(conn, event)
+    finally:
+        conn.close()
+    rows = out["contenders" if contenders else "all"]
+    if not rows:
+        click.echo("no settled prediction with its parts recorded yet (parts are frozen at each deadline from 2026-10-29)")
+        return
+    click.echo(f"gameweeks {out['events']}  player-gameweeks {out['players']}")
+    for r in rows:
+        click.echo(f"  {r['position']:<4} {r['part']:<12} n={r['n']:<4} predicted {r['predicted']:>6.2f}  actual {r['actual']:>6.2f}  gap {r['gap']:+.2f}")
+
+
 @cli.command("sheet-study")
 def sheet_study_cmd():
     """Whether a bench seat or an omission from the squad carries to the next match (models/sheet_study.py)."""

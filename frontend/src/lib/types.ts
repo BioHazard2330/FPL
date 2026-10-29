@@ -2677,3 +2677,7 @@ export interface Chase {
   options: { key: string; label: string; mean: number; sd: number; chance: number }[]
   captains: { player_id: number; name: string | null; mean: number; sd: number; chance: number; chosen: boolean }[]
 }
+
+/** Predicted against realised points per part of the projection (`models/component_skill.component_report`). */
+export interface ComponentRow { position: string; part: string; n: number; gameweeks: number; predicted: number; actual: number; gap: number }
+export interface ComponentsPayload { events: number[]; players: number; all: ComponentRow[]; contenders: ComponentRow[] }

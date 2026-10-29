@@ -75,8 +75,9 @@ def assumptions(min_move_gain: float, horizon: int, mae: float | None) -> list[s
         "Sell prices are current prices. FPL pays purchase price plus half the rise, which this project cannot read "
         "reliably, so the plan reports whether it still fits under the strictest reading.",
         "Every projection comes from the one model. Solio's is shown beside the player coming in as a check and never feeds it.",
-        "A predicted start percentage discounts the next gameweek's minutes in full and half as much for each gameweek after. "
-        "It is not calibrated: there is no history of that feed to fit it to.",
+        "A predicted start percentage is blended half and half with the player's own record of 60-minute matches for the "
+        "next gameweek, and less for each gameweek after (fitted on 216 finished team matches; it can raise a chance the "
+        "record undersells, never past an injury doubt).",
         f"The moves are judged by points over {horizon} gameweeks. Price changes, double gameweeks not yet announced and "
         "chips are outside the decision.",
     ]

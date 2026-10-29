@@ -6,6 +6,7 @@
 // forwards `/api/*` to the real `fpl live-server` process; in prod the
 // built app is served from the same origin as that server.
 import type {
+  ComponentsPayload,
   MatchStory,
   SquadNewsPayload,
   LeaguesPayload,
@@ -154,6 +155,10 @@ export function fetchLeagues(): Promise<LeaguesPayload> {
 export function fetchViewPlan(scales: Record<number, number>): Promise<ViewPlanPayload> {
   const q = Object.entries(scales).map(([k, v]) => `${k}:${v}`).join(',')
   return getJson<ViewPlanPayload>(`/api/viewplan?scales=${encodeURIComponent(q)}`)
+}
+
+export function fetchComponentsPayload(): Promise<ComponentsPayload> {
+  return getJson<ComponentsPayload>('/api/components')
 }
 
 export function fetchSignalsPayload(): Promise<SignalsPayload> {

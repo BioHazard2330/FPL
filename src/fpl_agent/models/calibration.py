@@ -85,6 +85,25 @@ def ledger_player_ids(conn: sqlite3.Connection, squad_ids: list[int] | set[int] 
     return sorted({r["id"] for r in rows} | {int(i) for i in squad_ids})
 
 
+def _components_json(conn: sqlite3.Connection, player_id: int, ep) -> str | None:
+    """The prediction's parts and minutes buckets, for `component_skill`; None if the projection had no breakdown."""
+    import json
+    from dataclasses import asdict
+
+    from fpl_agent.models.expected_points import _player_match_rates
+
+    components = getattr(ep, "components", None)
+    if components is None:
+        return None
+    parts = {k: round(v, 4) for k, v in asdict(components).items()}
+    try:
+        probs = _player_match_rates(conn, player_id)["minutes_probs"]
+        parts.update(p_zero=round(probs.p_zero, 4), p_partial=round(probs.p_partial, 4), p_full=round(probs.p_full, 4))
+    except Exception:
+        pass
+    return json.dumps(parts)
+
+
 def record_predictions_for_locked_squad(conn: sqlite3.Connection, event: int, squad_ids: list[int]) -> int:
     """Real, one-time-per-(player,event) snapshot - a genuine no-op (0 rows
     written) if predictions for this event were already recorded, so calling
@@ -119,10 +138,10 @@ def record_predictions_for_locked_squad(conn: sqlite3.Connection, event: int, sq
         conn.execute(
             "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_floor, "
             "predicted_ceiling, predicted_confidence, predicted_expected_minutes, model_version, predicted_at, "
-            "predicted_minutes_basis, predicted_availability) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "predicted_minutes_basis, predicted_availability, predicted_components) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (player_id, event, season, ep.median, ep.floor, ep.ceiling, ep.confidence,
-             ep.expected_minutes, ep.model_version, now, minutes_basis, availability),
+             ep.expected_minutes, ep.model_version, now, minutes_basis, availability, _components_json(conn, player_id, ep)),
         )
         written += 1
     if written:
