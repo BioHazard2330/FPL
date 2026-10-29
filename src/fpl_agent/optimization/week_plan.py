@@ -205,6 +205,7 @@ class WeekPlan:
     team_outlook: dict = field(default_factory=dict)
     calibration: str = ""
     matches_finished: int = 0
+    eye: dict = field(default_factory=dict)
 
 
 SOFT_REFRESH_MINUTES = 10
@@ -330,24 +331,51 @@ def prefer_current_eleven(
 
 
 # How much a transfer decision trusts a thin record (2026-10-29). The solver favours whoever projects best, and a player
-# whose projection rests on few matches is more often there by luck, so each value in the objective is pulled toward its
-# position's league-wide average by k / (n + k), n = his matches with minutes in the last 380 days (reported totals stay
-# pure expected points). Replayed with the fixture-reading plan over 2021-22 to 2025-26, three free transfers a round:
-# k 0 / 3 / 6 / 12 / 24 -> 7,301 / 7,419 / 7,296 / 7,302 / 7,266 points; k = 3 ahead in 4 of 5 seasons (+24, +3, +33,
-# -6, +64). Larger k swings between seasons and does not help. A regular with 30 matches keeps 91% of his own value; a
-# player with three keeps half.
+# whose projection rests on little evidence is more often there by luck, so each value in the objective is pulled toward
+# its position's league-wide average by k / (n + k) (reported totals stay pure expected points). n is the player's whole
+# stored record: every match with minutes in any season we hold, plus his minutes abroad where a cross-league prior exists
+# (as 90s). The first version counted only the last 380 days, which made a regular back from a loan abroad look unknown
+# (N.Jackson: 65 Premier League matches in 2023-25 and a season at Bayern, counted as 7) - the manager caught it. Replayed
+# with the fixture-reading plan over 2021-22 to 2025-26, three free transfers a round, career evidence: k 0 / 3 / 6 / 12 ->
+# 7,301 / 7,351 / 7,325 / 7,299, k = 3 ahead in 4 of 5 seasons (+24, +5, +32, -26, +15). (The 380-day count scored 7,419
+# but carries the loan blind spot.) A regular with 60 matches keeps 95% of his own value; a promoted player with eight
+# keeps 73%.
 EVIDENCE_K = 3.0
-EVIDENCE_DAYS = 380
 
 
 def evidence_matches(conn: sqlite3.Connection) -> dict[int, int]:
-    """Each player's matches with minutes in the last `EVIDENCE_DAYS` days (Understat)."""
-    from datetime import date, timedelta
+    """Each player's stored record in matches: every match with minutes in any season, plus 90s abroad from the
+    cross-league priors."""
+    out = {r[0]: r[1] for r in conn.execute(
+        "SELECT player_id, COUNT(*) FROM player_match_stats_history WHERE minutes > 0 AND player_id IS NOT NULL GROUP BY player_id")}
+    for r in conn.execute("SELECT player_id, SUM(minutes) FROM player_cross_league_prior WHERE player_id IS NOT NULL GROUP BY player_id"):
+        out[r[0]] = out.get(r[0], 0) + int((r[1] or 0) / 90)
+    return out
 
-    since = (date.today() - timedelta(days=EVIDENCE_DAYS)).isoformat()
-    return {r[0]: r[1] for r in conn.execute(
-        "SELECT player_id, COUNT(*) FROM player_match_stats_history WHERE match_date >= ? AND minutes > 0 "
-        "AND player_id IS NOT NULL GROUP BY player_id", (since,))}
+
+# The football eye's gate (2026-10-29, the manager's call: "the football eye needs to be very important, not just data").
+# The football read (`models/football_read`) weighs a player's craft, chance volume, creation, duties, minutes and
+# fixtures, each marked by whether that kind of evidence carries from match to match, into a verdict. Selling a player it
+# backs, or buying one it is against, must earn EYE_PENALTY more than any other move (so 3.0 instead of 1.5 over the
+# horizon), in this week's moves and on the road ahead. It only ever holds a move back, never forces one; there is no
+# history of the verdicts to replay it on, so it is a judgement, and the GW report keeps score of what it blocked.
+EYE_PENALTY = 1.5
+
+
+def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: list) -> tuple[dict[int, float], dict[int, float], dict[int, str]]:
+    """(sell penalties, buy penalties, verdict labels) from the football read of the squad and the candidate pool."""
+    from fpl_agent.models.football_read import football_read
+
+    labels: dict[int, str] = {}
+    for pid in set(squad_ids) | {c.player_id for c in pool}:
+        try:
+            labels[pid] = football_read(conn, pid)["verdict"]["label"]
+        except Exception:
+            continue
+    squad = set(squad_ids)
+    sell = {p: EYE_PENALTY for p in squad if labels.get(p) == "backs him"}
+    buy = {p: EYE_PENALTY for p, lab in labels.items() if p not in squad and lab == "against him"}
+    return sell, buy, labels
 
 
 BENCH_TRIALS = 4000
@@ -680,10 +708,12 @@ def build_road_ahead(
     """How the plan continues over a longer horizon, given this week's moves.
     Weeks with no move are kept as explicit rolls: they carry the free-transfer
     bank, which is the point of waiting."""
+    eye_sell, eye_buy, _ = eye_gates(conn, squad_ids, pool)
     common = dict(
         start_event=event, horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT,
         time_limit_seconds=SOLVE_SECONDS, model_chips=False, xp_cache=cache, league_pool=pool,
         transfer_penalty=min_move_gain, evidence_matches=evidence_matches(conn), evidence_k=EVIDENCE_K,
+        sell_penalty=eye_sell, buy_penalty=eye_buy,
     )
     plan = plan_transfers_milp(
         conn, squad_ids, free_transfers, bank, max_first_gw_transfers=len(pairs),
@@ -983,6 +1013,7 @@ def build_week_plan(
     cache: dict = {}
 
     evidence = evidence_matches(conn)
+    eye_sell, eye_buy, eye_labels = eye_gates(conn, squad_ids, pool)
 
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
         return plan_transfers_milp(
@@ -991,7 +1022,7 @@ def build_week_plan(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
-            evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_penalty=eye_sell, buy_penalty=eye_buy,
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -1175,6 +1206,11 @@ def build_week_plan(
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
         team_outlook=team_outlook, calibration=calibration_id(), matches_finished=finished_match_count(conn),
+        eye={
+            "penalty": EYE_PENALTY,
+            "protected": sorted(eye_sell), "blocked": sorted(eye_buy),
+            "labels": {str(p): eye_labels[p] for p in set(squad_ids) if p in eye_labels},
+        },
     )
 
 
@@ -1199,6 +1235,7 @@ def plan_with_view(
     clean = {int(k): float(v) for k, v in scales.items() if v is not None and abs(float(v) - 1.0) > 1e-9}
 
     evidence = evidence_matches(conn)
+    eye_sell, eye_buy, eye_labels = eye_gates(conn, squad_ids, pool)
 
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
         merged = {**clean, **(scale or {})}
@@ -1208,7 +1245,7 @@ def plan_with_view(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=merged or None,
-            evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_penalty=eye_sell, buy_penalty=eye_buy,
         )
 
     selection = select_moves(solve, event, min_move_gain)

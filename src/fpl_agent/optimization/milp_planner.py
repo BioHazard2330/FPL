@@ -211,6 +211,8 @@ def plan_transfers_milp(
     xp_scale: dict[int, float] | None = None,
     evidence_matches: dict[int, int] | None = None,
     evidence_k: float = 0.0,
+    sell_penalty: dict[int, float] | None = None,
+    buy_penalty: dict[int, float] | None = None,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -398,6 +400,10 @@ def plan_transfers_milp(
         ) if bbp else 0)
         - HIT_COST * pulp.lpSum(hits[t] for t in events)
         - transfer_penalty * pulp.lpSum(tin[(p, t)] for p in ids for t in events)
+        # The football eye's gate (objective only): selling a player the football read backs, or buying one it is
+        # against, has to earn this much more (week_plan.EYE_PENALTY).
+        - pulp.lpSum((sell_penalty or {}).get(p, 0.0) * tout[(p, t)] for p in ids for t in events if (sell_penalty or {}).get(p))
+        - pulp.lpSum((buy_penalty or {}).get(p, 0.0) * tin[(p, t)] for p in ids for t in events if (buy_penalty or {}).get(p))
     )
 
     for t in events:

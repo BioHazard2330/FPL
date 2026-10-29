@@ -311,6 +311,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
             "bank_after_tenths": detail["bank_after_tenths"],
             "affordability": detail["affordability"],
             "road_ahead": detail.get("road_ahead"),
+            "eye": detail.get("eye"),
             "captain_ladder": detail.get("captain_ladder", []),
             "team_outlook": detail.get("team_outlook", {}),
             "chip_outlook": detail.get("chip_outlook"),

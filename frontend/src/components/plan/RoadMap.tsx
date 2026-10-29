@@ -113,6 +113,18 @@ export function RoadMap({ plan }: { plan: WeekPlanPayload }) {
           })}
         </div>
       </div>
+      {plan.eye && plan.eye.protected.length > 0 && (() => {
+        const names = new Map([...(plan.lineup_now?.starting ?? []), ...(plan.lineup_now?.bench ?? [])].map((p) => [p.player_id, p.name]))
+        return (
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-2 border-ink bg-paper px-3 py-2">
+            <span className="bg-ink px-1.5 font-display text-[12px] font-black uppercase text-paper">the eye protects</span>
+            {plan.eye.protected.map((id) => (
+              <span key={id} className="border-2 border-ink bg-pitch-green px-1.5 font-display text-[12px] font-black uppercase text-pitch-green-ink">{names.get(id) ?? id}</span>
+            ))}
+            <span className="text-[12px] text-text-muted">the football read backs them: selling one has to earn {plan.eye.penalty} more than any other move.</span>
+          </div>
+        )
+      })()}
       <p className="mt-3 max-w-4xl text-[12.5px] text-text-faint">
         Each later move had to earn {plan.min_move_gain} points over the horizon; the whole road is re-solved every week with that
         day's injuries and prices.{!road.proven && ' Best plan found within the time limit; not proven optimal.'}

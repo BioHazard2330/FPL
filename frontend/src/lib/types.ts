@@ -1816,6 +1816,7 @@ export interface LineupChanges {
 }
 
 export interface WeekPlanPayload {
+  eye?: { penalty: number; protected: number[]; blocked: number[]; labels: Record<string, string> }
   rank_targets?: { you_total: number; weeks_left: number; targets: { rank: number; total: number; gap: number; per_week: number | null }[] }
   recorded_transfers?: {
     event: number
