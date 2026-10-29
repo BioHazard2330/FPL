@@ -4,6 +4,7 @@ import { Masthead } from '@/components/shell/Masthead'
 import { Skel, ScreenError } from '@/components/shell/ScreenStates'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { EdgeDensity } from '@/components/charts/EdgeDensity'
+import { ChaseBand } from '@/components/field/ChaseBand'
 import { fetchFieldPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import type { EdgeStats, FieldPayload } from '@/lib/types'
@@ -81,6 +82,7 @@ function Body({ d }: { d: FieldPayload }) {
 
   return (
     <>
+      {d.chase && <ChaseBand c={d.chase} />}
       <section className="border-b border-divider px-10 py-8">
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-12">
           <div>

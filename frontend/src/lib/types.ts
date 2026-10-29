@@ -1813,6 +1813,7 @@ export interface LineupChanges {
 }
 
 export interface WeekPlanPayload {
+  rank_targets?: { you_total: number; weeks_left: number; targets: { rank: number; total: number; gap: number; per_week: number | null }[] }
   recorded_transfers?: {
     event: number
     element_out: number
@@ -2308,6 +2309,7 @@ export interface FieldPayload {
   upside_captain_id?: number
   threats?: { player_id: number; photo_code?: number | null; name: string; team_short: string; team_code: number; position: string; field_eo: number; mean_points: number; p_haul: number; cost: number }[]
   contributions?: { player_id: number; name: string; team_short: string; team_code: number; position: string; you: number; field_eo: number; mean_points: number; edge: number }[]
+  chase?: Chase | null
   axis?: { min: number; max: number; bins: number }
 }
 
@@ -2653,4 +2655,25 @@ export interface UpcomingMatch {
   home_code: number | null
   away_code: number | null
   players: { player_id: number; web_name: string; position: string; slot: string; is_captain: boolean; is_vice: boolean; xp: number | null }[]
+}
+
+/** The top-10k chase on the Field page (`models/rank_target.chase`). Edges are against the top-10k field. */
+export interface Chase {
+  target: number
+  target_total: number
+  target_event: number
+  others: Record<string, number>
+  you_total: number
+  you_rank: number | null
+  gap: number
+  weeks_left: number
+  need_per_week: number | null
+  plan_pace: { mean: number; sd: number }
+  pace_source: 'measured' | 'plan'
+  measured: { event: number; you: number; field: number; edge: number }[]
+  measured_pace: { mean: number; sd: number | null; weeks: number } | null
+  chance_at_plan_pace: number
+  chance_at_measured_pace: number | null
+  options: { key: string; label: string; mean: number; sd: number; chance: number }[]
+  captains: { player_id: number; name: string | null; mean: number; sd: number; chance: number; chosen: boolean }[]
 }

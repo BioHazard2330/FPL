@@ -42,6 +42,7 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
     ? leagues.data.leagues.filter((l) => l.odds?.p_lead != null).sort((a, b) => (b.odds?.p_lead ?? 0) - (a.odds?.p_lead ?? 0))[0]
     : undefined
   const captain = plan.captain?.best?.name
+  const top10k = plan.rank_targets?.targets.find((t) => t.rank === 10000)
 
   return (
     <section className="bare relative !overflow-visible">
@@ -75,11 +76,24 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
             </span>
           ) : undefined}
         />
-        <Figure
-          label="Season points"
-          value={total ?? '—'}
-          sub={last !== null ? <>GW{gw?.events[gw.events.length - 1]}: <span className="font-semibold text-text">{last}</span>{lastAvg !== null && lastAvg !== undefined ? <> against {lastAvg} average</> : null}</> : undefined}
-        />
+        {top10k ? (
+          <Link to="/field" className="block hover:bg-raised/40">
+            <Figure
+              label="To the top 10k"
+              value={top10k.gap > 0 ? `${top10k.gap}` : 'in'}
+              tone={top10k.gap <= 0 ? 'text-pitch-green' : 'text-text'}
+              sub={top10k.gap > 0
+                ? <>points behind {top10k.total} · <span className="font-semibold text-text">{top10k.per_week?.toFixed(1)}</span> a week over {plan.rank_targets?.weeks_left}</>
+                : <>{-top10k.gap} clear of the 10,000th</>}
+            />
+          </Link>
+        ) : (
+          <Figure
+            label="Season points"
+            value={total ?? '—'}
+            sub={last !== null ? <>GW{gw?.events[gw.events.length - 1]}: <span className="font-semibold text-text">{last}</span>{lastAvg !== null && lastAvg !== undefined ? <> against {lastAvg} average</> : null}</> : undefined}
+          />
+        )}
         {race ? (
           <Link to="/leagues" className="block hover:bg-raised/40">
             <Figure

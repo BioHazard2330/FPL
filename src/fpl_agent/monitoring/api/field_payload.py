@@ -79,7 +79,7 @@ def _build(kind: str) -> dict:
         if stored is None:
             return {"status": "no_plan"}
         plan, created_at, decision_id = stored
-        field_model = re.build_field(conn, kind)
+        field_model = re.build_field(conn, kind, for_event=plan["event"])
         if field_model is None:
             return {"status": "no_sample", "detail": "no effective-ownership sample has been collected this season"}
 
@@ -92,9 +92,15 @@ def _build(kind: str) -> dict:
             plan_squad.discard(m["out"]["player_id"])
             plan_squad.add(m["into"]["player_id"])
 
+        # the top-10k chase is always against the top ten thousand, whichever field the page is showing
+        chase_field = field_model if field_model.kind == "top10k" else re.build_field(conn, "top10k", for_event=event)
         wanted = {pid for pid, eo in field_model.eo.items() if eo >= re.MIN_SIMULATED_EO} | set(squad) | plan_squad
+        if chase_field is not None:
+            wanted |= {pid for pid, eo in chase_field.eo.items() if eo >= re.MIN_SIMULATED_EO}
         trials = re.simulate_players(conn, event, sorted(wanted))
         fpts, coverage = re.field_points(field_model, trials)
+        chase_fpts = re.field_points(chase_field, trials)[0] if chase_field is not None else None
+        chase_scores: dict[str, object] = {}
         spread = re.population_sd(conn)
 
         starts = _start_percents(conn, set(squad) | plan_squad)
@@ -106,6 +112,7 @@ def _build(kind: str) -> dict:
 
         def evaluate(label: str, key: str, starters, bench, captain, vice, squad_set, move_pairs):
             score = re.score_lineup(trials, positions, starters, bench, captain, vice)
+            chase_scores[key] = score
             return {
                 "key": key, "label": label, "moves": move_pairs,
                 "captain": {"player_id": captain, **names.get(captain, {})} if captain else None,
@@ -150,6 +157,7 @@ def _build(kind: str) -> dict:
             pid = p["player_id"]
             vice = vice_default if vice_default != pid else next((q["player_id"] for q in by_xp if q["player_id"] != pid), None)
             score = re.score_lineup(trials, positions, starters, bench, pid, vice)
+            chase_scores[f"captain_{pid}"] = score
             captains.append({
                 "player_id": pid, **names.get(pid, {}), "mean_points": round(float(trials[pid].mean()), 2) if pid in trials else None,
                 "captain_share": round(field_model.captain_share.get(pid, 0.0), 3),
@@ -182,6 +190,19 @@ def _build(kind: str) -> dict:
             })
         contributions.sort(key=lambda c: c["edge"])
 
+        chase_block = None
+        if chase_fpts is not None:
+            from fpl_agent.models.rank_target import chase
+
+            def vs_top(key: str) -> dict:
+                return re.edge_to_dict(re.edge_stats(chase_scores[key], chase_fpts, spread))
+
+            chase_block = chase(
+                conn, vs_top("plan"),
+                [{**o, "edge": vs_top(o["key"])} for o in options],
+                [{**c, "edge": vs_top(f"captain_{c['player_id']}")} for c in captains],
+            )
+
         best_edge = max(captains, key=lambda c: c["edge"]["mean"])
         upside = max((c for c in captains if c["edge"]["mean"] >= best_edge["edge"]["mean"] - 0.5), key=lambda c: c["edge"]["p90"])
         return {
@@ -193,7 +214,7 @@ def _build(kind: str) -> dict:
             },
             "posture": _overall_posture(conn), "model_bias": _model_bias(conn), "options": options, "plan_option": plan_option,
             "captains": captains, "best_captain_id": best_edge["player_id"], "upside_captain_id": upside["player_id"],
-            "threats": threats, "contributions": contributions,
+            "threats": threats, "contributions": contributions, "chase": chase_block,
             "axis": {"min": -re.HIST_RANGE, "max": re.HIST_RANGE, "bins": re.HIST_BINS},
         }
     finally:

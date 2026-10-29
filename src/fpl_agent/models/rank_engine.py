@@ -35,6 +35,18 @@ Method, with its assumptions:
   percentiles slightly conservative).
 - Players outside the simulated set (effective ownership below 0.3%) are left
   out of the field's average; the share of ownership covered is reported.
+- A field read from the last locked gameweek is stale for the next one
+  (2026-10-29). Two corrections, only when the sample is older than the
+  gameweek being decided: a player flagged since then keeps his effective
+  ownership only in proportion to his chance of playing, and the rest goes to a
+  typical replacement at his position (the field's ownership-weighted average
+  there); and the top-10k field is lifted by its measured turnover - how much
+  more its next gameweek's picks scored than its previous gameweek's would have
+  on the same points (GW7 +11.0, GW8 +4.2, from consecutive samples; managers
+  near the top transfer towards fixtures and move the armband). Without them
+  the plan's edge on the top ten thousand read +11.6 a week against +2.6
+  realised over GW6-8. The overall field already uses current ownership, so it
+  gets the availability correction only.
 """
 import sqlite3
 from dataclasses import dataclass, field
@@ -59,6 +71,9 @@ class FieldModel:
     sample_event: int | None
     sample_size: int
     captain_share: dict[int, float] = field(default_factory=dict)
+    position: dict[int, str] = field(default_factory=dict)
+    replaced: dict[str, float] = field(default_factory=dict)
+    turnover: float = 0.0
 
 
 def population_sd(conn: sqlite3.Connection) -> float:
@@ -71,7 +86,81 @@ def population_sd(conn: sqlite3.Connection) -> float:
     return gaps[len(gaps) // 2] / MAX_SPREAD_Z
 
 
-def build_field(conn: sqlite3.Connection, kind: str) -> FieldModel | None:
+def _chance_now(conn: sqlite3.Connection, player_ids: list[int]) -> dict[int, float]:
+    """FPL's current chance of playing next round per player (1.0 when unflagged)."""
+    if not player_ids:
+        return {}
+    marks = ",".join("?" * len(player_ids))
+    out = {}
+    for r in conn.execute(
+        f"SELECT p.id, p.status, s.chance_of_playing_next_round AS ch FROM players p LEFT JOIN player_stats_snapshot s ON s.id = ("
+        f"SELECT id FROM player_stats_snapshot WHERE player_id = p.id ORDER BY retrieved_at DESC LIMIT 1) WHERE p.id IN ({marks})",
+        player_ids,
+    ):
+        if r["ch"] is not None:
+            out[r["id"]] = r["ch"] / 100
+        else:
+            out[r["id"]] = 1.0 if r["status"] in (None, "a") else 0.0
+    return out
+
+
+def field_turnover(conn: sqlite3.Connection, season: str) -> tuple[float, int]:
+    """Mean of (next gameweek's field score) minus (previous gameweek's picks on the same points) over consecutive
+    top-10k samples, and how many pairs it rests on."""
+    events = [r["event"] for r in conn.execute(
+        "SELECT DISTINCT event FROM player_sample_ownership_history WHERE season = ? ORDER BY event", (season,),
+    )]
+    gaps = []
+    for prev, nxt in zip(events, events[1:]):
+        if nxt != prev + 1:
+            continue
+        pts = {r["player_id"]: r["total_points"] for r in conn.execute(
+            "SELECT player_id, total_points FROM player_gw_stats WHERE event = ? AND season = ?", (nxt, season),
+        )}
+        if not pts:
+            continue
+
+        def score(ev: int) -> float:
+            return sum(
+                r["eo"] * pts.get(r["player_id"], 0) for r in conn.execute(
+                    "SELECT player_id, sum_multiplier * 1.0 / sample_size AS eo FROM player_sample_ownership_history "
+                    "WHERE event = ? AND season = ?", (ev, season),
+                )
+            )
+
+        gaps.append(score(nxt) - score(prev))
+    return (sum(gaps) / len(gaps), len(gaps)) if gaps else (0.0, 0)
+
+
+def _age_field(conn: sqlite3.Connection, model: FieldModel, season: str) -> FieldModel:
+    positions = {r["id"]: r["pos"] for r in conn.execute(
+        "SELECT p.id, et.singular_name_short AS pos FROM players p JOIN element_types et ON et.id = p.element_type",
+    )}
+    chance = _chance_now(conn, list(model.eo))
+    eo, replaced = {}, {}
+    for pid, e in model.eo.items():
+        c = chance.get(pid, 1.0)
+        eo[pid] = e * c
+        if c < 1.0 and pid in positions:
+            replaced[positions[pid]] = replaced.get(positions[pid], 0.0) + e * (1 - c)
+    turnover = field_turnover(conn, season)[0] if model.kind == "top10k" else 0.0
+    return FieldModel(
+        model.kind, model.label, eo, model.sample_event, model.sample_size, model.captain_share,
+        {pid: positions[pid] for pid in eo if pid in positions}, replaced, turnover,
+    )
+
+
+def build_field(conn: sqlite3.Connection, kind: str, for_event: int | None = None) -> FieldModel | None:
+    """`for_event` past the sample's own gameweek ages the field for that gameweek (see the module docstring)."""
+    model = _build_field(conn, kind)
+    if model is None or for_event is None or model.sample_event is None or for_event <= model.sample_event:
+        return model
+    from fpl_agent.models.effective_ownership import sample_season
+
+    return _age_field(conn, model, sample_season(conn))
+
+
+def _build_field(conn: sqlite3.Connection, kind: str) -> FieldModel | None:
     from fpl_agent.models.effective_ownership import sample_season
 
     season = sample_season(conn)
@@ -123,14 +212,24 @@ def field_points(field_model: FieldModel, trials: dict[int, np.ndarray]) -> tupl
     n = next(iter(trials.values())).shape[0]
     total = np.zeros(n)
     covered = 0.0
+    by_position: dict[str, list[np.ndarray | float]] = {}
     for pid, eo in field_model.eo.items():
         arr = trials.get(pid)
         if arr is None:
             continue
         total += eo * arr
         covered += eo
-    mass = sum(field_model.eo.values()) or 1.0
-    return total, covered / mass
+        pos = field_model.position.get(pid)
+        if pos is not None and eo > 0:
+            acc = by_position.setdefault(pos, [np.zeros(n), 0.0])
+            acc[0] = acc[0] + eo * arr
+            acc[1] = acc[1] + eo
+    for pos, lost in field_model.replaced.items():
+        acc = by_position.get(pos)
+        if acc is not None and acc[1] > 0:
+            total += lost * acc[0] / acc[1]
+    mass = sum(field_model.eo.values()) + sum(field_model.replaced.values()) or 1.0
+    return total + field_model.turnover, min((covered + sum(field_model.replaced.values())) / mass, 1.0)
 
 
 def score_lineup(

@@ -1907,6 +1907,15 @@ def run_scheduled(gated: bool):
     except Exception:
         logger.exception("run-scheduled mini-league sync failed - not fatal to the sync itself")
 
+    try:
+        from fpl_agent.ingestion.rank_threshold import sync_rank_thresholds
+
+        threshold_result = sync_rank_thresholds(conn)
+        if threshold_result.get("status") == "synced":
+            logger.info("run-scheduled rank thresholds: %s", threshold_result)
+    except Exception:
+        logger.exception("run-scheduled rank-threshold sync failed - not fatal to the sync itself")
+
     # Real gap found 2026-08-26 (GW1-postmortem audit): backfill-odds/
     # backfill-xg were built and proven for historical seasons, but NEVER
     # wired into the regular cycle for the LIVE season - confirmed live,

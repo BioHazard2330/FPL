@@ -29,6 +29,32 @@ def _with_code(player: dict, codes: dict[int, int]) -> dict:
     return {**player, "team_code": codes.get(player.get("team_id"))}
 
 
+def _attach_rank_targets(conn, payload: dict) -> None:
+    """The totals at overall ranks 1k / 10k / 100k against the manager's own, for the header (`rank_threshold`)."""
+    from fpl_agent.ingestion.my_team import get_my_team_entry_id
+    from fpl_agent.ingestion.rank_threshold import latest_thresholds
+    from fpl_agent.models.rank_target import SEASON_GAMEWEEKS
+
+    entry = get_my_team_entry_id(conn)
+    thresholds = latest_thresholds(conn)
+    if entry is None or not thresholds:
+        return
+    me = conn.execute(
+        "SELECT event, total_points FROM my_team_gw_summary WHERE entry_id = ? ORDER BY event DESC LIMIT 1", (entry,),
+    ).fetchone()
+    if me is None or me["total_points"] is None:
+        return
+    weeks = SEASON_GAMEWEEKS - me["event"]
+    payload["rank_targets"] = {
+        "you_total": me["total_points"], "weeks_left": weeks,
+        "targets": [
+            {"rank": t, "total": v["total"], "gap": v["total"] - me["total_points"],
+             "per_week": round((v["total"] - me["total_points"]) / weeks, 2) if weeks else None}
+            for t, v in sorted(thresholds.items())
+        ],
+    }
+
+
 def _attach_luck(conn, payload: dict) -> None:
     """Beside every player in a transfer: how far his season has run above or
     below the chances behind it (`models/luck_audit`). A player who is up 16
@@ -303,6 +329,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         _attach_matchups(conn, payload, detail)
         _attach_scouting(conn, payload)
         _attach_luck(conn, payload)
+        _attach_rank_targets(conn, payload)
         _attach_analyst(conn, payload)
         _attach_form(conn, payload, list(detail.get("squad_ids", [])))
         return attach_photo_codes(conn, payload)
