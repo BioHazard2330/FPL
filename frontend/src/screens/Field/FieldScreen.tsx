@@ -19,9 +19,9 @@ import type { EdgeStats, FieldPayload } from '@/lib/types'
  * the players the field holds that you do not, which is where a rank is lost
  * without a single bad decision.
  *
- * All figures are in the model's own points. The model runs cool: its past
- * predictions for your players have come in below what they scored (the
- * payload carries the measured shortfall). The edge is a gap between two sums of
+ * All figures are in the model's own points. Once the current model has three
+ * settled gameweeks the payload carries how far its predictions ran from what
+ * players scored (one gameweek is one scoring level, not a bias). The edge is a gap between two sums of
  * the same number of slots, so a shortfall that is similar per player cancels in
  * it; the "pts" column does not, and is not a forecast of your score. */
 
@@ -122,8 +122,8 @@ function Body({ d }: { d: FieldPayload }) {
         {options.map((o) => <EdgeRow key={o.key} label={o.label} e={o.edge} mean={o.mean_points} highlight={o.key === 'plan'} />)}
         {d.model_bias && (
           <p className="mt-3 max-w-3xl tone border-broadcast-gold bg-panel px-4 py-2 text-xs leading-relaxed text-text-muted">
-            The model runs cool: across {d.model_bias.n} of its past predictions for your players they scored {d.model_bias.bias_per_player.toFixed(1)} points
-            (plus or minus {d.model_bias.standard_error.toFixed(1)}) more than predicted. That applies to the field's players too, so the edge, a gap
+            Across {d.model_bias.n} of the current model's past predictions over {d.model_bias.gameweeks} gameweeks, players scored {d.model_bias.bias_per_player.toFixed(1)} points
+            {d.model_bias.standard_error !== null && <>(plus or minus {d.model_bias.standard_error.toFixed(1)} across gameweeks) </>}{d.model_bias.bias_per_player >= 0 ? 'more' : 'less'} than predicted. That applies to the field's players too, so the edge, a gap
             between equal numbers of slots, is mostly unaffected. The pts column is not: add roughly {(d.model_bias.bias_per_player * 12).toFixed(0)} for what a team like this tends to score.
           </p>
         )}

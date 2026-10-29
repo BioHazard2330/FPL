@@ -25,7 +25,7 @@ methodology:
   itself observed at match grain here."""
 import sqlite3
 
-from scipy.stats import poisson
+from scipy.stats import nbinom, poisson
 
 from fpl_agent.models.player_regression import ShrunkRate, shrink_rate
 
@@ -53,6 +53,16 @@ DEFCON_THRESHOLDS: dict[str, int | None] = {"DEF": 10, "MID": 12, "FWD": 12, "GK
 # the real, principled fix - never a fabricated season boundary, read
 # straight off where the real data itself changes shape.
 _FIRST_TRACKED_DEFCON_SEASON = "2024/25"
+
+# This season's matches count four times their minutes in the rate, and a defender's per-match count is spread wider
+# than Poisson (measured 2026-10-29 on `player_gw_stats`, GW4-8 2026-27, 60+ minute appearances, each predicted from
+# the matches before it). Variance over mean of a regular's per-match count: DEF 1.30, MID 1.08, FWD 1.05. Brier score
+# of "reached the threshold" with last season alone: DEF 0.1928, MID 0.1213; adding this season at weight 1 / 2 / 4 /
+# 10: DEF 0.1837 / 0.1811 / 0.1804 / 0.1827, MID 0.1161 / 0.1139 / 0.1128 / 0.1152; a defender's count as negative
+# binomial at 1.3: 0.1800 and predicted rate 0.280 against 0.290 realised (Poisson 0.268). The same spread made
+# midfielders worse (0.1140, 0.197 against 0.149), so they stay Poisson.
+CURRENT_SEASON_WEIGHT = 4.0
+DISPERSION = {"DEF": 1.3}
 
 # Real perf gap found 2026-08-21 (forensic audit, part 3): same population-prior
 # caching gap as bonus_regression.py::position_average_bonus_per90 - depends
@@ -115,6 +125,17 @@ def expected_defcon_actions_per90(
     ).fetchone()
     player_total = prior["defensive_contribution"] if prior else 0.0
     player_minutes = prior["minutes"] if prior else 0
+    if before_season is None:
+        from fpl_agent.models.rules import current_season
+
+        season = current_season(conn)
+        now = conn.execute(
+            "SELECT SUM(defensive_contribution) AS dc, SUM(minutes) AS minutes FROM player_gw_stats "
+            "WHERE player_id = ? AND season = ?", (player_id, season),
+        ).fetchone() if season else None
+        if now and now["minutes"]:
+            player_total += CURRENT_SEASON_WEIGHT * (now["dc"] or 0)
+            player_minutes += CURRENT_SEASON_WEIGHT * now["minutes"]
 
     position_avg = position_average_defcon_per90(conn, position, before_season)
     return shrink_rate(player_total, player_minutes, position_avg)
@@ -122,8 +143,8 @@ def expected_defcon_actions_per90(
 
 def defcon_points_probability(actions_per90: float, position: str) -> float:
     """P(a full match's CBIT/CBIRT count >= the position's threshold), treating
-    the action count as Poisson-distributed with the player's own shrinkage-
-    regressed per-90 rate as its mean - same methodology
+    the action count as Poisson-distributed (negative binomial for a defender,
+    see DISPERSION) with the player's own shrinkage-regressed per-90 rate as its mean - same methodology
     models/blend.py::clean_sheet_probability already uses to turn a goals-
     against RATE into a clean-sheet PROBABILITY. GKP (threshold=None) always
     returns 0.0, matching the real rule (not eligible)."""
@@ -132,4 +153,8 @@ def defcon_points_probability(actions_per90: float, position: str) -> float:
         return 0.0
     if actions_per90 <= 0:
         return 0.0
+    dispersion = DISPERSION.get(position, 1.0)
+    if dispersion > 1.0:
+        p = 1 / dispersion
+        return float(nbinom.sf(threshold - 1, actions_per90 * p / (1 - p), p))
     return float(1 - poisson.cdf(threshold - 1, actions_per90))

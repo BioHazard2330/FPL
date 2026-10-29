@@ -228,7 +228,7 @@ def _score(conn, season: str, squad: list[PlayerCandidate], round_start: str, ro
     )
 
 
-def _plan_step(conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value) -> bool:
+def _plan_step(conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR) -> bool:
     """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven."""
     pool = candidates + [c for c in run.squad if c.player_id not in by_id]
     cache = {(c.player_id, i + 1 + k): value(c, i + k) for c in pool for k in range(HORIZON)}
@@ -236,7 +236,7 @@ def _plan_step(conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: d
     result = plan_transfers_milp(
         conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
         horizon_gw=HORIZON, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
-        model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=BAR,
+        model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=bar,
     )
     used = 0
     proven = True

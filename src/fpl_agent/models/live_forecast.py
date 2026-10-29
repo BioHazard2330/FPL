@@ -154,24 +154,48 @@ MAX_BIAS = 1.5
 MIN_BIAS_SAMPLE = 40
 
 
+MIN_BIAS_GAMEWEEKS = 3
+
+
+def prediction_shortfall(conn: sqlite3.Connection) -> dict:
+    """Actual minus predicted points over the current MODEL_VERSION's settled
+    predictions: the mean, the sample, how many gameweeks it spans, and a
+    standard error taken across gameweek means. Players in one gameweek share
+    its scoring level (GW8 2026-27: 19 goals and 8 clean sheets in ten matches),
+    so a per-prediction error would be far too narrow."""
+    rows = conn.execute(
+        "SELECT event, actual_points - predicted_median AS d FROM prediction_outcomes "
+        "WHERE actual_points IS NOT NULL AND predicted_median IS NOT NULL AND model_version = ?", (MODEL_VERSION,),
+    ).fetchall()
+    n = len(rows)
+    by_event: dict[int, list[float]] = {}
+    for r in rows:
+        by_event.setdefault(r["event"], []).append(r["d"])
+    means = [sum(v) / len(v) for v in by_event.values()]
+    k = len(means)
+    mean = sum(r["d"] for r in rows) / n if n else 0.0
+    se = None
+    if k >= 2:
+        m = sum(means) / k
+        se = (sum((x - m) ** 2 for x in means) / (k - 1) / k) ** 0.5
+    return {"n": n, "gameweeks": k, "mean": mean, "standard_error": se}
+
+
 def model_bias(conn: sqlite3.Connection) -> tuple[float, int]:
     """How far the current model's own past predictions ran below what the
     players scored, per player and gameweek (mean of actual minus predicted,
-    clipped to [0, 1.5]; zero below 40 settled predictions). Only predictions
-    made by the current MODEL_VERSION count: calibrated-v2 ran about 1.1 cool
-    (goalkeeper saves were missing and assists were credited at the Understat
-    rate), calibrated-v3 fixed both, so the older predictions say nothing
-    about the model that is forecasting now. A forecast of what a score will
-    be, as opposed to which choice is better, adds back whatever shortfall
-    the current model has shown."""
-    rows = conn.execute(
-        "SELECT actual_points - predicted_median AS d FROM prediction_outcomes "
-        "WHERE actual_points IS NOT NULL AND predicted_median IS NOT NULL AND model_version = ?", (MODEL_VERSION,),
-    ).fetchall()
-    if len(rows) < MIN_BIAS_SAMPLE:
-        return 0.0, len(rows)
-    mean = sum(r["d"] for r in rows) / len(rows)
-    return max(0.0, min(mean, MAX_BIAS)), len(rows)
+    clipped to [0, 1.5]; zero below 40 settled predictions or 3 gameweeks).
+    Only predictions made by the current MODEL_VERSION count: calibrated-v2 ran
+    about 1.1 cool (goalkeeper saves were missing and assists were credited at
+    the Understat rate), calibrated-v3 fixed both, so the older predictions say
+    nothing about the model that is forecasting now. One gameweek is one
+    scoring level, not a bias. A forecast of what a score will be, as opposed
+    to which choice is better, adds back whatever shortfall the current model
+    has shown."""
+    s = prediction_shortfall(conn)
+    if s["n"] < MIN_BIAS_SAMPLE or s["gameweeks"] < MIN_BIAS_GAMEWEEKS:
+        return 0.0, s["n"]
+    return max(0.0, min(s["mean"], MAX_BIAS)), s["n"]
 
 
 def simulate_remaining(

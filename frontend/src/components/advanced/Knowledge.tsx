@@ -10,6 +10,8 @@ const USED: [string, string][] = [
   ['Yellow-card bans', "Five bookings by a club's 19th league match is a one-match ban (ten by the 32nd, two). Each player's booking rate (this season leaned on his own last season, which forecast bookings better than the position average over four seasons) and remaining fixtures give the chance he serves a ban in each match, and that share of his minutes is taken out before it happens, not after FPL flags it."],
   ['When to play the chips', 'A bench boost or triple captain still in hand is priced in every gameweek left in its window along the squad the plan expects to hold; the best week is the recommendation. A chip that expires unused is worth nothing.'],
   ['What a fixture is worth', 'Goals expected for both sides, correlated in one simulated match: clean sheets, goals conceded, saves, bonus, defensive contributions. Doubles and blanks are summed or zeroed. Replayed over five past seasons, reading how many matches each club plays added 420 points to the same transfer plan, and the opponent on top of that another 58 (ahead in 13 of 20 season runs across four planning horizons).'],
+  ['Bonus', "Last season's bonus rate, moved by the fixture: bonus is almost all goals, assists and clean sheets, so a forward's expected bonus rises with his side's expected goals and a defender's with the clean-sheet chance. Replayed over GW1-8, lower error in 6 of 8 gameweeks."],
+  ['Defensive contributions', "Last season's action rate with this season's matches counted four times over, and a defender's per-match count spread wider than a fixed rate would give (his variance is 1.3 times his mean). Both cut the error of 'reaches the threshold' by about 6% over GW4-8."],
   ['Roles', 'Penalty, corner and free-kick duty from FPL\'s own notes, and role changes the match analyst has seen in two or more matches, at the size measured on 22,000 player-matches.'],
   ['The market', "Tonight's price change from a model fitted on the transfer and price history, and the cost of selling at FPL's half-rise rule."],
 ]
@@ -26,6 +28,9 @@ const TESTED: [string, string][] = [
   ['Short rest, squad rotation indices', 'Real but too small to move a decision.'],
   ['Team-specific home advantage', 'Does not persist from one season to the next (r −0.10 over 68 team-seasons), so one league-wide figure is used.'],
   ['Clean-sheet probability', 'Checked against 2,268 team-matches: 24.1% predicted, 23.1% happened, close at every decile.'],
+  ['A lower or higher bar for each transfer', 'Replayed over five seasons at 0, 0.75, 1.5, 2.5 and 4 points: 0 to 1.5 are within noise of each other (7,315, 7,331 and 7,301 points with three free transfers a round); 2.5 and 4 lost 187 and 359. The bar stays at 1.5.'],
+  ['Minutes per appearance', "A 60-minute appearance averages 86 minutes, not 90, and a cameo 19, not 30. Using the measured figures made three seasons of replayed goal and assist totals worse (the rest of the model is calibrated with the round numbers), so they stay."],
+  ["This season's bonus in the bonus rate", 'Adding it changed the error of the next match by less than the noise (0.4136 to 0.4125).'],
 ]
 
 function List({ rows }: { rows: [string, string][] }) {

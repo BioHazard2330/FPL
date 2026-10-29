@@ -117,14 +117,14 @@ from fpl_agent.models.player_regression import (
 )
 from fpl_agent.models.promoted_team_calibration import augment_model_with_promoted_teams
 from fpl_agent.models.rules import current_season, get_rule
-from fpl_agent.models.scenario_sampling import sample_fixture_scorelines, sample_player_trial_points
+from fpl_agent.models.scenario_sampling import bonus_fixture_factor, sample_fixture_scorelines, sample_player_trial_points
 from fpl_agent.models.squad_churn import prior_season, team_churn_ratio
 from fpl_agent.models.team_strength_dc import expected_goals as dc_expected_goals
 from fpl_agent.models.team_strength_dc import fit_dixon_coles, load_matches_for_fitting
 
 MODEL_VERSION = "calibrated-v3"
 # Bumped when a projection input changes without a new model version, so stored plans are rebuilt (week_plan.calibration_id).
-PROJECTION_REVISION = "doubtful-eases-cup-bans-own-cards-6"
+PROJECTION_REVISION = "bonus-fixture-defcon-season-8"
 
 _CEILING_GOAL_UPSIDE = 4.0
 _ROTATION_DAMPING_PER_EXTRA_MATCH = 0.9
@@ -1269,7 +1269,7 @@ def _match_components(
         team_goals * rates["assisted_goal_rate"] * rates["assist_share_per90"]
         * effective_minutes_fraction * rates["assists_rate"]
     )
-    bonus = rates["bonus90"] * effective_minutes_fraction
+    bonus = rates["bonus90"] * effective_minutes_fraction * bonus_fixture_factor(rates["position"], team_goals, opp_goals)
     cards = rates["shrunk_cards90"] * rates["yellow_card_rate"] * effective_minutes_fraction
 
     # A clean sheet is a hard 60-minute threshold, not something a partial

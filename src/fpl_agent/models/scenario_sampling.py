@@ -5,6 +5,8 @@ model for genuine sampled floor/ceiling bands, without a circular import
 expected_points.py). No dependency on either module - pure math over
 already-computed inputs (lam/mu/rho, a rates dict, drawn scorelines).
 """
+import math
+
 import numpy as np
 from scipy.stats import poisson
 
@@ -31,6 +33,27 @@ _MAX_GOALS_GRID = 10  # tail probability beyond this is negligible for realistic
 # carries match-level BPS to calibrate the exact multiplier against (see
 # CLAUDE.md's own "Bonus/BPS is season-grain, not match-grain" blocker).
 _BONUS_INVOLVEMENT_BOOST = 2.0
+
+
+# Bonus follows the fixture (measured 2026-10-29). FPL bonus is almost all match events: 2022/23-2025/26 season
+# totals give each position's bonus split into attacking returns and clean sheets (the shares below, from a
+# least-squares fit of bonus on minutes, goals, assists and clean sheets; the rest of a keeper's is saves). A player's
+# flat bonus rate is moved by how his side's expected goals and clean-sheet chance in this fixture compare with the
+# league's (1.45 goals, 25.3% clean sheets over GW1-8 2026-27). Replayed over GW1-8 with pre-match expected goals,
+# against the flat rate: squared error per appearance lower in 6 of 8 gameweeks (all positions 0.4162 to 0.4120 at
+# strength 1.0, forwards 0.652 to 0.619); worse in GW1 (team ratings still last season's) and GW5. 0.75 is the
+# middle of the range that helped, not a fitted optimum.
+BONUS_FIXTURE_STRENGTH = 0.75
+BONUS_EVENT_SHARES = {"GKP": (0.0, 0.41), "DEF": (0.37, 0.63), "MID": (0.89, 0.11), "FWD": (0.87, 0.0)}
+BONUS_REFERENCE_GOALS = 1.45
+BONUS_REFERENCE_CLEAN_SHEET = 0.253
+
+
+def bonus_fixture_factor(position: str, team_goals: float, opp_goals: float) -> float:
+    """Multiplier on a player's flat bonus rate for one fixture (1.0 at a league-average fixture)."""
+    attack, clean = BONUS_EVENT_SHARES.get(position, (0.0, 0.0))
+    shift = attack * (team_goals / BONUS_REFERENCE_GOALS - 1) + clean * (math.exp(-opp_goals) / BONUS_REFERENCE_CLEAN_SHEET - 1)
+    return max(1.0 + BONUS_FIXTURE_STRENGTH * shift, 0.1)
 
 
 def _bonus_correlation_multiplier(involved: np.ndarray) -> np.ndarray:
@@ -149,7 +172,8 @@ def sample_player_trial_points(
     # docstring - concentrates bonus toward THIS trial's own goal/assist, not
     # just this player's season-average rate independent of what happened here.
     involved = (player_goals + assists) > 0
-    bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
+    fixture = bonus_fixture_factor(rates.get("position", ""), float(team_goals.mean()), float(opp_goals.mean()))
+    bonus_rate = np.clip(rates["bonus90"] * fixture * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
     bonus_points = rng.poisson(bonus_rate)
 
     # A clean sheet is a hard 60-minute threshold, same as _match_components - p_full
@@ -265,7 +289,8 @@ def sample_team_group_trial_points(
         # Same real intra-player bonus/goal-assist correlation as
         # sample_player_trial_points - see _bonus_correlation_multiplier.
         involved = (drawn[:, i] + assists_drawn) > 0
-        bonus_rate = np.clip(rates["bonus90"] * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
+        fixture = bonus_fixture_factor(rates.get("position", ""), float(team_goals.mean()), float(opp_goals.mean()))
+        bonus_rate = np.clip(rates["bonus90"] * fixture * weight, 0.0, None) * _bonus_correlation_multiplier(involved)
         bonus_points = rng.poisson(bonus_rate)
 
         clean_sheet_points = np.where(played_full & (opp_goals == 0), rates["clean_sheet_pts"], 0.0)

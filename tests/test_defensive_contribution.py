@@ -116,13 +116,28 @@ def test_defcon_points_probability_increases_with_rate():
 
 
 def test_defcon_points_probability_matches_poisson_survival_function_directly():
-    # DEF threshold=10: P(X>=10) for a Poisson(9) - computed independently here,
+    # MID threshold=12: P(X>=12) for a Poisson(11) - computed independently here,
     # not by re-deriving the module's own formula, to actually check the math.
     from scipy.stats import poisson
-    rate = 9.0
-    expected = sum(poisson.pmf(k, rate) for k in range(10, 60))
-    result = defcon_points_probability(actions_per90=rate, position="DEF")
+    rate = 11.0
+    expected = sum(poisson.pmf(k, rate) for k in range(12, 70))
+    result = defcon_points_probability(actions_per90=rate, position="MID")
     assert math.isclose(result, expected, rel_tol=1e-6)
+
+
+def test_a_defenders_count_is_spread_wider_than_poisson():
+    # DEF threshold=10 with a mean of 7 and variance 1.3x the mean (measured): the
+    # distribution used has that mean and variance, and puts more weight above a
+    # threshold the mean falls well short of than a Poisson would.
+    from scipy.stats import nbinom, poisson
+    p = 1 / 1.3
+    n = 7.0 * p / (1 - p)
+    assert math.isclose(nbinom.mean(n, p), 7.0, rel_tol=1e-9)
+    assert math.isclose(nbinom.var(n, p), 7.0 * 1.3, rel_tol=1e-9)
+    expected = sum(nbinom.pmf(k, n, p) for k in range(10, 80))
+    result = defcon_points_probability(actions_per90=7.0, position="DEF")
+    assert math.isclose(result, expected, rel_tol=1e-6)
+    assert result > sum(poisson.pmf(k, 7.0) for k in range(10, 60))
 
 
 def test_mid_and_fwd_need_a_higher_rate_than_def_for_the_same_probability():
@@ -131,3 +146,27 @@ def test_mid_and_fwd_need_a_higher_rate_than_def_for_the_same_probability():
     def_prob = defcon_points_probability(rate, "DEF")
     mid_prob = defcon_points_probability(rate, "MID")
     assert mid_prob < def_prob
+
+
+def test_this_seasons_matches_count_four_times_in_the_rate(db_conn, monkeypatch):
+    from fpl_agent.models import defensive_contribution as dc
+    from fpl_agent.models import rules
+
+    import pytest
+
+    _seed_ref_data(db_conn)
+    _seed_player(db_conn, 1)
+    _insert_season_row(db_conn, 1, "2025/26", defcon=80, minutes=900)
+    monkeypatch.setattr(rules, "current_season", lambda conn: "2026-27")
+    before = dc.expected_defcon_actions_per90(db_conn, 1)
+    season = "2026-27"
+    db_conn.execute(
+        "INSERT INTO player_gw_stats (player_id, event, season, minutes, starts, goals, assists, clean_sheets, goals_conceded, "
+        "own_goals, penalties_missed, penalties_saved, yellow_cards, red_cards, saves, bonus, bps, defensive_contribution, "
+        "xg, xa, xgc, total_points, fixtures, retrieved_at) "
+        "VALUES (1, 1, ?, 180, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, 4, 2, 't0')", (season,),
+    )
+    after = dc.expected_defcon_actions_per90(db_conn, 1)
+    assert after.shrunk_per90 > before.shrunk_per90
+    assert after.raw_per90 == pytest.approx((80 + 4 * 30) / ((900 + 4 * 180) / 90))
+    assert dc.expected_defcon_actions_per90(db_conn, 1, before_season="2026/27").shrunk_per90 == pytest.approx(before.shrunk_per90)

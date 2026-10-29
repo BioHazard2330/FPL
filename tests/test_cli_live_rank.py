@@ -373,6 +373,11 @@ def test_live_rank_cmd_no_livefpl_flag_forces_the_estimator(monkeypatch, db_conn
         cli_main_mod, "fetch_livefpl_snapshot",
         lambda entry_id: (_ for _ in ()).throw(AssertionError("LiveFPL should never be called with --no-livefpl")),
     )
+    # the estimator path's own first network call; failing it fast keeps this test off the real FPL API
+    monkeypatch.setattr(
+        cli_main_mod, "sync_my_team",
+        lambda conn, entry_id, event=None: (_ for _ in ()).throw(fpl_api_mod.SourceFetchError("offline in tests")),
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["live-rank", "--event", "1", "--no-livefpl"])

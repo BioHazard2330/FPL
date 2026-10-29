@@ -89,8 +89,12 @@ def test_bonus_is_sampled_with_real_variance_but_preserves_the_mean():
     points = _sample_player_trial_points(rng, rates, conceded_rate=0.0, team_goals=team_goals, opp_goals=opp_goals)
     bonus_only = points - 2.0  # subtract the deterministic full-appearance points
 
+    from fpl_agent.models.scenario_sampling import bonus_fixture_factor
+
     assert len(set(bonus_only.tolist())) > 1  # real variance - not the same value every trial
-    assert abs(bonus_only.mean() - 1.2) < 0.05  # Poisson mean recovers the calibrated rate (weight=1.0 here)
+    # Poisson mean recovers the calibrated rate (weight=1.0 here), moved only by this fixture's expected goals
+    expected = 1.2 * bonus_fixture_factor(rates.get("position", ""), 0.0, 0.0)
+    assert abs(bonus_only.mean() - expected) < 0.05
 
 
 def test_bonus_correlation_multiplier_is_mean_preserving():
@@ -138,7 +142,9 @@ def test_bonus_is_higher_in_trials_where_this_player_actually_scored():
 
     scored = team_goals > 0
     assert bonus_only[scored].mean() > bonus_only[~scored].mean()
-    assert abs(bonus_only.mean() - 1.0) < 0.05  # real mean-preservation, not an inflated average
+    from fpl_agent.models.scenario_sampling import bonus_fixture_factor
+    # real mean-preservation within the fixture, not an inflated average; the fixture itself moves the rate
+    assert abs(bonus_only.mean() - bonus_fixture_factor("FWD", team_goals.mean(), opp_goals.mean())) < 0.05
 
 
 def test_team_group_bonus_is_also_correlated_with_own_goals():
@@ -158,7 +164,9 @@ def test_team_group_bonus_is_also_correlated_with_own_goals():
 
     scored = team_goals > 0
     assert bonus_only[scored].mean() > bonus_only[~scored].mean()
-    assert abs(bonus_only.mean() - 1.0) < 0.05
+    from fpl_agent.models.scenario_sampling import bonus_fixture_factor
+    # real mean-preservation within the fixture, not an inflated average; the fixture itself moves the rate
+    assert abs(bonus_only.mean() - bonus_fixture_factor("FWD", team_goals.mean(), opp_goals.mean())) < 0.05
 
 
 def test_defender_conceded_penalty_scales_with_opponent_goals():

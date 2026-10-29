@@ -187,3 +187,15 @@ def test_model_bias_ignores_predictions_from_an_older_model_version(db_conn):
             "VALUES (1, ?, '2026-27', 3.0, 't', 9, 'calibrated-v2')", (k + 1,),
         )
     assert model_bias(db_conn) == (0.0, 0)
+
+
+def test_one_gameweek_of_outcomes_is_not_a_model_bias(db_conn):
+    _seed_two_players_two_teams(db_conn)
+    for k in range(60):
+        db_conn.execute(
+            "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_at, actual_points, model_version) "
+            "VALUES (1, 8, ?, 2.0, 't', 3.0, ?)", (f"s{k}", MODEL_VERSION),
+        )
+    assert model_bias(db_conn) == (0.0, 60)
+    s = lf.prediction_shortfall(db_conn)
+    assert s["gameweeks"] == 1 and s["mean"] == pytest.approx(1.0) and s["standard_error"] is None

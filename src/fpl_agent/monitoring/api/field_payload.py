@@ -47,22 +47,21 @@ def _overall_posture(conn) -> dict | None:
 
 
 def _model_bias(conn) -> dict | None:
-    """How far the model's own past predictions for this squad ran from what the
-    players scored: mean of actual minus predicted, its standard error, and the
-    sample. The edge is a gap between two sums of the same number of slots, so a
-    shortfall that is roughly the same per player cancels in it; the points column
-    does not cancel, which is why the page prints this beside it."""
-    rows = conn.execute(
-        "SELECT predicted_median AS p, actual_points AS a FROM prediction_outcomes "
-        "WHERE actual_points IS NOT NULL AND predicted_median IS NOT NULL"
-    ).fetchall()
-    if len(rows) < 20:
+    """How far the current model's settled predictions ran from what players
+    scored (all players, not only this squad), with a standard error across
+    gameweeks. The edge is a gap between two sums of the same number of slots,
+    so a shortfall that is roughly the same per player cancels in it; the points
+    column does not, which is why the page prints this beside it. Shown only
+    once it spans three gameweeks: one gameweek is its own scoring level."""
+    from fpl_agent.models.live_forecast import MIN_BIAS_GAMEWEEKS, MIN_BIAS_SAMPLE, prediction_shortfall
+
+    s = prediction_shortfall(conn)
+    if s["n"] < MIN_BIAS_SAMPLE or s["gameweeks"] < MIN_BIAS_GAMEWEEKS:
         return None
-    diffs = [r["a"] - r["p"] for r in rows]
-    n = len(diffs)
-    mean = sum(diffs) / n
-    var = sum((d - mean) ** 2 for d in diffs) / (n - 1)
-    return {"n": n, "bias_per_player": round(mean, 2), "standard_error": round((var / n) ** 0.5, 2)}
+    return {
+        "n": s["n"], "gameweeks": s["gameweeks"], "bias_per_player": round(s["mean"], 2),
+        "standard_error": round(s["standard_error"], 2) if s["standard_error"] is not None else None,
+    }
 
 
 def _ids(lineup_players) -> list[int]:
