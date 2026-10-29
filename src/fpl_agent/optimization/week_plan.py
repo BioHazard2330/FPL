@@ -329,6 +329,27 @@ def prefer_current_eleven(
     return start, benched
 
 
+# How much a transfer decision trusts a thin record (2026-10-29). The solver favours whoever projects best, and a player
+# whose projection rests on few matches is more often there by luck, so each value in the objective is pulled toward its
+# position's league-wide average by k / (n + k), n = his matches with minutes in the last 380 days (reported totals stay
+# pure expected points). Replayed with the fixture-reading plan over 2021-22 to 2025-26, three free transfers a round:
+# k 0 / 3 / 6 / 12 / 24 -> 7,301 / 7,419 / 7,296 / 7,302 / 7,266 points; k = 3 ahead in 4 of 5 seasons (+24, +3, +33,
+# -6, +64). Larger k swings between seasons and does not help. A regular with 30 matches keeps 91% of his own value; a
+# player with three keeps half.
+EVIDENCE_K = 3.0
+EVIDENCE_DAYS = 380
+
+
+def evidence_matches(conn: sqlite3.Connection) -> dict[int, int]:
+    """Each player's matches with minutes in the last `EVIDENCE_DAYS` days (Understat)."""
+    from datetime import date, timedelta
+
+    since = (date.today() - timedelta(days=EVIDENCE_DAYS)).isoformat()
+    return {r[0]: r[1] for r in conn.execute(
+        "SELECT player_id, COUNT(*) FROM player_match_stats_history WHERE match_date >= ? AND minutes > 0 "
+        "AND player_id IS NOT NULL GROUP BY player_id", (since,))}
+
+
 BENCH_TRIALS = 4000
 
 
@@ -662,7 +683,7 @@ def build_road_ahead(
     common = dict(
         start_event=event, horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT,
         time_limit_seconds=SOLVE_SECONDS, model_chips=False, xp_cache=cache, league_pool=pool,
-        transfer_penalty=min_move_gain,
+        transfer_penalty=min_move_gain, evidence_matches=evidence_matches(conn), evidence_k=EVIDENCE_K,
     )
     plan = plan_transfers_milp(
         conn, squad_ids, free_transfers, bank, max_first_gw_transfers=len(pairs),
@@ -961,6 +982,8 @@ def build_week_plan(
     by_id = {c.player_id: c for c in pool}
     cache: dict = {}
 
+    evidence = evidence_matches(conn)
+
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
         return plan_transfers_milp(
             conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
@@ -968,6 +991,7 @@ def build_week_plan(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K,
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -1174,6 +1198,8 @@ def plan_with_view(
     cache: dict = {}
     clean = {int(k): float(v) for k, v in scales.items() if v is not None and abs(float(v) - 1.0) > 1e-9}
 
+    evidence = evidence_matches(conn)
+
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
         merged = {**clean, **(scale or {})}
         return plan_transfers_milp(
@@ -1182,6 +1208,7 @@ def plan_with_view(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=merged or None,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K,
         )
 
     selection = select_moves(solve, event, min_move_gain)

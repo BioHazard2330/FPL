@@ -39,7 +39,7 @@ export class ApiError extends Error {
   }
 }
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) {
     throw new ApiError(res.status, `${path} -> ${res.status}`)

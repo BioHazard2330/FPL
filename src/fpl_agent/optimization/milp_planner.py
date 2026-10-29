@@ -209,6 +209,8 @@ def plan_transfers_milp(
     forced_out_first: frozenset[int] = frozenset(),
     transfer_penalty: float = 0.0,
     xp_scale: dict[int, float] | None = None,
+    evidence_matches: dict[int, int] | None = None,
+    evidence_k: float = 0.0,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -287,6 +289,22 @@ def plan_transfers_milp(
         (c.player_id, t): _gw_xp(conn, c.player_id, t, cache) * (xp_scale or {}).get(c.player_id, 1.0)
         for c in pool for t in events
     }
+    # Evidence shrink (objective only, like `transfer_penalty`; reported totals stay pure expected points): each value is
+    # pulled toward its position's league-wide average for a gameweek by k / (n + k), n = the player's matches with
+    # minutes in the last 380 days. The optimizer otherwise favours whoever looks best, and a thin record looks best by
+    # luck more often. See week_plan.EVIDENCE_K for the replay it rests on.
+    obj = xp
+    if evidence_matches is not None and evidence_k > 0:
+        means: dict[str, list[float]] = {}
+        for c in league:
+            means.setdefault(c.position, []).append(c.xp / max(horizon_gw, 1))
+        pos_mean = {k: sum(v) / len(v) for k, v in means.items() if v}
+        position_of = {c.player_id: c.position for c in pool}
+        obj = {}
+        for (p, t), v in xp.items():
+            n = evidence_matches.get(p, 0)
+            w = n / (n + evidence_k)
+            obj[(p, t)] = w * v + (1 - w) * pos_mean.get(position_of.get(p, ""), v)
     price = {c.player_id: c.price_tenths for c in pool}
     sell_price = {p: min((sell_prices_tenths or {}).get(p, price[p]), price[p]) for p in price}
     pos = {c.player_id: c.position for c in pool}
@@ -360,10 +378,10 @@ def plan_transfers_milp(
     # starter scores 2x), bench at squad.py's own weights. Minus real hit
     # cost. Identical convention to optimise_squad, summed over the horizon.
     prob += (
-        pulp.lpSum(xp[(p, t)] * s[(p, t)] for p in ids for t in events)
-        + pulp.lpSum(xp[(p, t)] * cap[(p, t)] for p in ids for t in events)
+        pulp.lpSum(obj[(p, t)] * s[(p, t)] for p in ids for t in events)
+        + pulp.lpSum(obj[(p, t)] * cap[(p, t)] for p in ids for t in events)
         + pulp.lpSum(
-            _bench_weight_for(pos[p], bench_weight) * xp[(p, t)] * (x[(p, t)] - s[(p, t)])
+            _bench_weight_for(pos[p], bench_weight) * obj[(p, t)] * (x[(p, t)] - s[(p, t)])
             for p in ids for t in events
         )
         # Triple captain: the captain already counts twice above, so this
@@ -371,11 +389,11 @@ def plan_transfers_milp(
         # Empty when the chip is unavailable or chips are off entirely -
         # `tcap`/`bbp` are not populated then, so the terms must not be
         # indexed at all rather than summed over an empty dict.
-        + (pulp.lpSum(xp[(p, t)] * tcap[(p, t)] for p in ids for t in events) if tcap else 0)
+        + (pulp.lpSum(obj[(p, t)] * tcap[(p, t)] for p in ids for t in events) if tcap else 0)
         # Bench boost: the bench is already counted at its discount above,
         # so this tops it up to full value rather than double counting it.
         + (pulp.lpSum(
-            (1.0 - _bench_weight_for(pos[p], bench_weight)) * xp[(p, t)] * bbp[(p, t)]
+            (1.0 - _bench_weight_for(pos[p], bench_weight)) * obj[(p, t)] * bbp[(p, t)]
             for p in ids for t in events
         ) if bbp else 0)
         - HIT_COST * pulp.lpSum(hits[t] for t in events)

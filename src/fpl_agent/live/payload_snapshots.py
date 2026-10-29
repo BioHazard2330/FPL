@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 _logger = logging.getLogger("fpl_agent.payload_snapshots")
 
 SNAPSHOT_SCREENS = frozenset({
-    "command", "myteam", "plan", "football", "matchweek", "scout", "advanced", "receipts", "previews", "explorer", "signals",
+    "command", "myteam", "plan", "football", "matchweek", "scout", "advanced", "receipts", "previews", "explorer", "signals", "album",
 })
 FRESH_SECONDS = 90.0
 
