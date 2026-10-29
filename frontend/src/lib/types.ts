@@ -1315,6 +1315,9 @@ export interface StoryShot {
   pid: number | null
   name: string | null
   zone: string | null
+  /** Where it crossed the goal line: across (pitch y, metres) and height (metres); absent on stories built before 2026-10-29. */
+  gy?: number | null
+  gz?: number | null
 }
 
 export interface StoryGoal {

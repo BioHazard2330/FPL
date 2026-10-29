@@ -535,7 +535,7 @@ def build_story(inputs: dict, league: dict | None = None, live_minute: int | Non
     compact_shots = [
         {"m": s["minute"], "side": _side_of(s["team_id"], home_id), "x": s["x"], "y": s["y"], "xg": round(s["xg"], 3),
          "xgot": s["xgot"], "o": s["outcome"], "sit": s["situation"], "type": s["shot_type"], "pid": s["player_id"],
-         "name": s["player_name"], "zone": zone(s["x"], s["y"])}
+         "name": s["player_name"], "zone": zone(s["x"], s["y"]), "gy": s.get("gy"), "gz": s.get("gz")}
         for s in sorted(shots_all, key=lambda s: (s["minute"] or 0))
         if s["xg"] is not None
     ]
@@ -936,7 +936,8 @@ def load_inputs(conn: sqlite3.Connection, match_id: int) -> dict | None:
         return None
     shots = [
         {"minute": r["minute"], "team_id": r["team_id"], "player_id": r["player_id"], "player_name": r["player_name"], "x": r["x"], "y": r["y"],
-         "xg": r["xg"], "xgot": r["xgot"], "on_target": bool(r["is_on_target"]), "outcome": r["outcome"], "situation": r["situation"], "shot_type": r["shot_type"]}
+         "xg": r["xg"], "xgot": r["xgot"], "on_target": bool(r["is_on_target"]), "outcome": r["outcome"], "situation": r["situation"], "shot_type": r["shot_type"],
+         "gy": r["goal_crossed_y"], "gz": r["goal_crossed_z"]}
         for r in conn.execute("SELECT * FROM match_shots WHERE match_id = ? ORDER BY minute", (match_id,))
     ]
     events = [

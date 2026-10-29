@@ -32,13 +32,15 @@ function pitchTexture(): THREE.CanvasTexture {
   const rect = (x: number, y: number, w: number, h: number) => g.strokeRect(x * sx, y * sy, w * sx, h * sy)
   rect(1, 1, WIDTH - 2, LENGTH - 2)
   g.beginPath(); g.moveTo(sx, (LENGTH / 2) * sy); g.lineTo((WIDTH - 1) * sx, (LENGTH / 2) * sy); g.stroke()
-  g.beginPath(); g.arc((WIDTH / 2) * sx, (LENGTH / 2) * sy, 9.15 * sx, 0, Math.PI * 2); g.stroke()
+  g.beginPath(); g.ellipse((WIDTH / 2) * sx, (LENGTH / 2) * sy, 9.15 * sx, 9.15 * sy, 0, 0, Math.PI * 2); g.stroke()
   for (const top of [true, false]) {
     const y0 = top ? 1 : LENGTH - 1
     const dir = top ? 1 : -1
     rect((WIDTH - 40.3) / 2, top ? 1 : LENGTH - 1 - 16.5, 40.3, 16.5)
     rect((WIDTH - 18.3) / 2, top ? 1 : LENGTH - 1 - 5.5, 18.3, 5.5)
-    g.beginPath(); g.arc((WIDTH / 2) * sx, (y0 + dir * 11) * sy, 9.15 * sx, top ? 0.2 * Math.PI : 1.2 * Math.PI, top ? 0.8 * Math.PI : 1.8 * Math.PI); g.stroke()
+    const a = Math.acos(5.5 / 9.15)
+    g.beginPath(); g.ellipse((WIDTH / 2) * sx, (y0 + dir * 11) * sy, 9.15 * sx, 9.15 * sy, 0, top ? Math.PI / 2 - a : 1.5 * Math.PI - a, top ? Math.PI / 2 + a : 1.5 * Math.PI + a); g.stroke()
+    g.beginPath(); g.ellipse((WIDTH / 2) * sx, (y0 + dir * 11) * sy, 0.25 * sx, 0.25 * sy, 0, 0, Math.PI * 2); g.fillStyle = 'rgba(255,255,255,0.92)'; g.fill()
   }
   const t = new THREE.CanvasTexture(c)
   t.anisotropy = 8
@@ -111,6 +113,145 @@ function spots(players: StadiumPlayer[]): Map<number, [number, number]> {
   return out
 }
 
+export function stadiumRenderer(el: HTMLElement, w: number, height: number): THREE.WebGLRenderer {
+  const renderer = new THREE.WebGLRenderer({ antialias: true })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setSize(w, height)
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.05
+  el.appendChild(renderer.domElement)
+  return renderer
+}
+
+export function disposeStadium(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
+  renderer.dispose()
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh
+    m.geometry?.dispose?.()
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+    else mat?.dispose?.()
+  })
+}
+
+/** The ground at night: pitch and markings (length along z, goals at z = +-52.5, width along x), goals, stepped stands
+ * with their crowd and glass roofs, LED hoardings scrolling `ticker`, four floodlight towers. */
+export function stadiumScene(ticker: string[]): { scene: THREE.Scene; ledTex: THREE.CanvasTexture } {
+  const scene = new THREE.Scene()
+  scene.background = new THREE.Color('#0a0d14')
+  scene.fog = new THREE.Fog('#0a0d14', 140, 260)
+
+  const pitch = new THREE.Mesh(new THREE.PlaneGeometry(WIDTH + 14, LENGTH + 14), new THREE.MeshStandardMaterial({ color: '#2b7436', roughness: 0.95 }))
+  pitch.rotation.x = -Math.PI / 2
+  pitch.position.y = -0.02
+  pitch.receiveShadow = true
+  const field = new THREE.Mesh(new THREE.PlaneGeometry(WIDTH, LENGTH), new THREE.MeshStandardMaterial({ map: pitchTexture(), roughness: 0.9 }))
+  field.rotation.x = -Math.PI / 2
+  field.receiveShadow = true
+  scene.add(pitch, field)
+
+  for (const z of [-LENGTH / 2, LENGTH / 2]) {
+    const goal = new THREE.Group()
+    const post = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 })
+    for (const x of [-3.66, 3.66]) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.44, 8), post)
+      p.position.set(x, 1.22, 0)
+      goal.add(p)
+    }
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7.32, 8), post)
+    bar.rotation.z = Math.PI / 2
+    bar.position.y = 2.44
+    const net = new THREE.Mesh(new THREE.BoxGeometry(7.32, 2.44, 2), new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.18, wireframe: true }))
+    net.position.set(0, 1.22, z > 0 ? 1 : -1)
+    goal.add(bar, net)
+    goal.position.z = z
+    goal.traverse((o) => { o.castShadow = true })
+    scene.add(goal)
+  }
+
+  const standMat = new THREE.MeshStandardMaterial({ color: '#1a1f2b', roughness: 0.9 })
+  const crowd: number[] = []
+  const crowdColors: number[] = []
+  const palette = [new THREE.Color('#f6f0e2'), new THREE.Color('#ff4614'), new THREE.Color('#1c3fd1'), new THREE.Color('#e8a800'), new THREE.Color('#0b7d40')]
+  const stands: [number, number, number, number, number][] = [
+    [0, -LENGTH / 2 - 16, WIDTH + 30, 0, 0], [0, LENGTH / 2 + 16, WIDTH + 30, 0, Math.PI],
+    [-WIDTH / 2 - 16, 0, LENGTH + 30, 0, Math.PI / 2], [WIDTH / 2 + 16, 0, LENGTH + 30, 0, -Math.PI / 2],
+  ]
+  for (const [x, z, len, , rot] of stands) {
+    const stand = new THREE.Group()
+    for (let k = 0; k < 7; k++) {
+      const step = new THREE.Mesh(new THREE.BoxGeometry(len, 1.6 + k * 1.7, 2.6), standMat)
+      step.position.set(0, (1.6 + k * 1.7) / 2, 8 - k * 2.6)
+      step.receiveShadow = true
+      stand.add(step)
+      for (let i = 0; i < 150; i++) {
+        const v = new THREE.Vector3((Math.random() - 0.5) * len, 1.6 + k * 1.7 + 0.4, 8 - k * 2.6 + (Math.random() - 0.5) * 2)
+          .applyAxisAngle(new THREE.Vector3(0, 1, 0), rot).add(new THREE.Vector3(x, 0, z))
+        crowd.push(v.x, v.y, v.z)
+        const col = palette[Math.floor(Math.random() * palette.length)]
+        crowdColors.push(col.r, col.g, col.b)
+      }
+    }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(len, 0.6, 22), new THREE.MeshStandardMaterial({ color: '#9fb4ff', roughness: 0.2, metalness: 0.4, transparent: true, opacity: 0.12, depthWrite: false }))
+    roof.position.set(0, 17, -1)
+    stand.add(roof)
+    stand.position.set(x, 0, z)
+    stand.rotation.y = rot
+    scene.add(stand)
+  }
+  const crowdGeo = new THREE.BufferGeometry()
+  crowdGeo.setAttribute('position', new THREE.Float32BufferAttribute(crowd, 3))
+  crowdGeo.setAttribute('color', new THREE.Float32BufferAttribute(crowdColors, 3))
+  const crowdPts = new THREE.Points(crowdGeo, new THREE.PointsMaterial({ size: 0.7, vertexColors: true, transparent: true, opacity: 0.85 }))
+  scene.add(crowdPts)
+
+  const ledCanvas = document.createElement('canvas')
+  ledCanvas.width = 2048
+  ledCanvas.height = 64
+  const lg = ledCanvas.getContext('2d')!
+  lg.fillStyle = '#05070b'
+  lg.fillRect(0, 0, 2048, 64)
+  lg.font = '900 44px "Big Shoulders Display", Impact, sans-serif'
+  lg.textBaseline = 'middle'
+  let lx = 16
+  for (const [i, part] of [...ticker, ...ticker].entries()) {
+    lg.fillStyle = i % 2 ? '#ff4614' : '#f6f0e2'
+    lg.fillText(part.toUpperCase(), lx, 34)
+    lx += lg.measureText(part.toUpperCase()).width + 60
+    if (lx > 2048) break
+  }
+  const ledTex = new THREE.CanvasTexture(ledCanvas)
+  ledTex.colorSpace = THREE.SRGBColorSpace
+  ledTex.wrapS = THREE.RepeatWrapping
+  ledTex.repeat.set(2, 1)
+  for (const [x, z, len, rot] of [[0, LENGTH / 2 + 4, WIDTH + 6, Math.PI], [0, -LENGTH / 2 - 4, WIDTH + 6, 0], [-WIDTH / 2 - 4, 0, LENGTH, Math.PI / 2], [WIDTH / 2 + 4, 0, LENGTH, -Math.PI / 2]] as const) {
+    const led = new THREE.Mesh(new THREE.BoxGeometry(len, 1.1, 0.3), new THREE.MeshStandardMaterial({ map: ledTex, emissive: '#ffffff', emissiveMap: ledTex, emissiveIntensity: 0.9 }))
+    led.position.set(x, 0.55, z)
+    led.rotation.y = rot
+    scene.add(led)
+  }
+
+  scene.add(new THREE.HemisphereLight('#9fb4ff', '#1a120a', 0.35))
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 46, 8), new THREE.MeshStandardMaterial({ color: '#3a3f4a' }))
+    const tx = x * (WIDTH / 2 + 22), tz = z * (LENGTH / 2 + 22)
+    tower.position.set(tx, 23, tz)
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#fff6d8', emissiveIntensity: 2.5 }))
+    panel.position.set(tx, 47, tz)
+    panel.lookAt(0, 0, 0)
+    const light = new THREE.SpotLight('#fff3dc', 2600, 260, Math.PI / 5, 0.5, 1.4)
+    light.position.set(tx, 47, tz)
+    light.target.position.set(0, 0, 0)
+    light.castShadow = true
+    light.shadow.mapSize.set(1024, 1024)
+    light.shadow.bias = -0.0004
+    scene.add(tower, panel, light, light.target)
+  }
+  return { scene, ledTex }
+}
+
 export function Stadium3D({ players, ticker, height = 560 }: { players: StadiumPlayer[]; ticker: string[]; height?: number }) {
   const mount = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
@@ -119,130 +260,10 @@ export function Stadium3D({ players, ticker, height = 560 }: { players: StadiumP
     const el = mount.current
     if (!el || players.length === 0) return
     const w = el.clientWidth
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setSize(w, height)
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
-    renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.05
-    el.appendChild(renderer.domElement)
+    const renderer = stadiumRenderer(el, w, height)
 
-    const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#0a0d14')
-    scene.fog = new THREE.Fog('#0a0d14', 140, 260)
+    const { scene, ledTex } = stadiumScene(ticker)
     const camera = new THREE.PerspectiveCamera(40, w / height, 0.5, 600)
-
-    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(WIDTH + 14, LENGTH + 14), new THREE.MeshStandardMaterial({ color: '#2b7436', roughness: 0.95 }))
-    pitch.rotation.x = -Math.PI / 2
-    pitch.position.y = -0.02
-    pitch.receiveShadow = true
-    const field = new THREE.Mesh(new THREE.PlaneGeometry(WIDTH, LENGTH), new THREE.MeshStandardMaterial({ map: pitchTexture(), roughness: 0.9 }))
-    field.rotation.x = -Math.PI / 2
-    field.receiveShadow = true
-    scene.add(pitch, field)
-
-    for (const z of [-LENGTH / 2, LENGTH / 2]) {
-      const goal = new THREE.Group()
-      const post = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 })
-      for (const x of [-3.66, 3.66]) {
-        const p = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.44, 8), post)
-        p.position.set(x, 1.22, 0)
-        goal.add(p)
-      }
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7.32, 8), post)
-      bar.rotation.z = Math.PI / 2
-      bar.position.y = 2.44
-      const net = new THREE.Mesh(new THREE.BoxGeometry(7.32, 2.44, 2), new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.18, wireframe: true }))
-      net.position.set(0, 1.22, z > 0 ? 1 : -1)
-      goal.add(bar, net)
-      goal.position.z = z
-      goal.traverse((o) => { o.castShadow = true })
-      scene.add(goal)
-    }
-
-    const standMat = new THREE.MeshStandardMaterial({ color: '#1a1f2b', roughness: 0.9 })
-    const crowd: number[] = []
-    const crowdColors: number[] = []
-    const palette = [new THREE.Color('#f6f0e2'), new THREE.Color('#ff4614'), new THREE.Color('#1c3fd1'), new THREE.Color('#e8a800'), new THREE.Color('#0b7d40')]
-    const stands: [number, number, number, number, number][] = [
-      [0, -LENGTH / 2 - 16, WIDTH + 30, 0, 0], [0, LENGTH / 2 + 16, WIDTH + 30, 0, Math.PI],
-      [-WIDTH / 2 - 16, 0, LENGTH + 30, 0, Math.PI / 2], [WIDTH / 2 + 16, 0, LENGTH + 30, 0, -Math.PI / 2],
-    ]
-    for (const [x, z, len, , rot] of stands) {
-      const stand = new THREE.Group()
-      for (let k = 0; k < 7; k++) {
-        const step = new THREE.Mesh(new THREE.BoxGeometry(len, 1.6 + k * 1.7, 2.6), standMat)
-        step.position.set(0, (1.6 + k * 1.7) / 2, 8 - k * 2.6)
-        step.receiveShadow = true
-        stand.add(step)
-        for (let i = 0; i < 150; i++) {
-          const v = new THREE.Vector3((Math.random() - 0.5) * len, 1.6 + k * 1.7 + 0.4, 8 - k * 2.6 + (Math.random() - 0.5) * 2)
-            .applyAxisAngle(new THREE.Vector3(0, 1, 0), rot).add(new THREE.Vector3(x, 0, z))
-          crowd.push(v.x, v.y, v.z)
-          const col = palette[Math.floor(Math.random() * palette.length)]
-          crowdColors.push(col.r, col.g, col.b)
-        }
-      }
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(len, 0.6, 22), new THREE.MeshStandardMaterial({ color: '#9fb4ff', roughness: 0.2, metalness: 0.4, transparent: true, opacity: 0.12, depthWrite: false }))
-      roof.position.set(0, 17, -1)
-      const lip = new THREE.Mesh(new THREE.BoxGeometry(len, 0.25, 0.25), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#cfe0ff', emissiveIntensity: 1.6 }))
-      lip.position.set(0, 16.6, 10)
-      stand.add(roof, lip)
-      stand.position.set(x, 0, z)
-      stand.rotation.y = rot
-      scene.add(stand)
-    }
-    const crowdGeo = new THREE.BufferGeometry()
-    crowdGeo.setAttribute('position', new THREE.Float32BufferAttribute(crowd, 3))
-    crowdGeo.setAttribute('color', new THREE.Float32BufferAttribute(crowdColors, 3))
-    const crowdPts = new THREE.Points(crowdGeo, new THREE.PointsMaterial({ size: 0.7, vertexColors: true, transparent: true, opacity: 0.85 }))
-    scene.add(crowdPts)
-
-    const ledCanvas = document.createElement('canvas')
-    ledCanvas.width = 2048
-    ledCanvas.height = 64
-    const lg = ledCanvas.getContext('2d')!
-    lg.fillStyle = '#05070b'
-    lg.fillRect(0, 0, 2048, 64)
-    lg.font = '900 44px "Big Shoulders Display", Impact, sans-serif'
-    lg.textBaseline = 'middle'
-    let lx = 16
-    for (const [i, part] of [...ticker, ...ticker].entries()) {
-      lg.fillStyle = i % 2 ? '#ff4614' : '#f6f0e2'
-      lg.fillText(part.toUpperCase(), lx, 34)
-      lx += lg.measureText(part.toUpperCase()).width + 60
-      if (lx > 2048) break
-    }
-    const ledTex = new THREE.CanvasTexture(ledCanvas)
-    ledTex.colorSpace = THREE.SRGBColorSpace
-    ledTex.wrapS = THREE.RepeatWrapping
-    ledTex.repeat.set(2, 1)
-    const leds: THREE.Mesh[] = []
-    for (const [x, z, len, rot] of [[0, LENGTH / 2 + 4, WIDTH + 6, Math.PI], [0, -LENGTH / 2 - 4, WIDTH + 6, 0], [-WIDTH / 2 - 4, 0, LENGTH, Math.PI / 2], [WIDTH / 2 + 4, 0, LENGTH, -Math.PI / 2]] as const) {
-      const led = new THREE.Mesh(new THREE.BoxGeometry(len, 1.1, 0.3), new THREE.MeshStandardMaterial({ map: ledTex, emissive: '#ffffff', emissiveMap: ledTex, emissiveIntensity: 0.9 }))
-      led.position.set(x, 0.55, z)
-      led.rotation.y = rot
-      leds.push(led)
-      scene.add(led)
-    }
-
-    scene.add(new THREE.HemisphereLight('#9fb4ff', '#1a120a', 0.35))
-    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 46, 8), new THREE.MeshStandardMaterial({ color: '#3a3f4a' }))
-      const tx = x * (WIDTH / 2 + 22), tz = z * (LENGTH / 2 + 22)
-      tower.position.set(tx, 23, tz)
-      const panel = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#fff6d8', emissiveIntensity: 2.5 }))
-      panel.position.set(tx, 47, tz)
-      panel.lookAt(0, 0, 0)
-      const light = new THREE.SpotLight('#fff3dc', 2600, 260, Math.PI / 5, 0.5, 1.4)
-      light.position.set(tx, 47, tz)
-      light.target.position.set(0, 0, 0)
-      light.castShadow = true
-      light.shadow.mapSize.set(1024, 1024)
-      light.shadow.bias = -0.0004
-      scene.add(tower, panel, light, light.target)
-    }
 
     const placed = spots(players)
     const clickable: THREE.Object3D[] = []
@@ -341,17 +362,11 @@ export function Stadium3D({ players, ticker, height = 560 }: { players: StadiumP
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', onResize)
       controls.dispose()
-      renderer.dispose()
-      scene.traverse((o) => {
-        const m = o as THREE.Mesh
-        m.geometry?.dispose?.()
-        const mat = m.material as THREE.Material | THREE.Material[] | undefined
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
-        else mat?.dispose?.()
-      })
+      disposeStadium(renderer, scene)
       el.removeChild(renderer.domElement)
     }
-  }, [players, ticker, height, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(players), ticker.join('|'), height, navigate])
 
   return <div ref={mount} className="w-full overflow-hidden" style={{ height }} />
 }
