@@ -236,10 +236,10 @@ export function CommandScreen() {
                   </Panel>
                 )}
                 <SquadNews />
+                <MarginalValue plan={plan} />
               </div>
               <div className="min-w-0 space-y-7">
                 <DeadlineChecklist plan={plan} desk={desk} />
-                <MarginalValue plan={plan} />
               </div>
             </div>
           </>

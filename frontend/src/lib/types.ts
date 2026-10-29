@@ -885,6 +885,7 @@ export interface LiveSnapshot {
   threats: LiveThreat[]
   squad: LiveSquadPlayer[]
   active_matches: LiveMatch[]
+  upcoming?: UpcomingMatch[]
   bonus_defcon: BonusDefconRow[]
   match_events: LiveMatchEvent[]
   recent_changes: LiveRecentChange[]
@@ -2287,7 +2288,7 @@ export interface FieldPayload {
   decision_id?: number
   field?: { kind: 'top10k' | 'population'; label: string; sample_event: number; sample_size: number; coverage: number; spread: number }
   posture?: { overall_rank: number; total_players: number; percentile: number; after_event: number } | null
-  model_bias?: { n: number; bias_per_player: number; standard_error: number } | null
+  model_bias?: { n: number; gameweeks: number; bias_per_player: number; standard_error: number | null } | null
   options?: FieldOption[]
   plan_option?: FieldOption
   captains?: {
@@ -2640,4 +2641,16 @@ export interface FootballReadData {
   event: number
   verdict: { label: 'backs him' | 'against him' | 'mixed'; score: number; text: string }
   lines: FootballReadLine[]
+}
+
+/** A match of the next gameweek still to kick off, with the squad players in it (`live_snapshot._upcoming_block`). */
+export interface UpcomingMatch {
+  fixture_id: number
+  event: number
+  kickoff_time: string
+  home: string
+  away: string
+  home_code: number | null
+  away_code: number | null
+  players: { player_id: number; web_name: string; position: string; slot: string; is_captain: boolean; is_vice: boolean; xp: number | null }[]
 }

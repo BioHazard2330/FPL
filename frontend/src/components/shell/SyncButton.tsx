@@ -33,6 +33,23 @@ export function SyncButton() {
 
   useEffect(() => stop, [])
 
+  // Opening the page on data more than six hours old outside the active window starts one sync on its own
+  // (`/api/open`); a sync already under way, from here or the scheduler's button, is picked up the same way.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/open', { headers: { 'X-FPL-Refresh': '1' } })
+      .then((r) => r.json())
+      .then((s: RefreshStatus & { auto_refresh: string | null }) => {
+        if (cancelled || !s.running) return
+        setStartedAt(s.started_at ? Date.parse(s.started_at) : Date.now())
+        setPhase('running')
+        poll()
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (phase !== 'running') return
     const id = setInterval(() => tick((n) => n + 1), 1000)

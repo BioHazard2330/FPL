@@ -4,13 +4,13 @@ import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
-import { fetchLiveSnapshot } from '@/lib/api'
+import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
 import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
-import type { LiveMatchEvent } from '@/lib/types'
+import type { LiveMatchEvent, UpcomingMatch } from '@/lib/types'
 
 const CLASS_COLOR: Record<string, string> = {
   FIT: 'text-pitch-green',
@@ -293,6 +293,8 @@ export function LiveScreen() {
             {matches.map((m) => <MatchCard key={m.match_id} m={m} />)}
           </div>
         </div>
+      ) : (p.upcoming ?? []).length > 0 ? (
+        <Upcoming matches={p.upcoming ?? []} />
       ) : (
         <div className="border-b border-divider px-10 py-8">
           <div className="font-display text-2xl font-bold text-text-faint">No match is live right now</div>
@@ -567,5 +569,65 @@ export function LiveScreen() {
       )}
 
     </div>
+  )
+}
+
+/** THE COMING GAMEWEEK, between matches: every kickoff still to come, by day, with the squad players in each. The match
+ * centre takes this place the moment a fixture kicks off. */
+function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
+  const days = new Map<string, UpcomingMatch[]>()
+  for (const m of matches) {
+    const day = new Date(m.kickoff_time).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })
+    days.set(day, [...(days.get(day) ?? []), m])
+  }
+  const first = new Date(matches[0].kickoff_time).getTime()
+  const hours = Math.max(0, (first - Date.now()) / 3_600_000)
+  const until = hours >= 24 ? `${Math.floor(hours / 24)}d ${Math.floor(hours % 24)}h` : `${Math.floor(hours)}h ${Math.floor((hours * 60) % 60)}m`
+  const yours = matches.reduce((n, m) => n + m.players.filter((x) => x.slot === 'starting').length, 0)
+  return (
+    <section className="px-10 py-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="voice text-lg text-text-muted">nothing in play · the match centre opens at kickoff</div>
+          <h2 className="font-display text-text">GW{matches[0].event}: when your eleven play</h2>
+        </div>
+        <div className="border-2 border-ink bg-ink px-4 py-2 text-right text-paper shadow-[4px_4px_0_var(--spot)]">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-paper/70">first kickoff in</div>
+          <div className="tabular font-display text-4xl font-black leading-none">{until}</div>
+        </div>
+      </div>
+      <div className="mt-2 text-[13px] text-text-faint">{yours} of your starters across {matches.length} matches</div>
+      <div className="mt-5 grid gap-6 xl:grid-cols-2">
+        {[...days.entries()].map(([day, list]) => (
+          <div key={day}>
+            <div className="mb-2 border-b-2 border-ink pb-1 font-display text-lg font-black uppercase text-text">{day}</div>
+            {list.map((m) => {
+              const home = crestUrl(m.home_code), away = crestUrl(m.away_code)
+              return (
+                <div key={m.fixture_id} className={`grid grid-cols-[3.5rem_9.5rem_1fr] items-center gap-3 border-b border-divider py-2 ${m.players.length ? '' : 'opacity-55'}`}>
+                  <span className="tabular font-display text-lg font-black text-text">
+                    {new Date(m.kickoff_time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
+                  </span>
+                  <span className="flex items-center gap-1.5 font-display text-[17px] font-black uppercase text-text">
+                    {home && <img src={home} alt="" className="size-5" />}{m.home}
+                    <span className="text-text-faint">v</span>
+                    {m.away}{away && <img src={away} alt="" className="size-5" />}
+                  </span>
+                  <span className="flex flex-wrap gap-1.5">
+                    {m.players.map((x) => (
+                      <Link key={x.player_id} to={`/player/${x.player_id}`}
+                        className={`border-2 px-1.5 py-0.5 text-[12px] font-bold ${x.slot === 'starting' ? 'border-ink bg-paper text-text' : 'border-divider text-text-faint'}`}>
+                        {x.is_captain && <span className="mr-1 bg-broadcast-gold px-1 text-broadcast-gold-ink">C</span>}
+                        {x.web_name}{x.xp !== null && <span className="ml-1 tabular text-pitch-green">{x.xp.toFixed(1)}</span>}
+                      </Link>
+                    ))}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }

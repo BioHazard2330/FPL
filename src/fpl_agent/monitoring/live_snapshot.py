@@ -146,6 +146,40 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
     return out
 
 
+def _upcoming_block(conn: sqlite3.Connection, squad: list[dict], now_iso: str) -> list[dict]:
+    """The next gameweek's matches still to kick off, in kickoff order, each with the squad players in it - what the
+    Live screen shows when nothing is in play. Reads the fixture list only."""
+    nxt = conn.execute(
+        "SELECT MIN(event) AS e FROM fixtures WHERE finished = 0 AND event IS NOT NULL AND kickoff_time > ?", (now_iso,),
+    ).fetchone()
+    if not nxt or nxt["e"] is None:
+        return []
+    rows = conn.execute(
+        "SELECT f.id, f.event, f.kickoff_time, f.team_h, f.team_a, th.short_name AS home, ta.short_name AS away, th.code AS home_code, ta.code AS away_code "
+        "FROM fixtures f JOIN teams th ON th.id = f.team_h JOIN teams ta ON ta.id = f.team_a "
+        "WHERE f.event = ? AND f.finished = 0 AND f.kickoff_time > ? ORDER BY f.kickoff_time, f.id",
+        (nxt["e"], now_iso),
+    ).fetchall()
+    ids = [p["player_id"] for p in squad]
+    team_of = {}
+    if ids:
+        team_of = {
+            r["id"]: r["team_id"]
+            for r in conn.execute(f"SELECT id, team_id FROM players WHERE id IN ({','.join('?' * len(ids))})", ids)
+        }
+    out = []
+    for r in rows:
+        mine = [
+            {k: p[k] for k in ("player_id", "web_name", "position", "slot", "is_captain", "is_vice", "xp")}
+            for p in squad if team_of.get(p["player_id"]) in (r["team_h"], r["team_a"])
+        ]
+        out.append({
+            "fixture_id": r["id"], "event": r["event"], "kickoff_time": r["kickoff_time"],
+            "home": r["home"], "away": r["away"], "home_code": r["home_code"], "away_code": r["away_code"], "players": mine,
+        })
+    return out
+
+
 _THREATS_LIMIT = 6
 
 
@@ -611,6 +645,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
                 "intragame points sample write skipped this tick (database locked by a real concurrent writer)"
             )
 
+    squad_rows = _squad_block(conn, locked)
     return {
         "version": now,  # ISO timestamp - sortable, and a real "as of" disclosure, not an opaque counter
         "generated_at": now,
@@ -619,7 +654,8 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "rank": rank_block,
         "points": points_block,
         "threats": _threats_block(conn, live_payload, squad_ids),
-        "squad": _squad_block(conn, locked),
+        "squad": squad_rows,
+        "upcoming": _upcoming_block(conn, squad_rows, now),
         "active_matches": _active_matches_block(conn, squad_ids),
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),
         "match_events": _match_events_block(live_bonus_rows),

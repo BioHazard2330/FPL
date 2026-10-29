@@ -32,7 +32,7 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
     items.push({
       tone: 'ok',
       title: 'The plan matches your squad',
-      detail: `Solved ${Math.round(plan.age_hours ?? 0)}h ago against the squad, bank and free transfers you have now.`,
+      detail: `Solved ${(plan.age_hours ?? 0) < 1 ? 'within the hour' : `${Math.round(plan.age_hours ?? 0)}h ago`} against the squad, bank and free transfers you have now.`,
     })
   }
 

@@ -89,18 +89,18 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
         render={
           <button
             onClick={() => onSelect(p)}
-            className={`relative flex flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${big ? 'w-28' : 'w-24'} ${dim ? 'opacity-60' : ''} ${ghostOut ? 'opacity-40 grayscale' : ''}`}
+            className={`relative flex flex-col items-center text-center focus:outline-none focus-visible:ring-1 focus-visible:ring-pitch-green ${big ? 'w-[7.5rem]' : 'w-[6.75rem]'} ${dim ? 'opacity-60' : ''} ${ghostOut ? 'opacity-40 grayscale' : ''}`}
             title={p.lineup?.detail ?? undefined}
           >
             {p.tier && (
               <span
-                className={`absolute left-1 top-0 h-2 w-2 ${TIER_DOT[p.tier]}`}
+                className={`absolute left-1 top-0 z-10 size-3.5 rounded-full border-2 border-ink ${TIER_DOT[p.tier]}`}
                 title={TIER_TITLE[p.tier]}
                 aria-hidden="true"
               />
             )}
             {(p.is_captain || p.is_vice) && (
-              <span className={`absolute right-1 top-0 flex h-4 w-4 items-center justify-center text-[12px] font-bold ${p.is_captain ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'bg-raised text-text'}`}>
+              <span className={`absolute right-1 top-0 z-10 flex size-5 items-center justify-center rounded-full border-2 border-ink font-display text-[12px] font-black ${p.is_captain ? 'bg-broadcast-gold text-broadcast-gold-ink' : 'bg-paper text-text'}`}>
                 {p.is_captain ? 'C' : 'V'}
               </span>
             )}
@@ -112,12 +112,14 @@ function PlayerTile({ p, dim = false, fixtures, onSelect, ghostOut = false }: {
               )}
               {crest && <img src={crest} alt="" loading="lazy" className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-void ring-2 ring-void" />}
             </div>
-            <div className={`mt-1 w-full truncate font-bold text-text ${big ? 'text-sm' : 'text-xs'}`}>{p.name}</div>
-            <div className="text-[12px] text-text-faint">
+            <div className="relative z-10 mt-1 flex max-w-full items-stretch border-2 border-ink shadow-[3px_3px_0_var(--ink)]">
+              <span className={`whitespace-nowrap bg-ink px-1.5 py-px font-display font-black uppercase leading-tight text-paper ${big ? 'text-[16px]' : 'text-[13px]'}`}>{p.name}</span>
+              <span className={`tabular bg-pitch-green px-1.5 py-px font-display font-black leading-tight text-pitch-green-ink ${big ? 'text-[17px]' : 'text-[14px]'}`}>{p.median.toFixed(1)}</span>
+            </div>
+            <div className="relative z-10 mt-1 bg-paper/80 px-1 text-[11.5px] font-semibold text-text-muted">
               {p.team_short} &middot; £{p.price_m.toFixed(1)}m
             </div>
-            <div className={`tabular font-bold text-pitch-green ${big ? 'text-base' : 'text-sm'}`}>{p.median.toFixed(1)}</div>
-            <NextFixture fixtures={run} className="mt-0.5" />
+            <NextFixture fixtures={run} className="relative z-10 mt-0.5" />
             {confirmedIn && (
               <span className="mt-0.5 bg-pitch-green px-1 py-0.5 text-[12px] font-bold text-pitch-green-ink">Confirmed</span>
             )}
@@ -446,10 +448,10 @@ export function MyTeamScreen() {
               <PitchMarkings />
               {p.positions?.map((pos) => (
                 <div key={pos.position} className="relative flex items-center gap-4">
-                  <span className="w-9 shrink-0 text-right text-[12px] font-bold text-text-faint">
+                  <span className="w-7 shrink-0 text-right text-[12px] font-bold text-text-faint">
                     {pos.label}
                   </span>
-                  <div className="flex flex-1 flex-wrap justify-center gap-6">
+                  <div className="flex flex-1 flex-wrap justify-center gap-x-2 gap-y-4">
                     {pos.players.map((pl) => (
                       <PlayerTile
                         key={pl.player_id}
@@ -461,7 +463,7 @@ export function MyTeamScreen() {
                     ))}
                     {showGhost && (ghostInByPosition.get(pos.position) ?? []).map((a) => <GhostInTile key={a.player_id} pl={a} />)}
                   </div>
-                  <span className="w-9 shrink-0" />
+                  <span className="w-7 shrink-0" />
                 </div>
               ))}
             </div>

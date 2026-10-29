@@ -294,3 +294,38 @@ def test_broadcaster_client_count_reflects_real_connections(live_server):
     time.sleep(0.2)
     assert live_server.broadcaster.client_count == 1
     s.close()
+
+
+def test_opening_the_page_on_stale_data_outside_the_window_starts_one_sync(db_conn, monkeypatch, tmp_path):
+    from fpl_agent.live import sse_server
+    from fpl_agent.scheduler import power_window
+
+    class FakeJob:
+        started = 0
+
+        def start(self):
+            self.started += 1
+            return "started"
+
+    class NoClose:
+        def __init__(self, c):
+            self.c = c
+
+        def __getattr__(self, name):
+            return getattr(self.c, name)
+
+        def close(self):
+            pass
+
+    factory = lambda: NoClose(db_conn)
+    job = FakeJob()
+    monkeypatch.setattr(power_window, "gate_says_active", lambda now_epoch=None, path=None: False)
+    now = 1_800_000_000
+    power_window.record_successful_cycle(db_conn, now_epoch=now - 7 * 3600)
+    assert sse_server.refresh_if_stale_on_open(factory, now_epoch=now, job=job) == "started"
+    power_window.record_successful_cycle(db_conn, now_epoch=now - 3600)
+    assert sse_server.refresh_if_stale_on_open(factory, now_epoch=now, job=job) is None
+    power_window.record_successful_cycle(db_conn, now_epoch=now - 7 * 3600)
+    monkeypatch.setattr(power_window, "gate_says_active", lambda now_epoch=None, path=None: True)
+    assert sse_server.refresh_if_stale_on_open(factory, now_epoch=now, job=job) is None
+    assert job.started == 1

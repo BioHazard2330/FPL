@@ -155,8 +155,9 @@ are unchanged, only the ink.
 | Rule | `divider` | `#C7B99C` | light rules inside a card |
 | Ink | `ink` / `text` / `muted` / `faint` | `#17130E` / `#17130E` / `#463E32` / `#7D715D` | card borders, hard shadows, text |
 
-Text on a filled ink, green, blue or red block is `paper`; on gold or vermilion it is `ink`. Graphics that are pictures
-in their own right (the dark-turf shot maps, the club-colour photo plates) keep their own colours as inset plates.
+Text on a filled ink, green, blue or red block is `paper`; on gold or vermilion it is `ink`. The club-colour photo plates
+(player file, club file, armband spotlight) keep their club's colours. Shot maps and the match replay are printed as
+programme diagrams: paper bands, ink lines, so the green, blue and gold dots carry the colour.
 
 **Semantic discipline** is unchanged: green is the good direction everywhere, red the bad, gold never means danger,
 and the vermilion spot never carries a data meaning at all.
@@ -206,8 +207,9 @@ one the code actually follows, and it is the right one.
 **Printed cards (2026-10-29).** Every top-level band (`.screen-frame > * > *`) and every `Panel`/`Disclosure`/
 `.slab` is a paper card with a 2px ink border, square corners and a hard 6px ink offset shadow - the shadow of a printed
 sticker, not a glow. Inside the frame `rounded-md/lg/xl` are forced to 2px; `rounded-full` (avatars, rings) keeps its
-shape. Every band carries its running page number (01, 02...) printed large and faint in its top-right corner (a CSS
-counter, behind content; not on collapsed `details`). The sidebar is a solid ink spine with paper text, vermilion
+shape. Every band carries its running page number as a small ink tab hung from its top rule ("No.01", a CSS counter;
+not on collapsed `details`, not on a band marked `.no-tab` such as the Command stage, which opens on its own ink
+ticker; a large faint numeral behind the content collided with short bands). The sidebar is a solid ink spine with paper text, vermilion
 group labels and the active item as a paper slip with a vermilion offset; the header is paper on a 2px ink rule with
 the screen name in 2.1rem display capitals.
 
@@ -225,7 +227,9 @@ Layering is:
 **Command** opens on the matchday bar (the call on the vermilion `.verdict-block`, oversized figures, a rotated rubber
 stamp for a lineup gain), then the stage (`CommandStage.tsx`: a pinhole-projected printed pitch, upright shirts with
 ink name slips, an ink fixture ticker with a vermilion label, the armband spotlight as a club-colour photo plate with a
-halftone screen and a poster-sized name with a vermilion offset), then five folder tabs in ink.
+halftone screen and a poster-sized name with a vermilion offset), then five folder tabs in ink. My Team's pitch uses the same name slip (ink plate with the name in display capitals, xP on a green tab, hard
+ink shadow) so the names read over the pitch markings; tier markers are ink-ringed dots. Between matches the Live
+screen shows the coming gameweek's kickoffs by day with your players in each, in place of an empty match centre.
 
 **The `gap-px` grid has one failure mode, and it is a rule:** an empty grid
 track renders as a solid grey block. Column counts must follow the number of

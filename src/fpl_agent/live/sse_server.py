@@ -274,6 +274,31 @@ class RefreshJob:
 
 refresh_job = RefreshJob()
 
+STALE_ON_OPEN_HOURS = 6.0
+
+
+def refresh_if_stale_on_open(conn_factory, now_epoch: float | None = None, job: RefreshJob | None = None) -> str | None:
+    """Start one sync when the dashboard is opened on data older than `STALE_ON_OPEN_HOURS` outside the active window.
+
+    Outside the window nothing runs on a schedule, so a manager opening the page in the evening saw the morning's
+    numbers until he pressed Sync now. Inside the window the scheduler keeps the data fresh and this does nothing.
+    Returns the job's answer when it started one, None otherwise."""
+    import time
+
+    from fpl_agent.scheduler.power_window import gate_says_active, last_successful_cycle
+
+    if gate_says_active(now_epoch) is True:
+        return None
+    conn = conn_factory()
+    try:
+        last = last_successful_cycle(conn)
+    finally:
+        conn.close()
+    now = time.time() if now_epoch is None else now_epoch
+    if last is not None and now - last < STALE_ON_OPEN_HOURS * 3600:
+        return None
+    return (job or refresh_job).start()
+
 
 def make_handler(
     broadcaster: Broadcaster, data_dir: Path, conn_factory=None, activity: ActivityTracker | None = None,
@@ -393,6 +418,16 @@ def make_handler(
             screen = screen.strip("/")
             if screen == "refresh-status":
                 self._send_json(refresh_job.status())
+                return
+            if screen == "open":
+                # same custom-header guard as POST /api/refresh: another origin cannot start a sync
+                started = None
+                if self.headers.get("X-FPL-Refresh") == "1":
+                    try:
+                        started = refresh_if_stale_on_open(conn_factory)
+                    except Exception:
+                        pass
+                self._send_json({"auto_refresh": started, **refresh_job.status()})
                 return
             builder = API_BUILDERS.get(screen)
             if builder is None:

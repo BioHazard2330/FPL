@@ -622,3 +622,37 @@ def test_points_changes_block_reports_real_revision_count(db_conn):
     assert block["total_revisions"] == 1
     assert block["squad_revisions"] == 1
     assert block["locked"] is True
+
+
+def test_upcoming_block_lists_the_next_gameweeks_kickoffs_with_squad_players(db_conn):
+    from fpl_agent.monitoring.live_snapshot import _upcoming_block
+
+    _seed_player(db_conn, 7, "Saka", team_id=1)
+    _seed_player(db_conn, 8, "Isak", team_id=3)
+    db_conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (2,2,'Team2','T2','t0')")
+    db_conn.execute("INSERT OR IGNORE INTO teams (id, code, name, short_name, updated_at) VALUES (4,4,'Team4','T4','t0')")
+    for ev in (8, 9, 10):
+        db_conn.execute(
+            "INSERT INTO events (id,name,deadline_time,deadline_time_epoch,finished,is_previous,is_current,is_next,updated_at) "
+            "VALUES (?, ?, 't0', 1, 0, 0, 0, 0, 't0')", (ev, f"GW{ev}"),
+        )
+    for fid, ev, ko, h, a, done in (
+        (1, 8, "2026-10-20T15:00:00Z", 1, 2, 1),
+        (2, 9, "2026-10-31T17:30:00Z", 3, 4, 0),
+        (3, 9, "2026-10-31T12:30:00Z", 2, 1, 0),
+        (4, 10, "2026-11-07T12:30:00Z", 1, 3, 0),
+    ):
+        db_conn.execute(
+            "INSERT INTO fixtures (id,code,event,kickoff_time,team_h,team_a,finished,started,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?, 't0')", (fid, fid, ev, ko, h, a, done, done),
+        )
+    squad = [
+        {"player_id": 7, "web_name": "Saka", "position": "MID", "slot": "starting", "is_captain": True, "is_vice": False, "xp": 5.1},
+        {"player_id": 8, "web_name": "Isak", "position": "FWD", "slot": "bench", "is_captain": False, "is_vice": False, "xp": 3.0},
+    ]
+    block = _upcoming_block(db_conn, squad, "2026-10-29T08:00:00Z")
+    assert [m["fixture_id"] for m in block] == [3, 2]
+    assert [p["web_name"] for p in block[0]["players"]] == ["Saka"]
+    assert block[0]["players"][0]["is_captain"] is True
+    assert [p["web_name"] for p in block[1]["players"]] == ["Isak"]
+    assert _upcoming_block(db_conn, squad, "2026-12-01T00:00:00Z") == []
