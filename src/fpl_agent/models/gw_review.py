@@ -128,7 +128,11 @@ def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
         after = stored[0]["lineup_after"]
         hits = max(0, len(stored[0].get("moves", [])) - (stored[0].get("free_transfers") or 0)) * 4
         plan_score = _xi_score([p["player_id"] for p in after["starting"]], after.get("captain_id"), after.get("vice_id"), pts, mins) - hits
-        out.append({"event": r["event"], "plan": plan_score, "you": r["points"] - (r["event_transfers_cost"] or 0)})
+        held = (stored[0].get("eye") or {}).get("held_back")
+        out.append({
+            "event": r["event"], "plan": plan_score, "you": r["points"] - (r["event_transfers_cost"] or 0),
+            "eye_won": sum(pts.get(o, 0) - pts.get(i, 0) for o, i in held) if held else None,
+        })
     return out
 
 
@@ -227,6 +231,12 @@ def gameweek_review(conn: sqlite3.Connection, entry_id: int, event: int) -> dict
                 for m in detail.get("moves", [])
             ],
             "followed": sorted(starting) == sorted(x["player_id"] for x in squad if x["starting"]),
+            "eye_held_back": [
+                {"out": {"player_id": o, **names.get(o, {}), "points": pts.get(o, 0)},
+                 "into": {"player_id": i, **names.get(i, {}), "points": pts.get(i, 0)},
+                 "gate_won": pts.get(o, 0) - pts.get(i, 0)}
+                for o, i in ((detail.get("eye") or {}).get("held_back") or [])
+            ],
         }
 
     autopsy = next((a for a in captain_autopsy(conn, entry_id) if a["event"] == event), None)

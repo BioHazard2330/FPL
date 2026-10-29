@@ -236,6 +236,32 @@ function Verdicts({ d }: { d: ReviewPayload }) {
               <li>Armband: {d.plan.captain.name} ({d.plan.captain.points}){d.plan.hits ? ` · ${d.plan.hits} in hits` : ''}</li>
             </ul>
             <p className="mt-2 text-[11.5px] text-text-faint">Its eleven on the real points, no automatic substitutions.</p>
+            {(d.plan.eye_held_back ?? []).length > 0 && (
+              <div className="mt-3 border-t-2 border-ink pt-2">
+                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">the football eye held back</div>
+                <ul className="mt-1 space-y-1 text-[13px] text-text-muted">
+                  {d.plan.eye_held_back!.map((m) => (
+                    <li key={`${m.out.player_id}-${m.into.player_id}`}>
+                      {m.out.name} <span className="tabular">({m.out.points})</span> → {m.into.name} <span className="tabular">({m.into.points})</span>{' '}
+                      <span className={`tabular font-semibold ${m.gate_won >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
+                        {m.gate_won > 0 ? `eye right by ${m.gate_won}` : m.gate_won < 0 ? `eye cost ${-m.gate_won}` : 'level'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(() => {
+              const scored = (d.ledger ?? []).filter((r) => r.eye_won !== null && r.eye_won !== undefined)
+              if (scored.length === 0) return null
+              const net = scored.reduce((n, r) => n + (r.eye_won ?? 0), 0)
+              return (
+                <div className="mt-1 text-[12.5px] text-text-muted">
+                  The eye's gate over {scored.length} gameweek{scored.length === 1 ? '' : 's'}:{' '}
+                  <span className={`tabular font-semibold ${net >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{net >= 0 ? '+' : ''}{net} points</span>
+                </div>
+              )
+            })()}
             {(d.ledger ?? []).length > 1 && (() => {
               const L = d.ledger ?? []
               const you = L.reduce((n, r) => n + r.you, 0), planned = L.reduce((n, r) => n + r.plan, 0)

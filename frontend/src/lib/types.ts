@@ -2710,11 +2710,13 @@ export interface ReviewPayload {
   squad: ReviewPlayer[]; predicted: number; deserved: number; counted: number; subs: { out?: string; into?: string }[]
   gains: ReviewSwing[]; losses: ReviewSwing[]
   transfers: { into: ReviewRef & { price: number }; out: ReviewRef & { price: number } }[]
-  plan: { made_at: string; score: number; hits: number; captain: ReviewRef; moves: { out: ReviewRef; into: ReviewRef }[]; followed: boolean } | null
+  plan: { made_at: string; score: number; hits: number; captain: ReviewRef; moves: { out: ReviewRef; into: ReviewRef }[]; followed: boolean
+    /** Moves the plan would have made with the football eye's gate lifted (absent before 2026-10-29). gate_won = out's points - in's. */
+    eye_held_back?: { out: ReviewRef; into: ReviewRef; gate_won: number }[] } | null
   captain: { multiplier: number; captain: { player_id: number; name: string; actual: number; deserved: number }; best_actual: { player_id: number; name: string; actual: number }; best_deserved: { player_id: number; name: string; deserved: number }; cost: number; owed: number } | null
   stars: ReviewRef[]
   history: { event: number; points: number; rank: number | null; average: number | null }[]
-  ledger?: { event: number; plan: number; you: number }[]
+  ledger?: { event: number; plan: number; you: number; eye_won?: number | null }[]
   events: number[]
 }
 

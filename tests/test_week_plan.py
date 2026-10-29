@@ -626,3 +626,18 @@ def test_bench_order_puts_the_likelier_and_better_substitute_first():
     p_zero[2] = 1.0
     order, best, given = order_bench(starting, [12], [(14, "FWD"), (13, "DEF"), (15, "MID")], p_zero, xp, trials=500)
     assert best == given == 1.0
+
+
+def test_the_eye_records_the_move_its_gate_held_back():
+    from fpl_agent.optimization.week_plan import _eye_held_back
+
+    def solve(k, forced_in, forced_out, scale=None, banned=frozenset(), gated=True):
+        k = min(k, 1)
+        if gated:
+            return _plan({0: 100.0, 1: 100.5}[k], {0: [], 1: [(2, 12)]}[k])
+        return _plan({0: 100.0, 1: 105.0}[k], {0: [], 1: [(1, 11)]}[k])
+
+    gated_sel = select_moves(solve, EVENT, min_move_gain=1.5)
+    assert gated_sel.accepted == []
+    assert _eye_held_back(solve, EVENT, 1.5, gated_sel, {1: 1.5}, {}) == [[1, 11]]
+    assert _eye_held_back(solve, EVENT, 1.5, gated_sel, {}, {}) == []

@@ -1899,6 +1899,16 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled injury-headline detection failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.change_detection import detect_manager_changes
+
+        fired = detect_manager_changes(conn, set(tracked_squad_ids or set()), datetime.now(timezone.utc).isoformat())
+        conn.commit()
+        if fired:
+            logger.info("run-scheduled manager changes: %d", fired)
+    except Exception:
+        logger.exception("run-scheduled manager-change detection failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.gw_stats import sync_gw_stats
 
         gw_result = sync_gw_stats(conn)

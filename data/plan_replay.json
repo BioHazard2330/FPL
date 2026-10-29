@@ -1,0 +1,624 @@
+{
+ "seasons": [
+  {
+   "season": "2021-22",
+   "rounds": 13,
+   "totals": {
+    "plan": 1211.0,
+    "plan_count": 1405.0,
+    "plan_fixture": 1404.0,
+    "swap": 1140.0,
+    "hold": 1119.0
+   },
+   "transfers": {
+    "plan": 12,
+    "plan_count": 12,
+    "plan_fixture": 14,
+    "swap": 3,
+    "hold": 0
+   },
+   "hits": {
+    "plan": 0,
+    "plan_count": 0,
+    "plan_fixture": 2,
+    "swap": 0,
+    "hold": 0
+   },
+   "unproven_solves": 0,
+   "per_round": [
+    {
+     "round": 1,
+     "plan": 97.0,
+     "plan_count": 97.0,
+     "plan_fixture": 97.0,
+     "swap": 97.0,
+     "hold": 97.0
+    },
+    {
+     "round": 2,
+     "plan": 82.0,
+     "plan_count": 106.0,
+     "plan_fixture": 106.0,
+     "swap": 89.0,
+     "hold": 89.0
+    },
+    {
+     "round": 3,
+     "plan": 115.0,
+     "plan_count": 138.0,
+     "plan_fixture": 134.0,
+     "swap": 123.0,
+     "hold": 122.0
+    },
+    {
+     "round": 4,
+     "plan": 99.0,
+     "plan_count": 132.0,
+     "plan_fixture": 120.0,
+     "swap": 99.0,
+     "hold": 99.0
+    },
+    {
+     "round": 5,
+     "plan": 127.0,
+     "plan_count": 154.0,
+     "plan_fixture": 159.0,
+     "swap": 115.0,
+     "hold": 120.0
+    },
+    {
+     "round": 6,
+     "plan": 33.0,
+     "plan_count": 52.0,
+     "plan_fixture": 50.0,
+     "swap": 27.0,
+     "hold": 31.0
+    },
+    {
+     "round": 7,
+     "plan": 74.0,
+     "plan_count": 67.0,
+     "plan_fixture": 84.0,
+     "swap": 66.0,
+     "hold": 70.0
+    },
+    {
+     "round": 8,
+     "plan": 121.0,
+     "plan_count": 159.0,
+     "plan_fixture": 153.0,
+     "swap": 113.0,
+     "hold": 96.0
+    },
+    {
+     "round": 9,
+     "plan": 106.0,
+     "plan_count": 101.0,
+     "plan_fixture": 101.0,
+     "swap": 93.0,
+     "hold": 101.0
+    },
+    {
+     "round": 10,
+     "plan": 60.0,
+     "plan_count": 80.0,
+     "plan_fixture": 81.0,
+     "swap": 46.0,
+     "hold": 43.0
+    },
+    {
+     "round": 11,
+     "plan": 92.0,
+     "plan_count": 89.0,
+     "plan_fixture": 113.0,
+     "swap": 71.0,
+     "hold": 75.0
+    },
+    {
+     "round": 12,
+     "plan": 126.0,
+     "plan_count": 144.0,
+     "plan_fixture": 147.0,
+     "swap": 135.0,
+     "hold": 117.0
+    },
+    {
+     "round": 13,
+     "plan": 79.0,
+     "plan_count": 86.0,
+     "plan_fixture": 67.0,
+     "swap": 66.0,
+     "hold": 59.0
+    }
+   ]
+  },
+  {
+   "season": "2022-23",
+   "rounds": 12,
+   "totals": {
+    "plan": 1338.0,
+    "plan_count": 1457.0,
+    "plan_fixture": 1473.0,
+    "swap": 1153.0,
+    "hold": 1153.0
+   },
+   "transfers": {
+    "plan": 11,
+    "plan_count": 12,
+    "plan_fixture": 11,
+    "swap": 0,
+    "hold": 0
+   },
+   "hits": {
+    "plan": 0,
+    "plan_count": 1,
+    "plan_fixture": 0,
+    "swap": 0,
+    "hold": 0
+   },
+   "unproven_solves": 0,
+   "per_round": [
+    {
+     "round": 1,
+     "plan": 128.0,
+     "plan_count": 140.0,
+     "plan_fixture": 140.0,
+     "swap": 128.0,
+     "hold": 128.0
+    },
+    {
+     "round": 2,
+     "plan": 95.0,
+     "plan_count": 106.0,
+     "plan_fixture": 106.0,
+     "swap": 102.0,
+     "hold": 102.0
+    },
+    {
+     "round": 3,
+     "plan": 133.0,
+     "plan_count": 116.0,
+     "plan_fixture": 116.0,
+     "swap": 122.0,
+     "hold": 122.0
+    },
+    {
+     "round": 4,
+     "plan": 134.0,
+     "plan_count": 177.0,
+     "plan_fixture": 134.0,
+     "swap": 159.0,
+     "hold": 159.0
+    },
+    {
+     "round": 5,
+     "plan": 56.0,
+     "plan_count": 65.0,
+     "plan_fixture": 72.0,
+     "swap": 45.0,
+     "hold": 45.0
+    },
+    {
+     "round": 6,
+     "plan": 78.0,
+     "plan_count": 106.0,
+     "plan_fixture": 73.0,
+     "swap": 68.0,
+     "hold": 68.0
+    },
+    {
+     "round": 7,
+     "plan": 119.0,
+     "plan_count": 148.0,
+     "plan_fixture": 167.0,
+     "swap": 103.0,
+     "hold": 103.0
+    },
+    {
+     "round": 8,
+     "plan": 144.0,
+     "plan_count": 131.0,
+     "plan_fixture": 156.0,
+     "swap": 86.0,
+     "hold": 86.0
+    },
+    {
+     "round": 9,
+     "plan": 154.0,
+     "plan_count": 134.0,
+     "plan_fixture": 154.0,
+     "swap": 106.0,
+     "hold": 106.0
+    },
+    {
+     "round": 10,
+     "plan": 111.0,
+     "plan_count": 105.0,
+     "plan_fixture": 121.0,
+     "swap": 65.0,
+     "hold": 65.0
+    },
+    {
+     "round": 11,
+     "plan": 118.0,
+     "plan_count": 164.0,
+     "plan_fixture": 156.0,
+     "swap": 120.0,
+     "hold": 120.0
+    },
+    {
+     "round": 12,
+     "plan": 68.0,
+     "plan_count": 69.0,
+     "plan_fixture": 78.0,
+     "swap": 49.0,
+     "hold": 49.0
+    }
+   ]
+  },
+  {
+   "season": "2023-24",
+   "rounds": 12,
+   "totals": {
+    "plan": 1553.0,
+    "plan_count": 1460.0,
+    "plan_fixture": 1494.0,
+    "swap": 1400.0,
+    "hold": 1327.0
+   },
+   "transfers": {
+    "plan": 11,
+    "plan_count": 12,
+    "plan_fixture": 11,
+    "swap": 3,
+    "hold": 0
+   },
+   "hits": {
+    "plan": 0,
+    "plan_count": 1,
+    "plan_fixture": 0,
+    "swap": 0,
+    "hold": 0
+   },
+   "unproven_solves": 0,
+   "per_round": [
+    {
+     "round": 1,
+     "plan": 92.0,
+     "plan_count": 88.0,
+     "plan_fixture": 88.0,
+     "swap": 92.0,
+     "hold": 92.0
+    },
+    {
+     "round": 2,
+     "plan": 164.0,
+     "plan_count": 156.0,
+     "plan_fixture": 156.0,
+     "swap": 164.0,
+     "hold": 164.0
+    },
+    {
+     "round": 3,
+     "plan": 88.0,
+     "plan_count": 87.0,
+     "plan_fixture": 87.0,
+     "swap": 102.0,
+     "hold": 84.0
+    },
+    {
+     "round": 4,
+     "plan": 125.0,
+     "plan_count": 123.0,
+     "plan_fixture": 128.0,
+     "swap": 128.0,
+     "hold": 142.0
+    },
+    {
+     "round": 5,
+     "plan": 105.0,
+     "plan_count": 101.0,
+     "plan_fixture": 105.0,
+     "swap": 95.0,
+     "hold": 96.0
+    },
+    {
+     "round": 6,
+     "plan": 65.0,
+     "plan_count": 47.0,
+     "plan_fixture": 62.0,
+     "swap": 50.0,
+     "hold": 57.0
+    },
+    {
+     "round": 7,
+     "plan": 82.0,
+     "plan_count": 84.0,
+     "plan_fixture": 86.0,
+     "swap": 68.0,
+     "hold": 68.0
+    },
+    {
+     "round": 8,
+     "plan": 162.0,
+     "plan_count": 137.0,
+     "plan_fixture": 153.0,
+     "swap": 149.0,
+     "hold": 146.0
+    },
+    {
+     "round": 9,
+     "plan": 149.0,
+     "plan_count": 141.0,
+     "plan_fixture": 134.0,
+     "swap": 106.0,
+     "hold": 107.0
+    },
+    {
+     "round": 10,
+     "plan": 186.0,
+     "plan_count": 128.0,
+     "plan_fixture": 153.0,
+     "swap": 127.0,
+     "hold": 119.0
+    },
+    {
+     "round": 11,
+     "plan": 164.0,
+     "plan_count": 177.0,
+     "plan_fixture": 149.0,
+     "swap": 142.0,
+     "hold": 95.0
+    },
+    {
+     "round": 12,
+     "plan": 171.0,
+     "plan_count": 195.0,
+     "plan_fixture": 193.0,
+     "swap": 177.0,
+     "hold": 157.0
+    }
+   ]
+  },
+  {
+   "season": "2024-25",
+   "rounds": 11,
+   "totals": {
+    "plan": 1217.0,
+    "plan_count": 1359.0,
+    "plan_fixture": 1422.0,
+    "swap": 1171.0,
+    "hold": 1116.0
+   },
+   "transfers": {
+    "plan": 11,
+    "plan_count": 10,
+    "plan_fixture": 11,
+    "swap": 4,
+    "hold": 0
+   },
+   "hits": {
+    "plan": 1,
+    "plan_count": 0,
+    "plan_fixture": 1,
+    "swap": 0,
+    "hold": 0
+   },
+   "unproven_solves": 0,
+   "per_round": [
+    {
+     "round": 1,
+     "plan": 154.0,
+     "plan_count": 154.0,
+     "plan_fixture": 154.0,
+     "swap": 154.0,
+     "hold": 154.0
+    },
+    {
+     "round": 2,
+     "plan": 95.0,
+     "plan_count": 95.0,
+     "plan_fixture": 98.0,
+     "swap": 83.0,
+     "hold": 83.0
+    },
+    {
+     "round": 3,
+     "plan": 92.0,
+     "plan_count": 121.0,
+     "plan_fixture": 121.0,
+     "swap": 109.0,
+     "hold": 116.0
+    },
+    {
+     "round": 4,
+     "plan": 103.0,
+     "plan_count": 131.0,
+     "plan_fixture": 131.0,
+     "swap": 113.0,
+     "hold": 111.0
+    },
+    {
+     "round": 5,
+     "plan": 129.0,
+     "plan_count": 137.0,
+     "plan_fixture": 162.0,
+     "swap": 119.0,
+     "hold": 110.0
+    },
+    {
+     "round": 6,
+     "plan": 152.0,
+     "plan_count": 152.0,
+     "plan_fixture": 163.0,
+     "swap": 157.0,
+     "hold": 142.0
+    },
+    {
+     "round": 7,
+     "plan": 88.0,
+     "plan_count": 125.0,
+     "plan_fixture": 125.0,
+     "swap": 50.0,
+     "hold": 46.0
+    },
+    {
+     "round": 8,
+     "plan": 114.0,
+     "plan_count": 101.0,
+     "plan_fixture": 114.0,
+     "swap": 81.0,
+     "hold": 75.0
+    },
+    {
+     "round": 9,
+     "plan": 82.0,
+     "plan_count": 115.0,
+     "plan_fixture": 113.0,
+     "swap": 119.0,
+     "hold": 100.0
+    },
+    {
+     "round": 10,
+     "plan": 99.0,
+     "plan_count": 101.0,
+     "plan_fixture": 92.0,
+     "swap": 80.0,
+     "hold": 69.0
+    },
+    {
+     "round": 11,
+     "plan": 113.0,
+     "plan_count": 127.0,
+     "plan_fixture": 153.0,
+     "swap": 106.0,
+     "hold": 110.0
+    }
+   ]
+  },
+  {
+   "season": "2025-26",
+   "rounds": 12,
+   "totals": {
+    "plan": 1014.0,
+    "plan_count": 1072.0,
+    "plan_fixture": 1018.0,
+    "swap": 946.0,
+    "hold": 813.0
+   },
+   "transfers": {
+    "plan": 15,
+    "plan_count": 16,
+    "plan_fixture": 16,
+    "swap": 6,
+    "hold": 0
+   },
+   "hits": {
+    "plan": 4,
+    "plan_count": 5,
+    "plan_fixture": 5,
+    "swap": 0,
+    "hold": 0
+   },
+   "unproven_solves": 0,
+   "per_round": [
+    {
+     "round": 1,
+     "plan": 41.0,
+     "plan_count": 41.0,
+     "plan_fixture": 41.0,
+     "swap": 41.0,
+     "hold": 41.0
+    },
+    {
+     "round": 2,
+     "plan": 85.0,
+     "plan_count": 85.0,
+     "plan_fixture": 85.0,
+     "swap": 85.0,
+     "hold": 85.0
+    },
+    {
+     "round": 3,
+     "plan": 56.0,
+     "plan_count": 75.0,
+     "plan_fixture": 75.0,
+     "swap": 61.0,
+     "hold": 62.0
+    },
+    {
+     "round": 4,
+     "plan": 49.0,
+     "plan_count": 63.0,
+     "plan_fixture": 63.0,
+     "swap": 68.0,
+     "hold": 82.0
+    },
+    {
+     "round": 5,
+     "plan": 76.0,
+     "plan_count": 93.0,
+     "plan_fixture": 81.0,
+     "swap": 95.0,
+     "hold": 53.0
+    },
+    {
+     "round": 6,
+     "plan": 124.0,
+     "plan_count": 131.0,
+     "plan_fixture": 117.0,
+     "swap": 91.0,
+     "hold": 89.0
+    },
+    {
+     "round": 7,
+     "plan": 101.0,
+     "plan_count": 111.0,
+     "plan_fixture": 107.0,
+     "swap": 74.0,
+     "hold": 42.0
+    },
+    {
+     "round": 8,
+     "plan": 108.0,
+     "plan_count": 127.0,
+     "plan_fixture": 119.0,
+     "swap": 92.0,
+     "hold": 49.0
+    },
+    {
+     "round": 9,
+     "plan": 99.0,
+     "plan_count": 104.0,
+     "plan_fixture": 98.0,
+     "swap": 86.0,
+     "hold": 74.0
+    },
+    {
+     "round": 10,
+     "plan": 107.0,
+     "plan_count": 88.0,
+     "plan_fixture": 90.0,
+     "swap": 113.0,
+     "hold": 105.0
+    },
+    {
+     "round": 11,
+     "plan": 112.0,
+     "plan_count": 91.0,
+     "plan_fixture": 93.0,
+     "swap": 82.0,
+     "hold": 84.0
+    },
+    {
+     "round": 12,
+     "plan": 72.0,
+     "plan_count": 83.0,
+     "plan_fixture": 69.0,
+     "swap": 58.0,
+     "hold": 47.0
+    }
+   ]
+  }
+ ]
+}

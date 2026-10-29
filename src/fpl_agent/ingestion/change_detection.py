@@ -495,3 +495,31 @@ def detect_injury_headlines(conn: sqlite3.Connection, watched_ids: set[int], squ
         )
         fired += 1
     return fired
+
+
+def detect_manager_changes(conn: sqlite3.Connection, squad_ids: set[int], now: str) -> int:
+    """A managerial change reported by two independent news sources (`models/manager_change.py`), once per (club,
+    earliest report). HIGH when a squad player plays for the club, MEDIUM otherwise. Reported, never confirmed."""
+    from fpl_agent.models.manager_change import detect_manager_change_signals
+
+    squad_teams = set()
+    if squad_ids:
+        squad_teams = {
+            r["team_id"] for r in conn.execute(
+                f"SELECT team_id FROM players WHERE id IN ({','.join('?' * len(squad_ids))})", sorted(squad_ids),
+            )
+        }
+    fired = 0
+    for s in detect_manager_change_signals(conn):
+        key = s.earliest_published_at or ""
+        if conn.execute(
+            "SELECT 1 FROM change_events WHERE event_type='manager_change' AND entity_id=? AND old_value=?", (s.team_id, key),
+        ).fetchone():
+            continue
+        record_event(
+            conn, "manager_change", "team", s.team_id, key, s.matched_titles[0], now, ",".join(s.sources), "REPORTED",
+            "HIGH" if s.team_id in squad_teams else "MEDIUM",
+            fpl_impact=f"{s.team_name}: managerial change reported by {len(s.sources)} sources; minutes and roles may shift",
+        )
+        fired += 1
+    return fired

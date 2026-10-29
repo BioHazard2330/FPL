@@ -33,6 +33,7 @@ MANAGER_CHANGE_KEYWORDS = (
     "interim manager", "interim head coach", "interim boss",
     "parts company with manager", "parted company with manager",
     "sacked as manager", "sacked as head coach",
+    "sack", "appoint", "appoints", "appointed", "new boss", "takes charge", "part ways", "parts ways", "parted ways",
 )
 
 
@@ -45,9 +46,46 @@ class ManagerChangeSignal:
     earliest_published_at: str | None
 
 
+# The club must be named in the headline before the phrase ("Aston Villa sack boss", not "Kuyt named Fenerbahce interim
+# boss before Liverpool tie").
+# Speculation about a change that has not happened ("X high on list if Y sacked", "could be sacked", "linked with the
+# job") uses the same verbs; an article carrying any of these is not counted.
+SPECULATION_MARKERS = (
+    " if ", "could be", "could replace", "would be", "might", " list", "shortlist", "linked", "favourite", "frontrunner",
+    "front-runner", "candidate", "considering", "under pressure", "odds", "in talks", "set to", "eyeing", "target",
+    "rumour", "?", "wsl", "women",
+)
+
+
+def _keyword_at(text: str) -> int | None:
+    """Position of the first manager-change phrase as whole words, or None."""
+    import re
+
+    low = text.lower()
+    hits = [m.start() for kw in MANAGER_CHANGE_KEYWORDS for m in [re.search(r"\b" + re.escape(kw.strip()) + r"\b", low)] if m]
+    return min(hits) if hits else None
+
+
 def _matches_keyword(text: str) -> bool:
-    text_lower = text.lower()
-    return any(kw in text_lower for kw in MANAGER_CHANGE_KEYWORDS)
+    text_lower = f" {text.lower()} "
+    return _keyword_at(text) is not None and not any(m in text_lower for m in SPECULATION_MARKERS)
+
+
+def _names_team(title: str, team_name: str) -> bool:
+    """The headline itself names the club: an article tagged to a club for a passing mention (a former player taking a
+    job elsewhere) is not about its manager."""
+    from fpl_agent.ingestion.watcher_ratings import TEAM_ALIASES, _norm
+
+    at = _keyword_at(title)
+    if at is None:
+        return False
+    padded = f" {_norm(title[:at])} "
+    return any(f" {_norm(n)} " in padded for n in [team_name, *TEAM_ALIASES.get(team_name, [])])
+
+
+def _outlet(source: str) -> str:
+    """Feeds of one outlet (BBC's football-all and Premier League feeds) are one source, not two."""
+    return source.split("_", 1)[0]
 
 
 def detect_manager_change_signals(conn: sqlite3.Connection, days_lookback: int = 7) -> list[ManagerChangeSignal]:
@@ -67,13 +105,12 @@ def detect_manager_change_signals(conn: sqlite3.Connection, days_lookback: int =
 
     by_team: dict[int, dict] = {}
     for r in rows:
-        text = r["title"] + " " + (r["summary"] or "")
-        if not _matches_keyword(text):
+        if not _matches_keyword(r["title"]) or not _names_team(r["title"], r["team_name"]):
             continue
         bucket = by_team.setdefault(
             r["team_id"], {"team_name": r["team_name"], "sources": set(), "titles": [], "dates": []}
         )
-        bucket["sources"].add(r["source"])
+        bucket["sources"].add(_outlet(r["source"]))
         bucket["titles"].append(r["title"])
         if r["published_at"]:
             bucket["dates"].append(r["published_at"])

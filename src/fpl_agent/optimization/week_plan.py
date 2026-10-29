@@ -615,6 +615,24 @@ def _first_moves(result, event: int) -> list[tuple[int, int]]:
     return [(s.player_out_id, s.player_in_id) for s in steps]
 
 
+def _eye_held_back(solve, event: int, min_move_gain: float, selection, eye_sell: dict, eye_buy: dict) -> list[list[int]] | None:
+    """The first-gameweek moves the same selection would make with the eye's gate lifted, where they differ from the
+    plan and touch a gated player: what the eye held back, kept so the gameweek report can score the gate. None when
+    the open run failed; [] when the gate changed nothing."""
+    if not eye_sell and not eye_buy:
+        return []
+    try:
+        open_sel = select_moves(lambda k, fin, fout, scale=None, banned=frozenset(): solve(k, fin, fout, scale, banned, gated=False), event, min_move_gain)
+    except Exception:
+        _logger.exception("ungated selection failed - the eye's held-back moves are not recorded")
+        return None
+    if open_sel is None:
+        return None
+    gated = set(selection.first_moves(selection.final)) if selection.accepted else set()
+    opened = open_sel.first_moves(open_sel.final) if open_sel.accepted else []
+    return [[o, i] for o, i in opened if (o, i) not in gated and (o in eye_sell or i in eye_buy)]
+
+
 JOINT_LOOKAHEAD = 2
 
 
@@ -1029,19 +1047,21 @@ def build_week_plan(
     evidence = evidence_matches(conn)
     eye_sell, eye_buy, eye_labels = eye_gates(conn, squad_ids, pool)
 
-    def solve(max_moves: int, fin, fout, scale=None, banned=frozenset()):
+    def solve(max_moves: int, fin, fout, scale=None, banned=frozenset(), gated=True):
         return plan_transfers_milp(
             conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
             pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
-            evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_penalty=eye_sell, buy_penalty=eye_buy,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            sell_penalty=eye_sell if gated else None, buy_penalty=eye_buy if gated else None,
         )
 
     selection = select_moves(solve, event, min_move_gain)
     if selection is None:
         return None
+    held_back = _eye_held_back(solve, event, min_move_gain, selection, eye_sell, eye_buy)
     accepted, declined, curve, final, proven, roll_total = (
         selection.accepted, selection.declined, selection.curve, selection.final, selection.proven,
         selection.roll_total,
@@ -1224,6 +1244,7 @@ def build_week_plan(
             "penalty": EYE_PENALTY,
             "protected": sorted(eye_sell), "blocked": sorted(eye_buy),
             "labels": {str(p): eye_labels[p] for p in set(squad_ids) if p in eye_labels},
+            "held_back": held_back,
         },
     )
 

@@ -154,8 +154,17 @@ def assess_task_health(task_name: str, info: dict | None = None) -> TaskHealth:
             status = "CRITICAL"
             detail = f"state={state}, last relaunch attempt {age_minutes:.0f}m ago - not recovering"
         else:
-            status = "STALE"
-            detail = f"state={state} - not currently running, awaiting next relaunch attempt"
+            from fpl_agent.scheduler.power_window import gate_says_active, read_gate
+
+            if gate_says_active() is False:
+                opens = read_gate().get("from")
+                status = "OK"
+                detail = "off outside the active window (power gating)" + (
+                    f"; window opens {datetime.fromtimestamp(int(opens)).astimezone().strftime('%a %d %b %H:%M')}" if opens and opens.isdigit() else ""
+                )
+            else:
+                status = "STALE"
+                detail = f"state={state} - not currently running, awaiting next relaunch attempt"
         return TaskHealth(
             task_name=task_name, status=status, detail=detail,
             last_run_at=last_run_at, age_minutes=age_minutes,

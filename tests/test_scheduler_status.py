@@ -190,3 +190,20 @@ def test_assess_all_task_health_covers_every_registered_task(monkeypatch):
 
     assert {h.task_name for h in healths} == set(status_mod.ALL_TASK_NAMES)
     assert all(h.status == "UNREGISTERED" for h in healths)
+
+
+def test_assess_task_health_live_server_off_outside_the_window_is_ok(monkeypatch):
+    from fpl_agent.scheduler import power_window
+
+    recent = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    _mock_info(monkeypatch, "FPLAgentLiveServer", {
+        "State": "Ready", "LastRunTime": recent, "NextRunTime": "2026-09-03T00:00:00+00:00",
+        "LastResult": "0", "IntervalMinutes": "5",
+    })
+    monkeypatch.setattr(power_window, "gate_says_active", lambda *a, **k: False)
+    monkeypatch.setattr(power_window, "read_gate", lambda *a, **k: {"from": "1793358000"})
+
+    health = assess_task_health("FPLAgentLiveServer")
+
+    assert health.status == "OK"
+    assert "power gating" in health.detail
