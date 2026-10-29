@@ -343,11 +343,44 @@ def make_handler(
             if path == "/api/made-transfer" and conn_factory is not None:
                 self._made_transfer()
                 return
+            if path == "/api/eye-note" and conn_factory is not None:
+                self._eye_note()
+                return
             if path != "/api/refresh":
                 self.send_error(404)
                 return
             outcome = refresh_job.start()
             self._send_json({"result": outcome, **refresh_job.status()})
+
+        def _eye_note(self) -> None:
+            """Save (`?player=&event=&rating=&tags=a,b&note=`) or delete (`&delete=1`) one eye-journal note; the squad screens'
+            snapshots are dropped so the eye gate and the album pick it up."""
+            from urllib.parse import parse_qs
+
+            from fpl_agent.live.payload_snapshots import invalidate
+            from fpl_agent.models.eye_journal import delete_note, save_note
+
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            conn = conn_factory()
+            try:
+                try:
+                    pid, ev = int(q["player"][0]), int(q["event"][0])
+                    if q.get("delete") == ["1"]:
+                        delete_note(conn, pid, ev)
+                        result = {"status": "deleted"}
+                    else:
+                        tags = [t for t in (q.get("tags", [""])[0] or "").split(",") if t]
+                        result = {"status": "saved", **save_note(conn, pid, ev, int(q["rating"][0]), tags, q.get("note", [None])[0])}
+                except (KeyError, ValueError) as e:
+                    self.send_error(400, str(e))
+                    return
+                try:
+                    invalidate(conn, {"album", "plan", "command", "myteam"})
+                except Exception:
+                    pass
+            finally:
+                conn.close()
+            self._send_json(result)
 
         def _made_transfer(self) -> None:
             """Record transfers made in FPL before the deadline (`?moves=OUT:IN,...`), or forget them all (`?undo=1`); the

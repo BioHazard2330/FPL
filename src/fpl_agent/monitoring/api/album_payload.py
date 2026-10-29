@@ -58,6 +58,9 @@ def build_album_payload(ctx=None, params: dict | None = None) -> dict:
         if plan:
             for p in (plan.get("lineup_after") or {}).get("starting", []) + (plan.get("lineup_after") or {}).get("bench", []):
                 xp[p["player_id"]] = p.get("xp")
+        from fpl_agent.models.eye_journal import RATINGS, latest_reads
+
+        eye = latest_reads(conn)
         order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
         stickers = []
         for pid in ids:
@@ -90,6 +93,7 @@ def build_album_payload(ctx=None, params: dict | None = None) -> dict:
                 "best": [{"label": m["label"], "display": m["display"], "percentile": m["percentile"]} for m in (scout or {}).get("strengths", [])[:2]],
                 "worst": [{"label": m["label"], "display": m["display"], "percentile": m["percentile"]} for m in (scout or {}).get("weaknesses", [])[:1]],
                 "fate": _plan_fate(plan, pid),
+                "my_eye": {**eye[pid], "label": RATINGS.get(eye[pid]["rating"])} if pid in eye else None,
             })
         stickers.sort(key=lambda s: (order.get(s["position"], 9), -(s["xp"] or 0)))
         return {"status": "ok", "event": plan["event"] if plan else None, "stickers": stickers}

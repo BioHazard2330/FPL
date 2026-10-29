@@ -22,6 +22,7 @@ interface Sticker {
   best: { label: string; display: string; percentile: number }[]
   worst: { label: string; display: string; percentile: number }[]
   fate: { kind: 'sell' | 'captain' | 'bench' | 'keep'; when: string | null; for?: string } | null
+  my_eye?: { event: number; rating: number; tags: string[]; note: string | null; label: string } | null
 }
 interface AlbumPayload { status: string; event: number | null; stickers: Sticker[] }
 
@@ -62,6 +63,12 @@ function Card({ s, n }: { s: Sticker; n: number }) {
             </div>
           )}
           {flagged && <div className="absolute bottom-3 right-2 z-10 bg-alert-red px-1.5 font-display text-[12px] font-black uppercase text-paper" title={s.news ?? ''}>flagged</div>}
+          {s.my_eye && (
+            <div className={`absolute right-2 top-12 z-10 rotate-[5deg] border-2 border-ink px-1.5 font-display text-[12px] font-black uppercase shadow-[2px_2px_0_var(--ink)] ${s.my_eye.rating > 0 ? 'bg-pitch-green text-paper' : s.my_eye.rating < 0 ? 'bg-alert-red text-paper' : 'bg-paper text-ink'}`}
+              title={[s.my_eye.tags.join(', '), s.my_eye.note].filter(Boolean).join(' · ')}>
+              your eye: {s.my_eye.label}
+            </div>
+          )}
         </div>
         <div className="border-y-[3px] border-ink bg-ink px-3 py-1.5">
           <div className="font-display text-[1.7rem] font-black uppercase leading-none text-paper">{s.name}</div>

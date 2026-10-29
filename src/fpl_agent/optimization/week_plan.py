@@ -375,6 +375,20 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
     squad = set(squad_ids)
     sell = {p: EYE_PENALTY for p in squad if labels.get(p) == "backs him"}
     buy = {p: EYE_PENALTY for p, lab in labels.items() if p not in squad and lab == "against him"}
+    # The manager's own eye (models/eye_journal) overrides the read: rated +1 or better protects, -1 or worse unprotects
+    # an owned player and gates a target.
+    try:
+        from fpl_agent.models.eye_journal import gate_adjustments
+
+        protect, unprotect, block = gate_adjustments(conn)
+        for p in protect & squad:
+            sell[p] = EYE_PENALTY
+        for p in unprotect & squad:
+            sell.pop(p, None)
+        for p in block - squad:
+            buy[p] = EYE_PENALTY
+    except Exception:
+        _logger.exception("eye journal gate failed - the read's gate stands")
     return sell, buy, labels
 
 
