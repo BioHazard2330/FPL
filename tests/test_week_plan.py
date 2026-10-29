@@ -609,3 +609,20 @@ def test_excluded_clubs_are_kept_out_of_the_buyable_pool_but_owned_players_stay(
     assert [c.player_id for c in wp._buyable_pool(db_conn, 5, [2])] == [2, 3]
     wp.set_excluded_team_ids(db_conn, set())
     assert len(wp._buyable_pool(db_conn, 5, [])) == 3
+
+
+def test_bench_order_puts_the_likelier_and_better_substitute_first():
+    from fpl_agent.optimization.week_plan import order_bench
+
+    starting = [(1, "GKP"), (2, "DEF"), (3, "DEF"), (4, "DEF"), (5, "MID"), (6, "MID"), (7, "MID"), (8, "MID"), (9, "MID"), (10, "FWD"), (11, "FWD")]
+    p_zero = {i: 0.0 for i in range(1, 16)}
+    p_zero[5] = 0.5  # a midfielder who may not play
+    xp = {i: 4.0 for i in range(1, 16)}
+    xp[13], xp[14], xp[15] = 1.0, 2.0, 5.0
+    order, best, given = order_bench(starting, [12], [(13, "DEF"), (14, "FWD"), (15, "MID")], p_zero, xp, trials=2000)
+    assert order[0] == 15 and best > given
+    # a defender out with three at the back can only be replaced by a defender, whatever the order
+    p_zero = {i: 0.0 for i in range(1, 16)}
+    p_zero[2] = 1.0
+    order, best, given = order_bench(starting, [12], [(14, "FWD"), (13, "DEF"), (15, "MID")], p_zero, xp, trials=500)
+    assert best == given == 1.0

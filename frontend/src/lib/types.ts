@@ -1800,6 +1800,7 @@ export interface WeekPlanLineup {
   vice_id: number | null
   xp_total: number
   captain_note: string | null
+  bench_gain?: number | null
 }
 
 export interface LineupChanges {
@@ -1867,12 +1868,18 @@ export interface WeekPlanPayload {
     final_free_transfers: number
     weeks: {
       event: number
+      free_transfers?: number
       moves: {
         out: string
         into: string
         hit: boolean
         out_id?: number
         in_id?: number
+        out_photo?: number
+        in_photo?: number
+        out_team_code?: number
+        in_team_code?: number
+        position?: string
         why_later?: { gain_this_week: number; gain_in_its_week: number; short_now_tenths: number }
       }[]
     }[]

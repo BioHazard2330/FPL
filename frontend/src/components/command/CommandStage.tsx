@@ -229,8 +229,8 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
             ))}
           </div>
           {block.bench.length > 0 && (
-            <div className="flex items-center gap-4 border-t-2 border-ink bg-raised px-6 py-3">
-              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint">Bench</span>
+            <div className="flex flex-wrap items-center gap-4 border-t-2 border-ink bg-raised px-6 py-3">
+              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-text-faint" title="Outfield order set for the most expected points from automatic substitutions">Bench</span>
               {block.bench.map((p, i) => (
                 <Link key={p.player_id} to={`/player/${p.player_id}`} className="flex items-center gap-2 opacity-85 hover:opacity-100">
                   <span className="font-display text-[13px] text-text-faint">{i + 1}</span>
@@ -239,6 +239,9 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
                   <span className="font-display text-[13px] font-bold tabular text-text-faint">{p.median.toFixed(1)}</span>
                 </Link>
               ))}
+              {(plan.lineup_after?.bench_gain ?? 0) >= 0.05 && (
+                <span className="ml-auto bg-ink px-2 py-0.5 font-display text-[12px] font-black uppercase text-paper">order set for auto-subs +{plan.lineup_after!.bench_gain!.toFixed(2)}</span>
+              )}
             </div>
           )}
         </div>

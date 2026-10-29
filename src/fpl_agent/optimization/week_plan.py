@@ -164,6 +164,7 @@ class Lineup:
     vice_id: int | None
     xp_total: float
     captain_note: str | None = None
+    bench_gain: float | None = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +329,47 @@ def prefer_current_eleven(
     return start, benched
 
 
+BENCH_TRIALS = 4000
+
+
+def order_bench(
+    starting: list[tuple[int, str]], keepers: list[int], outfield: list[tuple[int, str]],
+    p_zero: dict[int, float], xp: dict[int, float], trials: int = BENCH_TRIALS, seed: int = 20261029,
+) -> tuple[list[int], float, float]:
+    """The outfield bench order that brings on the most expected points under FPL's automatic substitutions.
+
+    Each trial draws who plays (a player sits out with his chance of no minutes) and applies `gw_review.automatic_subs`
+    for every order of the outfield bench; a substitute who comes on scores his projection given that he plays
+    (projection over the chance of minutes). Returns (best order, its expected bench points, the given order's). Common
+    random numbers across orders, so the difference is the order's, not the draw's."""
+    import itertools
+    import random
+
+    from fpl_agent.models.gw_review import automatic_subs
+
+    rng = random.Random(seed)
+    everyone = [pid for pid, _ in starting] + keepers + [pid for pid, _ in outfield]
+    draws = [{pid: rng.random() >= p_zero.get(pid, 0.0) for pid in everyone} for _ in range(trials)]
+    pos = dict(starting) | dict(outfield) | {k: "GKP" for k in keepers}
+    if_played = {pid: xp.get(pid, 0.0) / max(1.0 - p_zero.get(pid, 0.0), 0.05) for pid in everyone}
+
+    def value(order: tuple[int, ...]) -> float:
+        total = 0.0
+        for d in draws:
+            if all(d[pid] for pid, _ in starting):
+                continue
+            squad = [{"player_id": pid, "position": pos[pid], "starting": True, "minutes": 90 if d[pid] else 0} for pid, _ in starting]
+            squad += [{"player_id": pid, "position": pos[pid], "starting": False, "minutes": 90 if d[pid] else 0}
+                      for pid in keepers + list(order)]
+            total += sum(if_played[into] for _, into in automatic_subs(squad))
+        return total / trials
+
+    given = tuple(pid for pid, _ in outfield)
+    scored = {order: value(order) for order in itertools.permutations(given)}
+    best = max(scored, key=lambda o: (round(scored[o], 6), o == given))
+    return list(best), scored[best], scored[given]
+
+
 def _lineup(
     conn: sqlite3.Connection, squad_ids: set[int], event: int, xp_cache: dict, starts: dict[int, int],
     current_xi_ids: set[int] | None = None,
@@ -347,7 +389,24 @@ def _lineup(
     starting_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
     starting = sorted(xi.starting, key=lambda c: (starting_order[c.position], -c.xp))
     keepers = [c for c in xi.bench if c.position == "GKP"]
-    outfield = [c for c in xi.bench if c.position != "GKP"]
+    outfield = sorted((c for c in xi.bench if c.position != "GKP"), key=lambda c: -c.xp)
+    bench_gain = None
+    if len(outfield) > 1:
+        from fpl_agent.models.expected_points import _player_match_rates
+
+        p_zero = {}
+        for c in list(xi.starting) + list(xi.bench):
+            try:
+                p_zero[c.player_id] = _player_match_rates(conn, c.player_id)["minutes_probs"].p_zero
+            except Exception:
+                p_zero[c.player_id] = 0.0
+        order, best, plain = order_bench(
+            [(c.player_id, c.position) for c in xi.starting], [c.player_id for c in keepers],
+            [(c.player_id, c.position) for c in outfield], p_zero, {c.player_id: c.xp for c in list(xi.starting) + list(xi.bench)},
+        )
+        by_id = {c.player_id: c for c in outfield}
+        outfield = [by_id[pid] for pid in order]
+        bench_gain = round(best - plain, 2)
     bench = keepers + outfield
     captain, vice = pick_captains(xi.starting, xp_cache, event)
     top = max(xi.starting, key=lambda c: c.xp, default=None)
@@ -361,7 +420,7 @@ def _lineup(
         starting=[row(c) for c in starting], bench=[row(c) for c in bench],
         captain_id=captain.player_id if captain else None, vice_id=vice.player_id if vice else None,
         xp_total=round(sum(c.xp for c in xi.starting) + (captain.xp if captain else 0.0), 2),
-        captain_note=captain_note,
+        captain_note=captain_note, bench_gain=bench_gain,
     )
 
 
@@ -625,7 +684,19 @@ def build_road_ahead(
         })
     banked = free_transfers
     for week in weeks:
+        week["free_transfers"] = banked
         banked = min(banked - min(len(week["moves"]), banked) + 1, FREE_TRANSFER_CAP)
+    ids = {m[k] for w in weeks for m in w["moves"] for k in ("out_id", "in_id") if m[k]}
+    if ids:
+        codes = {r["id"]: (r["code"], r["team_code"], r["pos"]) for r in conn.execute(
+            "SELECT p.id, p.code, t.code AS team_code, et.singular_name_short AS pos FROM players p JOIN teams t ON t.id = p.team_id "
+            f"JOIN element_types et ON et.id = p.element_type WHERE p.id IN ({','.join('?' * len(ids))})", sorted(ids))}
+        for w in weeks:
+            for m in w["moves"]:
+                for side in ("out", "in"):
+                    code = codes.get(m[f"{side}_id"])
+                    if code:
+                        m[f"{side}_photo"], m[f"{side}_team_code"], m["position"] = code
     try:
         _why_later(conn, weeks, event, bank, pairs, cache)
     except Exception:

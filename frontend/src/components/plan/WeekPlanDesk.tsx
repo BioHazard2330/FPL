@@ -1,4 +1,5 @@
 import { RoadAhead } from '@/components/command/RoadAhead'
+import { RoadMap } from '@/components/plan/RoadMap'
 import { chipName, Panel, Pill } from '@/components/ui/kit'
 import type { ChipPlan, WeekPlanPayload } from '@/lib/types'
 
@@ -10,11 +11,15 @@ export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
 
   return (
     <>
-      <RoadAhead
-        plan={plan}
-        title={`GW${plan.event} and beyond`}
-        lead={<>This week: {moves.length === 0 ? 'roll the transfer' : moves.map((m) => `${m.out.name} to ${m.into.name}`).join(', ')}. </>}
-      />
+      {plan.road_ahead ? (
+        <RoadMap plan={plan} />
+      ) : (
+        <RoadAhead
+          plan={plan}
+          title={`GW${plan.event} and beyond`}
+          lead={<>This week: {moves.length === 0 ? 'roll the transfer' : moves.map((m) => `${m.out.name} to ${m.into.name}`).join(', ')}. </>}
+        />
+      )}
 
       {chips && (
         <Panel title="Chips">
