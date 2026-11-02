@@ -328,3 +328,18 @@ def test_without_the_wildcard_the_same_rebuild_pays_hits(db_conn):
     made = [s for s in res.sequence.steps if s.event == 10 and s.player_in_id is not None]
     # A swap gains 3 for one week (a bench swap less) against a 4-point hit, so only the free transfer is worth making.
     assert len(made) == 1
+
+
+def test_a_forced_purchase_outside_the_top_of_his_position_is_still_bought(db_conn):
+    owned, market = _synthetic_market(db_conn, 1.0, 4.0)
+    from fpl_agent.optimization.squad import PlayerCandidate
+
+    weak = PlayerCandidate(999, "Weak", "MID", 999, "T999", 50, 0.5, 0.5, 0.5, 0.5, "high", 90.0)
+    league = owned + market + [weak]
+    res = plan_transfers_milp(
+        db_conn, [c.player_id for c in owned], 1, 0, start_event=10, horizon_gw=1, pool_per_position=2,
+        time_limit_seconds=60, model_chips=False, xp_cache=_cache(league, [10]), league_pool=league,
+        forced_in_first=frozenset({999}),
+    )
+    assert res.sequence is not None
+    assert any(s.player_in_id == 999 for s in res.sequence.steps if s.event == 10)

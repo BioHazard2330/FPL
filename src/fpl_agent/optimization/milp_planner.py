@@ -283,8 +283,14 @@ def plan_transfers_milp(
             key=lambda c: c.xp, reverse=True,
         )
         pool.extend(ranked[:pool_per_position])
+    # A player forced in has to exist as a variable; outside the top of his position he would otherwise be silently
+    # dropped and the constraint skipped (found 2026-11-02: "get me Rice" returned routes without Rice).
+    pool.extend(c for c in league if c.player_id in forced_in_first)
 
     pool = list({c.player_id: c for c in pool}.values())
+    if any(p not in {c.player_id for c in pool} for p in forced_in_first):
+        return MilpPlanResult(None, "Infeasible (a forced player is not in the buyable pool)",
+                              False, None, horizon_gw, len(pool), time.monotonic() - started)
     if len(pool) < 15:
         return MilpPlanResult(None, "Infeasible (pool smaller than a legal squad)",
                               False, None, horizon_gw, len(pool), time.monotonic() - started)
