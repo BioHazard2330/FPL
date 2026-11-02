@@ -1,3 +1,4 @@
+import { Pizza, PizzaLegend } from './Pizza'
 import type { ScoutingMeasure, ScoutingReportData } from '@/lib/types'
 
 /** THE SCOUTING REPORT: how he plays and how good he is at it, against players in his position this season. Every line
@@ -74,6 +75,12 @@ export function ScoutingReport({ r, name }: { r: ScoutingReportData; name: strin
           </div>
         </div>
         <div className="space-y-6">
+          {r.ranked && quality.length >= 3 && (
+            <div className="flex flex-col items-center gap-2">
+              <Pizza measures={r.measures} size={340} />
+              <PizzaLegend />
+            </div>
+          )}
           {r.style.length > 0 && (
             <div>
               <div className="mb-2 text-[13px] font-bold text-text-faint">How he plays</div>

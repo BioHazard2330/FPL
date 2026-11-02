@@ -1,3 +1,4 @@
+import { Pizza } from '@/components/football/Pizza'
 import { useMemo, useState } from 'react'
 import { FootballReadInline } from '@/components/football/FootballRead'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -330,6 +331,16 @@ function CraftCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
           </div>
         ))}
       </div>
+      {sa.position === sb.position && shared.length >= 3 && (
+        <div className="mb-5 grid grid-cols-2 gap-10">
+          {[[sa, sb, a.name], [sb, sa, b.name]].map(([x, y, n], i) => (
+            <div key={i} className="flex flex-col items-center">
+              <Pizza measures={(x as typeof sa).measures} other={(y as typeof sa).measures} size={320} />
+              <div className="mt-1 text-[12px] text-text-faint">{n as string} filled · the other dashed</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="space-y-1">
         {shared.map((ma) => {
           const mb = byKey.get(ma.key)!

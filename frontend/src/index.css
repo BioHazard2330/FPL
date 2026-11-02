@@ -792,3 +792,8 @@ main { view-transition-name: page; }
 @keyframes tv-splash { 0% { opacity: 0; } 6% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes tv-slam { from { transform: scale(2.4) rotate(-6deg); opacity: 0; } to { transform: scale(1) rotate(-3deg); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .tv-splash, .tv-splash > div:first-child { animation: none; } }
+
+/* Pizza charts (components/football/Pizza.tsx): slices grow out from the centre. */
+.pizza-slice { transform-origin: 200px 200px; animation: pizza-grow 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+@keyframes pizza-grow { from { transform: scale(0.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pizza-slice { animation: none; } }
