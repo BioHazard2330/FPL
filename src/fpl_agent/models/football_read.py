@@ -85,6 +85,33 @@ def _chances(report: dict) -> list[dict]:
     return [_line("Chances", f"{text[0].upper()}{text[1:]}. Chance volume carries from match to match (shots r 0.56, xG r 0.48).", CARRIES, lean)]
 
 
+BOX_MIN_MINUTES = 270
+
+
+def _box_presence(conn: sqlite3.Connection, player_id: int, position: str, report: dict | None) -> list[dict]:
+    """Touches in the opposition box per 90 this league season (FotMob), against his position. Measured 2026-11-02: over
+    638 midfield and forward matches, a player's box-touch rate improved the forecast of his next match's xG beyond his
+    xG rate so far (leave-one-gameweek-out error 0.0703 to 0.0692; shots added nothing). Leans for him when he is in the
+    top quarter for box touches but not yet for xG: chances that have not come yet."""
+    if position not in ("MID", "FWD"):
+        return []
+    rows = conn.execute(
+        "SELECT pp.player_id, SUM(pp.touches_box) AS tb, SUM(pp.minutes) AS m FROM player_physical pp JOIN players p ON p.id = pp.player_id "
+        "WHERE pp.competition = 'Premier League' AND pp.touches_box IS NOT NULL AND p.element_type = ? GROUP BY pp.player_id HAVING m >= ?",
+        ({"MID": 3, "FWD": 4}[position], BOX_MIN_MINUTES),
+    ).fetchall()
+    rates = {r["player_id"]: r["tb"] * 90 / r["m"] for r in rows}
+    if player_id not in rates or len(rates) < 10:
+        return []
+    mine = rates[player_id]
+    pct = round(100 * sum(1 for v in rates.values() if v <= mine) / len(rates))
+    npxg = _measure(report, "npxg90") if report else None
+    xg_pct = npxg.get("percentile") if npxg else None
+    lean = 1 if pct >= TOP and (xg_pct is None or xg_pct < TOP) else 0
+    tail = " He is in the box more than his xG shows: in this season's matches that has run ahead of the next match's xG." if lean else ""
+    return [_line("Box presence", f"{mine:.1f} touches in the opposition box per 90 ({_ordinal(pct)} percentile among {_POSITION_PLURAL[position]}).{tail}", CARRIES, lean)]
+
+
 def _creation_and_defence(report: dict) -> list[dict]:
     out = []
     xa, kp = _measure(report, "xa90"), _measure(report, "key_passes90")
@@ -326,6 +353,7 @@ def football_read(conn: sqlite3.Connection, player_id: int, event: int | None = 
     lines: list[dict] = []
     if report:
         lines += _craft(report) + _chances(report) + _creation_and_defence(report) + _finishing(report)
+    lines += _box_presence(conn, player_id, position, report)
     lines += _duties(conn, player_id, report)
     if position in ("MID", "FWD"):
         lines += _spell(form_watch(conn, [player_id]).get(player_id))
