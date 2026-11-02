@@ -17,7 +17,9 @@ const duty = (v: unknown) => (typeof v === 'number' ? (ORDER[v - 1] ?? `choice $
 
 /** A stored change event as a sentence. Set-piece changes are stored as a pair of six-value lists (penalty, corner and direct
  * free kick orders, each followed by its note) and used to be printed raw. */
-export function describeChange(eventType: string | null, oldValue: string | null, newValue: string | null): string {
+export function describeChange(eventType: string | null, oldValue: string | null, newValue: string | null, impact?: string | null): string {
+  // events keyed by an id (a match, an article) carry their sentence in the impact, not in the values
+  if (impact && eventType && ['cup_withdrawal', 'cup_absence', 'injury_headline', 'manager_change', 'early_withdrawal'].includes(eventType)) return impact
   if (eventType === 'setpiece_change') {
     try {
       const o = JSON.parse(oldValue ?? '[]') as unknown[]
@@ -47,6 +49,8 @@ const EVENT_LABELS: Record<string, string> = {
   new_player: 'new player',
   club_change: 'club',
   removed_player: 'removed',
+  cup_withdrawal: 'off early in a cup tie',
+  cup_absence: 'out of a cup tie',
 }
 
 export const eventLabel = (eventType: string | null): string => (eventType ? (EVENT_LABELS[eventType] ?? eventType.replace(/_/g, ' ')) : '')

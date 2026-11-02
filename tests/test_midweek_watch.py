@@ -70,3 +70,14 @@ def test_a_european_night_opens_the_power_window(db_conn):
 
     assert pw.compute_window(db_conn, kick + 3600, cfg).active
     assert not pw.compute_window(db_conn, kick - 6 * 3600, cfg).active
+
+
+def test_an_old_tie_read_by_a_backfill_raises_no_event(db_conn, monkeypatch):
+    _seed_two_players_two_teams(db_conn)
+    _cup_fixture(db_conn)
+    team = db_conn.execute("SELECT name FROM teams WHERE id = 1").fetchone()["name"]
+    _fake_payload(monkeypatch, ours=team, states=[_state("Haaland", True, 24, off=24, team=team)])
+    mw.sync_midweek(db_conn, {1}, set(), now=KICK + timedelta(hours=3), fetch=lambda mid: {})
+    db_conn.execute("DELETE FROM change_events")
+
+    assert mw.detect_cup_events(db_conn, {1}, {1}, (KICK + timedelta(days=10)).isoformat()) == 0

@@ -43,7 +43,7 @@ def test_a_move_the_fixtures_read_and_replays_oppose_is_doubtful():
             "gain": 1.6, "confidence": {"win_prob": 0.48, "mean_diff": 1, "p10": -9, "p90": 10, "trials": 4000}}
     b = pundit.move_brief(move, {"20": _fx([4, 5, 4]), "10": _fx([2, 2, 3])}, {}, {}, {}, 3)
     assert b["grade"] == "doubtful"
-    assert any("Fixture by fixture" in line for line in b["against"])
+    assert any(lz["key"] == "fixtures" and lz["lean"] == -1 for lz in b["lenses"])
 
 
 def test_form_streaks_are_context_never_counted():

@@ -511,7 +511,7 @@ export function LiveScreen() {
                         </div>
                       ) : (
                         (c.old_value !== null || c.new_value !== null) && (
-                          <div className="text-xs text-text-muted">{describeChange(c.event_type, c.old_value, c.new_value)}</div>
+                          <div className="text-xs text-text-muted">{describeChange(c.event_type, c.old_value, c.new_value, c.impact)}</div>
                         )
                       )}
                     </div>

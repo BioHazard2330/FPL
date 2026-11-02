@@ -75,7 +75,7 @@ def _recent_changes_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=_RECENT_CHANGES_WINDOW_HOURS)).isoformat()
     placeholders = ",".join("?" * len(squad_ids))
     rows = conn.execute(
-        f"SELECT ce.event_type, ce.entity, ce.entity_id, ce.old_value, ce.new_value, ce.severity, ce.detected_at, "
+        f"SELECT ce.event_type, ce.entity, ce.entity_id, ce.old_value, ce.new_value, ce.severity, ce.detected_at, ce.fpl_impact, "
         f"p.web_name FROM change_events ce LEFT JOIN players p ON p.id = ce.entity_id "
         f"WHERE ce.entity='player' AND ce.entity_id IN ({placeholders}) AND ce.detected_at > ? "
         f"ORDER BY ce.detected_at DESC LIMIT ?",
@@ -85,7 +85,7 @@ def _recent_changes_block(conn: sqlite3.Connection, squad_ids: frozenset[int]) -
         {
             "player_id": r["entity_id"], "web_name": r["web_name"], "event_type": r["event_type"],
             "old_value": r["old_value"], "new_value": r["new_value"], "severity": r["severity"],
-            "detected_at": r["detected_at"],
+            "detected_at": r["detected_at"], "impact": r["fpl_impact"],
         }
         for r in rows
     ]

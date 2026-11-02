@@ -798,6 +798,7 @@ export interface LiveRecentChange {
   new_value: string | null
   severity: string | null
   detected_at: string | null
+  impact?: string | null
 }
 
 export interface LivePointsChanges {

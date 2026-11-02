@@ -101,18 +101,28 @@ def store_match(conn: sqlite3.Connection, fixture: sqlite3.Row, payload: dict, n
     return stored
 
 
+EVENT_MAX_AGE_HOURS = 72
+
+
 def detect_cup_events(conn: sqlite3.Connection, watched_ids: set[int], squad_ids: set[int], now: str) -> int:
     """A watched starter taken off in a cup match's first hour, and a squad player listed out injured; once each."""
     fired = 0
     if not watched_ids:
         return 0
     marks = ",".join("?" * len(watched_ids))
+    # Only ties from the last few days are news; a backfill of older ties (backfill_cups) must not raise them as new
+    # (2026-11-02: five September and October withdrawals were raised as fresh events).
+    since = (datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(hours=EVENT_MAX_AGE_HOURS)).isoformat()
     for r in conn.execute(
-        f"SELECT a.*, m.competition, m.opponent_name, p.web_name FROM cup_appearance a JOIN cup_match m USING (fotmob_match_id) "
-        f"JOIN players p ON p.id = a.player_id WHERE a.player_id IN ({marks})", sorted(watched_ids),
+        f"SELECT a.*, m.competition, m.opponent_name, m.team_id AS row_team, t.name AS row_team_name, p.web_name, "
+        f"p.team_id AS player_team FROM cup_appearance a JOIN cup_match m USING (fotmob_match_id) "
+        f"JOIN players p ON p.id = a.player_id LEFT JOIN teams t ON t.id = m.team_id "
+        f"WHERE a.player_id IN ({marks}) AND replace(m.kickoff_utc, 'Z', '+00:00') >= ?", (*sorted(watched_ids), since),
     ):
         pid, mine = r["player_id"], r["player_id"] in squad_ids
-        where = f"{r['competition']} v {r['opponent_name']}"
+        # the match row is kept from one club's side; for the other club's player the opponent is that club
+        opponent = r["opponent_name"] if r["player_team"] == r["row_team"] else (r["row_team_name"] or r["opponent_name"])
+        where = f"{r['competition']} v {opponent}"
         if r["role"] == "STARTED" and r["sub_off_minute"] and 0 < r["sub_off_minute"] <= EARLY_WITHDRAWAL_MAX_MINUTE:
             if conn.execute("SELECT 1 FROM change_events WHERE event_type='cup_withdrawal' AND entity_id=? AND old_value=?",
                             (pid, r["fotmob_match_id"])).fetchone():
