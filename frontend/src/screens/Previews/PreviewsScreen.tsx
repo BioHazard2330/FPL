@@ -1,3 +1,4 @@
+import { WeatherIcon, WEATHER_LABEL, weatherKind } from '@/components/ui/Weather'
 import { Link } from 'react-router-dom'
 import { RunOfFixtures } from '@/screens/Previews/RunOfFixtures'
 import { Masthead } from '@/components/shell/Masthead'
@@ -185,6 +186,47 @@ function Reading({ f }: { f: PreviewFixture }) {
   )
 }
 
+function Conditions({ c }: { c: NonNullable<PreviewFixture['conditions']> }) {
+  const kind = weatherKind(c.forecast_code)
+  const hot = c.ref_yellows_pm !== null && c.ref_yellows_avg !== null && c.ref_yellows_pm - c.ref_yellows_avg >= 0.3
+  return (
+    <div className="mb-5 grid grid-cols-1 gap-px border-2 border-ink bg-ink lg:grid-cols-3">
+      <div className="bg-paper px-4 py-3">
+        <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-text-faint">the ground</div>
+        <div className="font-display text-lg font-black uppercase leading-tight text-text">{c.stadium ?? '—'}</div>
+        <div className="text-[12px] text-text-muted">{c.city}{c.capacity ? ` · ${c.capacity.toLocaleString()} seats` : ''}</div>
+      </div>
+      <div className="flex items-center gap-3 bg-paper px-4 py-3">
+        <WeatherIcon code={c.forecast_code} className="size-10 shrink-0" />
+        <div>
+          <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-text-faint">at kickoff</div>
+          {kind ? (
+            <>
+              <div className="font-display text-lg font-black leading-tight text-text">{WEATHER_LABEL[kind]} · {Math.round(c.forecast_temp ?? 0)}°C</div>
+              <div className="text-[12px] text-text-muted">
+                rain {Math.round(c.forecast_precip_prob ?? 0)}% · wind {Math.round(c.forecast_wind ?? 0)} km/h{c.forecast_gust ? `, gusts ${Math.round(c.forecast_gust)}` : ''}
+              </div>
+            </>
+          ) : <div className="text-[13px] text-text-muted">Forecast opens 16 days out</div>}
+        </div>
+      </div>
+      <div className="bg-paper px-4 py-3">
+        <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-text-faint">the referee</div>
+        {c.referee ? (
+          <>
+            <div className="font-display text-lg font-black uppercase leading-tight text-text">{c.referee}</div>
+            <div className="text-[12px] text-text-muted">
+              <span className={hot ? 'font-bold text-alert-red' : ''}>{c.ref_yellows_pm?.toFixed(2)} yellows a match</span>
+              {c.ref_yellows_avg !== null ? ` (league ${c.ref_yellows_avg.toFixed(2)})` : ''}
+              {c.ref_penalties !== null && c.ref_matches ? ` · ${c.ref_penalties} pens in ${c.ref_matches}` : ''}
+            </div>
+          </>
+        ) : <div className="text-[13px] text-text-muted">Not appointed yet (the league names referees early in the week)</div>}
+      </div>
+    </div>
+  )
+}
+
 function Card({ f }: { f: PreviewFixture }) {
   const yours = f.home.yours.length + f.away.yours.length
   const gap = f.market ? Math.round((f.model.home_win - f.market.home_win) * 100) : null
@@ -193,8 +235,8 @@ function Card({ f }: { f: PreviewFixture }) {
   const time = f.kickoff ? new Date(f.kickoff).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'TBC'
   return (
     <details className="group border-b border-divider last:border-0">
-      <summary className="grid cursor-pointer list-none grid-cols-[4rem_minmax(0,1fr)_7rem_minmax(0,1fr)_11rem_1.5rem] items-center gap-4 px-8 py-3.5 hover:bg-raised/30 [&::-webkit-details-marker]:hidden">
-        <span className="tabular text-[13px] text-text-faint">{time}</span>
+      <summary className="grid cursor-pointer list-none grid-cols-[5.5rem_minmax(0,1fr)_7rem_minmax(0,1fr)_11rem_1.5rem] items-center gap-4 px-8 py-3.5 hover:bg-raised/30 [&::-webkit-details-marker]:hidden">
+        <span className="tabular flex items-center gap-1.5 text-[13px] text-text-faint">{time}<WeatherIcon code={f.conditions?.forecast_code} className="size-5" /></span>
         <span className="flex items-center justify-end gap-2.5 text-right font-display text-lg font-semibold text-text">
           {f.home.name}
           {hc && <img src={hc} alt="" className="size-6 object-contain" />}
@@ -222,6 +264,7 @@ function Card({ f }: { f: PreviewFixture }) {
           <span>{kickoffLabel(f.kickoff)}</span>
           {yours > 0 && <span>{[...f.home.yours, ...f.away.yours].map((p) => p.name).join(', ')}</span>}
         </div>
+        {f.conditions && <Conditions c={f.conditions} />}
         <div className="grid grid-cols-[1fr_300px_1fr] gap-8">
           <Side side={f.home} home cs={f.model.home_clean_sheet} />
           <div className="flex flex-col items-center justify-start text-center">

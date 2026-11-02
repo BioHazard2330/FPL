@@ -226,7 +226,11 @@ def _build_previews_uncached() -> dict:
                 "market": _market(conn, f["id"]),
             })
         names = {r["id"]: r["web_name"] for r in conn.execute("SELECT id, web_name FROM players WHERE removed=0")}
+        from fpl_agent.ingestion.matchday_conditions import conditions_by_fixture
+
+        conditions = conditions_by_fixture(conn, [fx["fixture_id"] for fx in out])
         for fx in out:
+            fx["conditions"] = conditions.get(fx["fixture_id"])
             for side in ("home", "away"):
                 fx[side]["yours"] = [{"player_id": p, "name": names.get(p, "")} for p in fx[side]["yours"]]
                 for r in fx[side]["form"]:

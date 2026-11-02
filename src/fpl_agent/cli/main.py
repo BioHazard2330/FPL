@@ -2147,6 +2147,15 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled cohort sample failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.matchday_conditions import sync_conditions
+
+        cond = sync_conditions(conn)
+        if cond.get("status") == "ok":
+            logger.info("run-scheduled matchday conditions: %s", cond)
+    except Exception:
+        logger.exception("run-scheduled matchday conditions failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.midweek_watch import sync_midweek
         from fpl_agent.optimization.week_plan import plan_target_ids
 

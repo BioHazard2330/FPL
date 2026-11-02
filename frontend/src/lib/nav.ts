@@ -1,4 +1,4 @@
-import { Target, Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Map as MapIcon, Target, Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -9,6 +9,7 @@ export const DESTINATIONS = [
   { to: '/eye', label: 'Eye journal', icon: Eye },
   { to: '/live', label: 'Live', icon: Radio },
   { to: '/matchweek', label: 'League', icon: Trophy },
+  { to: '/map', label: 'The map', icon: MapIcon },
   { to: '/table', label: 'Team styles', icon: ListOrdered },
   { to: '/previews', label: 'Previews', icon: Swords },
   { to: '/football', label: 'My clubs', icon: Goal },
@@ -30,7 +31,7 @@ export const DESTINATIONS = [
  * how am I doing against everyone else, and is the machine healthy. Ordering inside a group runs from most to least used. */
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
   { label: 'This week', routes: ['/', '/my-team', '/album', '/eye', '/plan', '/war-room', '/live'] },
-  { label: 'The league', routes: ['/matchweek', '/table', '/previews', '/football', '/atlas'] },
+  { label: 'The league', routes: ['/matchweek', '/map', '/table', '/previews', '/football', '/atlas'] },
   { label: 'Players', routes: ['/scout', '/compare', '/explorer', '/desk'] },
   { label: 'How I am doing', routes: ['/review', '/versus', '/leagues', '/field', '/audit', '/receipts'] },
   { label: 'System', routes: ['/advanced'] },

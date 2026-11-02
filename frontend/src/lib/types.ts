@@ -2042,8 +2042,17 @@ export interface FixtureReading {
   statements: ReadingStatement[]
 }
 
+export interface FixtureConditions {
+  stadium: string | null; city: string | null; lat: number | null; lon: number | null; capacity: number | null
+  referee: string | null; ref_matches: number | null; ref_yellows_pm: number | null; ref_yellows_avg: number | null; ref_reds: number | null
+  ref_penalties: number | null; ref_fouls_pm: number | null
+  forecast_temp: number | null; forecast_precip: number | null; forecast_precip_prob: number | null; forecast_wind: number | null
+  forecast_gust: number | null; forecast_code: number | null; forecast_at: string | null
+}
+
 export interface PreviewFixture {
   fixture_id: number
+  conditions?: FixtureConditions | null
   reading?: FixtureReading | null
   kickoff: string | null
   home: PreviewSide
