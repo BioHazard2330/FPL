@@ -19,6 +19,7 @@ import { TrackRecord } from '@/components/command/TrackRecord'
 import { SquadNews } from '@/components/command/SquadNews'
 import { TonightPrices } from '@/components/command/TonightPrices'
 import { MidweekWatch } from '@/components/command/MidweekWatch'
+import { PlanChanges } from '@/components/command/PlanChanges'
 import { LastReport } from '@/components/command/LastReport'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
 import { CommandStage } from '@/components/command/CommandStage'
@@ -224,6 +225,7 @@ export function CommandScreen() {
             <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
             <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
               <div className="min-w-0 space-y-7">
+                <PlanChanges changes={plan.changes} horizon={plan.horizon ?? 5} />
                 {moves.length > 0 && (
                   <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
                     <div className="space-y-4">

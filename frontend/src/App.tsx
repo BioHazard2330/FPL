@@ -30,6 +30,7 @@ const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').th
 const EyeScreen = lazy(() => import('@/screens/Eye/EyeScreen').then((m) => ({ default: m.EyeScreen })))
 const WarRoomScreen = lazy(() => import('@/screens/WarRoom/WarRoomScreen').then((m) => ({ default: m.WarRoomScreen })))
 const AlbumScreen = lazy(() => import('@/screens/Album/AlbumScreen').then((m) => ({ default: m.AlbumScreen })))
+const VersusScreen = lazy(() => import('@/screens/Versus/VersusScreen').then((m) => ({ default: m.VersusScreen })))
 const ReviewScreen = lazy(() => import('@/screens/Review/ReviewScreen').then((m) => ({ default: m.ReviewScreen })))
 const LeaguesScreen = lazy(() => import('@/screens/Leagues/LeaguesScreen').then((m) => ({ default: m.LeaguesScreen })))
 const LiveScreen = lazy(() => import('@/screens/Live/LiveScreen').then((m) => ({ default: m.LiveScreen })))
@@ -77,6 +78,7 @@ function App() {
             <Route path="/advanced" element={<AdvancedScreen />} />
             <Route path="/live" element={<LiveScreen />} />
             <Route path="/review" element={<ReviewScreen />} />
+            <Route path="/versus" element={<VersusScreen />} />
             <Route path="/album" element={<AlbumScreen />} />
             <Route path="/war-room" element={<WarRoomScreen />} />
             <Route path="/eye" element={<EyeScreen />} />

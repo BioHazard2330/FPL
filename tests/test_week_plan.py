@@ -641,3 +641,13 @@ def test_the_eye_records_the_move_its_gate_held_back():
     assert gated_sel.accepted == []
     assert _eye_held_back(solve, EVENT, 1.5, gated_sel, {1: 1.5}, {}) == [[1, 11]]
     assert _eye_held_back(solve, EVENT, 1.5, gated_sel, {}, {}) == []
+
+
+def test_standing_moves_are_the_last_plans_open_moves_for_the_same_gameweek():
+    from fpl_agent.optimization.week_plan import standing_moves
+
+    prev = {"event": 10, "moves": [{"out": {"player_id": 1}, "into": {"player_id": 11}}, {"out": {"player_id": 2}, "into": {"player_id": 12}}]}
+    assert standing_moves(prev, 10, [1, 2, 3]) == [(1, 11), (2, 12)]
+    assert standing_moves(prev, 10, [1, 3, 12]) == [(1, 11)]
+    assert standing_moves(prev, 11, [1, 2, 3]) == []
+    assert standing_moves(None, 10, [1]) == []

@@ -206,6 +206,8 @@ class WeekPlan:
     calibration: str = ""
     matches_finished: int = 0
     eye: dict = field(default_factory=dict)
+    xp_index: dict = field(default_factory=dict)
+    changes: dict | None = None
 
 
 SOFT_REFRESH_MINUTES = 10
@@ -633,6 +635,73 @@ def _eye_held_back(solve, event: int, min_move_gain: float, selection, eye_sell:
     return [[o, i] for o, i in opened if (o, i) not in gated and (o in eye_sell or i in eye_buy)]
 
 
+# A plan rebuilt for the same gameweek keeps its standing call unless a different one beats it by the bar any move has
+# to clear: the moves the last plan recommended get half the bar off on each side of the swap in the solver's objective
+# (reported gains stay pure expected points, and each move still has to clear the bar on its own). Rebuilds within one
+# gameweek moved the GW9 recommendation six times in a week on near-equal options (2026-11-02); a call that flips on
+# noise cannot be acted on.
+STANDING_BONUS = MIN_MOVE_GAIN / 2
+XP_INDEX_SIZE = 250
+
+
+def standing_moves(previous: dict | None, event: int, squad_ids: list[int]) -> list[tuple[int, int]]:
+    """The last stored plan's moves for this same gameweek that are still open (seller owned, buyer not)."""
+    if not previous or previous.get("event") != event:
+        return []
+    owned = set(squad_ids)
+    out = []
+    for m in previous.get("moves") or []:
+        o, i = m["out"]["player_id"], m["into"]["player_id"]
+        if o in owned and i not in owned:
+            out.append((o, i))
+    return out
+
+
+def plan_changes(conn: sqlite3.Connection, previous: tuple | None, event: int, pairs: list[tuple[int, int]],
+                 captain_id: int | None, xp_index: dict, standing: list[tuple[int, int]]) -> dict | None:
+    """What changed since the last plan for this gameweek, and why: moves dropped and added with each player's projection
+    over the horizon before and after, news logged for them since, results in, and whether the model itself changed."""
+    if not previous:
+        return None
+    prev, prev_at = previous[0], previous[1]
+    if prev.get("event") != event:
+        return None
+    prev_pairs = [(m["out"]["player_id"], m["into"]["player_id"]) for m in prev.get("moves") or []]
+    prev_index = dict(prev.get("xp_index") or {})
+    for m in list(prev.get("moves") or []) + list(prev.get("declined") or []):
+        for side in ("out", "into"):
+            x = m[side]
+            prev_index.setdefault(str(x["player_id"]), round(sum(x.get("xp_by_gw") or []), 2) if x.get("xp_by_gw") else None)
+    ids = {p for pair in set(prev_pairs) ^ set(pairs) for p in pair}
+    names = {r["id"]: r["web_name"] for r in conn.execute(
+        f"SELECT id, web_name FROM players WHERE id IN ({','.join('?' * len(ids | {captain_id or 0, prev.get('lineup_after', {}).get('captain_id') or 0}))})",
+        sorted(ids | {captain_id or 0, prev.get("lineup_after", {}).get("captain_id") or 0}),
+    )} if ids or captain_id else {}
+    news: dict[int, list[str]] = {}
+    if ids:
+        for r in conn.execute(
+            f"SELECT entity_id, event_type, new_value, fpl_impact FROM change_events WHERE entity = 'player' AND entity_id IN "
+            f"({','.join('?' * len(ids))}) AND detected_at > ? ORDER BY detected_at", (*sorted(ids), prev_at),
+        ):
+            news.setdefault(r["entity_id"], []).append(r["fpl_impact"] or f"{r['event_type']}: {r['new_value']}")
+
+    def who(pid: int) -> dict:
+        return {"player_id": pid, "name": names.get(pid), "xp_before": prev_index.get(str(pid)), "xp_after": xp_index.get(str(pid)),
+                "news": news.get(pid, [])[-3:]}
+
+    prev_cap = prev.get("lineup_after", {}).get("captain_id")
+    return {
+        "since": prev_at,
+        "model_changed": prev.get("calibration") != calibration_id(),
+        "matches_finished": max(0, finished_match_count(conn) - (prev.get("matches_finished") or 0)),
+        "dropped": [{"out": who(o), "into": who(i)} for o, i in prev_pairs if (o, i) not in pairs],
+        "added": [{"out": who(o), "into": who(i)} for o, i in pairs if (o, i) not in prev_pairs],
+        "kept": len([p for p in pairs if p in prev_pairs]),
+        "standing_bonus": STANDING_BONUS if standing else 0.0,
+        "captain": {"from": names.get(prev_cap), "to": names.get(captain_id)} if prev_cap != captain_id else None,
+    }
+
+
 JOINT_LOOKAHEAD = 2
 
 
@@ -1046,6 +1115,12 @@ def build_week_plan(
 
     evidence = evidence_matches(conn)
     eye_sell, eye_buy, eye_labels = eye_gates(conn, squad_ids, pool)
+    previous = latest_week_plan(conn)
+    standing = standing_moves(previous[0] if previous else None, event, squad_ids)
+    sell_pen, buy_pen = dict(eye_sell), dict(eye_buy)
+    for o, i in standing:
+        sell_pen[o] = sell_pen.get(o, 0.0) - STANDING_BONUS
+        buy_pen[i] = buy_pen.get(i, 0.0) - STANDING_BONUS
 
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset(), gated=True):
         return plan_transfers_milp(
@@ -1055,7 +1130,7 @@ def build_week_plan(
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
             evidence_matches=evidence, evidence_k=EVIDENCE_K,
-            sell_penalty=eye_sell if gated else None, buy_penalty=eye_buy if gated else None,
+            sell_penalty=sell_pen if gated else None, buy_penalty=buy_pen if gated else None,
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -1227,6 +1302,11 @@ def build_week_plan(
             f"{joint['first_alone']:+.1f}, under the {min_move_gain} bar, so they are kept as a set."
         )
 
+    captain_now = lineup_after.captain_id
+    keep = set(squad_ids) | squad_after | {p for pair in chosen_pairs for p in pair} | {o for o, _ in standing} | {i for _, i in standing}
+    xp_index = {str(c.player_id): round(c.median, 2) for c in sorted(pool, key=lambda c: -c.median)[:XP_INDEX_SIZE]}
+    xp_index.update({str(c.player_id): round(c.median, 2) for c in pool if c.player_id in keep})
+
     return WeekPlan(
         event=event, horizon=horizon, free_transfers=free_transfers, free_transfers_known=ft_known,
         bank_tenths=bank, roll_total=round(roll_total, 2), plan_total=round(plan_total, 2),
@@ -1246,6 +1326,8 @@ def build_week_plan(
             "labels": {str(p): eye_labels[p] for p in set(squad_ids) if p in eye_labels},
             "held_back": held_back,
         },
+        xp_index=xp_index,
+        changes=plan_changes(conn, previous, event, chosen_pairs, captain_now, xp_index, standing),
     )
 
 

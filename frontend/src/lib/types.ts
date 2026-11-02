@@ -1820,6 +1820,8 @@ export interface LineupChanges {
 
 export interface WeekPlanPayload {
   eye?: { penalty: number; protected: number[]; blocked: number[]; labels: Record<string, string> }
+  /** What changed since the last plan for this gameweek (`week_plan.plan_changes`). */
+  changes?: PlanChanges | null
   rank_targets?: { you_total: number; weeks_left: number; targets: { rank: number; total: number; gap: number; per_week: number | null }[] }
   recorded_transfers?: {
     event: number
@@ -2723,3 +2725,15 @@ export interface ReviewPayload {
 export interface PriceRow { player_id: number; name: string | null; photo_code: number | null; team_short: string | null; team_code: number | null; position: string | null; price: number | null; owned: number | null; p_rise: number | null; when: string | null }
 /** Tonight's rise chances (`monitoring/api/prices_payload.py`). */
 export interface PricesPayload { status: 'ok' | 'no_model'; squad?: PriceRow[]; targets?: PriceRow[]; risers?: PriceRow[]; likely?: number; model?: { fitted_at: string; auc: number; holdout_rises: number } }
+
+export interface PlanChangeSide { player_id: number; name: string | null; xp_before: number | null; xp_after: number | null; news: string[] }
+export interface PlanChanges {
+  since: string
+  model_changed: boolean
+  matches_finished: number
+  dropped: { out: PlanChangeSide; into: PlanChangeSide }[]
+  added: { out: PlanChangeSide; into: PlanChangeSide }[]
+  kept: number
+  standing_bonus: number
+  captain: { from: string | null; to: string | null } | null
+}

@@ -1,4 +1,4 @@
-import { Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Target, Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
@@ -18,6 +18,7 @@ export const DESTINATIONS = [
   { to: '/explorer', label: 'Explorer', icon: SlidersHorizontal },
   { to: '/desk', label: 'News', icon: Newspaper },
   { to: '/review', label: 'GW report', icon: FileText },
+  { to: '/versus', label: 'Versus the 10k', icon: Target },
   { to: '/leagues', label: 'Mini-leagues', icon: Medal },
   { to: '/field', label: 'Versus the field', icon: Telescope },
   { to: '/audit', label: 'Luck check', icon: ScanSearch },
@@ -31,7 +32,7 @@ export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
   { label: 'This week', routes: ['/', '/my-team', '/album', '/eye', '/plan', '/war-room', '/live'] },
   { label: 'The league', routes: ['/matchweek', '/table', '/previews', '/football', '/atlas'] },
   { label: 'Players', routes: ['/scout', '/compare', '/explorer', '/desk'] },
-  { label: 'How I am doing', routes: ['/review', '/leagues', '/field', '/audit', '/receipts'] },
+  { label: 'How I am doing', routes: ['/review', '/versus', '/leagues', '/field', '/audit', '/receipts'] },
   { label: 'System', routes: ['/advanced'] },
 ]
 

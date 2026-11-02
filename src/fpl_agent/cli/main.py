@@ -2134,6 +2134,14 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled cross-competition fixtures sync failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.cohort import cohort_due, sync_cohort
+
+        if cohort_due(conn):
+            logger.info("run-scheduled cohort: %s", sync_cohort(conn))
+    except Exception:
+        logger.exception("run-scheduled cohort sample failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.midweek_watch import sync_midweek
         from fpl_agent.optimization.week_plan import plan_target_ids
 
