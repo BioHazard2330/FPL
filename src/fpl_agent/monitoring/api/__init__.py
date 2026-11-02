@@ -37,6 +37,7 @@ from fpl_agent.monitoring.api.getme_payload import build_getme_payload
 from fpl_agent.monitoring.api.map_payload import build_map_payload
 from fpl_agent.monitoring.api.story_payload import build_story_payload
 from fpl_agent.monitoring.api.chips_payload import build_chips_payload
+from fpl_agent.monitoring.api.workload_payload import build_workload_payload
 from fpl_agent.monitoring.api.review_payload import build_review_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
@@ -63,6 +64,7 @@ API_BUILDERS = {
     "map": build_map_payload,
     "story": build_story_payload,
     "chips": build_chips_payload,
+    "workload": build_workload_payload,
     "album": build_album_payload,
     "eye": build_eye_payload,
     "advanced": build_advanced_payload,

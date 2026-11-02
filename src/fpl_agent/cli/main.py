@@ -2175,6 +2175,17 @@ def run_scheduled(gated: bool):
     except Exception:
         logger.exception("run-scheduled midweek watch failed - not fatal to the sync itself")
 
+    try:
+        from fpl_agent.ingestion.midweek_watch import backfill_cups
+        from fpl_agent.ingestion.workload import sync_workload
+
+        cups = backfill_cups(conn, limit=20)
+        load = sync_workload(conn)
+        if cups["matches"] or load["matches"]:
+            logger.info("run-scheduled workload: cups %s, matches %s", cups, load)
+    except Exception:
+        logger.exception("run-scheduled workload sync failed - not fatal to the sync itself")
+
     # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
     # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new
     # "tracked match" registry: re-syncs any not-yet-FULL_TIME match_intelligence

@@ -198,3 +198,29 @@ def midweek_block(conn: sqlite3.Connection, player_ids: set[int], now: datetime 
             ],
         })
     return out
+
+
+def backfill_cups(conn: sqlite3.Connection, days: int = 75, limit: int = 60, fetch=None) -> dict:
+    """Reads finished cup and European matches older than the watch window (to `days` back) that were never read, so
+    the workload view carries the whole run of a club's matches. No events are raised for them."""
+    from fpl_agent.ingestion.fotmob_source import fetch_match_details
+
+    fetch = fetch or fetch_match_details
+    now = datetime.now(timezone.utc)
+    lo = (now - timedelta(days=days)).isoformat()
+    hi = (now - timedelta(hours=3)).isoformat()
+    rows = conn.execute(
+        "SELECT f.* FROM team_other_competition_fixtures f LEFT JOIN cup_match m ON m.fotmob_match_id = f.fotmob_match_id "
+        "WHERE f.fotmob_match_id IS NOT NULL AND (m.status IS NULL OR m.status != 'FULL_TIME') "
+        "AND replace(f.kickoff_utc, 'Z', '+00:00') BETWEEN ? AND ? ORDER BY f.kickoff_utc DESC", (lo, hi),
+    ).fetchall()
+    read = failed = 0
+    for fx in rows[:limit]:
+        try:
+            store_match(conn, fx, fetch(str(fx["fotmob_match_id"])), now)
+            read += 1
+        except Exception as e:
+            _logger.warning("cup backfill %s failed: %s", fx["fotmob_match_id"], e)
+            failed += 1
+    conn.commit()
+    return {"matches": read, "failed": failed, "pending": max(0, len(rows) - read - failed)}

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Masthead } from '@/components/shell/Masthead'
+import { Workload } from '@/components/squad/Workload'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { crestUrl, fetchMyTeamPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -562,6 +563,8 @@ export function MyTeamScreen() {
           )}
         </aside>
       </div>
+
+      <Workload />
 
       <PlayerDetailSheet player={selected} onClose={() => setSelectedId(null)} />
     </div>
