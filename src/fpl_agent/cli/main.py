@@ -2324,6 +2324,13 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled effective-ownership trigger failed - not fatal to the sync itself")
 
     try:
+        ladder_reason = _maybe_trigger_chip_ladder(conn)
+        if ladder_reason:
+            logger.info("run-scheduled auto-triggered chip ladder: %s", ladder_reason)
+    except Exception:
+        logger.exception("run-scheduled chip ladder trigger failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.optimization.week_plan import refresh_week_plan_if_needed
 
         plan_reason = refresh_week_plan_if_needed(conn)
@@ -2904,6 +2911,65 @@ def _maybe_trigger_eo_sample(conn) -> str | None:
             stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(PROJECT_ROOT), creationflags=creationflags,
         )
     return f"GW{event} has no effective-ownership sample"
+
+
+def _maybe_trigger_chip_ladder(conn) -> str | None:
+    """Starts `fpl chip-ladder` detached at idle priority when the stored wildcard ladder is missing or a day old: one
+    wildcard draft per week of the window still ahead (about a minute each), far past this cycle's time budget."""
+    from fpl_agent.optimization.chip_draft import LADDER_MAX_AGE_HOURS, ladder_events, stored_ladder
+
+    if not ladder_events(conn):
+        return None
+    now = datetime.now(timezone.utc)
+    have = stored_ladder(conn)
+    if have:
+        try:
+            age = (now - datetime.fromisoformat(have["computed_at"])).total_seconds() / 3600
+        except (KeyError, ValueError):
+            age = 999
+        if age < LADDER_MAX_AGE_HOURS:
+            return None
+    lock = conn.execute("SELECT value FROM app_meta WHERE key='chip_ladder_started_at'").fetchone()
+    if lock is not None:
+        try:
+            if (now - datetime.fromisoformat(lock["value"])).total_seconds() < 3 * 3600:
+                return None
+        except ValueError:
+            pass
+    fpl_exe = Path(sys.executable).parent / ("fpl.exe" if sys.platform == "win32" else "fpl")
+    if not fpl_exe.exists():
+        return None
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES ('chip_ladder_started_at', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (now.isoformat(), now.isoformat()),
+    )
+    conn.commit()
+    log_path = LOGS_DIR / "chip_ladder_auto.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(f"\n--- auto-triggered {now.isoformat()} ---\n")
+        log_file.flush()
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS if sys.platform == "win32" else 0
+        subprocess.Popen([str(fpl_exe), "chip-ladder"], stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         cwd=str(PROJECT_ROOT), creationflags=creationflags)
+    return "wildcard ladder missing or a day old"
+
+
+@cli.command("chip-ladder")
+def chip_ladder_cmd():
+    """Draft a wildcard for every week of its window still ahead and store what each is worth (the Plan page's ladder)."""
+    from fpl_agent.models.projection_memo import projection_memo
+    from fpl_agent.optimization.chip_draft import store_ladder
+
+    conn = get_connection()
+    try:
+        with projection_memo(conn):
+            out = store_ladder(conn)
+        for r in out["ladder"]:
+            click.echo(f"GW{r['event']}: +{r['gain']:.1f} over the horizon ({r['moves']} moves){'' if r['proven'] else ' (unproven)'}")
+    finally:
+        conn.close()
 
 
 def _write_dashboard(

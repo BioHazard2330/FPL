@@ -213,6 +213,7 @@ def plan_transfers_milp(
     evidence_k: float = 0.0,
     sell_penalty: dict[int, float] | None = None,
     buy_penalty: dict[int, float] | None = None,
+    wildcard_first: bool = False,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -457,7 +458,10 @@ def plan_transfers_milp(
         # to dominate the largest transfer count a legal squad can make in
         # one week (15 - a full rebuild), so it is tight rather than the
         # arbitrary huge constant that makes a MILP relax badly.
-        if "wildcard" in chip_kinds:
+        if i == 0 and wildcard_first:
+            # A wildcard (or free hit) drafted for the first gameweek of the solve: any number of moves, no hit.
+            prob += hits[t] >= 0
+        elif "wildcard" in chip_kinds:
             prob += hits[t] >= transfers_t - fuse[t] - 15 * chip[("wildcard", t)]
         else:
             prob += hits[t] >= transfers_t - fuse[t]
@@ -472,6 +476,8 @@ def plan_transfers_milp(
             # whichever bound binds, which is exactly the real rule.
             prob += ft[t] <= ft_cap
             prob += ft[t] <= ft[prev_t] - fuse[prev_t] + 1
+            if i == 1 and wildcard_first:
+                prob += ft[t] <= 1
             # A wildcard BURNS whatever free transfers were banked: FPL
             # gives you exactly one the following gameweek, regardless of
             # how many you had saved. Without this the rollover above is

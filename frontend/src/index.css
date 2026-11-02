@@ -810,3 +810,33 @@ main { view-transition-name: page; }
 .prog-cover { transform-origin: left center; transform-style: preserve-3d; transition: transform 1.2s cubic-bezier(0.7, 0, 0.3, 1); box-shadow: 18px 18px 0 #ff4614, 0 40px 80px rgba(0, 0, 0, 0.6); cursor: pointer; }
 .prog-cover-open { transform: rotateY(-115deg); }
 @keyframes prog-arrive { from { transform: translateY(40px) rotateX(12deg) rotateZ(-4deg) scale(0.85); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* chip drafts */
+@keyframes chipdraft-rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.chipdraft-bar { transform-origin: bottom; animation: chipdraft-rise 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+@keyframes chipdraft-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.chipdraft-in { animation: chipdraft-in 0.45s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .chipdraft-bar, .chipdraft-in { animation: none; } }
+
+/* The broadcast stinger between screens (shell/RouteStinger.tsx): three slanted bands cross the page left to right, the
+   ink one carrying the destination's name, and leave on the far side. */
+.stinger-band { position: absolute; top: -10%; bottom: -10%; left: -30%; width: 160%; transform: translateX(-110%) skewX(-14deg); }
+.stinger-a { animation: stinger-cross 0.62s cubic-bezier(0.7, 0, 0.3, 1) both; }
+.stinger-b { animation: stinger-cross 0.62s cubic-bezier(0.7, 0, 0.3, 1) 0.04s both; }
+.stinger-c { animation: stinger-cross 0.62s cubic-bezier(0.7, 0, 0.3, 1) 0.08s both; }
+.stinger-title { transform: skewX(14deg); animation: stinger-title 0.62s ease-out 0.08s both; }
+@keyframes stinger-cross {
+  0% { transform: translateX(-110%) skewX(-14deg); }
+  42%, 58% { transform: translateX(0) skewX(-14deg); }
+  100% { transform: translateX(110%) skewX(-14deg); }
+}
+@keyframes stinger-title { 0%, 25% { opacity: 0; letter-spacing: 0.2em; } 45%, 62% { opacity: 1; letter-spacing: 0; } 80%, 100% { opacity: 0; } }
+
+/* The goal lower third (shell/GoalFlash.tsx): the label slams in, the name panel wipes out from behind it. */
+.goalflash-kind { animation: goalflash-slam 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.goalflash-body { clip-path: inset(0 100% 0 0); animation: goalflash-wipe 0.45s ease-out 0.25s forwards; }
+.goalflash { animation: goalflash-leave 0.4s ease-in 6.6s forwards; }
+@keyframes goalflash-slam { from { transform: translateX(-120%) scale(1.3); } to { transform: none; } }
+@keyframes goalflash-wipe { to { clip-path: inset(0 0 0 0); } }
+@keyframes goalflash-leave { to { transform: translateY(160%); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .goalflash, .goalflash-kind, .goalflash-body { animation: none; clip-path: none; } }

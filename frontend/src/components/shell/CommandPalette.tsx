@@ -24,6 +24,7 @@ const HINTS: Record<string, string> = {
 const ITEMS: Item[] = [
   ...DESTINATIONS.map((d) => ({ label: d.label, hint: HINTS[d.to] ?? '', to: d.to })),
   { label: 'Matchday TV', hint: 'Full-screen broadcast for a second screen', to: '/tv' },
+  { label: 'Screen wipes on / off', hint: 'The broadcast wipe between screens', to: '#stinger' },
 ]
 
 const MAX_PLAYERS = 6
@@ -92,6 +93,15 @@ export function CommandPalette() {
   }, [query, players])
 
   function go(item: Item, compare = false) {
+    if (item.to === '#stinger') {
+      try {
+        localStorage.setItem('fpl-stinger', localStorage.getItem('fpl-stinger') === 'off' ? 'on' : 'off')
+      } catch {
+        /* storage blocked: wipes stay as they are */
+      }
+      setOpen(false)
+      return
+    }
     navigate(compare && item.player ? `/compare?a=${item.player.player_id}` : item.to, { viewTransition: true })
     setOpen(false)
   }

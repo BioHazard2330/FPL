@@ -637,6 +637,8 @@ export interface LiveSquadPlayer {
   /** FPL's own real overall ownership% (all managers, not a sampled
    * top-10k subset) - `null` only if the sync genuinely hasn't run yet. */
   ownership_percent: number | null
+  photo_code?: number | null
+  team_code?: number | null
 }
 
 export interface LiveChartSeries {

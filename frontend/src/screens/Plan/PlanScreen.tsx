@@ -7,6 +7,7 @@ import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/S
 import { WeekPlanDesk } from '@/components/plan/WeekPlanDesk'
 import { WhatIf } from '@/components/plan/WhatIf'
 import { ChipCalendar } from '@/components/plan/ChipCalendar'
+import { ChipDraft } from '@/components/plan/ChipDraft'
 import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -341,6 +342,7 @@ export function PlanScreen() {
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
         <ChipCalendar />
+        <ChipDraft />
         {second(
           state.status === 'loading' ? (
             <div className="animate-pulse">
@@ -363,6 +365,7 @@ export function PlanScreen() {
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
         <ChipCalendar />
+        <ChipDraft />
         {second(<div className="text-text-muted">{p.reason}</div>)}
       </div>
     )
@@ -377,6 +380,7 @@ export function PlanScreen() {
       {week && <WeekPlanDesk plan={week} />}
       {week && <WhatIf />}
         <ChipCalendar />
+        <ChipDraft />
       {second(
         <>
       <div className="relative overflow-hidden px-10 pb-8 pt-7">

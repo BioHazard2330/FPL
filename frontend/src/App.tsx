@@ -5,6 +5,8 @@ import { ContextHeader } from '@/components/shell/ContextHeader'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { CommandScreen } from '@/screens/Command/CommandScreen'
 import { CommandPalette } from '@/components/shell/CommandPalette'
+import { GoalFlash } from '@/components/shell/GoalFlash'
+import { RouteStinger } from '@/components/shell/RouteStinger'
 import { Skel, SkelMasthead } from '@/components/shell/ScreenStates'
 
 // Every screen but Command is its own chunk: the three.js, leaflet and chart
@@ -101,6 +103,8 @@ function App() {
         </main>
       </SidebarInset>
       <CommandPalette />
+      <RouteStinger />
+      <GoalFlash />
       {location.pathname === '/' && <Suspense fallback={null}><ProgrammeIntro /></Suspense>}
     </SidebarProvider>
   )

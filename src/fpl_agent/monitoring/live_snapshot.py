@@ -106,7 +106,8 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
     placeholders = ",".join("?" * len(locked.squad_ids))
     avail_rows = conn.execute(
         f"SELECT p.id AS player_id, p.status, s.chance_of_playing_this_round, s.chance_of_playing_next_round, "
-        f"p.news FROM players p LEFT JOIN player_stats_snapshot s ON s.id = ("
+        f"p.news, p.code AS photo_code, t.code AS team_code FROM players p LEFT JOIN teams t ON t.id = p.team_id "
+        f"LEFT JOIN player_stats_snapshot s ON s.id = ("
         f"SELECT id FROM player_stats_snapshot WHERE player_id = p.id ORDER BY retrieved_at DESC LIMIT 1) "
         f"WHERE p.id IN ({placeholders})",
         tuple(locked.squad_ids),
@@ -142,6 +143,8 @@ def _squad_block(conn: sqlite3.Connection, locked) -> list[dict]:
                 ),
                 "news": a["news"] if a else None,
                 "ownership_percent": own_by_id.get(c.player_id),
+                "photo_code": a["photo_code"] if a else None,
+                "team_code": a["team_code"] if a else None,
             })
     return out
 

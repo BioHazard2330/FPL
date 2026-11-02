@@ -279,3 +279,52 @@ def test_transfers_in_one_gameweek_are_paired_within_position():
     pairs = _pair_by_position([1, 2, 3], [10, 11, 12], pos)
 
     assert {(o, i) for o, i in pairs} == {(1, 10), (2, 12), (3, 11)}
+
+
+def _synthetic_market(conn, owned_xp, market_xp):
+    """Fifteen owned players and fifteen better ones, one of each per club, every price equal, xp fixed through the cache."""
+    from fpl_agent.optimization.squad import PlayerCandidate
+
+    now = "2026-01-01T00:00:00Z"
+    for i, (short, name, lo, hi, sel) in enumerate((("GKP", "Goalkeeper", 1, 1, 2), ("DEF", "Defender", 3, 5, 5),
+                                                    ("MID", "Midfielder", 2, 5, 5), ("FWD", "Forward", 1, 3, 3)), start=1):
+        conn.execute(
+            "INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, squad_min_play, squad_max_play, "
+            "squad_select, updated_at) VALUES (?,?,?,?,?,?,?,?)", (i, name, short, name + "s", lo, hi, sel, now))
+    conn.commit()
+    layout = ["GKP"] * 2 + ["DEF"] * 5 + ["MID"] * 5 + ["FWD"] * 3
+    owned, market = [], []
+    for k, pos in enumerate(layout):
+        for pid, xp, bucket in ((k + 1, owned_xp, owned), (k + 101, market_xp, market)):
+            bucket.append(PlayerCandidate(pid, f"P{pid}", pos, pid, f"T{pid}", 50, xp, xp, xp, xp, "high", 90.0))
+    return owned, market
+
+
+def _cache(players, events):
+    return {(c.player_id, e): c.xp for c in players for e in events}
+
+
+def test_a_first_week_wildcard_rebuilds_the_whole_squad_without_hits(db_conn):
+    owned, market = _synthetic_market(db_conn, 1.0, 4.0)
+    ids = [c.player_id for c in owned]
+    res = plan_transfers_milp(
+        db_conn, ids, 1, 0, start_event=10, horizon_gw=2, pool_per_position=8, time_limit_seconds=60, model_chips=False,
+        xp_cache=_cache(owned + market, [10, 11]), league_pool=owned + market, wildcard_first=True,
+    )
+    assert res.sequence is not None
+    first = [s for s in res.sequence.steps if s.event == 10]
+    assert set(first[-1].resulting_squad_ids) == {c.player_id for c in market}
+    assert not any(s.uses_hit for s in first)
+
+
+def test_without_the_wildcard_the_same_rebuild_pays_hits(db_conn):
+    owned, market = _synthetic_market(db_conn, 1.0, 4.0)
+    ids = [c.player_id for c in owned]
+    res = plan_transfers_milp(
+        db_conn, ids, 1, 0, start_event=10, horizon_gw=1, pool_per_position=8, time_limit_seconds=60, model_chips=False,
+        xp_cache=_cache(owned + market, [10]), league_pool=owned + market,
+    )
+    assert res.sequence is not None
+    made = [s for s in res.sequence.steps if s.event == 10 and s.player_in_id is not None]
+    # A swap gains 3 for one week (a bench swap less) against a 4-point hit, so only the free transfer is worth making.
+    assert len(made) == 1
