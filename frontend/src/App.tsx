@@ -1,5 +1,5 @@
 import { lazy, Suspense, type CSSProperties } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { AppSidebar } from '@/components/shell/AppSidebar'
 import { ContextHeader } from '@/components/shell/ContextHeader'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
@@ -30,6 +30,7 @@ const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').th
 const EyeScreen = lazy(() => import('@/screens/Eye/EyeScreen').then((m) => ({ default: m.EyeScreen })))
 const WarRoomScreen = lazy(() => import('@/screens/WarRoom/WarRoomScreen').then((m) => ({ default: m.WarRoomScreen })))
 const AlbumScreen = lazy(() => import('@/screens/Album/AlbumScreen').then((m) => ({ default: m.AlbumScreen })))
+const TvScreen = lazy(() => import('@/screens/Tv/TvScreen').then((m) => ({ default: m.TvScreen })))
 const MapScreen = lazy(() => import('@/screens/Map/MapScreen').then((m) => ({ default: m.MapScreen })))
 const VersusScreen = lazy(() => import('@/screens/Versus/VersusScreen').then((m) => ({ default: m.VersusScreen })))
 const ReviewScreen = lazy(() => import('@/screens/Review/ReviewScreen').then((m) => ({ default: m.ReviewScreen })))
@@ -49,6 +50,10 @@ function RouteFallback() {
 }
 
 function App() {
+  const location = useLocation()
+  if (location.pathname === '/tv') {
+    return <Suspense fallback={<div className="fixed inset-0 bg-[#07090d]" />}><TvScreen /></Suspense>
+  }
   return (
     <SidebarProvider style={{ '--sidebar-width': '13rem' } as CSSProperties}>
       <AppSidebar />

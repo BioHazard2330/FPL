@@ -21,7 +21,10 @@ const HINTS: Record<string, string> = {
   '/versus': 'Your season against the managers ranked around 10,000', '/leagues': 'Rivals and odds', '/field': 'This week against everyone',
   '/audit': 'Luck and deserved points', '/receipts': 'How the model has done', '/advanced': 'System health',
 }
-const ITEMS: Item[] = DESTINATIONS.map((d) => ({ label: d.label, hint: HINTS[d.to] ?? '', to: d.to }))
+const ITEMS: Item[] = [
+  ...DESTINATIONS.map((d) => ({ label: d.label, hint: HINTS[d.to] ?? '', to: d.to })),
+  { label: 'Matchday TV', hint: 'Full-screen broadcast for a second screen', to: '/tv' },
+]
 
 const MAX_PLAYERS = 6
 

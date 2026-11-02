@@ -771,3 +771,24 @@ main { view-transition-name: page; }
 .map-tip::before { display: none; }
 .leaflet-control-zoom a { border-radius: 0 !important; border: 2px solid #17130e !important; color: #17130e !important; }
 @media (prefers-reduced-motion: reduce) { .map-journey { animation: none; } }
+
+/* Odometer (components/ui/Odometer.tsx): rolling digit wheels. */
+.odo { display: inline-flex; line-height: 1; font-variant-numeric: tabular-nums; }
+.odo-cell { display: inline-block; height: 1em; overflow: hidden; position: relative; }
+.odo-strip { display: flex; flex-direction: column; transition-property: transform; transition-timing-function: cubic-bezier(0.2, 0.9, 0.25, 1.05); }
+.odo-strip > span { height: 1em; display: block; text-align: center; }
+.odo-static { display: inline-block; }
+@media (prefers-reduced-motion: reduce) { .odo-strip { transition: none; } }
+
+/* Matchday TV (screens/Tv): floodlight haze and the goal splash. */
+.tv-floodlight {
+  background:
+    radial-gradient(ellipse 60% 40% at 10% 0%, rgba(255, 246, 216, 0.10), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(255, 246, 216, 0.10), transparent 70%),
+    radial-gradient(ellipse 80% 50% at 50% 120%, rgba(11, 125, 64, 0.22), transparent 70%);
+}
+.tv-splash { animation: tv-splash 6.5s cubic-bezier(0.2, 0.9, 0.2, 1) both; }
+.tv-splash > div:first-child { animation: tv-slam 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes tv-splash { 0% { opacity: 0; } 6% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes tv-slam { from { transform: scale(2.4) rotate(-6deg); opacity: 0; } to { transform: scale(1) rotate(-3deg); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tv-splash, .tv-splash > div:first-child { animation: none; } }

@@ -116,6 +116,7 @@ export function LiveScreen() {
     <div className="data-in pb-16">
       <Masthead right={
         <span className="flex items-center gap-4">
+          <Link to="/tv" className="border-2 border-ink bg-ink px-2.5 py-0.5 font-display text-[13px] font-black uppercase tracking-[0.06em] text-paper hover:bg-spot hover:text-ink">TV mode</Link>
           <button type="button" onClick={crowd.toggle} title="A synthesised crowd: a murmur, and a roar when one of your players scores or assists"
             className={`border-2 border-ink px-2.5 py-0.5 font-display text-[13px] font-black uppercase tracking-[0.06em] ${crowd.on ? 'bg-spot text-ink' : 'bg-paper text-ink'}`}>
             {crowd.on ? 'Crowd on' : 'Crowd off'}
