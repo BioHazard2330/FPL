@@ -2138,6 +2138,11 @@ def run_scheduled(gated: bool):
 
         if cohort_due(conn):
             logger.info("run-scheduled cohort: %s", sync_cohort(conn))
+        from fpl_agent.ingestion.cohort import locked_picks_due, sync_locked_picks
+
+        locked = locked_picks_due(conn)
+        if locked is not None:
+            logger.info("run-scheduled cohort locked picks: %s", sync_locked_picks(conn, locked))
     except Exception:
         logger.exception("run-scheduled cohort sample failed - not fatal to the sync itself")
 

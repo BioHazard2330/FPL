@@ -56,3 +56,24 @@ def test_cohort_is_sampled_once_per_finished_gameweek_and_the_gap_splits_by_play
     assert d["weeks"][0]["cohort_mean"] == 11.0
     assert d["totals"]["gap"] == 1.0
     assert d["totals"]["captain"] == round(2 - (10 + 2) / 2, 1)
+
+
+def test_week_moves_counts_ins_outs_and_leaves_chip_squads_apart(db_conn):
+    from fpl_agent.models.cohort_compare import week_moves
+
+    _seed(db_conn)
+    for e in (100, 101, 102):
+        db_conn.execute("INSERT INTO cohort_entry (entry_id, cohort, retrieved_at) VALUES (?, 'top10k', 't0')", (e,))
+    rows = [(100, 1, 1), (100, 2, 2), (101, 1, 1), (101, 2, 1), (102, 1, 1), (102, 2, 2)]
+    for entry, event, pid in rows:
+        db_conn.execute("INSERT INTO cohort_pick (entry_id, event, player_id, position, multiplier) VALUES (?, ?, ?, 1, 1)", (entry, event, pid))
+    for entry, chip in ((100, None), (101, None), (102, "freehit")):
+        db_conn.execute("INSERT INTO cohort_gw (entry_id, event, chip, captain_id, captain_multiplier, transfers, transfer_cost, retrieved_at) "
+                        "VALUES (?, 2, ?, 1, 2, 1, 0, 't0')", (entry, chip))
+    db_conn.commit()
+
+    d = week_moves(db_conn, None, 2)
+    assert (d["managers"], d["movers"]) == (3, 2)
+    assert [(r["player_id"], r["count"]) for r in d["ins"]] == [(2, 1)]
+    assert [(r["player_id"], r["count"]) for r in d["outs"]] == [(1, 1)]
+    assert d["chips"] == {"freehit": 0.33}

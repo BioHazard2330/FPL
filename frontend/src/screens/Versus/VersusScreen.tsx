@@ -4,6 +4,7 @@ import { ScreenError } from '@/components/shell/ScreenStates'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { getJson } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { WeekMoves, type WeekMovesData } from '@/components/field/WeekMoves'
 
 /** VERSUS THE 10K - the season set against fifty managers ranked around 10,000 overall (`models/cohort_compare`). The
  * gap splits exactly by player (points times your multiplier minus theirs), the armband, hits and automatic
@@ -20,6 +21,7 @@ interface CohortPayload {
   status: string; managers: number; events: number[]; weeks: Week[]
   totals: { you: number; cohort: number; gap: number; captain: number; hits: number; players: number; subs: number; bench_you: number; bench_cohort: number; transfers_you: number; transfers_cohort: number }
   losses: Swing[]; gains: Swing[]; template: { event: number; missing: Swing[]; yours: Swing[] }
+  week?: WeekMovesData | null
 }
 
 const signed = (v: number, d = 0) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(d)}`
@@ -185,6 +187,14 @@ export function VersusScreen() {
           </div>
         </div>
       </section>
+
+      {d.week && (
+        <section className="px-10 py-8">
+          <div className="voice text-lg text-text-muted">their picks as locked at the deadline, against the week before</div>
+          <h2 className="font-display text-text">What the 10k did in GW{d.week.event}</h2>
+          <div className="mt-4"><WeekMoves d={d.week} /></div>
+        </section>
+      )}
 
       <section className="px-10 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">

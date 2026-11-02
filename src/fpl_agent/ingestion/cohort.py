@@ -66,7 +66,8 @@ def sync_cohort(conn: sqlite3.Connection, client: FPLApiAdapter | None = None, t
     entries = [r["entry_id"] for r in conn.execute("SELECT entry_id FROM cohort_entry WHERE cohort = ?", (cohort,))]
     histories = picks = failed = 0
     for entry in entries:
-        have = {r["event"] for r in conn.execute("SELECT event FROM cohort_gw WHERE entry_id = ? AND captain_id IS NOT NULL", (entry,))}
+        have = {r["event"] for r in conn.execute(
+            "SELECT event FROM cohort_gw WHERE entry_id = ? AND captain_id IS NOT NULL AND points IS NOT NULL", (entry,))}
         missing = [e for e in events if e not in have]
         if not missing:
             continue
@@ -107,3 +108,63 @@ def sync_cohort(conn: sqlite3.Connection, client: FPLApiAdapter | None = None, t
                 time.sleep(pause)
         conn.commit()
     return {"status": "ok", "entries": len(entries), "histories": histories, "picks": picks, "failed": failed, "event": last}
+
+
+def _locked_event(conn: sqlite3.Connection) -> int | None:
+    """The latest gameweek whose deadline has passed."""
+    row = conn.execute(
+        "SELECT MAX(id) AS e FROM events WHERE deadline_time IS NOT NULL AND replace(deadline_time, 'Z', '+00:00') <= ?",
+        (datetime.now(timezone.utc).isoformat(),),
+    ).fetchone()
+    return row["e"] if row else None
+
+
+def locked_picks_due(conn: sqlite3.Connection, cohort: str = COHORT) -> int | None:
+    """The locked gameweek when the cohort's picks for it have not been read yet."""
+    event = _locked_event(conn)
+    if event is None:
+        return None
+    have = conn.execute(
+        "SELECT COUNT(DISTINCT p.entry_id) AS n FROM cohort_pick p JOIN cohort_entry c ON c.entry_id = p.entry_id "
+        "WHERE c.cohort = ? AND p.event = ?", (cohort, event),
+    ).fetchone()["n"]
+    return event if have == 0 else None
+
+
+def sync_locked_picks(conn: sqlite3.Connection, event: int, client: FPLApiAdapter | None = None, cohort: str = COHORT,
+                      pause: float = PAUSE_SECONDS) -> dict:
+    """The cohort's picks for a gameweek as locked at its deadline (FPL publishes them then): fifteen, captain, chip and the
+    transfers made, so the week's moves of the managers around 10k can be read before a ball is kicked. Points stay empty
+    until the gameweek finishes and the full sample fills them."""
+    client = client or FPLApiAdapter()
+    at = datetime.now(timezone.utc).isoformat()
+    read = failed = 0
+    for entry in [r["entry_id"] for r in conn.execute("SELECT entry_id FROM cohort_entry WHERE cohort = ?", (cohort,))]:
+        try:
+            data = client.fetch_entry_picks(entry, event).data
+        except SourceFetchError as e:
+            _logger.warning("cohort locked picks %s GW%s failed: %s", entry, event, e)
+            failed += 1
+            continue
+        captain, mult = None, None
+        for p in data.get("picks") or []:
+            conn.execute(
+                "INSERT OR REPLACE INTO cohort_pick (entry_id, event, player_id, position, multiplier) VALUES (?, ?, ?, ?, ?)",
+                (entry, event, p["element"], p["position"], p["multiplier"]),
+            )
+            if p.get("is_captain"):
+                captain, mult = p["element"], p["multiplier"]
+        h = data.get("entry_history") or {}
+        conn.execute(
+            "INSERT INTO cohort_gw (entry_id, event, points, total, overall_rank, bench_points, transfers, transfer_cost, value, chip, "
+            "captain_id, captain_multiplier, retrieved_at) VALUES (?,?,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?) ON CONFLICT(entry_id, event) "
+            "DO UPDATE SET transfers=excluded.transfers, transfer_cost=excluded.transfer_cost, value=excluded.value, chip=excluded.chip, "
+            "captain_id=excluded.captain_id, captain_multiplier=excluded.captain_multiplier, retrieved_at=excluded.retrieved_at "
+            "WHERE cohort_gw.points IS NULL",
+            (entry, event, h.get("event_transfers"), h.get("event_transfers_cost"), h.get("value"), data.get("active_chip"), captain, mult, at),
+        )
+        read += 1
+        if pause:
+            time.sleep(pause)
+    conn.commit()
+    return {"status": "ok", "event": event, "read": read, "failed": failed}
