@@ -14,7 +14,7 @@ interface Item {
 
 const HINTS: Record<string, string> = {
   '/': 'The call this week', '/my-team': 'Squad and pitch', '/plan': 'Transfers over the horizon', '/war-room': 'Drag in a transfer, priced at once',
-  '/album': 'The fifteen as stickers', '/eye': 'Your read of each player', '/live': 'Matches in play, auto-subs, departures',
+  '/album': 'The fifteen as stickers', '/programme': 'This gameweek as a matchday programme cover', '/eye': 'Your read of each player', '/live': 'Matches in play, auto-subs, departures',
   '/matchweek': 'Every match of the week', '/map': 'The gameweek on a map: grounds, journeys, weather', '/table': 'How each side plays', '/previews': 'Next gameweek, match by match',
   '/football': 'Your clubs', '/atlas': 'Every shot of the season', '/scout': 'Player market', '/compare': 'Two players side by side',
   '/explorer': 'Filter every player', '/desk': 'News, video, community', '/review': 'Last gameweek read back',

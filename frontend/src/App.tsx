@@ -30,6 +30,8 @@ const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').th
 const EyeScreen = lazy(() => import('@/screens/Eye/EyeScreen').then((m) => ({ default: m.EyeScreen })))
 const WarRoomScreen = lazy(() => import('@/screens/WarRoom/WarRoomScreen').then((m) => ({ default: m.WarRoomScreen })))
 const AlbumScreen = lazy(() => import('@/screens/Album/AlbumScreen').then((m) => ({ default: m.AlbumScreen })))
+const ProgrammeScreen = lazy(() => import('@/screens/Programme/ProgrammeScreen').then((m) => ({ default: m.ProgrammeScreen })))
+const ProgrammeIntro = lazy(() => import('@/components/programme/ProgrammeIntro').then((m) => ({ default: m.ProgrammeIntro })))
 const StoryScreen = lazy(() => import('@/screens/Story/StoryScreen').then((m) => ({ default: m.StoryScreen })))
 const TvScreen = lazy(() => import('@/screens/Tv/TvScreen').then((m) => ({ default: m.TvScreen })))
 const MapScreen = lazy(() => import('@/screens/Map/MapScreen').then((m) => ({ default: m.MapScreen })))
@@ -88,6 +90,7 @@ function App() {
             <Route path="/versus" element={<VersusScreen />} />
             <Route path="/map" element={<MapScreen />} />
             <Route path="/story" element={<StoryScreen />} />
+            <Route path="/programme" element={<ProgrammeScreen />} />
             <Route path="/album" element={<AlbumScreen />} />
             <Route path="/war-room" element={<WarRoomScreen />} />
             <Route path="/eye" element={<EyeScreen />} />
@@ -98,6 +101,7 @@ function App() {
         </main>
       </SidebarInset>
       <CommandPalette />
+      {location.pathname === '/' && <Suspense fallback={null}><ProgrammeIntro /></Suspense>}
     </SidebarProvider>
   )
 }

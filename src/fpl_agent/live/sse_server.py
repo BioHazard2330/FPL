@@ -327,8 +327,28 @@ def make_handler(
                 self._serve_sse()
             elif self.path.startswith("/api/") and conn_factory is not None:
                 self._serve_api()
+            elif self.path.startswith("/img?"):
+                self._serve_image()
             else:
                 self._serve_static()
+
+        def _serve_image(self) -> None:
+            from urllib.parse import parse_qs
+
+            from fpl_agent.live.image_proxy import fetch_image
+
+            url = (parse_qs(self.path.split("?", 1)[1]).get("u") or [""])[0]
+            got = fetch_image(url, data_dir / "cache" / "img")
+            if got is None:
+                self.send_error(404)
+                return
+            body, ctype = got
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=604800")
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             if activity is not None:
