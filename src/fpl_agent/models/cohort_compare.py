@@ -125,6 +125,8 @@ def season_compare(conn: sqlite3.Connection, entry_id: int, cohort: str = COHORT
             "bench_you": sum(w["bench_you"] or 0 for w in weeks), "bench_cohort": round(sum(w["bench_cohort"] or 0 for w in weeks), 1),
             "transfers_you": sum(w["transfers_you"] or 0 for w in weeks),
             "transfers_cohort": round(sum(w["transfers_cohort"] or 0 for w in weeks), 1),
+            "value_you": (mine[last].get("team_value_tenths") or 0) / 10 if mine.get(last) else None,
+            "value_cohort": round(mean([r["value"] / 10 for r in cgw[last].values() if r.get("value")]), 1) if any(r.get("value") for r in cgw[last].values()) else None,
         },
         "losses": [player(p) for p in ranked[:10] if swing[p] < 0],
         "gains": [player(p) for p in reversed(ranked[-10:]) if swing[p] > 0],

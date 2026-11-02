@@ -19,7 +19,7 @@ interface Week {
 }
 interface CohortPayload {
   status: string; managers: number; events: number[]; weeks: Week[]
-  totals: { you: number; cohort: number; gap: number; captain: number; hits: number; players: number; subs: number; bench_you: number; bench_cohort: number; transfers_you: number; transfers_cohort: number }
+  totals: { you: number; cohort: number; gap: number; captain: number; hits: number; players: number; subs: number; bench_you: number; bench_cohort: number; transfers_you: number; transfers_cohort: number; value_you: number | null; value_cohort: number | null }
   losses: Swing[]; gains: Swing[]; template: { event: number; missing: Swing[]; yours: Swing[] }
   week?: WeekMovesData | null
 }
@@ -250,11 +250,12 @@ export function VersusScreen() {
         <div className="bg-void px-10 py-8">
           <div className="voice text-lg text-text-muted">how you managed it, against their averages</div>
           <h2 className="font-display text-text">Habits</h2>
-          <div className="mt-5 grid grid-cols-3 gap-4">
+          <div className="mt-5 grid grid-cols-2 gap-4 xl:grid-cols-4">
             {[
               { k: 'Transfers made', you: t.transfers_you, them: t.transfers_cohort },
               { k: 'Bench points left', you: t.bench_you, them: t.bench_cohort },
               { k: 'Points paid in hits', you: -t.hits + 0, them: null as number | null, raw: d.weeks.reduce((n, w) => n + w.hits_you, 0), rawThem: d.weeks.reduce((n, w) => n + (w.hits_cohort ?? 0), 0) },
+              ...(t.value_you !== null && t.value_cohort !== null ? [{ k: 'Squad value, £m', you: t.value_you, them: t.value_cohort }] : []),
             ].map((h) => (
               <div key={h.k} className="border-2 border-ink bg-paper p-4 shadow-[4px_4px_0_var(--ink)]">
                 <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">{h.k}</div>
