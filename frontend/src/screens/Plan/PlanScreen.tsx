@@ -6,6 +6,7 @@ import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
 import { WeekPlanDesk } from '@/components/plan/WeekPlanDesk'
 import { WhatIf } from '@/components/plan/WhatIf'
+import { ChipCalendar } from '@/components/plan/ChipCalendar'
 import type { PlanPath, PlannerCrossCheck } from '@/lib/types'
 
 const TIE_COLOR: Record<string, string> = {
@@ -339,6 +340,7 @@ export function PlanScreen() {
         <Masthead />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
+        <ChipCalendar />
         {second(
           state.status === 'loading' ? (
             <div className="animate-pulse">
@@ -360,6 +362,7 @@ export function PlanScreen() {
         <Masthead />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
+        <ChipCalendar />
         {second(<div className="text-text-muted">{p.reason}</div>)}
       </div>
     )
@@ -373,6 +376,7 @@ export function PlanScreen() {
       <Masthead />
       {week && <WeekPlanDesk plan={week} />}
       {week && <WhatIf />}
+        <ChipCalendar />
       {second(
         <>
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
