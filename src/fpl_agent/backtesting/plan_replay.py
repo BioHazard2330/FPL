@@ -243,7 +243,7 @@ def medoid_set(counts: dict[frozenset, int], base: frozenset) -> frozenset:
 def _plan_step(
     conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR,
     horizon: int = HORIZON, tail: int = 0, tail_weight: float = 0.0, draws: int = 0, sigma: float = 0.3,
-    keep_share: float | None = None,
+    keep_share: float | None = None, ft_gain: int = 1,
 ) -> bool:
     """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven.
     `tail` more rounds at `tail_weight` are the squad's value beyond the horizon (`plan_transfers_milp(terminal_value=)`).
@@ -311,7 +311,7 @@ def _plan_step(
     run.hits += hits
     run.points -= hits * HIT_COST
     run.transfers += used
-    run.free_transfers = min(max(run.free_transfers - used, 0) + 1, FT_CAP)
+    run.free_transfers = min(max(run.free_transfers - used, 0) + ft_gain, FT_CAP)
     return proven
 
 
@@ -376,9 +376,11 @@ def run_plan_replay(
         if i > 0:
             for name in plans:
                 horizon, tail, weight, *rest = (variants or {}).get(name, (HORIZON, 0, 0.0))
-                draws, sigma, keep = (rest + [0, 0.3, None][len(rest):])[:3]
-                unproven += 0 if _plan_step(conn, runs[name], candidates, by_id, i, values[name], horizon=horizon, tail=tail,
-                                            tail_weight=weight, draws=draws, sigma=sigma, keep_share=keep) else 1
+                draws, sigma, keep, bars, ft_gain = (rest + [0, 0.3, None, None, 1][len(rest):])[:5]
+                run = runs[name]
+                bar = BAR if bars is None else bars[min(run.free_transfers, len(bars)) - 1]
+                unproven += 0 if _plan_step(conn, run, candidates, by_id, i, values[name], bar=bar, horizon=horizon, tail=tail,
+                                            tail_weight=weight, draws=draws, sigma=sigma, keep_share=keep, ft_gain=ft_gain) else 1
 
             swap = runs["swap"]
             pool_by_position: dict[str, list[PlayerCandidate]] = {}
