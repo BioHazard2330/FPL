@@ -18,6 +18,7 @@ import { SeasonRibbon } from '@/components/command/SeasonRibbon'
 import { TrackRecord } from '@/components/command/TrackRecord'
 import { SquadNews } from '@/components/command/SquadNews'
 import { TonightPrices } from '@/components/command/TonightPrices'
+import { MidweekWatch } from '@/components/command/MidweekWatch'
 import { LastReport } from '@/components/command/LastReport'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
 import { CommandStage } from '@/components/command/CommandStage'
@@ -243,6 +244,7 @@ export function CommandScreen() {
               </div>
               <div className="min-w-0 space-y-7">
                 <DeadlineChecklist plan={plan} desk={desk} />
+                <MidweekWatch />
                 <TonightPrices />
               </div>
             </div>

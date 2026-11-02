@@ -31,6 +31,7 @@ from fpl_agent.monitoring.api.components_payload import build_components_payload
 from fpl_agent.monitoring.api.album_payload import build_album_payload
 from fpl_agent.monitoring.api.eye_payload import build_eye_payload
 from fpl_agent.monitoring.api.prices_payload import build_prices_payload
+from fpl_agent.monitoring.api.midweek_payload import build_midweek_payload
 from fpl_agent.monitoring.api.review_payload import build_review_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
@@ -51,6 +52,7 @@ API_BUILDERS = {
     "components": build_components_payload,
     "review": build_review_payload,
     "prices": build_prices_payload,
+    "midweek": build_midweek_payload,
     "album": build_album_payload,
     "eye": build_eye_payload,
     "advanced": build_advanced_payload,

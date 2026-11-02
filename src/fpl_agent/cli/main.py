@@ -2133,6 +2133,17 @@ def run_scheduled(gated: bool):
     except Exception:
         logger.exception("run-scheduled cross-competition fixtures sync failed - not fatal to the sync itself")
 
+    try:
+        from fpl_agent.ingestion.midweek_watch import sync_midweek
+        from fpl_agent.optimization.week_plan import plan_target_ids
+
+        squad_now = set(tracked_squad_ids or set())
+        mw = sync_midweek(conn, squad_now | plan_target_ids(conn), squad_now)
+        if mw["matches"] or mw["events"]:
+            logger.info("run-scheduled midweek watch: %s", mw)
+    except Exception:
+        logger.exception("run-scheduled midweek watch failed - not fatal to the sync itself")
+
     # Match Intelligence Core auto-refresh (Slice A2, spec section 4) - the
     # real PRE_MATCH -> LIVE -> HALFTIME -> FULL_TIME detection hook. No new
     # "tracked match" registry: re-syncs any not-yet-FULL_TIME match_intelligence

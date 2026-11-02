@@ -69,6 +69,26 @@ def _kickoff_epochs(conn: sqlite3.Connection, since_epoch: int) -> list[int]:
     return out
 
 
+def _cup_kickoff_epochs(conn: sqlite3.Connection, since_epoch: int) -> list[int]:
+    """Premier League clubs' cup and European kickoffs (`team_other_competition_fixtures`): the midweek watch reads
+    their lineups, so these nights open the window too (unbridged: a Tuesday and a Thursday stay two nights)."""
+    since = datetime.fromtimestamp(since_epoch, timezone.utc).isoformat()
+    out: list[int] = []
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT kickoff_utc FROM team_other_competition_fixtures WHERE kickoff_utc IS NOT NULL "
+            "AND replace(kickoff_utc, 'Z', '+00:00') >= ?", (since,),
+        ).fetchall()
+    except sqlite3.Error:
+        return out
+    for row in rows:
+        try:
+            out.append(int(datetime.fromisoformat(row["kickoff_utc"].replace("Z", "+00:00")).timestamp()))
+        except (ValueError, AttributeError):
+            continue
+    return out
+
+
 def _merge(spans: list[tuple[int, int]], tolerance: int = 0) -> list[tuple[int, int]]:
     merged: list[tuple[int, int]] = []
     for start, end in sorted(spans):
@@ -123,7 +143,8 @@ def compute_window(
         int(cfg.matchday_bridge_hours * 3600),
     )
     deadline_spans = [(d - lead, d + grace) for d in deadlines]
-    spans = _merge(match_spans + deadline_spans)
+    cup_spans = [(k - pre, k + post) for k in _cup_kickoff_epochs(conn, now - post)]
+    spans = _merge(match_spans + deadline_spans + cup_spans)
     live_now = _a_match_is_live_now(conn, now)
     if live_now:
         spans = _merge(spans + [(now - 60, now + post)])
