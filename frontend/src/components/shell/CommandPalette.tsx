@@ -18,7 +18,7 @@ const HINTS: Record<string, string> = {
   '/matchweek': 'Every match of the week', '/map': 'The gameweek on a map: grounds, journeys, weather', '/table': 'How each side plays', '/previews': 'Next gameweek, match by match',
   '/football': 'Your clubs', '/atlas': 'Every shot of the season', '/scout': 'Player market', '/compare': 'Two players side by side',
   '/explorer': 'Filter every player', '/desk': 'News, video, community', '/review': 'Last gameweek read back',
-  '/versus': 'Your season against the managers ranked around 10,000', '/leagues': 'Rivals and odds', '/field': 'This week against everyone',
+  '/versus': 'Your season against the managers ranked around 10,000', '/story': 'Your season as a scroll-driven film', '/leagues': 'Rivals and odds', '/field': 'This week against everyone',
   '/audit': 'Luck and deserved points', '/receipts': 'How the model has done', '/advanced': 'System health',
 }
 const ITEMS: Item[] = [

@@ -175,3 +175,52 @@ def sync_leagues(conn: sqlite3.Connection, client: FPLApiAdapter | None = None, 
     )
     conn.commit()
     return {"status": "ok", "leagues": len(leagues), "tracked": len(tracked), "rivals": len(rivals), "picks_fetched": fetched, "event": event}
+
+
+RACE_LEAGUE_MAX = 20
+
+
+def race_league(conn: sqlite3.Connection) -> int | None:
+    """The tracked league the season race is drawn for: the smallest one with at least three managers (a private league
+    of friends rather than a cup or a country league)."""
+    row = conn.execute(
+        "SELECT id FROM fpl_league WHERE tracked = 1 AND rank_count BETWEEN 3 AND ? ORDER BY rank_count, id LIMIT 1", (RACE_LEAGUE_MAX,),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def backfill_rival_history(conn: sqlite3.Connection, client: FPLApiAdapter | None = None) -> dict:
+    """Every finished gameweek of every manager in the race league from his public history (one call each), into
+    `rival_event` beside the picks the regular sync stores, so the season can be drawn as a race. Only managers missing a
+    finished gameweek are fetched."""
+    league = race_league(conn)
+    if league is None:
+        return {"status": "no_league"}
+    finished = [r["id"] for r in conn.execute("SELECT id FROM events WHERE finished = 1 ORDER BY id")]
+    if not finished:
+        return {"status": "no_finished_event"}
+    client = client or FPLApiAdapter()
+    at = _now()
+    fetched = 0
+    for r in conn.execute("SELECT entry_id FROM fpl_league_standing WHERE league_id = ?", (league,)).fetchall():
+        entry = r["entry_id"]
+        have = {x["event"] for x in conn.execute("SELECT event FROM rival_event WHERE entry_id = ? AND total_points IS NOT NULL", (entry,))}
+        if all(e in have for e in finished):
+            continue
+        try:
+            hist = client.fetch_entry_history(entry).data
+        except SourceFetchError as e:
+            _logger.warning("rival history %s failed: %s", entry, e)
+            continue
+        chips = {c["event"]: c["name"] for c in hist.get("chips") or []}
+        for h in hist.get("current") or []:
+            conn.execute(
+                "INSERT INTO rival_event (entry_id, event, active_chip, points, total_points, bank, value, event_transfers, event_transfers_cost, "
+                "retrieved_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_id, event) DO UPDATE SET points=excluded.points, "
+                "total_points=excluded.total_points, active_chip=COALESCE(rival_event.active_chip, excluded.active_chip), retrieved_at=excluded.retrieved_at",
+                (entry, h["event"], chips.get(h["event"]), h.get("points"), h.get("total_points"), h.get("bank"), h.get("value"),
+                 h.get("event_transfers"), h.get("event_transfers_cost"), at),
+            )
+        fetched += 1
+    conn.commit()
+    return {"status": "ok", "league": league, "fetched": fetched}

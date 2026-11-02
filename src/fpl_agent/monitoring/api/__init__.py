@@ -35,6 +35,7 @@ from fpl_agent.monitoring.api.midweek_payload import build_midweek_payload
 from fpl_agent.monitoring.api.cohort_payload import build_cohort_payload
 from fpl_agent.monitoring.api.getme_payload import build_getme_payload
 from fpl_agent.monitoring.api.map_payload import build_map_payload
+from fpl_agent.monitoring.api.story_payload import build_story_payload
 from fpl_agent.monitoring.api.review_payload import build_review_payload
 from fpl_agent.monitoring.api.scout_payload import build_scout_payload
 from fpl_agent.monitoring.api.signals_payload import build_signals_payload
@@ -59,6 +60,7 @@ API_BUILDERS = {
     "cohort": build_cohort_payload,
     "getme": build_getme_payload,
     "map": build_map_payload,
+    "story": build_story_payload,
     "album": build_album_payload,
     "eye": build_eye_payload,
     "advanced": build_advanced_payload,

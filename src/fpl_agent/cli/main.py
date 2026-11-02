@@ -1939,6 +1939,15 @@ def run_scheduled(gated: bool):
         logger.exception("run-scheduled mini-league sync failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.ingestion.leagues import backfill_rival_history
+
+        race = backfill_rival_history(conn)
+        if race.get("fetched"):
+            logger.info("run-scheduled league race history: %s", race)
+    except Exception:
+        logger.exception("run-scheduled league race history failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.watcher_ratings import sync_watcher_ratings
 
         watcher_result = sync_watcher_ratings(conn)
