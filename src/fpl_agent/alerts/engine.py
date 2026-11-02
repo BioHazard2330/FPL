@@ -74,6 +74,22 @@ class Alert:
     def summary(self) -> str:
         return self.detail or f"{self.old_value} -> {self.new_value}"
 
+    @property
+    def headline(self) -> str:
+        """A readable title for a notification: what kind of news this is, in words."""
+        return EVENT_TITLES.get(self.event_type, self.event_type.replace("_", " ").capitalize())
+
+
+EVENT_TITLES = {
+    "status_change": "Availability changed", "price_change": "Price change", "lineup_confirmed": "Team news",
+    "kickoff_reminder": "Kickoff soon", "early_withdrawal": "Taken off early", "cup_withdrawal": "Taken off early in a cup tie",
+    "cup_absence": "Out of a cup tie", "injury_headline": "Injury headline", "manager_change": "Managerial change",
+    "predicted_lineup_change": "Predicted lineup changed", "start_percent_change": "Start chance changed",
+    "setpiece_change": "Set-piece duty changed", "deadline_reminder": "Deadline soon", "points_revision": "Points revised",
+    "club_change": "Transfer between clubs", "new_player": "New player in the game", "qualitative_analysis": "Match read",
+    "week_plan_change": "The plan changed",
+}
+
 
 class Notifier(ABC):
     @abstractmethod
@@ -148,8 +164,8 @@ class WindowsToastNotifier(Notifier):
     def send(self, alert: Alert) -> None:
         import base64
 
-        title = f"[{alert.severity}] {alert.event_type}"
-        body = f"{alert.subject}: {alert.summary}"
+        title = f"{alert.headline} · {alert.subject}"
+        body = alert.summary
         script = _build_toast_script(title, body)
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         try:
