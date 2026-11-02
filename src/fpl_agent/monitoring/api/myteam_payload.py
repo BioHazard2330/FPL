@@ -108,6 +108,7 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
 
     payload = {
         "has_squad": True,
+        "event": ctx.reference_event,
         "bar": {
             "squad_value_m": ctx.squad_value_m,
             "bank_m": ctx.bank_m,
@@ -133,7 +134,51 @@ def build_my_team_payload(ctx: DashboardContext) -> dict:
         "fixtures": _fixture_block(ctx),
         "analyst": _analyst_block(ctx),
     }
+    _align_to_next_deadline(ctx, payload)
     return _with_photo_codes(payload)
+
+
+def _align_to_next_deadline(ctx: DashboardContext, payload: dict) -> None:
+    """Once a gameweek's deadline has passed, the squad page is about the next one; the dashboard context still projects
+    the gameweek being played (`live_or_reference_event`) until its last match ends, so for days the page showed the
+    played gameweek's projections against the next gameweek's fixtures, with that gameweek's teamsheets as "Confirmed"
+    (found 2026-11-02: Haaland 4.7 here, 6.3 in the plan). When the stored week plan is for a later gameweek, its eleven as
+    you set it supplies the projections, and teamsheet states are read for that gameweek."""
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.models.lineup_state import squad_lineup_states
+    from fpl_agent.optimization.week_plan import latest_week_plan
+
+    conn = get_connection()
+    try:
+        stored = latest_week_plan(conn)
+        if stored is None or ctx.reference_event is None or stored[0].get("event", 0) <= ctx.reference_event:
+            return
+        detail = stored[0]
+        lineup = detail.get("lineup_set_by_you") or detail.get("lineup_now")
+        if not lineup:
+            return
+        by_id = {p["player_id"]: p for p in lineup["starting"] + lineup["bench"]}
+        event = detail["event"]
+        players = [p for pos in payload["positions"] for p in pos["players"]] + payload["bench"]
+        states = squad_lineup_states(conn, [p["player_id"] for p in players], event)
+        for p in players:
+            src = by_id.get(p["player_id"])
+            if src is not None:
+                p["median"] = src["xp"]
+                p["floor"] = src.get("floor") if src.get("floor") is not None else p["floor"]
+                p["ceiling"] = src.get("ceiling") if src.get("ceiling") is not None else p["ceiling"]
+            st = states.get(p["player_id"])
+            p["lineup"] = (
+                {"state": st.state, "label": _LINEUP_LABEL.get(st.state, st.state.replace("_", " ").title()), "detail": st.detail}
+                if st is not None and st.state != "UNKNOWN" else None
+            )
+        starters = [p for pos in payload["positions"] for p in pos["players"]]
+        if starters:
+            top = max(starters, key=lambda p: p["median"])
+            payload["strong_link"] = {**payload["strong_link"], "name": top["name"], "team_short": top["team_short"], "median": round(top["median"], 1)}
+        payload["event"] = event
+    finally:
+        conn.close()
 
 
 def _analyst_block(ctx: DashboardContext) -> list[dict]:
