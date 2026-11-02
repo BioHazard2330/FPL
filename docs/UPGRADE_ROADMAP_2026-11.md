@@ -23,14 +23,17 @@ odds, 500 credits/month), Understat, BBC/Sky/Guardian RSS, YouTube/Reddit feeds.
    the squad; measured against next-match minutes before it is ever allowed near a projection. `[built]` (display)
 5. **Matchday conditions** - stadium, kickoff weather forecast (Open-Meteo at the stadium's coordinates), referee and
    his card rate from stored matches, on previews and the map. `[built]`
-6. Team value engine - your squad value against the cohort's by gameweek and the price rises your squad is riding;
-   timing transfers ahead of predicted rises inside the plan.
-7. Elite-crowd signal study - does top-10k ownership change predict points beyond our projection (once 4+ gameweeks of
+6. Team value - your squad value against the cohort's (`[built]` on Versus: 102.3 against 102.9 at GW8, so cash is not
+   the gap). Timing transfers ahead of predicted rises inside the plan: not built.
+7. **Box presence** - FotMob's touches in the opposition box carry to next-match xG beyond the xG rate (measured,
+   leave-one-gameweek-out, 638 matches); on every football read (`[built]`), kept out of projections until tested
+   against the model's own goal components.
+8. Elite-crowd signal study - does top-10k ownership change predict points beyond our projection (once 4+ gameweeks of
    frozen projections exist; the plumbing is the cohort table).
-8. Referee as a card/penalty input - only if a multi-season referee history becomes available (FotMob ids for past
+9. Referee as a card/penalty input - only if a multi-season referee history becomes available (FotMob ids for past
    seasons are not stored).
-9. Rank-aware armband - pick by chance of beating the top-10k field when two options are within a point.
-10. Joint chip-and-transfer solve over the second half once doubles are announced (needs a faster formulation).
+10. Rank-aware armband - pick by chance of beating the top-10k field when two options are within a point.
+11. Joint chip-and-transfer solve over the second half once doubles are announced (needs a faster formulation).
 
 ## B. Live football
 
@@ -38,31 +41,32 @@ odds, 500 credits/month), Understat, BBC/Sky/Guardian RSS, YouTube/Reddit feeds.
     every match on one board, your players' events as they happen with goal animations and the crowd. `[built]`
 12. **The map** (`/map`) - every stadium on a dark football map, this gameweek's ties as arcs, weather at kickoff,
     live scores and your players pinned to their grounds. `[built]`
-13. **Desktop notifications + installable app** - goals, assists, cards and subs for your players, cup withdrawals,
-    injuries, price moves and the deadline, pushed by the browser; the site installs as an app. `[built]`
+13. **Desktop notifications** - every HIGH event (cup withdrawals, injury headlines, manager changes, team news) already
+    reaches Windows toasts through the alert engine; titles are now readable (`[built]`). A browser push/installable app
+    was not built: the toasts already reach the desktop with the browser closed.
 14. **Live commentary** - the Premier League's own text commentary in the match centre. `[built]`
-15. Momentum river - the live momentum as a flowing ribbon behind the score.
-16. Auto night mode - the floodlit palette switches on while your players are on the pitch. `[built]`
+15. Momentum river - the live momentum as a flowing ribbon behind the score. Not built.
+16. Auto night mode - the floodlit palette switches on while your players are on the pitch. Not built: inverting the print palette breaks the ink shadows across ~30 screens; needs a palette pass of its own.
 
 ## C. The story of your season
 
 17. **Season story** (`/story`) - a scroll-driven film of your season: rank river, chip moments, hauls and blanks,
     the gap to the 10k, each chapter animating in as you scroll. `[built]`
 18. **The race** - you, the 10k cohort and every mini-league rival as an animated race by gameweek. `[built]`
-19. Achievements - green-arrow streaks, armband hauls, differentials that came off, earned and shown in the album.
-20. Counterfactual season - your season replayed as if you had followed every stored plan.
+19. Achievements (not built) - green-arrow streaks, armband hauls, differentials that came off, earned and shown in the album.
+20. Counterfactual season (not built) - your season replayed as if you had followed every stored plan.
 
 ## D. Players
 
 21. **Pizza charts** - the scouting percentiles as a radial pizza on player pages and Compare. `[built]`
-22. Heatmaps per match from FotMob.
+22. Heatmaps per match from FotMob (not built).
 23. Attacking zones - where each team attacks (left/centre/right) beside the full-backs and wingers who play there.
     `[built]` (previews)
-24. Similar players - nearest neighbours in percentile space with price, for every player.
+24. Similar players (not built) - nearest neighbours in percentile space with price, for every player.
 
 ## E. Polish and trust
 
 25. **Numbers that count** - key figures roll to their value. `[built]`
 26. **QA sweep** - every route at 1440 and 1080: console errors, overflow, empty and stale states. `[built]`
-27. Keyboard map (`?`) for every shortcut.
-28. Per-panel freshness stamps everywhere.
+27. Keyboard map (not built) (`?`) for every shortcut.
+28. Per-panel freshness stamps everywhere (not built).
