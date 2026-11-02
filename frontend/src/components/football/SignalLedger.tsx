@@ -1,4 +1,5 @@
 import { fetchSignalsPayload } from '@/lib/api'
+import { Note } from '@/components/ui/Info'
 import { useFetch } from '@/lib/useFetch'
 import type { SignalMetric, StreakRow } from '@/lib/types'
 
@@ -71,10 +72,10 @@ export function SignalLedger() {
   return (
     <div className="mt-10 border-t border-divider px-10 py-8">
       <div className="mb-1 text-[13px] font-bold text-text-faint">How much to trust a football signal</div>
-      <p className="mb-6 max-w-3xl text-sm text-text-muted">
+      <Note>
         A finding is one match. This is how far each kind of signal has carried into the next match, measured on {d.stories} analysed matches this season and on every
         season in the history. Where a signal does not carry, the analyst marks its findings low confidence.
-      </p>
+      </Note>
 
       <div className="grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem_4.5rem] items-end gap-x-5 border-b border-divider pb-2 text-[12px] font-bold text-text-faint">
         <span>Signal</span>

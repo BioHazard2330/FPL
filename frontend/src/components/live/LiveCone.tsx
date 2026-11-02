@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Note } from '@/components/ui/Info'
 import { EdgeDensity } from '@/components/charts/EdgeDensity'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchLiveCone } from '@/lib/api'
@@ -80,9 +81,9 @@ export function LiveCone() {
               <div className="tabular text-right text-text-muted" title="chance of 5 or more points still to come">{Math.round(p.p_five_more * 100)}% for 5+</div>
             </div>
           ))}
-          <p className="mt-3 text-[13px] leading-relaxed text-text-faint">
+          <Note>
             Remaining points include the model's measured shortfall per player still to play. Automatic substitutions are not applied, so a benched player who comes on is a small understatement.
-          </p>
+          </Note>
         </div>
       </div>
     </section>

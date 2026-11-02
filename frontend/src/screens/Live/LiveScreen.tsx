@@ -1,4 +1,5 @@
 import Chart from 'react-apexcharts'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
@@ -311,18 +312,18 @@ export function LiveScreen() {
       ) : (
         <div className="border-b border-divider px-10 py-8">
           <div className="font-display text-2xl font-bold text-text-faint">No match is live right now</div>
-          <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
+          <Note>
             The match centre &mdash; scoreline, possession and xG contest, momentum band, shot map, and your own players'
             in-match returns &mdash; fills in here from the fast poll channel the moment a fixture kicks off. Nothing is
             simulated in between.
-          </p>
+          </Note>
         </div>
       )}
 
       {(p.autosubs ?? []).length > 0 && (
         <section className="px-10 py-6">
           <h2 className="font-display text-text">Auto-sub watch</h2>
-          <p className="mt-1 text-[13px] text-text-muted">Starters on 0 minutes and the bench player FPL brings on, in your bench order with a legal formation. Standby: his match is still to finish.</p>
+          <Note>Starters on 0 minutes and the bench player FPL brings on, in your bench order with a legal formation. Standby: his match is still to finish.</Note>
           <div className="mt-4 flex flex-wrap gap-4">
             {(p.autosubs ?? []).map((a) => (
               <div key={a.out} className={`flex items-center gap-3 border-2 border-ink px-4 py-2.5 shadow-[4px_4px_0_var(--ink)] ${a.status === 'made' ? 'bg-paper' : 'bg-raised'}`}>
@@ -418,9 +419,9 @@ export function LiveScreen() {
             <div className="mb-1 text-[13px] font-bold text-text-faint">Bonus &amp; defensive contribution</div>
             {bonusDefcon.some((r) => (r.minutes ?? 0) > 0) ? (
               <>
-                <p className="mb-3 text-[13px] text-text-faint">
+                <Note>
                   Provisional bonus is exactly that &mdash; BPS can still move until the match is settled.
-                </p>
+                </Note>
                 <BonusDefconRail rows={bonusDefcon} />
               </>
             ) : (
@@ -442,7 +443,7 @@ export function LiveScreen() {
       {p.threats.length > 0 && (
         <div className="border-t border-divider bg-void px-10 py-8">
           <div className="mb-1 text-[13px] font-bold text-text-faint">Threats</div>
-          <p className="mb-3 text-[13px] text-text-faint">Template picks you don't own, hauling right now.</p>
+          <Note>Template picks you don't own, hauling right now.</Note>
           <div className="flex flex-wrap gap-x-10 gap-y-3">
             {p.threats.map((t) => (
               <div key={t.player_id} className="flex items-baseline gap-2">
@@ -467,7 +468,7 @@ export function LiveScreen() {
           {events.length > 0 && (
             <div className="bg-void px-10 py-8">
               <div className="mb-1 text-[13px] font-bold text-text-faint">Squad returns</div>
-              <p className="mb-3 text-[13px] text-text-faint">Running totals this gameweek, not a timed feed.</p>
+              <Note>Running totals this gameweek, not a timed feed.</Note>
               <div className="divide-y divide-divider">
                 {events.map((e, i) => {
                   const kind = RETURN_KIND[e.kind]

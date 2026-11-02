@@ -93,124 +93,104 @@ def _verdict(side: dict) -> str | None:
 
 
 def move_brief(move: dict, fixtures: dict, eo: dict, yellows: dict, midweek: dict, horizon: int) -> dict:
+    """Every lens as a chip: a short `value`, a `lean` (+1 for the move, -1 against, 0 context), whether it is `counted`
+    in the grade, and the full sentence as `detail` for the hover. `for`/`against`/`context` keep the sentences."""
     out, into = move["out"], move["into"]
-    for_, against, context = [], [], []
-    score = 0
+    lenses: list[dict] = []
+
+    def add(key: str, label: str, value: str, lean: int, detail: str, counted: bool = True) -> None:
+        lenses.append({"key": key, "label": label, "value": value, "lean": lean, "counted": counted and lean != 0, "detail": detail})
 
     gain = move.get("gain") or 0.0
-    line = (f"+{gain:.1f} over {horizon} gameweeks on the projections: {into['name']} "
-            f"{' / '.join(f'{x:.1f}' for x in into.get('xp_by_gw') or [])} against {out['name']} "
-            f"{' / '.join(f'{x:.1f}' for x in out.get('xp_by_gw') or [])}.")
-    (for_ if gain >= BIG_GAIN else context).append(line)
-    score += 1 if gain >= BIG_GAIN else 0
+    add("proj", "Projection", f"{gain:+.1f}", 1 if gain >= BIG_GAIN else 0,
+        f"+{gain:.1f} over {horizon} gameweeks: {into['name']} {' / '.join(f'{x:.1f}' for x in into.get('xp_by_gw') or [])}, "
+        f"{out['name']} {' / '.join(f'{x:.1f}' for x in out.get('xp_by_gw') or [])}.")
 
     run_in, run_out = _run(fixtures, into.get("team_code")), _run(fixtures, out.get("team_code"))
     if run_in and into.get("team_code") == out.get("team_code"):
-        context.append(f"Same club, same fixtures: {into['team_short']} {_fixture_text(run_in)}.")
+        add("fixtures", "Fixtures", "same club", 0, f"Same club, same fixtures: {_fixture_text(run_in)}.")
     elif run_in and run_out:
         d_in, d_out = _mean_difficulty(run_in), _mean_difficulty(run_out)
-        d3_in, d3_out = _mean_difficulty(run_in, 3), _mean_difficulty(run_out, 3)
-        text = (f"Fixture by fixture: {into['team_short']} {_fixture_text(run_in)} (average {d_in:.1f}) against "
-                f"{out['team_short']} {_fixture_text(run_out)} (average {d_out:.1f}); next three {d3_in:.1f} against {d3_out:.1f}.")
-        if d_out - d_in >= FIXTURE_STEP:
-            for_.append(text)
-            score += 1
-        elif d_in - d_out >= FIXTURE_STEP:
-            against.append(text)
-            score -= 1
-        else:
-            context.append(text)
+        lean = 1 if d_out - d_in >= FIXTURE_STEP else -1 if d_in - d_out >= FIXTURE_STEP else 0
+        add("fixtures", "Fixtures", f"{d_in:.1f} v {d_out:.1f}", lean,
+            f"{into['team_short']} {_fixture_text(run_in)} (average {d_in:.1f}); {out['team_short']} {_fixture_text(run_out)} (average {d_out:.1f}).")
 
     v_in, v_out = _verdict(into), _verdict(out)
-    read_in = ((into.get("football_read") or {}).get("verdict") or {}).get("text")
-    read_out = ((out.get("football_read") or {}).get("verdict") or {}).get("text")
-    if v_in == "backs him":
-        for_.append(f"The football read on {into['name']}: {read_in}")
-        score += 1
-    elif v_in == "against him":
-        against.append(f"The football read on {into['name']}: {read_in}")
-        score -= 1
-    if v_out == "against him":
-        for_.append(f"The football read on {out['name']}: {read_out}")
-        score += 1
-    elif v_out == "backs him":
-        against.append(f"The football read on {out['name']} still backs him: {read_out}")
-        score -= 1
+    read_in = ((into.get("football_read") or {}).get("verdict") or {}).get("text") or ""
+    read_out = ((out.get("football_read") or {}).get("verdict") or {}).get("text") or ""
+    short = {"backs him": "backs", "against him": "against", "mixed": "mixed"}
+    if v_in:
+        add("read_in", f"Read: {into['name']}", short.get(v_in, v_in), 1 if v_in == "backs him" else -1 if v_in == "against him" else 0, read_in)
+    if v_out:
+        add("read_out", f"Read: {out['name']}", short.get(v_out, v_out), 1 if v_out == "against him" else -1 if v_out == "backs him" else 0, read_out)
 
     s_in, s_out = into.get("start_percent"), out.get("start_percent")
-    if s_in is not None and s_in < START_FLOOR:
-        against.append(f"{into['name']} is {s_in}% to start on the lineup feed.")
-        score -= 1
-    elif s_in is not None and s_out is not None and s_out < START_FLOOR:
-        for_.append(f"{out['name']} is {s_out}% to start; {into['name']} {s_in}%.")
+    if s_in is not None:
+        lean = -1 if s_in < START_FLOOR else 1 if s_out is not None and s_out < START_FLOOR else 0
+        add("start", "Start %", f"{s_in} v {s_out if s_out is not None else '—'}", lean,
+            f"Lineup feed: {into['name']} {s_in}% to start, {out['name']} {s_out if s_out is not None else 'unknown'}%.")
 
     duties_in, duties_out = into.get("duties") or [], out.get("duties") or []
     if duties_in or duties_out:
-        context.append(f"Set pieces: {into['name']} {', '.join(duties_in) or 'none'}; {out['name']} {', '.join(duties_out) or 'none'}.")
+        add("duties", "Set pieces", f"{len(duties_in)} v {len(duties_out)}", 0,
+            f"{into['name']}: {', '.join(duties_in) or 'none'}. {out['name']}: {', '.join(duties_out) or 'none'}.", counted=False)
 
     so_in, so_out = into.get("solio_next"), out.get("solio_next")
     if so_in is not None and so_out is not None:
         diff = so_in - so_out
         ours = (into.get("xp_next") or 0) - (out.get("xp_next") or 0)
-        text = (f"Solio's model next gameweek: {into['name']} {so_in:.1f}, {out['name']} {so_out:.1f} ({diff:+.1f}; "
-                f"ours {ours:+.1f}).")
-        if diff >= SOLIO_STEP:
-            for_.append(text)
-            score += 1
-        elif diff <= -SOLIO_STEP:
-            against.append(text)
-            score -= 1
-        else:
-            context.append(text)
+        add("solio", "Solio", f"{diff:+.1f}", 1 if diff >= SOLIO_STEP else -1 if diff <= -SOLIO_STEP else 0,
+            f"Solio next gameweek: {into['name']} {so_in:.1f}, {out['name']} {so_out:.1f} ({diff:+.1f}; ours {ours:+.1f}).")
 
     conf = move.get("confidence") or {}
     win = conf.get("win_prob")
     if win is not None:
-        text = (f"Replayed {conf.get('trials', 4000):,} times with talent uncertainty: the move wins in {_pct(win)}, "
-                f"by {conf.get('mean_diff', 0):+.1f} on average (10-90%: {conf.get('p10', 0):+.0f} to {conf.get('p90', 0):+.0f}).")
-        if win >= WIN_SOLID:
-            for_.append(text)
-            score += 1
-        elif win < WIN_THIN:
-            against.append(text)
-            score -= 1
-        else:
-            context.append(text)
+        add("replays", "Replays won", _pct(win), 1 if win >= WIN_SOLID else -1 if win < WIN_THIN else 0,
+            f"Replayed {conf.get('trials', 4000):,} times with talent uncertainty: wins {_pct(win)}, by {conf.get('mean_diff', 0):+.1f} "
+            f"on average (10-90%: {conf.get('p10', 0):+.0f} to {conf.get('p90', 0):+.0f}).")
 
     stress = move.get("stress") or {}
     if stress.get("survives_half") is True:
-        context.append(f"Still clears the bar if {into['name']}'s edge over {out['name']} is halved ({stress.get('gain_if_half', 0):+.1f}).")
+        add("stress", "Robust", "survives ½", 0, f"Still clears the bar with the edge halved ({stress.get('gain_if_half', 0):+.1f}).", counted=False)
     elif stress.get("survives_half") is False and stress.get("breakeven_drop_pct") is not None:
-        against.append(f"Fragile: the move stops paying if {into['name']}'s projection is {stress['breakeven_drop_pct']:.0f}% too high.")
+        add("stress", "Fragile", f"{stress['breakeven_drop_pct']:.0f}%", -1,
+            f"Stops paying if {into['name']}'s projection is {stress['breakeven_drop_pct']:.0f}% too high.", counted=False)
 
     e_in, e_out = eo.get(into["player_id"]), eo.get(out["player_id"])
     if e_in is not None and e_out is not None:
-        context.append(
-            f"Top 10k: {into['name']} effective ownership {e_in[0]:.2f} ({'a shield' if e_in[0] >= 0.5 else 'a differential'}), "
-            f"{out['name']} {e_out[0]:.2f}. Owning a player the top 10k hold protects rank; one they do not moves it."
-        )
+        add("top10k", "Top-10k EO", f"{e_in[0]:.2f} v {e_out[0]:.2f}", 0,
+            f"Effective ownership in the top 10k: {into['name']} {e_in[0]:.2f} ({'shield' if e_in[0] >= 0.5 else 'differential'}), "
+            f"{out['name']} {e_out[0]:.2f}.", counted=False)
 
     p_rise = into.get("price_p_rise")
     if p_rise is not None and p_rise >= RISE_LIKELY:
-        for_.append(f"{into['name']} has a {_pct(p_rise)} chance to rise tonight: make it before the price moves.")
-    for side in (into, out):
+        add("price", "Price rise", _pct(p_rise), 1, f"{into['name']} {_pct(p_rise)} to rise tonight: buy before it moves.", counted=False)
+    for side, sign in ((into, -1), (out, 1)):
         n = yellows.get(side["player_id"])
         if n is not None and n >= YELLOW_WATCH:
-            (against if side is into else for_).append(f"{side['name']} is on {n} yellows (five by the 19th club match is a ban).")
-    for side in (into, out):
-        games = midweek.get(side["player_id"])
-        if games:
-            context.append(f"{side['name']}'s club plays midweek: {'; '.join(games)} (measured: regulars' league minutes do not drop after a European tie).")
-
+            add(f"cards_{side['player_id']}", f"Cards: {side['name']}", f"{n} YC", sign,
+                f"{side['name']} on {n} yellows; five by the club's 19th match is a ban.", counted=False)
+    games = sorted({g.split(" v ")[0] for side in (into, out) for g in midweek.get(side["player_id"], [])})
+    if games:
+        add("midweek", "Midweek", ", ".join(games), 0,
+            "; ".join(f"{side['name']}: {', '.join(midweek[side['player_id']])}" for side in (into, out) if midweek.get(side["player_id"]))
+            + ". Measured: regulars' league minutes do not drop after a European tie.", counted=False)
     form_in = (into.get("form") or {}).get("label")
     if form_in in ("HOT", "COLD"):
-        context.append(f"{into['name']} is {form_in.lower()} over his last three; streaks of that kind do not carry into the next match (measured), so it is not counted.")
+        add("form", "Form", form_in.lower(), 0, f"{into['name']} {form_in.lower()} over his last three; such spells do not carry (measured).", counted=False)
 
+    score = sum(lz["lean"] for lz in lenses if lz["counted"])
+    for_ = [lz["detail"] for lz in lenses if lz["lean"] > 0]
+    against = [lz["detail"] for lz in lenses if lz["lean"] < 0]
+    context = [lz["detail"] for lz in lenses if lz["lean"] == 0]
     grade = "strong" if score >= 3 else "sound" if score >= 1 else "marginal" if score == 0 else "doubtful"
     return {
         "out_id": out["player_id"], "into_id": into["player_id"], "out": out["name"], "into": into["name"],
         "position": POSITION_WORD.get(into.get("position"), into.get("position")), "grade": grade, "score": score,
-        "for": for_, "against": against, "context": context,
+        "for": for_, "against": against, "context": context, "lenses": lenses,
+        "runs": {"into": run_in[:5], "out": run_out[:5]}, "into_team": into.get("team_short"), "out_team": out.get("team_short"),
+        "into_photo": into.get("photo_code"), "out_photo": out.get("photo_code"),
+        "into_team_code": into.get("team_code"), "out_team_code": out.get("team_code"), "gain": move.get("gain"),
     }
 
 

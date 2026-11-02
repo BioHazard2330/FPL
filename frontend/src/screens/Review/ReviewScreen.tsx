@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, ScreenError } from '@/components/shell/ScreenStates'
@@ -180,9 +181,9 @@ function Swings({ d }: { d: ReviewPayload }) {
         <h2 className="font-display text-text">Where the rank was won and lost</h2>
         {net !== null && <span className={`tabular font-display text-2xl font-black ${net >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{signed(net, 1)} on the top 10k</span>}
       </div>
-      <p className="mt-1 max-w-3xl text-[13px] text-text-muted">
+      <Note>
         Each player's points times your multiplier minus the top ten thousand's effective ownership of him: green moved you up on them, red moved you down.
-      </p>
+      </Note>
       <div className="mt-4 grid grid-cols-2 gap-x-10">
         <div className="text-center font-display text-[13px] font-black uppercase tracking-[0.06em] text-alert-red">lost ground</div>
         <div className="text-center font-display text-[13px] font-black uppercase tracking-[0.06em] text-pitch-green">gained ground</div>
@@ -235,7 +236,7 @@ function Verdicts({ d }: { d: ReviewPayload }) {
               ))}
               <li>Armband: {d.plan.captain.name} ({d.plan.captain.points}){d.plan.hits ? ` · ${d.plan.hits} in hits` : ''}</li>
             </ul>
-            <p className="mt-2 text-[11.5px] text-text-faint">Its eleven on the real points, no automatic substitutions.</p>
+            <Note>Its eleven on the real points, no automatic substitutions.</Note>
             {(d.plan.eye_held_back ?? []).length > 0 && (
               <div className="mt-3 border-t-2 border-ink pt-2">
                 <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">the football eye held back</div>

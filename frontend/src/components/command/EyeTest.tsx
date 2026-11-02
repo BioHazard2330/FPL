@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { fetchViewPlan } from '@/lib/api'
 import { Panel, Pill } from '@/components/ui/kit'
@@ -103,7 +104,7 @@ export function EyeTest({ plan }: { plan: WeekPlanPayload }) {
           <summary className="cursor-pointer list-none text-[13px] text-text-muted">
             <span className="mr-1.5 text-text-faint group-open:hidden">▸</span>
             <span className="mr-1.5 hidden text-text-faint group-open:inline">▾</span>
-            Form spells have not carried into the next match in any band but a collapse: the evidence, over every stored season
+            form evidence: spells do not carry
           </summary>
           <div className="mb-2 mt-2 text-[13px] text-text-muted">
             Midfielders and forwards, last three matches against the rest of their season, then the next match against a baseline that already includes the dip.
@@ -204,7 +205,7 @@ export function EyeTest({ plan }: { plan: WeekPlanPayload }) {
               {(plan.moves ?? []).length === 0 && <p className="mt-1 text-sm text-text-muted">Roll.</p>}
             </div>
           </div>
-          <p className="mt-3 text-[12px] text-text-faint">An opinion applied to the same planner. It changes nothing stored and submits nothing.</p>
+          <Note>An opinion applied to the same planner. It changes nothing stored and submits nothing.</Note>
         </div>
       )}
     </Panel>

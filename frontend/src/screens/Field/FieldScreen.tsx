@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, ScreenError } from '@/components/shell/ScreenStates'
@@ -123,15 +124,15 @@ function Body({ d }: { d: FieldPayload }) {
         <Header />
         {options.map((o) => <EdgeRow key={o.key} label={o.label} e={o.edge} mean={o.mean_points} highlight={o.key === 'plan'} />)}
         {d.model_bias && (
-          <p className="mt-3 max-w-3xl tone border-broadcast-gold bg-panel px-4 py-2 text-xs leading-relaxed text-text-muted">
+          <Note>
             Across {d.model_bias.n} of the current model's past predictions over {d.model_bias.gameweeks} gameweeks, players scored {d.model_bias.bias_per_player.toFixed(1)} points
             {d.model_bias.standard_error !== null && <>(plus or minus {d.model_bias.standard_error.toFixed(1)} across gameweeks) </>}{d.model_bias.bias_per_player >= 0 ? 'more' : 'less'} than predicted. That applies to the field's players too, so the edge, a gap
             between equal numbers of slots, is mostly unaffected. The pts column is not: add roughly {(d.model_bias.bias_per_player * 12).toFixed(0)} for what a team like this tends to score.
-          </p>
+          </Note>
         )}
-        <p className="mt-2 text-[13px] text-text-faint">
+        <Note>
           pts: your simulated score. edge: your score minus the field's average, same trial. top 10%: the edge you clear in your best tenth of weeks. +12 / −12: chance of ending at least that far clear of, or behind, the field.
-        </p>
+        </Note>
       </section>
 
       <section className="border-b border-divider px-10 py-7">
@@ -144,9 +145,9 @@ function Body({ d }: { d: FieldPayload }) {
             </span>
           )}
         </div>
-        <p className="mb-3 max-w-3xl text-xs text-text-muted">
+        <Note>
           Captain share is how often the sampled top managers captain him; field EO is the average multiplier the field gives him. A captain the field also captains costs you rank when he scores and you did not back him, and gains you almost none when he does.
-        </p>
+        </Note>
         <div className="grid grid-cols-[2.2rem_minmax(0,1fr)_4.5rem_4.5rem_4rem_4.5rem_4.5rem_4.5rem] items-center gap-3 border-b border-divider py-1.5 text-[12px] text-text-faint">
           <div /><div />
           <div className="text-right">field cap</div><div className="text-right">field EO</div><div className="text-right">pts</div><div className="text-right">edge</div><div className="text-right">beat field</div><div className="text-right">top 10%</div>
@@ -175,7 +176,7 @@ function Body({ d }: { d: FieldPayload }) {
       <section className="grid grid-cols-2 gap-12 px-10 py-7">
         <div>
           <h2 className="font-display text-2xl font-bold text-text">What the field has that you do not</h2>
-          <p className="mb-3 mt-1 text-xs text-text-muted">Players with the most field ownership times expected points that are not in your squad. Each is a way to lose rank to a week you played correctly.</p>
+          <Note>Players with the most field ownership times expected points that are not in your squad. Each is a way to lose rank to a week you played correctly.</Note>
           {(d.threats ?? []).map((t) => (
             <div key={t.player_id} className="grid grid-cols-[2.2rem_minmax(0,1fr)_4rem_4rem_4rem] items-center gap-3 border-b border-divider py-2 text-sm">
               <PlayerPhoto code={t.photo_code} teamCode={t.team_code} isGkp={t.position === 'GKP'} className="h-9 w-7" />
@@ -188,7 +189,7 @@ function Body({ d }: { d: FieldPayload }) {
         </div>
         <div>
           <h2 className="font-display text-2xl font-bold text-text">Where your edge comes from</h2>
-          <p className="mb-3 mt-1 text-xs text-text-muted">For each starter: his expected points times (your multiplier minus the field's). Low or negative means you are only matching the field there.</p>
+          <Note>For each starter: his expected points times (your multiplier minus the field's). Low or negative means you are only matching the field there.</Note>
           {(d.contributions ?? []).map((c) => (
             <div key={c.player_id} className="grid grid-cols-[minmax(0,1fr)_4rem_9rem_3.5rem] items-center gap-3 border-b border-divider py-2 text-sm">
               <div className="min-w-0"><Link to={`/player/${c.player_id}`} className="font-bold text-text hover:text-pitch-green">{c.name}</Link>{c.you === 2 && <span className="ml-2 bg-broadcast-gold px-1 text-[12px] font-bold leading-4 text-broadcast-gold-ink">C</span>}</div>

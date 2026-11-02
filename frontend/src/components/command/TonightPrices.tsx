@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Info } from '@/components/ui/Info'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchPricesPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -36,15 +37,17 @@ export function TonightPrices() {
   const head = 'mb-1 mt-4 font-display text-[13px] font-black uppercase tracking-[0.08em] text-text'
   return (
     <section className="slab px-6 pb-6 pt-5">
-      <h2 className="font-display text-text">Tonight's prices</h2>
-      <p className="mt-1 text-[13px] text-text-muted">
-        Chance of a rise at the next overnight update. A target that rises before you buy costs £0.1m; a squad player who rises
-        is team value. {d.model && <>Fitted on the stored transfer history (held-out AUC {d.model.auc}, {d.model.holdout_rises} rises).</>}
-      </p>
+      <div className="flex items-center gap-2">
+        <h2 className="font-display text-text">Tonight's prices</h2>
+        <Info label="Rise chances">
+          <p>Chance of a rise at the next overnight update. A target that rises before you buy costs £0.1m; a squad player who rises is team value.</p>
+          {d.model && <p>Fitted on the stored transfer history (held-out AUC {d.model.auc}, {d.model.holdout_rises} rises).</p>}
+          <p>Falls are not shown: the fall model has not beaten the base rate on held-out nights.</p>
+        </Info>
+      </div>
       {squadHot.length > 0 && (<><div className={head}>Your squad</div><div className="divide-y divide-divider">{squadHot.map((r) => <Row key={r.player_id} r={r} likely={likely} />)}</div></>)}
       {targets.length > 0 && (<><div className={head}>Players the plan has lined up</div><div className="divide-y divide-divider">{targets.map((r) => <Row key={r.player_id} r={r} likely={likely} note={r.when ?? undefined} />)}</div></>)}
       {risers.length > 0 && (<><div className={head}>Likeliest risers in the game</div><div className="divide-y divide-divider">{risers.map((r) => <Row key={r.player_id} r={r} likely={likely} />)}</div></>)}
-      <p className="mt-3 text-[11.5px] text-text-faint">Falls are not shown: the fall model has not beaten the base rate on held-out nights.</p>
     </section>
   )
 }

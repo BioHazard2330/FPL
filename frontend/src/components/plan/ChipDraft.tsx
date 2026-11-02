@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Info } from '@/components/ui/Info'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { getJson } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -56,11 +57,16 @@ function LadderNote({ rows }: { rows: LadderRow[] }) {
   const best = rows.reduce((b, r) => (r.gain > b.gain ? r : b))
   const spread = Math.max(...gains) - Math.min(...gains)
   return (
-    <div className="mt-4 border-t-2 border-ink/15 pt-3 text-[13px] text-text-muted">
-      Best week GW{best.event} ({signed(best.gain)}).{' '}
-      {spread < 6
-        ? `Every week is within ${spread.toFixed(1)} points of the others over six gameweeks: on today's fixtures the week matters less than playing it, so hold it for a blank, a double or an injury crisis.`
-        : `The weeks differ by ${spread.toFixed(1)} points: the timing matters.`}
+    <div className="mt-4 flex items-center gap-3 border-t-2 border-ink/15 pt-3">
+      <span className="font-display text-[15px] font-black uppercase text-text">best GW{best.event} {signed(best.gain)}</span>
+      <span className={`px-1.5 font-display text-[13px] font-black uppercase ${spread < 6 ? 'bg-broadcast-gold text-ink' : 'bg-spot text-ink'}`}>
+        {spread < 6 ? `flat · ${spread.toFixed(1)} spread` : `timing matters · ${spread.toFixed(1)}`}
+      </span>
+      <Info label="Reading the ladder">
+        {spread < 6
+          ? `Every week is within ${spread.toFixed(1)} points of the others over six gameweeks: on today's fixtures the week matters less than playing it, so hold it for a blank, a double or an injury crisis.`
+          : `The weeks differ by ${spread.toFixed(1)} points: the timing matters.`}
+      </Info>
     </div>
   )
 }
@@ -121,9 +127,9 @@ function DraftView({ d }: { d: Draft }) {
             {!d.out?.length && <div className="text-[13px] text-text-muted">None: the draft keeps your squad.</div>}
           </div>
         </div>
-        <div className="text-[11.5px] leading-snug text-text-faint">
-          Today's prices and the plan's projections, evidence shrink and eye gate. A draft weeks ahead reads fixtures and current
-          form; injuries and price moves before then change it.{d.proven === false ? ' Solver stopped at its time limit: best found, not proven best.' : ''}
+        <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+          <Info label="What a draft assumes">Today's prices and the plan's projections, evidence shrink and eye gate. A draft weeks ahead reads fixtures and current form; injuries and price moves before then change it.{d.proven === false ? ' Solver stopped at its time limit: best found, not proven best.' : ''}</Info>
+          today's prices
         </div>
       </div>
     </div>

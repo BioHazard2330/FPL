@@ -1,4 +1,5 @@
 import { RoadAhead } from '@/components/command/RoadAhead'
+import { Info } from '@/components/ui/Info'
 import { RoadMap } from '@/components/plan/RoadMap'
 import { chipName, Panel, Pill } from '@/components/ui/kit'
 import type { ChipPlan, WeekPlanPayload } from '@/lib/types'
@@ -35,13 +36,11 @@ export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
                 ))
               )}
             </div>
-            <p className="max-w-2xl text-[14px] leading-snug text-text-muted">
+            <span className="text-[13px] font-semibold text-text-muted">
               {chips.double_gameweeks.length === 0
-                ? `No double gameweek is scheduled in the next ${chips.horizon}.`
-                : `Double gameweek${chips.double_gameweeks.length > 1 ? 's' : ''}: ${chips.double_gameweeks
-                    .map((d) => `GW${d.event} (${d.teams.join(', ')})`)
-                    .join('; ')}.`}
-            </p>
+                ? `no doubles in the next ${chips.horizon}`
+                : chips.double_gameweeks.map((d) => `DGW${d.event} (${d.teams.join(', ')})`).join(' · ')}
+            </span>
           </div>
           {(chips.plan ?? []).map((c) => (
             <ChipLadder key={c.chip} plan={c} />
@@ -64,11 +63,12 @@ function ChipLadder({ plan }: { plan: ChipPlan }) {
         <span className="font-display text-lg text-text">
           {chipName(plan.chip)}: GW{plan.event}
         </span>
-        <span className="text-[14px] text-text-muted">
-          {what} projected {plan.worth.toFixed(1)} that week ({plan.players.map((p) => `${p.name} ${p.xp.toFixed(1)}`).join(', ')}),{' '}
-          {plan.this_week.toFixed(1)} this week. Expires after GW{plan.window_ends}; unplayed, it is worth nothing.
-          {max - min < 3 ? ' Every week in the window is within 3 points, so play it whenever the bench is fit.' : ''}
-        </span>
+        <span className="tabular font-display text-lg font-black text-pitch-green">{plan.worth.toFixed(1)}</span>
+        <span className="text-[12px] text-text-muted">expires GW{plan.window_ends}{max - min < 3 ? ' · flat: play when the bench is fit' : ''}</span>
+        <Info label={chipName(plan.chip)}>
+          {what} projected {plan.worth.toFixed(1)} that week ({plan.players.map((p) => `${p.name} ${p.xp.toFixed(1)}`).join(', ')}), {plan.this_week.toFixed(1)} this week.
+          Expires after GW{plan.window_ends}; unplayed, it is worth nothing.{max - min < 3 ? ' Every week in the window is within 3 points.' : ''}
+        </Info>
       </div>
       <div className="mt-3 flex items-end gap-1.5" role="img" aria-label={`${chipName(plan.chip)} worth by gameweek`}>
         {plan.ladder.map((w) => (

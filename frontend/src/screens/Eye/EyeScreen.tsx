@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, ScreenError } from '@/components/shell/ScreenStates'
@@ -160,10 +161,10 @@ export function EyeScreen() {
       </section>
       <section className="px-8 pb-8 pt-7">
         <h2 className="font-display text-text">Your squad in GW{d.event}</h2>
-        <p className="mt-1 max-w-3xl text-[13px] text-text-muted">
+        <Note>
           One tap is enough. Sharp or outstanding protects a player from the plan selling him; off it or poor takes that protection
           away. Tags and a line are for you and the album.
-        </p>
+        </Note>
         <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
           {squad.map((p) => <Card key={`${d.event}-${p.player_id}`} p={p} event={d.event} tags={d.tags} ratings={d.ratings} />)}
         </div>
@@ -171,7 +172,7 @@ export function EyeScreen() {
       {targets.length > 0 && (
         <section className="px-8 pb-8 pt-7">
           <h2 className="font-display text-text">The players the plan wants</h2>
-          <p className="mt-1 max-w-3xl text-[13px] text-text-muted">If you watched one and did not like what you saw, say so: off it or poor makes the plan ask more of him before it buys.</p>
+          <Note>If you watched one and did not like what you saw, say so: off it or poor makes the plan ask more of him before it buys.</Note>
           <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
             {targets.map((p) => <Card key={`${d.event}-${p.player_id}`} p={p} event={d.event} tags={d.tags} ratings={d.ratings} />)}
           </div>

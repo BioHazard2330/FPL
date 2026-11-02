@@ -228,21 +228,73 @@ def _score(conn, season: str, squad: list[PlayerCandidate], round_start: str, ro
     )
 
 
+def medoid_set(counts: dict[frozenset, int], base: frozenset) -> frozenset:
+    """The move set with the highest average Jaccard similarity to every solve's set (weighted by how often each came
+    up; two empty sets - both rolls - count as identical). Ties go to `base`."""
+    def sim(a: frozenset, b: frozenset) -> float:
+        return 1.0 if not a and not b else len(a & b) / len(a | b)
+
+    total = sum(counts.values())
+    score = {s: sum(n * sim(s, t) for t, n in counts.items()) / total for s in counts}
+    best = max(score.values())
+    return base if score.get(base, -1) >= best - 1e-9 else max(score, key=score.get)
+
+
 def _plan_step(
     conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR,
-    horizon: int = HORIZON, tail: int = 0, tail_weight: float = 0.0,
+    horizon: int = HORIZON, tail: int = 0, tail_weight: float = 0.0, draws: int = 0, sigma: float = 0.3,
+    keep_share: float | None = None,
 ) -> bool:
     """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven.
-    `tail` more rounds at `tail_weight` are the squad's value beyond the horizon (`plan_transfers_milp(terminal_value=)`)."""
+    `tail` more rounds at `tail_weight` are the squad's value beyond the horizon (`plan_transfers_milp(terminal_value=)`).
+    With `draws`, the plan is also solved that many times with every player's values scaled by one lognormal factor
+    (spread `sigma`, mean 1) and the first round's move set chosen most often across all solves is made (the
+    unperturbed solve's on a tie): sensitivity analysis."""
     pool = candidates + [c for c in run.squad if c.player_id not in by_id]
     cache = {(c.player_id, i + 1 + k): value(c, i + k) for c in pool for k in range(horizon)}
     ranked = [PlayerCandidate(**{**c.__dict__, "xp": sum(cache[(c.player_id, i + 1 + k)] for k in range(horizon))}) for c in pool]
     terminal = {c.player_id: tail_weight * sum(value(c, i + horizon + k) for k in range(tail)) for c in pool} if tail else None
-    result = plan_transfers_milp(
-        conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
-        horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
-        model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=bar, terminal_value=terminal,
-    )
+    def solve(xp_cache):
+        return plan_transfers_milp(
+            conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
+            horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
+            model_chips=False, xp_cache=xp_cache, league_pool=ranked, transfer_penalty=bar, terminal_value=terminal,
+        )
+
+    result = solve(cache)
+    if draws and result.sequence is not None:
+        import numpy as np
+
+        def first_set(res) -> frozenset:
+            return frozenset((st.player_out_id, st.player_in_id) for st in res.sequence.steps if st.event == i + 1 and st.player_in_id is not None)
+
+        rng = np.random.default_rng(1000 * i + len(run.squad) + run.transfers)
+        seen = {first_set(result): [result, 1]}
+        for _ in range(draws):
+            factor = {c.player_id: float(np.exp(sigma * rng.standard_normal() - sigma ** 2 / 2)) for c in pool}
+            res = solve({k: v * factor[k[0]] for k, v in cache.items()})
+            if res.sequence is None:
+                continue
+            key = first_set(res)
+            if key in seen:
+                seen[key][1] += 1
+            else:
+                seen[key] = [res, 1]
+        if keep_share is None:
+            result = seen[medoid_set({k: v[1] for k, v in seen.items()}, first_set(result))][0]
+        else:
+            n = sum(v[1] for v in seen.values())
+            base_pairs = first_set(result)
+            kept = {pr for pr in base_pairs if sum(v[1] for k, v in seen.items() if pr in k) / n >= keep_share}
+            if kept != base_pairs:
+                refit = plan_transfers_milp(
+                    conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
+                    horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
+                    model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=bar, terminal_value=terminal,
+                    max_first_gw_transfers=len(kept), forced_in_first=frozenset(i_ for _, i_ in kept),
+                    forced_out_first=frozenset(o for o, _ in kept),
+                )
+                result = refit if refit.sequence is not None else result
     used = 0
     proven = True
     if result.sequence is not None:
@@ -265,7 +317,7 @@ def _plan_step(
 
 def run_plan_replay(
     conn: sqlite3.Connection, season: str, max_rounds: int | None = None,
-    variants: dict[str, tuple[int, int, float]] | None = None,
+    variants: dict[str, tuple] | None = None,
 ) -> PlanReplayResult:
     """`variants` replaces the three plans with fixture-reading plans of the given (horizon, tail rounds, tail weight),
     for testing how far ahead to look; the swap and hold policies run either way."""
@@ -323,8 +375,10 @@ def run_plan_replay(
 
         if i > 0:
             for name in plans:
-                horizon, tail, weight = (variants or {}).get(name, (HORIZON, 0, 0.0))
-                unproven += 0 if _plan_step(conn, runs[name], candidates, by_id, i, values[name], horizon=horizon, tail=tail, tail_weight=weight) else 1
+                horizon, tail, weight, *rest = (variants or {}).get(name, (HORIZON, 0, 0.0))
+                draws, sigma, keep = (rest + [0, 0.3, None][len(rest):])[:3]
+                unproven += 0 if _plan_step(conn, runs[name], candidates, by_id, i, values[name], horizon=horizon, tail=tail,
+                                            tail_weight=weight, draws=draws, sigma=sigma, keep_share=keep) else 1
 
             swap = runs["swap"]
             pool_by_position: dict[str, list[PlayerCandidate]] = {}

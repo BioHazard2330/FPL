@@ -1,4 +1,5 @@
 import { Pizza } from '@/components/football/Pizza'
+import { Note } from '@/components/ui/Info'
 import { useMemo, useState } from 'react'
 import { FootballReadInline } from '@/components/football/FootballRead'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -161,7 +162,7 @@ function Components({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   return (
     <section className="border-b border-divider px-10 py-7">
       <h2 className="font-display text-2xl font-bold text-text">Where the next gameweek's points come from</h2>
-      <p className="mb-4 mt-1 text-xs text-text-muted">The model's own breakdown of the one-gameweek projection. Negative parts are deductions.</p>
+      <Note>The model's own breakdown of the one-gameweek projection. Negative parts are deductions.</Note>
       {COMPONENT_LABELS.map(([k, label]) => {
         const va = ca[k], vb = cb[k]
         if (va === 0 && vb === 0) return null
@@ -236,7 +237,7 @@ function AsTransfer({ d }: { d: ComparePayload }) {
           </span>
         ))}
       </div>
-      <p className="mt-2 text-[13px] text-text-faint">The xP gap is the two players on their own; the week plan prices the same move inside your whole squad, so its figure can differ. Sale price is today's price; FPL pays purchase price plus half the rise, so confirm the bank on the transfers page.</p>
+      <Note>The xP gap is the two players on their own; the week plan prices the same move inside your whole squad, so its figure can differ. Sale price is today's price; FPL pays purchase price plus half the rise, so confirm the bank on the transfers page.</Note>
     </section>
   )
 }
@@ -416,7 +417,7 @@ export function CompareScreen() {
 
       {(!a || !b) && (
         <div className="px-10 py-10">
-          <p className="max-w-2xl text-sm text-text-muted">Pick two players. The page lines up what the model projects for each, where those points come from, the season line, and the next five fixtures.</p>
+          <Note>Pick two players. The page lines up what the model projects for each, where those points come from, the season line, and the next five fixtures.</Note>
           <QuickPairs onPick={(x, y) => setParams(new URLSearchParams({ a: String(x), b: String(y) }), { replace: true })} />
         </div>
       )}

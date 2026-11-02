@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Info } from '@/components/ui/Info'
 import { crestUrl, getJson } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 
@@ -59,7 +60,7 @@ export function MidweekWatch() {
           <div className="font-display text-[12px] font-black uppercase tracking-[0.24em] text-spot">Midweek watch</div>
           <h2 className="font-display text-paper">Europe and the cups</h2>
         </div>
-        <p className="max-w-[18rem] text-right text-[12px] leading-snug text-paper/60">FPL sees none of this until the press conference. Red: a starter off before minute 36.</p>
+        <Info label="Midweek watch" className="text-paper">FPL sees none of this until the press conference. Red: a starter taken off before minute 36 (every such case this season was injury-linked).</Info>
       </div>
       <div className="divide-y-2 divide-ink/10 px-6 py-2">
         {matches.map((m) => {

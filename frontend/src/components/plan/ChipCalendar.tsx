@@ -1,4 +1,5 @@
 import { getJson } from '@/lib/api'
+import { Info } from '@/components/ui/Info'
 import { useFetch } from '@/lib/useFetch'
 
 /** THE CHIP CALENDAR: all 38 gameweeks on one strip - blanks and doubles as FPL schedules them (with how many of your
@@ -52,10 +53,14 @@ export function ChipCalendar() {
           })}
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap gap-4 text-[11.5px] text-text-muted">
-        <span>Top row: the gameweek (filled: the chip you played; dashed: the plan's best week for a chip in hand).</span>
-        <span>Bottom row: share of the 10k who played each chip.</span>
-        <span className="text-alert-red">Hatched: a blank.</span><span className="text-broadcast-gold">Gold: a double.</span>
+      <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+        <Info label="Reading the calendar">
+          <p>Top row: the gameweek (filled: the chip you played; dashed: the plan's best week for a chip in hand).</p>
+          <p>Bottom row: share of the 10k who played each chip.</p>
+          <p>{d.announced ? 'Blanks and doubles are as FPL has scheduled them.' : 'No blank or double gameweek is scheduled yet; they appear the cycle after FPL moves fixtures.'}</p>
+        </Info>
+        <span className="text-alert-red">hatched blank</span><span className="text-broadcast-gold">gold double</span>
+        <span>dashed: best week</span>
       </div>
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         {halves.map((ws, i) => (
@@ -82,12 +87,7 @@ export function ChipCalendar() {
           </div>
         </div>
       </div>
-      <p className="mt-4 text-[12.5px] text-text-muted">
-        {d.announced
-          ? 'Blanks and doubles above are as FPL has scheduled them; the plan prices a chip in hand by week along its road ahead.'
-          : 'No blank or double gameweek is scheduled yet. They appear here the cycle after FPL moves fixtures (cup clashes usually do it in the second half).'}
-        {d.unscheduled.length > 0 && ` Still without a gameweek: ${d.unscheduled.map((u) => `${u.home} v ${u.away}`).join(', ')}.`}
-      </p>
+      {d.unscheduled.length > 0 && <div className="mt-4 text-[12.5px] text-text-muted">unscheduled: {d.unscheduled.map((u) => `${u.home} v ${u.away}`).join(', ')}</div>}
     </section>
   )
 }

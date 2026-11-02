@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { Note } from '@/components/ui/Info'
 import { ScoutingReport } from '@/components/football/ScoutingReport'
 import { FootballRead } from '@/components/football/FootballRead'
 import { Link, useParams } from 'react-router-dom'
@@ -278,7 +279,7 @@ export function PlayerScreen() {
       {(p.analyst ?? []).length > 0 && (
         <div className="border-t border-divider px-10 py-8">
           <div className="mb-1 text-[13px] font-bold text-text-faint">What the analyst saw</div>
-          <p className="mb-4 max-w-3xl text-[13px] text-text-faint">Measured from each match&rsquo;s shots, goals and substitutions. Where a finding rests on a signal, the tag says whether that signal carries to the next match.</p>
+          <Note>Measured from each match&rsquo;s shots, goals and substitutions. Where a finding rests on a signal, the tag says whether that signal carries to the next match.</Note>
           <div className="space-y-5">
             {(p.analyst ?? []).map((m) => (
               <div key={m.match_id}>

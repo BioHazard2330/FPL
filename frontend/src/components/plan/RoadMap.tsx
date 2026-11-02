@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Info } from '@/components/ui/Info'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchPricesPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -121,14 +122,14 @@ export function RoadMap({ plan }: { plan: WeekPlanPayload }) {
             {plan.eye.protected.map((id) => (
               <span key={id} className="border-2 border-ink bg-pitch-green px-1.5 font-display text-[12px] font-black uppercase text-pitch-green-ink">{names.get(id) ?? id}</span>
             ))}
-            <span className="text-[12px] text-text-muted">the football read backs them: selling one has to earn {plan.eye.penalty} more than any other move.</span>
+            <Info label="The eye gate">The football read backs them: selling one has to earn {plan.eye.penalty} more than any other move.</Info>
           </div>
         )
       })()}
-      <p className="mt-3 max-w-4xl text-[12.5px] text-text-faint">
-        Each later move had to earn {plan.min_move_gain} points over the horizon; the whole road is re-solved every week with that
-        day's injuries and prices.{!road.proven && ' Best plan found within the time limit; not proven optimal.'}
-      </p>
+      <div className="mt-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.1em] text-text-faint">
+        <Info label="The road">Each later move had to earn {plan.min_move_gain} points over the horizon; the whole road is re-solved every week with that day's injuries and prices.{!road.proven && ' Best plan found within the time limit; not proven optimal.'}</Info>
+        re-solved every week
+      </div>
     </section>
   )
 }

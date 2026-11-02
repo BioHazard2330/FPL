@@ -18,7 +18,7 @@ function Delta({ p }: { p: PlanChangeSide }) {
   )
 }
 
-export function PlanChanges({ changes, horizon }: { changes: Changes | null | undefined; horizon: number }) {
+export function PlanChanges({ changes }: { changes: Changes | null | undefined; horizon?: number }) {
   if (!changes) return null
   const moved = changes.dropped.length + changes.added.length > 0 || changes.captain
   const why = [
@@ -36,7 +36,7 @@ export function PlanChanges({ changes, horizon }: { changes: Changes | null | un
           {changes.kept > 0 && `${changes.kept} move${changes.kept === 1 ? '' : 's'} held${changes.standing_bonus ? `: a replacement must beat a standing call by ${(changes.standing_bonus * 2).toFixed(1)}` : ''}.`}
         </div>
       </div>
-      {!moved && <p className="mt-1.5 text-[13px] text-text-muted">The call is unchanged. Projections over {horizon} gameweeks shown before→after where they moved.</p>}
+      {!moved && <div className="mt-1 font-display text-[15px] font-black uppercase text-pitch-green">unchanged</div>}
       <div className="mt-2 space-y-1.5 text-[13px] text-text-muted">
         {changes.dropped.map((m) => (
           <div key={`d${m.out.player_id}-${m.into.player_id}`}>

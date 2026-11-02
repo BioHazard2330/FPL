@@ -1,4 +1,5 @@
 import type { FootballReadData, FootballReadLine } from '@/lib/types'
+import { Note } from '@/components/ui/Info'
 
 /** THE FOOTBALL READ: a scout's account of the player, line by line, each marked by whether that kind of evidence has
  * held up from one match to the next in the stored history (`models/football_read.py`). A lean is shown only where the
@@ -49,10 +50,10 @@ export function FootballRead({ r }: { r: FootballReadData }) {
       <ul className="grid gap-x-10 divide-y divide-divider/60 md:grid-cols-2 md:divide-y-0">
         {r.lines.map((l) => <Row key={l.topic} l={l} />)}
       </ul>
-      <p className="mt-4 text-[12px] text-text-faint">
+      <Note>
         A read beside the projection, not part of it. "Holds up": chance volume, minutes and fixtures, measured to carry into the next match.
         "Doesn't carry": finishing above or below the chances and hot or cold spells, measured not to.
-      </p>
+      </Note>
     </div>
   )
 }

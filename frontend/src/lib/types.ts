@@ -1830,9 +1830,13 @@ export interface RankReview {
   field: { sample_event: number; sample_size: number }; options: RankReviewOption[]; best_option: string | null
   captains: RankReviewCaptain[]; best_captain: number | null; captain_id: number | null
 }
+export interface PunditLens { key: string; label: string; value: string; lean: number; counted: boolean; detail: string }
+export interface PunditFixture { opponent_short: string; is_home: boolean; difficulty: number }
 export interface PunditMove {
   out_id: number; into_id: number; out: string; into: string; position: string; grade: 'strong' | 'sound' | 'marginal' | 'doubtful'
-  score: number; for: string[]; against: string[]; context: string[]
+  score: number; for: string[]; against: string[]; context: string[]; lenses?: PunditLens[]
+  runs?: { into: PunditFixture[]; out: PunditFixture[] }; into_team: string | null; out_team: string | null
+  into_team_code: number | null; out_team_code: number | null; gain: number | null
 }
 export interface PunditCaptainOption {
   player_id: number; name: string; xp: number; ceiling: number | null; fixture: string | null; difficulty: number | null

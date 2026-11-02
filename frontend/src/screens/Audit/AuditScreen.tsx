@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { Skel, SkelMasthead, ScreenError } from '@/components/shell/ScreenStates'
@@ -155,7 +156,7 @@ export function AuditScreen() {
       <section className="border-b border-divider px-10 py-7">
         <h2 className="mb-3 font-display text-2xl font-bold text-text">Your squad</h2>
         {d.squad.map((r) => <Row key={r.player_id} r={r} scale={scale} />)}
-        <p className="mt-2 text-[13px] text-text-faint">Bar: gold is luck in your favour, blue is points owed. z is the luck over its own standard error; beyond ±2 is unusual.</p>
+        <Note>Bar: gold is luck in your favour, blue is points owed. z is the luck over its own standard error; beyond ±2 is unusual.</Note>
       </section>
 
       {d.armband.length > 0 && (
@@ -167,9 +168,9 @@ export function AuditScreen() {
               <span className="tabular font-bold text-broadcast-blue">{d.armband.reduce((s, r) => s + r.owed, 0).toFixed(0)}</span> of the captains' own returns were owed by their chances
             </span>
           </div>
-          <p className="mb-3 max-w-3xl text-[13px] text-text-faint">
+          <Note>
             Cost is what the armband left on the table against the highest scorer of that gameweek's eleven, the extra a captain earns, so it is nearly always positive. Owed is the same armband's points the captain's own chances said he should have had.
-          </p>
+          </Note>
           <div className="grid grid-cols-[3.5rem_minmax(0,1.2fr)_5rem_5rem_minmax(0,1.2fr)_5rem_5rem] gap-3 border-b border-divider pb-1.5 text-[12px] text-text-faint">
             <span>GW</span><span>Captain</span><span className="text-right">Scored</span><span className="text-right">Chances</span><span>Best in the eleven</span><span className="text-right">Cost</span><span className="text-right">Owed</span>
           </div>
@@ -221,9 +222,9 @@ export function AuditScreen() {
             ))}
           </div>
         </div>
-        <p className="mb-2 max-w-3xl px-10 text-xs text-text-muted">
+        <Note>
           Each match replayed from its shots: cumulative xG against the clock, a ring on every goal, and the result those chances would produce in how many replays.
-        </p>
+        </Note>
         <div className="grid grid-cols-2 gap-px bg-divider">
           {d.matches.map((m) => <div key={m.match_id} className="bg-void"><MatchCard m={m} /></div>)}
         </div>

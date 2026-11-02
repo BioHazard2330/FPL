@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Info } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { chipName, Pill, money } from '@/components/ui/kit'
 import { Face } from '@/components/ui/Face'
@@ -40,20 +41,13 @@ function Moves({ plan }: { plan: WeekPlanPayload }) {
     return (
       <>
         <div className="font-display text-3xl font-semibold leading-none text-text">Roll</div>
-        <p className="mt-3 text-[14px] leading-snug text-text-muted">
-          No transfer adds {plan.min_move_gain} points or more over {horizon} gameweeks.{' '}
-          {(plan.free_transfers ?? 0) >= 5 ? 'You hold the maximum of five, so rolling still costs you one.' : `Rolling banks a free transfer: ${Math.min((plan.free_transfers ?? 0) + 1, 5)} next week.`}
-        </p>
-        {(plan.curve ?? []).filter((c) => c.moves > 0).length > 0 && (
-          <p className="mt-2 text-[13px] leading-snug text-text-faint">
-            Closest it came:{' '}
-            {(plan.curve ?? [])
-              .filter((c) => c.moves > 0)
-              .map((c) => `${c.moves} move${c.moves === 1 ? '' : 's'} ${c.gain_vs_roll >= 0 ? '+' : ''}${c.gain_vs_roll.toFixed(1)} (needs ${(c.moves * (plan.min_move_gain ?? 1.5)).toFixed(1)})`)
-              .join(' · ')}
-            .
-          </p>
-        )}
+        <div className="mt-3 flex items-center gap-2 text-[14px] text-text-muted">
+          nothing clears +{plan.min_move_gain}
+          <Info label="Why roll">
+            <p>No transfer adds {plan.min_move_gain} points or more over {horizon} gameweeks. {(plan.free_transfers ?? 0) >= 5 ? 'You hold the maximum of five, so rolling still costs you one.' : `Rolling banks a free transfer: ${Math.min((plan.free_transfers ?? 0) + 1, 5)} next week.`}</p>
+            {(plan.curve ?? []).filter((c) => c.moves > 0).map((c) => <p key={c.moves}>{c.moves} move{c.moves === 1 ? '' : 's'}: {c.gain_vs_roll >= 0 ? '+' : ''}{c.gain_vs_roll.toFixed(1)} (needs {(c.moves * (plan.min_move_gain ?? 1.5)).toFixed(1)})</p>)}
+          </Info>
+        </div>
       </>
     )
   }
@@ -85,10 +79,11 @@ function Moves({ plan }: { plan: WeekPlanPayload }) {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-[14px] leading-snug text-text-muted">
-        <span className="tabular font-semibold text-text">+{(plan.gain_vs_roll ?? 0).toFixed(1)} points</span> over the next {horizon} gameweeks against rolling.
-        {late && ' At least one of these is better made after team news.'}
-      </p>
+      <div className="mt-5 flex items-baseline gap-3">
+        <span className="tabular font-display text-3xl font-black text-pitch-green">+{(plan.gain_vs_roll ?? 0).toFixed(1)}</span>
+        <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">pts / {horizon} GW v rolling</span>
+        {late && <Pill tone="gold">after team news</Pill>}
+      </div>
     </>
   )
 }
@@ -143,15 +138,11 @@ function Armband({ plan }: { plan: WeekPlanPayload }) {
           )}
         </div>
       </div>
-      <p className="mt-4 text-[14px] leading-snug text-text-muted">
-        {cap.second && (
-          <>
-            Next best is <span className="font-semibold text-text">{cap.second.name}</span> on {cap.second.median.toFixed(1)}.{' '}
-          </>
-        )}
-        {vice && <>Vice: <span className="font-semibold text-text">{vice.name}</span>.</>}
-      </p>
-      {cap.note && <p className="mt-2 text-[13px] leading-snug text-text-faint">{cap.note}</p>}
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-text-muted">
+        {cap.second && <span>2nd <span className="font-semibold text-text">{cap.second.name}</span> {cap.second.median.toFixed(1)}</span>}
+        {vice && <span>vice <span className="font-semibold text-text">{vice.name}</span></span>}
+        {cap.note && <Info label="Why this armband">{cap.note}</Info>}
+      </div>
     </>
   )
 }
@@ -163,7 +154,7 @@ function Lineup({ plan }: { plan: WeekPlanPayload }) {
     return (
       <>
         <div className="font-display text-3xl font-semibold leading-none text-text">Keep it</div>
-        <p className="mt-3 text-[14px] leading-snug text-text-muted">The eleven you have on the FPL site is the best this squad allows, within a tenth of a point.</p>
+        <div className="mt-3 text-[13px] text-text-muted">best eleven already set</div>
       </>
     )
   }
@@ -189,15 +180,10 @@ function Lineup({ plan }: { plan: WeekPlanPayload }) {
           ))}
         </div>
       </div>
-      <p className="mt-3 text-[14px] leading-snug text-text-muted">
-        Start <span className="font-semibold text-text">{d.bring_in.map((p) => p.name).join(' and ')}</span>
-        {d.take_out.length > 0 && (
-          <>
-            {' '}for <span className="font-semibold text-text">{d.take_out.map((p) => p.name).join(' and ')}</span>
-          </>
-        )}
-        {d.captain_to && d.captain_from && d.captain_to.player_id !== d.captain_from.player_id && <>, armband to {d.captain_to.name}</>}. Costs nothing, and counts even if you make no transfer.
-      </p>
+      <div className="mt-3 text-[13px] text-text-muted">
+        start <span className="font-semibold text-text">{d.bring_in.map((p) => p.name).join(', ')}</span>
+        {d.captain_to && d.captain_from && d.captain_to.player_id !== d.captain_from.player_id && <> · armband {d.captain_to.name}</>}
+      </div>
     </>
   )
 }
@@ -284,7 +270,14 @@ export function DecisionSheet({ plan, chips }: { plan: WeekPlanPayload; chips: s
             Chips left <span className="font-semibold text-text">{chips.map(chipName).join(', ')}</span>
           </span>
         )}
-        {plan.affordability && moves.length > 0 && <span className="text-text-faint">{plan.affordability}</span>}
+        {plan.affordability && moves.length > 0 && (
+          <span className="inline-flex items-center gap-1.5">
+            {plan.affordability.startsWith('Over budget') ? <span className="font-semibold text-alert-red">over budget</span>
+              : plan.affordability.startsWith('Affordable even') ? <span className="font-semibold text-pitch-green">✓ affordable</span>
+              : <span className="font-semibold text-broadcast-gold">check sale prices</span>}
+            <Info label="Affordability">{plan.affordability}</Info>
+          </span>
+        )}
       </footer>
     </section>
   )

@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { Info } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { SignalLedger } from '@/components/football/SignalLedger'
 import { Masthead } from '@/components/shell/Masthead'
@@ -194,7 +195,7 @@ function FeaturedSignalCard({ s, large = false, extra = [] }: { s: FootballSigna
       </div>
       <div className={`mt-1.5 font-display font-bold text-text ${large ? 'text-4xl' : 'text-2xl'}`}>{s.entity_name}</div>
       <p className={`mt-2 leading-relaxed text-text-muted ${large ? 'max-w-2xl text-base' : 'text-sm'}`}>{plain(s.evidence)}</p>
-      {s.interpretation && <p className="mt-1 text-sm italic text-text-faint">{s.interpretation}</p>}
+      {s.interpretation && <div className="mt-1"><Info label="The analyst's read">{s.interpretation}</Info></div>}
       {s.fpl_effect && <div className={`mt-3 font-bold ${DIRECTION_COLOR[s.direction] ?? 'text-text'} ${large ? 'text-lg' : 'text-sm'}`}>{s.fpl_effect}</div>}
       {extra.length > 0 && (
         <ul className="mt-3 space-y-1 border-t border-divider pt-2 text-xs text-text-faint">
@@ -236,7 +237,7 @@ function SignalRow({ s }: { s: FootballSignal }) {
       <span className="font-bold text-text">{s.entity_name}</span>
       {s.is_mine && <span className="shrink-0 rounded bg-broadcast-gold/20 px-1.5 text-[12px] font-semibold leading-5 text-broadcast-gold">yours</span>}
       <span className="text-text-muted">{plain(s.evidence)}</span>
-      {s.interpretation && <span className="italic text-text-faint">{s.interpretation}</span>}
+      {s.interpretation && <Info label="The analyst's read">{s.interpretation}</Info>}
       {s.fpl_effect && <span className={`font-semibold ${DIRECTION_COLOR[s.direction] ?? 'text-text'}`}>{s.fpl_effect}</span>}
       <span className="ml-auto shrink-0 text-[12px] font-bold text-text-faint">{s.confidence}</span>
     </div>
@@ -264,9 +265,7 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
         <span className="flex-1 text-right text-[12px] font-bold text-alert-red">xGA conceded</span>
         <span className="w-px" />
         <span className="flex-1 text-[12px] font-bold text-pitch-green">xG created</span>
-        <span className="hidden w-[26rem] shrink-0 text-[12px] font-bold text-text-faint xl:block">
-          Shape &amp; FPL implication
-        </span>
+        <span className="hidden w-[14rem] shrink-0 text-[12px] font-bold text-text-faint xl:block">Shape</span>
       </div>
       {ordered.map((t) => {
         const crest = crestUrl(t.team_code)
@@ -307,11 +306,11 @@ function TeamStateGrid({ rows, fixtures }: { rows: TeamStateRow[]; fixtures?: Fi
               <span className="tabular text-xs text-text-muted">{xg !== null ? xg.toFixed(2) : '—'}</span>
             </div>
 
-            <div className="hidden w-[26rem] shrink-0 text-[13px] leading-snug xl:block">
+            <div className="hidden w-[14rem] shrink-0 items-center gap-2 text-[13px] leading-snug xl:flex">
               {(t.formation || t.tactical) && (
                 <span className="text-text-faint">{[t.formation, t.tactical].filter(Boolean).join(' · ')} </span>
               )}
-              {t.fpl_implication && <span className="text-text-muted">{t.fpl_implication}</span>}
+              {t.fpl_implication && <span className="inline-flex align-middle"><Info label={`${t.team_name}: what it means`}>{t.fpl_implication}</Info></span>}
             </div>
           </div>
         )

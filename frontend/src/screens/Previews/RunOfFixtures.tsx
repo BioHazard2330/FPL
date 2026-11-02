@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { crestUrl } from '@/lib/api'
 import type { PreviewsPayload } from '@/lib/types'
@@ -39,11 +40,11 @@ export function RunOfFixtures({ ticker, mine }: { ticker: NonNullable<PreviewsPa
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h2 className="font-display text-2xl font-bold text-text">The run of fixtures</h2>
-          <p className="mt-1 max-w-3xl text-xs text-text-muted">
+          <Note>
             The next six gameweeks from the team model, not the official difficulty number.{' '}
             {mode === 'attack' ? 'Goals each club is expected to score.' : 'Chance each club keeps a clean sheet.'} Colour is rank across every cell.
             A dot marks fixtures where stored odds fed the figure; the rest are the model alone.
-          </p>
+          </Note>
         </div>
         <div className="flex gap-1">
           {(['attack', 'defence'] as Mode[]).map((m) => (

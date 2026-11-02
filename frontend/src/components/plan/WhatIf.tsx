@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchPlayersIndex, fetchWhatIf } from '@/lib/api'
@@ -116,9 +117,9 @@ export function WhatIf() {
           {base.data.free_transfers} free transfer{base.data.free_transfers === 1 ? '' : 's'} · bank £{((base.data.bank_tenths ?? 0) / 10).toFixed(1)}m · priced over the next {base.data.horizon} gameweeks
         </span>
       </div>
-      <p className="mb-5 max-w-3xl text-[14px] leading-snug text-text-muted">
+      <Note>
         Pick who goes out and who comes in. It checks the squad is legal and affordable, then compares the best eleven you could field after the moves with the one you have now, for each of the next five gameweeks.
-      </p>
+      </Note>
 
       <div className="space-y-3">
         {outs.map((o, i) => (
@@ -232,13 +233,13 @@ export function WhatIf() {
                     </div>
                   )
                 })}
-                <p className="mt-2 text-[11.5px] text-text-faint">Rivals on their last locked teams; 4,000 simulated gameweeks, so a point or two either way is noise.</p>
+                <Note>Rivals on their last locked teams; 4,000 simulated gameweeks, so a point or two either way is noise.</Note>
               </div>
             )}
             {r.plan && r.plan.gain !== null && (
-              <p className="mt-4 text-[13px] leading-relaxed text-text-faint">
+              <Note>
                 The week plan&apos;s own moves ({r.plan.moves.join(', ') || 'roll'}) are worth {r.plan.gain >= 0 ? '+' : ''}{r.plan.gain.toFixed(1)}, but against rolling the transfer to next week, which would make the same move a week later. That gap is about one gameweek of the difference, so it is smaller than the figure here by design.
-              </p>
+              </Note>
             )}
           </div>
         </div>

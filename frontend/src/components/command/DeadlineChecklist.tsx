@@ -145,15 +145,22 @@ export function DeadlineChecklist({ plan, desk }: { plan: WeekPlanPayload; desk:
       title="Before the deadline"
       sub={open === 0 ? 'Nothing open: every check below is clear.' : `${open} thing${open === 1 ? '' : 's'} to look at before you confirm.`}
     >
-      <div className="grid grid-cols-1 gap-x-10 gap-y-4 lg:grid-cols-2">
-        {items.map((it) => (
+      <div className="space-y-3">
+        {items.filter((it) => it.tone !== 'ok').map((it) => (
           <div key={it.title} className="flex gap-3">
-            <span className={`mt-[7px] size-2 shrink-0 rounded-full ${DOT[it.tone]}`} aria-label={TONE[it.tone].label} />
+            <span className={`mt-[7px] size-2.5 shrink-0 rounded-full ${DOT[it.tone]}`} aria-label={TONE[it.tone].label} />
             <div className="min-w-0">
-              <div className="text-[14px] font-semibold text-text">{it.title}</div>
+              <div className="text-[15px] font-semibold text-text">{it.title}</div>
               <div className="mt-0.5 text-[13px] leading-snug text-text-muted">{it.detail}</div>
             </div>
           </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {items.filter((it) => it.tone === 'ok').map((it) => (
+          <span key={it.title} title={typeof it.detail === 'string' ? it.detail : undefined} className="inline-flex items-center gap-1.5 border-2 border-pitch-green/50 bg-pitch-green/10 px-2 py-1 text-[12px] font-semibold text-text">
+            <span className="font-black text-pitch-green">✓</span>{it.title}
+          </span>
         ))}
       </div>
     </Panel>

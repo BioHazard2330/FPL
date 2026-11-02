@@ -26,7 +26,7 @@ import { LastReport } from '@/components/command/LastReport'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
 import { CommandStage } from '@/components/command/CommandStage'
 import { useState } from 'react'
-import { Panel } from '@/components/ui/kit'
+import { Disclosure } from '@/components/ui/kit'
 import { fetchCommandPayload, fetchDeskPayload, fetchWeekPlanPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
@@ -230,7 +230,7 @@ export function CommandScreen() {
               <div className="min-w-0 space-y-7">
                 <PlanChanges changes={plan.changes} horizon={plan.horizon ?? 5} />
                 {moves.length > 0 && (
-                  <Panel title={moves.length === 1 ? 'The transfer, in detail' : 'The transfers, in detail'} sub={`Why each move earns its points over ${plan.horizon ?? 5} gameweeks.`}>
+                  <Disclosure title="Scouting file" summary={`${moves.length} move${moves.length === 1 ? '' : 's'} · craft, fixtures, chances`}>
                     <div className="space-y-4">
                       {moves.map((m) => (
                         <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} startEvent={plan.event ?? 0} board={plan.matchups} />
@@ -242,7 +242,7 @@ export function CommandScreen() {
                         </p>
                       ))}
                     </div>
-                  </Panel>
+                  </Disclosure>
                 )}
                 <SquadNews />
                 <MarginalValue plan={plan} />

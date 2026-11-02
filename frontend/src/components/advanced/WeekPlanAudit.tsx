@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Note } from '@/components/ui/Info'
 import { relativeTime } from '@/lib/time'
 import type { WeekPlanAuditBlock } from '@/lib/types'
 
@@ -26,9 +27,9 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
           {audit.solver && <> &middot; {audit.solver.proven_optimal ? 'the best plan found' : 'best found within the time limit'}</>}
         </span>
       </div>
-      <p className="mt-1 max-w-3xl text-[14px] leading-snug text-text-muted">
+      <Note>
         Each move is priced again with the player coming in delivering only half of what we project. A move that stops paying for itself at that point is a judgement call, not a certainty.
-      </p>
+      </Note>
 
       {audit.stale_reasons.length > 0 && (
         <div className="mt-3 max-w-2xl tone border-alert-red bg-panel px-4 py-2 text-sm text-text-muted">
