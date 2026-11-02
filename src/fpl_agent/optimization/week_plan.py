@@ -1602,3 +1602,76 @@ def refresh_week_plan_if_needed(conn: sqlite3.Connection) -> str | None:
 
 def dumps(plan: WeekPlan) -> str:
     return json.dumps(week_plan_to_dict(plan), default=str)
+
+
+@scoped
+def route_to(conn: sqlite3.Connection, target: int, horizon: int = HORIZON_GW, max_moves: int = 3) -> dict | None:
+    """GET ME X: the best way to have `target` in the squad this gameweek. For one, two and three moves this week (the
+    target's purchase included, hits charged past the free transfers) the solver finds the best plan with him forced in
+    and the best plan without that constraint; the difference is what insisting on him costs over the horizon, and the
+    gap to the stored plan of record is shown beside it. Same projections, evidence shrink and eye gate as the plan."""
+    locked = get_locked_squad(conn)
+    if locked is None or locked.source != "synced_real":
+        return None
+    squad_ids = [c.player_id for c in locked.xi.starting] + [c.player_id for c in locked.xi.bench]
+    if len(squad_ids) != 15:
+        return None
+    names = {r["id"]: (r["web_name"], r["code"], r["team_code"], r["short_name"]) for r in conn.execute(
+        "SELECT p.id, p.web_name, p.code, t.code AS team_code, t.short_name FROM players p JOIN teams t ON t.id = p.team_id")}
+    if target not in names:
+        return {"status": "unknown_player"}
+    who = {"player_id": target, "name": names[target][0], "photo_code": names[target][1], "team_code": names[target][2], "team_short": names[target][3]}
+    if target in squad_ids:
+        return {"status": "owned", "target": who}
+    event = locked.event + 1
+    bank = int(round(locked.bank_tenths or 0))
+    free_transfers = locked.free_transfers if locked.free_transfers is not None else 1
+    pool = _buyable_pool(conn, horizon, squad_ids)
+    if target not in {c.player_id for c in pool}:
+        return {"status": "not_in_pool", "target": who}
+    cache: dict = {}
+    evidence = evidence_matches(conn)
+    eye_sell, eye_buy, _ = eye_gates(conn, squad_ids, pool)
+    buy_pen = {k: v for k, v in eye_buy.items() if k != target}
+
+    def solve(k: int, forced: frozenset):
+        return plan_transfers_milp(
+            conn, squad_ids, free_transfers, bank, start_event=event, horizon_gw=horizon,
+            pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
+            model_chips=False, xp_cache=cache, max_first_gw_transfers=k, league_pool=pool,
+            forced_in_first=forced, forced_out_first=frozenset(), evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            sell_penalty=eye_sell, buy_penalty=buy_pen,
+        )
+
+    stored = latest_week_plan(conn)
+    plan_total = stored[0].get("plan_total") if stored and stored[0].get("event") == event else None
+    routes = []
+    for k in range(1, max_moves + 1):
+        with_him = solve(k, frozenset({target}))
+        if with_him.sequence is None:
+            routes.append({"moves": k, "feasible": False, "reason": with_him.status})
+            continue
+        free = solve(k, frozenset())
+        steps = [s for s in with_him.sequence.steps if s.event == event and s.player_in_id is not None]
+        pairs = [(s.player_out_id, s.player_in_id) for s in steps]
+        total = with_him.sequence.total_net_ev
+        free_total = free.sequence.total_net_ev if free.sequence is not None else None
+        routes.append({
+            "moves": k, "feasible": True,
+            "pairs": [{"out": {"player_id": o, "name": names.get(o, ("?",))[0], "photo_code": names.get(o, (None, None))[1],
+                               "team_code": names.get(o, (None, None, None))[2]},
+                       "into": {"player_id": i, "name": names.get(i, ("?",))[0], "photo_code": names.get(i, (None, None))[1],
+                                "team_code": names.get(i, (None, None, None))[2]}} for o, i in pairs],
+            "hits": max(0, len(pairs) - free_transfers) * 4,
+            "total": round(total, 2),
+            "cost_of_insisting": round(free_total - total, 2) if free_total is not None else None,
+            "vs_plan": round(total - plan_total, 2) if plan_total is not None else None,
+            "proven": with_him.proven_optimal,
+        })
+    feasible = [r for r in routes if r["feasible"]]
+    best = max(feasible, key=lambda r: r["total"]) if feasible else None
+    return {
+        "status": "ok" if feasible else "unaffordable", "target": who, "event": event, "horizon": horizon,
+        "free_transfers": free_transfers, "bank_tenths": bank, "plan_total": plan_total, "routes": routes,
+        "best": best["moves"] if best else None,
+    }

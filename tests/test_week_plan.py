@@ -651,3 +651,17 @@ def test_standing_moves_are_the_last_plans_open_moves_for_the_same_gameweek():
     assert standing_moves(prev, 10, [1, 3, 12]) == [(1, 11)]
     assert standing_moves(prev, 11, [1, 2, 3]) == []
     assert standing_moves(None, 10, [1]) == []
+
+
+def test_route_to_reports_an_owned_player_without_solving(db_conn, monkeypatch):
+    from types import SimpleNamespace
+
+    from fpl_agent.optimization import week_plan as wp
+
+    xi = SimpleNamespace(starting=[SimpleNamespace(player_id=i) for i in range(1, 12)], bench=[SimpleNamespace(player_id=i) for i in range(12, 16)])
+    monkeypatch.setattr(wp, "get_locked_squad", lambda conn: SimpleNamespace(source="synced_real", xi=xi, event=9, bank_tenths=10, free_transfers=1))
+    from test_news_source_matching import _seed_two_players_two_teams
+
+    _seed_two_players_two_teams(db_conn)
+    assert wp.route_to(db_conn, 1)["status"] == "owned"
+    assert wp.route_to(db_conn, 99999)["status"] == "unknown_player"

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { GetMe } from '@/components/plan/GetMe'
 import { Skel, ScreenError } from '@/components/shell/ScreenStates'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { crestUrl, fetchComparePayload, fetchExplorerPayload, fetchWhatIf } from '@/lib/api'
@@ -268,6 +269,7 @@ export function WarRoomScreen() {
           </div>
         </section>
       )}
+      <GetMe />
     </div>
   )
 }

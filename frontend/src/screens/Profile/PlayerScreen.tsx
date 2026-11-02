@@ -114,6 +114,9 @@ export function PlayerScreen() {
             <span className="bg-paper px-2 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-ink">{pl.position}</span>
             {pl.is_mine && <span className="rotate-[-3deg] bg-broadcast-gold px-2 py-1 text-[12px] font-black uppercase tracking-[0.14em] text-broadcast-gold-ink shadow-[3px_3px_0_var(--ink)]">In my squad</span>}
             <Link to={`/compare?a=${pl.player_id}`} className="border-2 border-ink bg-paper px-2 py-0.5 text-[12px] font-bold uppercase tracking-[0.14em] text-ink hover:bg-spot">Compare</Link>
+            {!pl.is_mine && (
+              <Link to={`/war-room?getme=${pl.player_id}`} className="border-2 border-ink bg-spot px-2 py-0.5 text-[12px] font-black uppercase tracking-[0.14em] text-ink shadow-[3px_3px_0_var(--ink)] hover:bg-paper">Get me him</Link>
+            )}
           </div>
           <div className="mt-3 max-w-[60%] font-display text-[6.5rem] font-black uppercase leading-[0.8] text-paper [text-shadow:6px_6px_0_var(--ink)]">{pl.name}</div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
