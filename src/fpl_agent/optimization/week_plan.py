@@ -208,6 +208,7 @@ class WeekPlan:
     eye: dict = field(default_factory=dict)
     xp_index: dict = field(default_factory=dict)
     changes: dict | None = None
+    rank: dict | None = None
 
 
 SOFT_REFRESH_MINUTES = 10
@@ -1095,6 +1096,60 @@ def _buyable_pool(conn: sqlite3.Connection, horizon: int, squad_ids: list[int]) 
 
 
 @scoped
+
+def _with_captain(lineup: Lineup, captain: int, vice: int | None, note: str) -> Lineup:
+    xp = {p.player_id: p.xp for p in lineup.starting}
+    return replace(lineup, captain_id=captain, vice_id=vice, captain_note=note,
+                   xp_total=round(sum(xp.values()) + xp.get(captain, 0.0), 2))
+
+
+def _apply_rank_review(
+    conn: sqlite3.Connection, event: int, curve: list, moves: list, squad_now: set[int], lineup_now: Lineup,
+    lineup_after: Lineup, lineup_cache: dict, starts: dict[int, int], current_xi_ids: set[int], plan_gain: float,
+) -> tuple[dict | None, Lineup, Lineup]:
+    """The rank review (`optimization/rank_review.py`) over roll, each run of the plan's first moves and the plan, and
+    the armband: the armband among near-tied starters goes to the best chance of a top-10k finish."""
+    from fpl_agent.optimization.rank_review import RankOption, rank_review
+
+    def option(key: str, label: str, lu: Lineup, gain: float) -> RankOption:
+        return RankOption(key, label, [p.player_id for p in lu.starting], [p.player_id for p in lu.bench],
+                          lu.captain_id, lu.vice_id, gain, lu.xp_total)
+
+    gains = {getattr(c, "moves", None): getattr(c, "gain_vs_roll", None) for c in curve}
+    options = [option("roll", "Roll", lineup_now, 0.0)]
+    squad = set(squad_now)
+    for k, m in enumerate(moves[:-1], start=1):
+        squad = (squad - {m.out.player_id}) | {m.into.player_id}
+        lu = _lineup(conn, set(squad), event, lineup_cache, starts, current_xi_ids)
+        names = ", ".join(f"{x.out.name} to {x.into.name}" for x in moves[:k])
+        options.append(option(f"first_{k}", f"Only {names}", lu, gains.get(k) or sum(x.gain for x in moves[:k])))
+    plan_opt = option("plan", "The plan" if moves else "The plan (roll)", lineup_after, plan_gain)
+    options.append(plan_opt)
+
+    review = rank_review(conn, event, options, plan_opt, {p.player_id: p.xp for p in lineup_after.starting})
+    if review is None:
+        return None, lineup_after, lineup_now
+    best = review["best_captain"]
+    if best is not None and best != lineup_after.captain_id:
+        rows = {c["player_id"]: c for c in review["captains"]}
+        names = {p.player_id: p.name for p in lineup_after.starting}
+        was = rows.get(lineup_after.captain_id) or max(review["captains"], key=lambda c: c["xp"])
+        pick = rows[best]
+        note = (
+            f"{names[best]} over {names.get(was['player_id'], was['player_id'])}: projections within {CAPTAIN_TIE_BAND:g} xP "
+            f"({pick['xp']:.2f} against {was['xp']:.2f}); the top 10k captain {names[best]} "
+            f"{pick['field_captain_share'] * 100:.0f}% and {names.get(was['player_id'], '')} "
+            f"{was['field_captain_share'] * 100:.0f}%, and the chance of a top-10k finish is "
+            f"{pick['chance'] * 100:.1f}% against {was['chance'] * 100:.1f}%."
+        )
+        same_squad = {p.player_id for p in lineup_now.starting} == {p.player_id for p in lineup_after.starting}
+        lineup_after = _with_captain(lineup_after, best, pick["vice"], note)
+        if same_squad:
+            lineup_now = _with_captain(lineup_now, best, pick["vice"], note)
+    review["captain_id"] = lineup_after.captain_id
+    return review, lineup_after, lineup_now
+
+
 def build_week_plan(
     conn: sqlite3.Connection, horizon: int = HORIZON_GW, min_move_gain: float = MIN_MOVE_GAIN,
 ) -> WeekPlan | None:
@@ -1238,6 +1293,15 @@ def build_week_plan(
     lineup_after = _lineup(conn, squad_after, event, lineup_cache, starts, current_xi_ids)
     as_set = _lineup_as_set(locked, xp_by_id, starts)
 
+    rank = None
+    try:
+        rank, lineup_after, lineup_now = _apply_rank_review(
+            conn, event, curve, moves, set(squad_ids), lineup_now, lineup_after, lineup_cache, starts, current_xi_ids,
+            plan_total - roll_total,
+        )
+    except Exception:
+        _logger.exception("rank review failed - the plan keeps its points-based armband")
+
     out_ids = [m.out.player_id for m in moves]
     spent = sum(m.cost_tenths for m in moves)
     bank_after = bank - spent
@@ -1328,6 +1392,7 @@ def build_week_plan(
         },
         xp_index=xp_index,
         changes=plan_changes(conn, previous, event, chosen_pairs, captain_now, xp_index, standing),
+        rank=rank,
     )
 
 

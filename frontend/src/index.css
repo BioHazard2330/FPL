@@ -840,3 +840,12 @@ main { view-transition-name: page; }
 @keyframes goalflash-wipe { to { clip-path: inset(0 0 0 0); } }
 @keyframes goalflash-leave { to { transform: translateY(160%); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .goalflash, .goalflash-kind, .goalflash-body { animation: none; clip-path: none; } }
+
+/* The pundit's desk (command/PunditDesk.tsx): cards deal in, the grade stamp lands, the chance bars fill. */
+.pundit-card { animation: pundit-deal 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.pundit-stamp { animation: pundit-stamp 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) 0.35s both; }
+.pundit-bar { transform-origin: left; animation: pundit-fill 0.9s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+@keyframes pundit-deal { from { opacity: 0; transform: translateY(18px) rotate(-1deg); } to { opacity: 1; transform: none; } }
+@keyframes pundit-stamp { from { opacity: 0; transform: scale(2.2) rotate(-12deg); } to { opacity: 1; transform: scale(1) rotate(-3deg); } }
+@keyframes pundit-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .pundit-card, .pundit-stamp, .pundit-bar { animation: none; } }

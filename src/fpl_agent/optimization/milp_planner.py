@@ -214,6 +214,7 @@ def plan_transfers_milp(
     sell_penalty: dict[int, float] | None = None,
     buy_penalty: dict[int, float] | None = None,
     wildcard_first: bool = False,
+    terminal_value: dict[int, float] | None = None,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -405,6 +406,9 @@ def plan_transfers_milp(
         # against, has to earn this much more (week_plan.EYE_PENALTY).
         - pulp.lpSum((sell_penalty or {}).get(p, 0.0) * tout[(p, t)] for p in ids for t in events if (sell_penalty or {}).get(p))
         - pulp.lpSum((buy_penalty or {}).get(p, 0.0) * tin[(p, t)] for p in ids for t in events if (buy_penalty or {}).get(p))
+        # What the squad left at the end of the horizon is worth beyond it (objective only): without it a plan happily
+        # ends holding players whose fixtures turn the week after the window closes.
+        + pulp.lpSum(v * x[(p, events[-1])] for p, v in (terminal_value or {}).items() if p in pos)
     )
 
     for t in events:

@@ -67,14 +67,17 @@ def chance(gap: float, weeks: int, mean: float, sd: float) -> float:
 def chance_with_this_week(gap: float, weeks: int, week: dict, pace: dict) -> float:
     """As `chance`, with this gameweek at `week`'s mean and spread and the rest at `pace`'s."""
     rest = max(weeks - 1, 0)
-    mean = week["mean"] + rest * pace["mean"]
+    mean = week["mean"] + week.get("later", 0.0) + rest * pace["mean"]
     var = week["sd"] ** 2 + rest * pace["sd"] ** 2
     return float(norm.sf(gap, loc=mean, scale=math.sqrt(max(var, 1e-9))))
 
 
-def chase(conn: sqlite3.Connection, plan_edge: dict, options: list[dict], captains: list[dict], target: int = DEFAULT_TARGET) -> dict | None:
+def chase(conn: sqlite3.Connection, plan_edge: dict, options: list[dict], captains: list[dict], target: int = DEFAULT_TARGET,
+          plan_later: float = 0.0) -> dict | None:
     """The chase block for the Field page. `plan_edge`, each option's and each captain's `edge` are against the top-10k
-    field this gameweek ({mean, sd, ...} from `rank_engine.edge_to_dict`)."""
+    field this gameweek ({mean, sd, ...} from `rank_engine.edge_to_dict`); an option's `later` is what it adds over
+    rolling in the later weeks of the plan's horizon (`optimization/rank_review`), and `plan_later` the plan's, which
+    every armband shares."""
     from fpl_agent.ingestion.my_team import get_my_team_entry_id
     from fpl_agent.ingestion.rank_threshold import latest_thresholds
 
@@ -118,13 +121,13 @@ def chase(conn: sqlite3.Connection, plan_edge: dict, options: list[dict], captai
             round(chance(gap, weeks, measured_mean, measured_sd or pace["sd"]), 3) if measured_mean is not None else None
         ),
         "options": [
-            {"key": o["key"], "label": o["label"], "mean": o["edge"]["mean"], "sd": o["edge"]["sd"],
-             "chance": round(chance_with_this_week(gap, weeks, o["edge"], pace), 4)}
+            {"key": o["key"], "label": o["label"], "mean": o["edge"]["mean"], "sd": o["edge"]["sd"], "later": o.get("later", 0.0),
+             "chance": round(chance_with_this_week(gap, weeks, {**o["edge"], "later": o.get("later", 0.0)}, pace), 4)}
             for o in options
         ],
         "captains": [
             {"player_id": c["player_id"], "name": c.get("name"), "mean": c["edge"]["mean"], "sd": c["edge"]["sd"],
-             "chance": round(chance_with_this_week(gap, weeks, c["edge"], pace), 4), "chosen": c.get("chosen", False)}
+             "chance": round(chance_with_this_week(gap, weeks, {**c["edge"], "later": plan_later}, pace), 4), "chosen": c.get("chosen", False)}
             for c in captains
         ],
     }

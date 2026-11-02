@@ -1820,7 +1820,33 @@ export interface LineupChanges {
   worth_changing: boolean
 }
 
+export interface RankReviewOption { key: string; label: string; week_mean: number; week_sd: number; horizon_gain: number; later_gain: number; chance: number }
+export interface RankReviewCaptain {
+  player_id: number; xp: number; week_mean: number; week_sd: number; chance: number; vice: number | null
+  field_captain_share: number; field_eo: number; contender: boolean
+}
+export interface RankReview {
+  target: number; gap: number; weeks_left: number; pace: { mean: number; sd: number; weeks: number; source: string }
+  field: { sample_event: number; sample_size: number }; options: RankReviewOption[]; best_option: string | null
+  captains: RankReviewCaptain[]; best_captain: number | null; captain_id: number | null
+}
+export interface PunditMove {
+  out_id: number; into_id: number; out: string; into: string; position: string; grade: 'strong' | 'sound' | 'marginal' | 'doubtful'
+  score: number; for: string[]; against: string[]; context: string[]
+}
+export interface PunditCaptainOption {
+  player_id: number; name: string; xp: number; ceiling: number | null; fixture: string | null; difficulty: number | null
+  start_percent: number | null; field_captain_share: number | null; field_eo: number | null; chance: number | null
+  week_sd: number | null; chosen: boolean
+}
+export interface PunditBrief {
+  overview: string[]; moves: PunditMove[]
+  captain: { captain_id: number; lines: string[]; options: PunditCaptainOption[] } | null
+  rank: RankReview | null
+}
+
 export interface WeekPlanPayload {
+  pundit?: PunditBrief | null
   eye?: { penalty: number; protected: number[]; blocked: number[]; labels: Record<string, string> }
   /** What changed since the last plan for this gameweek (`week_plan.plan_changes`). */
   changes?: PlanChanges | null

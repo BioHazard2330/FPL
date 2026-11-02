@@ -20,6 +20,7 @@ import { SquadNews } from '@/components/command/SquadNews'
 import { TonightPrices } from '@/components/command/TonightPrices'
 import { MidweekWatch } from '@/components/command/MidweekWatch'
 import { PlanChanges } from '@/components/command/PlanChanges'
+import { PunditDesk } from '@/components/command/PunditDesk'
 import { TenKWeek } from '@/components/command/TenKWeek'
 import { LastReport } from '@/components/command/LastReport'
 import { MatchdayHeader } from '@/components/command/MatchdayHeader'
@@ -224,6 +225,7 @@ export function CommandScreen() {
         {tab === 'week' && (
           <>
             <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
+            <PunditDesk plan={plan} />
             <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
               <div className="min-w-0 space-y-7">
                 <PlanChanges changes={plan.changes} horizon={plan.horizon ?? 5} />

@@ -228,15 +228,20 @@ def _score(conn, season: str, squad: list[PlayerCandidate], round_start: str, ro
     )
 
 
-def _plan_step(conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR) -> bool:
-    """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven."""
+def _plan_step(
+    conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR,
+    horizon: int = HORIZON, tail: int = 0, tail_weight: float = 0.0,
+) -> bool:
+    """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven.
+    `tail` more rounds at `tail_weight` are the squad's value beyond the horizon (`plan_transfers_milp(terminal_value=)`)."""
     pool = candidates + [c for c in run.squad if c.player_id not in by_id]
-    cache = {(c.player_id, i + 1 + k): value(c, i + k) for c in pool for k in range(HORIZON)}
-    ranked = [PlayerCandidate(**{**c.__dict__, "xp": sum(cache[(c.player_id, i + 1 + k)] for k in range(HORIZON))}) for c in pool]
+    cache = {(c.player_id, i + 1 + k): value(c, i + k) for c in pool for k in range(horizon)}
+    ranked = [PlayerCandidate(**{**c.__dict__, "xp": sum(cache[(c.player_id, i + 1 + k)] for k in range(horizon))}) for c in pool]
+    terminal = {c.player_id: tail_weight * sum(value(c, i + horizon + k) for k in range(tail)) for c in pool} if tail else None
     result = plan_transfers_milp(
         conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
-        horizon_gw=HORIZON, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
-        model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=bar,
+        horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
+        model_chips=False, xp_cache=cache, league_pool=ranked, transfer_penalty=bar, terminal_value=terminal,
     )
     used = 0
     proven = True
@@ -258,7 +263,12 @@ def _plan_step(conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: d
     return proven
 
 
-def run_plan_replay(conn: sqlite3.Connection, season: str, max_rounds: int | None = None) -> PlanReplayResult:
+def run_plan_replay(
+    conn: sqlite3.Connection, season: str, max_rounds: int | None = None,
+    variants: dict[str, tuple[int, int, float]] | None = None,
+) -> PlanReplayResult:
+    """`variants` replaces the three plans with fixture-reading plans of the given (horizon, tail rounds, tail weight),
+    for testing how far ahead to look; the swap and hold policies run either way."""
     from fpl_agent.backtesting.data_fidelity import MISSING_DATA, UNRESOLVED_ID, diagnose_season
 
     starts = _round_start_dates(conn, season)
@@ -278,7 +288,8 @@ def run_plan_replay(conn: sqlite3.Connection, season: str, max_rounds: int | Non
         raise ValueError(f"round-0 squad infeasible for {season}")
     unreliable = frozenset(s.player_id for s in diagnose_season(conn, season) if s.derived_status in (MISSING_DATA, UNRESOLVED_ID))
 
-    runs = {name: PolicyRun(name, list(squad0)) for name in (*PLANS, "swap", "hold")}
+    plans = tuple(variants) if variants else PLANS
+    runs = {name: PolicyRun(name, list(squad0)) for name in (*plans, "swap", "hold")}
     per_round = []
     unproven = 0
     for i, round_start in enumerate(starts):
@@ -307,10 +318,13 @@ def run_plan_replay(conn: sqlite3.Connection, season: str, max_rounds: int | Non
 
         flat = value_for(False, False)
         values = {"plan": flat, "plan_count": value_for(True, False), "plan_fixture": value_for(True, True)}
+        for name in variants or {}:
+            values[name] = values["plan_fixture"]
 
         if i > 0:
-            for name in PLANS:
-                unproven += 0 if _plan_step(conn, runs[name], candidates, by_id, i, values[name]) else 1
+            for name in plans:
+                horizon, tail, weight = (variants or {}).get(name, (HORIZON, 0, 0.0))
+                unproven += 0 if _plan_step(conn, runs[name], candidates, by_id, i, values[name], horizon=horizon, tail=tail, tail_weight=weight) else 1
 
             swap = runs["swap"]
             pool_by_position: dict[str, list[PlayerCandidate]] = {}

@@ -197,10 +197,32 @@ def _build(kind: str) -> dict:
             def vs_top(key: str) -> dict:
                 return re.edge_to_dict(re.edge_stats(chase_scores[key], chase_fpts, spread))
 
+            roll_pts = next((o["mean_points"] for o in options if o["key"] == "roll"), 0.0)
+            horizon_gain = {"plan": plan.get("gain_vs_roll") or 0.0}
+            first = moves[0]["into"]["player_id"] if moves else None
+            for m in moves:
+                horizon_gain[f"single_{m['into']['player_id']}"] = m["gain"]
+            # the first move alone is the curve's one-move solve; later moves' standalone worth is their marginal gain
+            if first is not None and len(plan.get("curve") or []) > 1:
+                horizon_gain[f"single_{first}"] = plan["curve"][1]["gain_vs_roll"]
+
+            # the plan's rank review (`optimization/rank_review`) already split each of its options into this week and
+            # later weeks on the projections; use its split where it has one so the two pages give the same chance
+            reviewed = {o["key"]: o["later_gain"] for o in (plan.get("rank") or {}).get("options", [])}
+            if first is not None and "first_1" in reviewed:
+                reviewed[f"single_{first}"] = reviewed.pop("first_1")
+
+            def later(o: dict) -> float:
+                if o["key"] in reviewed:
+                    return reviewed[o["key"]]
+                return horizon_gain[o["key"]] - (o["mean_points"] - roll_pts) if o["key"] in horizon_gain else 0.0
+
+            plan_later = later(plan_option)
             chase_block = chase(
                 conn, vs_top("plan"),
-                [{**o, "edge": vs_top(o["key"])} for o in options],
+                [{**o, "edge": vs_top(o["key"]), "later": later(o)} for o in options],
                 [{**c, "edge": vs_top(f"captain_{c['player_id']}")} for c in captains],
+                plan_later=plan_later,
             )
 
         best_edge = max(captains, key=lambda c: c["edge"]["mean"])

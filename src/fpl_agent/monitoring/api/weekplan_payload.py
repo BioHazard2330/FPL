@@ -210,6 +210,17 @@ def _attach_matchups(conn, payload: dict, detail: dict) -> None:
         _logger.exception("matchup board failed - the plan is unaffected")
 
 
+def _attach_pundit(conn, payload: dict, detail: dict) -> None:
+    """The plan argued across every lens the app measures, and the rank review it was decided with (`models/pundit`)."""
+    from fpl_agent.models.pundit import pundit_brief
+
+    try:
+        payload["pundit"] = pundit_brief(conn, payload, detail.get("rank"))
+    except Exception:
+        _logger.exception("pundit brief failed - the plan is unaffected")
+        payload["pundit"] = None
+
+
 def build_week_plan_payload(ctx: DashboardContext) -> dict:
     from fpl_agent.database.connection import get_connection
     from fpl_agent.monitoring.api.fixture_context import fixture_context_by_team_code
@@ -334,6 +345,7 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         _attach_rank_targets(conn, payload)
         _attach_analyst(conn, payload)
         _attach_form(conn, payload, list(detail.get("squad_ids", [])))
+        _attach_pundit(conn, payload, detail)
         return attach_photo_codes(conn, payload)
     finally:
         conn.close()
