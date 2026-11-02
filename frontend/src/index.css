@@ -737,3 +737,15 @@ main {
 .holo:hover .holo-foil::before { opacity: 0.6; }
 .holo:hover .holo-gold::before { opacity: 0.7; }
 @media (prefers-reduced-motion: reduce) { .holo { transform: none !important; } }
+
+/* Page changes (sidebar and palette navigate with view transitions): the old page drops back as the new one is printed
+ * over it from the top, like a programme page turned. Off for reduced motion. */
+main { view-transition-name: page; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-old(page) { animation: page-out 180ms cubic-bezier(0.4, 0, 1, 1) both; }
+::view-transition-new(page) { animation: page-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes page-out { to { opacity: 0; transform: translateY(10px) scale(0.995); } }
+@keyframes page-in { from { opacity: 0; clip-path: inset(0 0 100% 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(page), ::view-transition-new(page) { animation: none; }
+}

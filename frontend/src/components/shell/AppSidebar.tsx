@@ -61,7 +61,7 @@ export function AppSidebar() {
                             : 'rounded-none text-paper/75 hover:bg-[#2a241b] hover:text-paper'
                         }
                         render={
-                          <NavLink to={d.to} end={'end' in d ? d.end : false}>
+                          <NavLink to={d.to} end={'end' in d ? d.end : false} viewTransition>
                             <d.icon strokeWidth={2.2} className={`size-4 ${isActive ? 'text-spot' : ''}`} />
                             <span className="font-display text-[17px] font-bold uppercase tracking-[0.02em]">{d.label}</span>
                           </NavLink>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchPlayersIndex } from '@/lib/api'
 import type { PlayerIndexRow } from '@/lib/types'
+import { DESTINATIONS } from '@/lib/nav'
 
 interface Item {
   label: string
@@ -11,21 +12,16 @@ interface Item {
   player?: PlayerIndexRow
 }
 
-const ITEMS: Item[] = [
-  { label: 'Command', hint: 'Current decision', to: '/' },
-  { label: 'My Team', hint: 'Squad & pitch', to: '/my-team' },
-  { label: 'Plan', hint: 'Strategic trajectory', to: '/plan' },
-  { label: 'Football', hint: 'Match intelligence', to: '/football' },
-  { label: 'Desk', hint: 'News, video, price board', to: '/desk' },
-  { label: 'Previews', hint: 'Next gameweek, match by match', to: '/previews' },
-  { label: 'Mini-leagues', hint: 'Your leagues, rivals and head-to-heads', to: '/leagues' },
-  { label: 'Field', hint: 'This week against everyone else', to: '/field' },
-  { label: 'Audit', hint: 'Luck, deserved points, match rebuilds', to: '/audit' },
-  { label: 'Compare', hint: 'Two players, side by side', to: '/compare' },
-  { label: 'Scout', hint: 'Player market', to: '/scout' },
-  { label: 'Advanced', hint: 'System diagnostics', to: '/advanced' },
-  { label: 'Live', hint: 'Live matches & events', to: '/live' },
-]
+const HINTS: Record<string, string> = {
+  '/': 'The call this week', '/my-team': 'Squad and pitch', '/plan': 'Transfers over the horizon', '/war-room': 'Drag in a transfer, priced at once',
+  '/album': 'The fifteen as stickers', '/eye': 'Your read of each player', '/live': 'Matches in play, auto-subs, departures',
+  '/matchweek': 'Every match of the week', '/table': 'How each side plays', '/previews': 'Next gameweek, match by match',
+  '/football': 'Your clubs', '/atlas': 'Every shot of the season', '/scout': 'Player market', '/compare': 'Two players side by side',
+  '/explorer': 'Filter every player', '/desk': 'News, video, community', '/review': 'Last gameweek read back',
+  '/versus': 'Your season against the managers ranked around 10,000', '/leagues': 'Rivals and odds', '/field': 'This week against everyone',
+  '/audit': 'Luck and deserved points', '/receipts': 'How the model has done', '/advanced': 'System health',
+}
+const ITEMS: Item[] = DESTINATIONS.map((d) => ({ label: d.label, hint: HINTS[d.to] ?? '', to: d.to }))
 
 const MAX_PLAYERS = 6
 
@@ -85,11 +81,15 @@ export function CommandPalette() {
               player: p,
             }))
         : []
-    return [...found, ...screens]
+    const starts = (label: string) => label.toLowerCase().split(/\s+/).some((w) => w.startsWith(q))
+    const lead = screens.filter((i) => starts(i.label))
+    const rest = screens.filter((i) => !starts(i.label))
+    const byStart = [...found].sort((a, b) => Number(starts(b.label)) - Number(starts(a.label)))
+    return [...lead, ...byStart, ...rest]
   }, [query, players])
 
   function go(item: Item, compare = false) {
-    navigate(compare && item.player ? `/compare?a=${item.player.player_id}` : item.to)
+    navigate(compare && item.player ? `/compare?a=${item.player.player_id}` : item.to, { viewTransition: true })
     setOpen(false)
   }
 
