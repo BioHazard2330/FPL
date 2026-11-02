@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { Flap } from '@/components/ui/Flap'
 import { useCountdown } from '@/lib/clock'
 import type { UpcomingMatch } from '@/lib/types'
@@ -18,13 +19,23 @@ function remark(m: UpcomingMatch): string {
   return ''
 }
 
-export function DepartureBoard({ matches }: { matches: UpcomingMatch[] }) {
+export function DepartureBoard({ matches, compact: forced = false }: { matches: UpcomingMatch[]; compact?: boolean }) {
+  const box = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(1200)
+  useEffect(() => {
+    if (!box.current) return
+    const ro = new ResizeObserver(([e]) => setWidth(e.contentRect.width))
+    ro.observe(box.current)
+    return () => ro.disconnect()
+  }, [])
+  const compact = forced || width < 900
+  const nameCells = width < 520 ? 12 : compact ? 20 : 28
   const first = useCountdown(matches[0]?.kickoff_time ?? null)
   const clock = first && !first.expired
     ? `${first.days > 0 ? `${first.days}D ` : ''}${pad2(first.hours)}:${pad2(first.minutes)}:${pad2(first.seconds)}`
     : 'KICKOFF'
   return (
-    <div className="border-2 border-ink bg-[#0e0f12] p-5 shadow-[6px_6px_0_var(--spot)]">
+    <div ref={box} className="@container border-2 border-ink bg-[#0e0f12] p-5 shadow-[6px_6px_0_var(--spot)]">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-4">
         <div>
           <div className="font-display text-[13px] font-black uppercase tracking-[0.3em] text-[#ffc400]">Departures · GW{matches[0]?.event}</div>
@@ -32,12 +43,12 @@ export function DepartureBoard({ matches }: { matches: UpcomingMatch[] }) {
         </div>
         <div className="text-right">
           <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-white/45">first kickoff in</div>
-          <Flap text={clock} width={11} className="text-[2.4rem]" stagger={0} />
+          <Flap text={clock} width={11} className="text-[clamp(1.1rem,3.4cqw,2.4rem)]" stagger={0} />
         </div>
       </div>
-      <div className="mt-3 grid grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-x-5 gap-y-2 text-[1.35rem]">
-        {['time', 'match', 'your players', 'xp', 'remarks'].map((h) => (
-          <div key={h} className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">{h}</div>
+      <div className={`mt-3 grid items-center gap-y-2 ${compact ? 'grid-cols-[auto_auto_minmax(0,1fr)_auto] gap-x-3 text-[clamp(0.6rem,2.2cqw,1.25rem)]' : 'grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] gap-x-[1.2cqw] text-[clamp(0.6rem,1.62cqw,1.35rem)]'}`}>
+        {(compact ? ['time', 'match', 'your players', 'xp'] : ['time', 'match', 'your players', 'xp', 'remarks']).map((h) => (
+          <div key={h} className="truncate text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">{h}</div>
         ))}
         {matches.map((m, i) => {
           const k = new Date(m.kickoff_time)
@@ -50,12 +61,12 @@ export function DepartureBoard({ matches }: { matches: UpcomingMatch[] }) {
             <Flap key={`t${i}`} text={when} width={9} stagger={22} />,
             <Flap key={`m${i}`} text={`${m.home} V ${m.away}`} width={9} stagger={22} />,
             <span key={`p${i}`} className="min-w-0 overflow-hidden" title={m.players.map((x) => x.web_name).join(', ')}>
-              <Flap text={names} width={28} stagger={14} className={`text-[0.7em] ${starters.length ? '' : 'opacity-45'}`} />
+              <Flap text={names} width={nameCells} stagger={14} className={`text-[0.7em] ${starters.length ? '' : 'opacity-45'}`} />
             </span>,
             <Flap key={`x${i}`} text={starters.length ? xp.toFixed(1) : ''} width={4} stagger={22} />,
-            <span key={`r${i}`} className={r === 'BOARDING' ? 'animate-pulse text-[#ff4614]' : r === 'ARMBAND' ? 'text-[#ffc400]' : ''}>
+            ...(compact ? [] : [<span key={`r${i}`} className={r === 'BOARDING' ? 'animate-pulse text-[#ff4614]' : r === 'ARMBAND' ? 'text-[#ffc400]' : ''}>
               <Flap text={r} width={10} stagger={22} className={r === 'ARMBAND' ? '[&_.flap]:!text-[#ffc400]' : r === 'BOARDING' ? '[&_.flap]:!text-[#ff4614]' : ''} />
-            </span>,
+            </span>]),
           ]
         })}
       </div>

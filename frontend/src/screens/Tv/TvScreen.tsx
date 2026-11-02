@@ -180,7 +180,7 @@ export function TvScreen() {
               })}
             </div>
           ) : (snap?.upcoming ?? []).length > 0 ? (
-            <div className="origin-top scale-[0.92]"><DepartureBoard matches={snap!.upcoming!} /></div>
+            <DepartureBoard matches={snap!.upcoming!} compact />
           ) : (
             <div className="flex h-full items-center justify-center font-display text-3xl font-black uppercase text-paper/30">no matches on</div>
           )}
