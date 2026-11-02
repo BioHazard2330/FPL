@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import confetti from 'canvas-confetti'
 import { Odometer } from '@/components/ui/Odometer'
@@ -14,7 +14,20 @@ import type { LiveSnapshot } from '@/lib/types'
  * splash (with confetti and, if switched on, the crowd) when one of your players scores or sets one up. Before kickoff
  * it shows the departures board and the deadline. Reads the same live snapshot as the Live screen, every 10 seconds. */
 
-interface Splash { id: number; kind: 'GOAL' | 'ASSIST' | 'RED CARD' | 'POINTS'; name: string; points: number; captain: boolean }
+interface Splash { id: number; kind: 'GOAL' | 'ASSIST' | 'RED CARD' | 'POINTS'; name: string; points: number; captain: boolean
+  shot?: { x: number; y: number; gy: number | null; gz: number | null } | null }
+
+const GoalReplay = lazy(() => import('@/components/live/GoalReplay').then((m) => ({ default: m.GoalReplay })))
+
+/** The latest goal in the live shot maps whose shooter matches the scorer's name, for the 3D replay. */
+function findGoalShot(snap: LiveSnapshot, name: string): Splash['shot'] {
+  const want = name.toLowerCase().split('.').pop()?.trim() ?? ''
+  const goals = (snap.active_matches ?? []).flatMap((m) => m.shots ?? [])
+    .filter((s) => s.outcome?.toLowerCase() === 'goal' && s.x !== null && s.y !== null && (s.player_name ?? '').toLowerCase().includes(want))
+    .sort((a, b) => (b.minute ?? 0) - (a.minute ?? 0))
+  const g = goals[0]
+  return g ? { x: g.x!, y: g.y!, gy: g.goal_crossed_y, gz: g.goal_crossed_z } : null
+}
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
@@ -57,7 +70,8 @@ export function TvScreen() {
       const name = e.web_name ?? squad.get(e.player_id)?.web_name ?? ''
       lines.push(`${kind} · ${name}`)
       const gained = (pts.get(e.player_id) ?? 0) - (before.pts.get(e.player_id) ?? 0)
-      const cand: Splash = { id: Date.now(), kind, name, points: gained, captain: e.player_id === captainId }
+      const shot = kind === 'GOAL' ? findGoalShot(snap, name) : null
+      const cand: Splash = { id: Date.now(), kind, name, points: gained, captain: e.player_id === captainId, shot }
       if (!best || (kind === 'GOAL' && best.kind !== 'GOAL')) best = cand
     }
     for (const [pid, p] of pts) {
@@ -73,7 +87,7 @@ export function TvScreen() {
         window.setTimeout(() => confetti({ particleCount: 120, angle: 60, spread: 70, origin: { x: 0 }, colors }), 250)
         window.setTimeout(() => confetti({ particleCount: 120, angle: 120, spread: 70, origin: { x: 1 }, colors }), 400)
       }
-      window.setTimeout(() => setSplash((s) => (s && s.id === best!.id ? null : s)), 6500)
+      window.setTimeout(() => setSplash((s) => (s && s.id === best!.id ? null : s)), best.shot ? 10500 : 6500)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap])
@@ -225,10 +239,13 @@ export function TvScreen() {
       </div>
 
       {splash && (
-        <div key={splash.id} className="tv-splash pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#07090d]/80">
+        <div key={splash.id} className="tv-splash pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#07090d]/85" style={{ animationDuration: splash.shot ? '10.5s' : '6.5s' }}>
           <div className={`font-display text-[14rem] font-black uppercase leading-[0.8] ${splash.kind === 'RED CARD' ? 'text-[#ff3b30]' : 'text-[#ffc400]'} [text-shadow:10px_10px_0_#ff4614]`}>{splash.kind}</div>
           <div className="mt-6 font-display text-[6rem] font-black uppercase leading-none text-paper">{splash.name}</div>
           {splash.points > 0 && <div className="mt-4 font-display text-5xl font-black text-[#4fd88a]">+{splash.points}{splash.captain ? ' · armband' : ''}</div>}
+          {splash.shot && (
+            <div className="mt-8"><Suspense fallback={null}><GoalReplay x={splash.shot.x} y={splash.shot.y} gy={splash.shot.gy} gz={splash.shot.gz} label={splash.name} /></Suspense></div>
+          )}
         </div>
       )}
     </div>
