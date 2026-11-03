@@ -64,11 +64,16 @@ def component_report(conn: sqlite3.Connection, event: int | None = None) -> dict
     rules = _rules(conn, season)
     clause, params = ("AND po.event = ?", (event,)) if event is not None else ("", ())
     rows = conn.execute(
-        "SELECT po.event, po.predicted_median, po.predicted_components, et.singular_name_short AS pos, g.* "
+        # `player_gw_stats` holds only players who got minutes or points; one who sat out is a real zero, not missing
+        # (2026-11-03: the inner join dropped them and read appearance points 0.15-0.3 high at every position).
+        "SELECT po.event, po.player_id AS pid, po.predicted_median, po.predicted_components, et.singular_name_short AS pos, "
+        "g.minutes, g.goals, g.assists, g.bonus, g.clean_sheets, g.goals_conceded, g.saves, g.defensive_contribution, "
+        "g.yellow_cards, g.red_cards "
         "FROM prediction_outcomes po JOIN players p ON p.id = po.player_id JOIN element_types et ON et.id = p.element_type "
-        "JOIN player_gw_stats g ON g.player_id = po.player_id AND g.event = po.event AND g.season = po.season "
-        f"WHERE po.season = ? AND po.model_version = ? AND po.predicted_components IS NOT NULL AND g.fixtures = 1 {clause}",
-        (season, MODEL_VERSION) + params,
+        "LEFT JOIN player_gw_stats g ON g.player_id = po.player_id AND g.event = po.event AND g.season = po.season "
+        "WHERE po.season = ? AND po.model_version = ? AND po.predicted_components IS NOT NULL AND COALESCE(g.fixtures, 1) = 1 "
+        f"AND po.event IN (SELECT DISTINCT event FROM player_gw_stats WHERE season = ?) {clause}",
+        (season, MODEL_VERSION, season) + params,
     ).fetchall()
     by_event: dict[int, list] = defaultdict(list)
     for r in rows:
@@ -76,7 +81,7 @@ def component_report(conn: sqlite3.Connection, event: int | None = None) -> dict
     contenders = set()
     for ev, rs in by_event.items():
         for r in sorted(rs, key=lambda x: -(x["predicted_median"] or 0))[:CONTENDER_TOP]:
-            contenders.add((ev, r["player_id"]))
+            contenders.add((ev, r["pid"]))
 
     def table(keep) -> list[dict]:
         acc: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0, 0.0, 0.0])
@@ -108,7 +113,7 @@ def component_report(conn: sqlite3.Connection, event: int | None = None) -> dict
 
     return {
         "events": sorted(by_event),
-        "players": len({(r["event"], r["player_id"]) for r in rows}),
+        "players": len({(r["event"], r["pid"]) for r in rows}),
         "all": table(lambda r: True),
-        "contenders": table(lambda r: (r["event"], r["player_id"]) in contenders),
+        "contenders": table(lambda r: (r["event"], r["pid"]) in contenders),
     }

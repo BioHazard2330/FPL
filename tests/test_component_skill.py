@@ -57,3 +57,16 @@ def test_component_report_lays_frozen_parts_against_the_gameweek(db_conn, monkey
     assert goals == {"position": "FWD", "part": "goals", "n": 2, "gameweeks": 1, "predicted": 1.6, "actual": 2.0, "gap": 0.4}
     total = next(r for r in out["all"] if r["part"] == "total")
     assert total["predicted"] == pytest.approx(4.2) and total["actual"] == pytest.approx(4.0)
+
+
+def test_a_player_who_sat_out_counts_as_zero_not_missing(db_conn, monkeypatch):
+    test_component_report_lays_frozen_parts_against_the_gameweek(db_conn, monkeypatch)
+    db_conn.execute("INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) VALUES (3,3,'P3',1,4,'a',0,'t0')")
+    parts = {"appearance": 1.0, "goals": 0.4, "assists": 0, "bonus": 0, "clean_sheet": 0, "conceded": 0, "saves": 0, "defcon": 0, "cards": 0}
+    db_conn.execute(
+        "INSERT INTO prediction_outcomes (player_id, event, season, predicted_median, predicted_at, model_version, predicted_components) "
+        "VALUES (3, 9, '2026-27', 1.4, 't', ?, ?)", (MODEL_VERSION, json.dumps(parts)),
+    )
+    out = cs.component_report(db_conn)
+    app = next(r for r in out["all"] if r["part"] == "appearance")
+    assert out["players"] == 3 and app["n"] == 3 and app["actual"] == pytest.approx(4 / 3, abs=1e-3)
