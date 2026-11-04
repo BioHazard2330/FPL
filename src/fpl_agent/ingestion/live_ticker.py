@@ -26,7 +26,8 @@ _logger = logging.getLogger(__name__)
 URL = "https://data.fotmob.com/webcl/ltc/gsm/{match_id}_en.json.gz"
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 _TIMEOUT_SECONDS = 15
-LIVE_TTL_SECONDS = 15.0
+LIVE_TTL_SECONDS = 8.0
+NO_FILE_TTL_SECONDS = 60.0
 FINISHED_TTL_SECONDS = 3600.0
 _CACHE: dict[str, tuple[float, dict | None]] = {}
 
@@ -108,7 +109,7 @@ def cached_ticker(match_id: str, now: float | None = None, fetch=fetch_ticker) -
     now = time.monotonic() if now is None else now
     hit = _CACHE.get(match_id)
     if hit is not None:
-        ttl = FINISHED_TTL_SECONDS if hit[1] is None or hit[1].get("finished") else LIVE_TTL_SECONDS
+        ttl = NO_FILE_TTL_SECONDS if hit[1] is None else FINISHED_TTL_SECONDS if hit[1].get("finished") else LIVE_TTL_SECONDS
         if now - hit[0] < ttl:
             return hit[1]
     try:
@@ -123,7 +124,7 @@ def cached_ticker(match_id: str, now: float | None = None, fetch=fetch_ticker) -
 
 
 PITCH_HOST = "https://pub.fotmob.com/"
-LIVE_STATE_TTL_SECONDS = 30.0
+LIVE_STATE_TTL_SECONDS = 20.0
 _LIVE_STATE: dict[str, tuple[float, dict | None]] = {}
 
 
@@ -147,7 +148,7 @@ def match_live(match_id: str, now: float | None = None, fetch=None) -> dict | No
 
     now = time.monotonic() if now is None else now
     hit = _LIVE_STATE.get(match_id)
-    if hit is not None and now - hit[0] < LIVE_STATE_TTL_SECONDS:
+    if hit is not None and now - hit[0] < (FINISHED_TTL_SECONDS if hit[1] and hit[1]["finished"] else LIVE_STATE_TTL_SECONDS):
         return hit[1]
     try:
         state = parse_live_state((fetch or fetch_match_details)(match_id))

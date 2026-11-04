@@ -11,7 +11,7 @@ import { useFetch } from '@/lib/useFetch'
 interface Who { name: string; player_id?: number; web_name?: string; mine?: boolean; target?: boolean; captain?: boolean; photo_code?: number | null }
 interface Row { id: string; kind: string; minute: number | null; stoppage: number | null; side: 'home' | 'away' | null; text: string; key: boolean; players: Who[]; score?: [number, number] }
 interface Team { short: string; code: number | null }
-export interface MatchHead { fotmob_id: string; fixture: number | null; status: string; score: [number | null, number | null]; minute: number | string | null; home: Team; away: Team; mine?: number; competition?: string }
+export interface MatchHead { kickoff_utc?: string; fotmob_id: string; fixture: number | null; status: string; score: [number | null, number | null]; minute: number | string | null; home: Team; away: Team; mine?: number; competition?: string }
 interface Payload {
   status: string; source?: 'fotmob' | 'premier_league'; match?: MatchHead; live?: boolean; events?: Row[]; team_news?: string[]
   reports?: { half_time?: string; full_time?: string }; pitch_url?: string | null
@@ -100,7 +100,7 @@ function Report({ title, text }: { title: string; text: string }) {
 
 export function PlayByPlay({ fixtureId, fotmobId, live, bare = false }: { fixtureId?: number | null; fotmobId?: string; live: boolean; bare?: boolean }) {
   const query = fotmobId ? `match=${fotmobId}` : `fixture=${fixtureId}`
-  const state = useFetch(() => getJson<Payload>(`/api/playbyplay?${query}`), [query], live ? 15000 : undefined)
+  const state = useFetch(() => getJson<Payload>(`/api/playbyplay?${query}`), [query], live ? 8000 : undefined)
   const [mode, setMode] = useState<'key' | 'all' | 'mine'>('key')
   const data = state.status === 'ready' ? state.data : null
   const rows = useMemo(() => [...(data?.events ?? [])].reverse(), [data])
@@ -135,32 +135,63 @@ export function PlayByPlay({ fixtureId, fotmobId, live, bare = false }: { fixtur
   )
 }
 
-/** The match picker for Live: anything in play first, otherwise the latest finished matches, yours marked. */
-export function LivePlayByPlay() {
-  const list = useFetch(() => getJson<{ status: string; matches: MatchHead[] }>('/api/playbyplay'), [], 60000)
+const inPlay = (m: MatchHead) => m.status === 'LIVE' || m.status === 'HALFTIME'
+const kickoffTime = (m: MatchHead) => (m.kickoff_utc ? new Date(m.kickoff_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+
+/** Every match the picker offers, refreshed often enough that a tie shows as live within seconds of kickoff. */
+export function useLiveMatches(): MatchHead[] {
+  const list = useFetch(() => getJson<{ status: string; matches: MatchHead[] }>('/api/playbyplay'), [], 20000)
+  return list.status === 'ready' ? list.data.matches ?? [] : []
+}
+
+export const anyInPlay = (matches: MatchHead[]) => matches.some(inPlay)
+
+/** The match picker for Live: anything in play first, then your clubs' ties due soon, then the latest finished, yours marked. */
+export function LivePlayByPlay({ matches }: { matches: MatchHead[] }) {
   const [picked, setPicked] = useState<string | null>(null)
-  const matches = list.status === 'ready' ? list.data.matches ?? [] : []
   if (!matches.length) return null
-  const first = matches.find((m) => m.status !== 'FULL_TIME') ?? matches.find((m) => (m.mine ?? 0) > 0) ?? matches[0]
+  const first = matches.find(inPlay) ?? matches.find((m) => m.status === 'FULL_TIME' && (m.mine ?? 0) > 0) ?? matches[0]
   const current = matches.find((m) => m.fotmob_id === picked) ?? first
   return (
     <section className="px-10 py-6">
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
         {matches.map((m) => {
           const on = m.fotmob_id === current.fotmob_id
-          const live = m.status !== 'FULL_TIME'
+          const live = inPlay(m)
+          const soon = m.status === 'UPCOMING'
           return (
             <button key={m.fotmob_id} type="button" onClick={() => setPicked(m.fotmob_id)}
               className={`shrink-0 border-2 border-ink px-2.5 py-1 text-left ${on ? 'bg-ink text-paper shadow-[3px_3px_0_var(--spot)]' : 'bg-paper text-text hover:bg-raised'}`}>
-              <span className="tabular font-display text-[15px] font-black">{m.home.short} {m.score[0] ?? 0}–{m.score[1] ?? 0} {m.away.short}</span>
-              <span className={`ml-2 text-[10.5px] font-bold uppercase ${live ? 'text-alert-red' : 'opacity-60'}`}>{live ? (m.minute ? `${m.minute}'` : 'live') : 'FT'}{m.competition ? ` · ${m.competition}` : ''}</span>
+              <span className="tabular font-display text-[15px] font-black">{m.home.short} {soon ? 'v' : `${m.score[0] ?? 0}–${m.score[1] ?? 0}`} {m.away.short}</span>
+              <span className={`ml-2 text-[10.5px] font-bold uppercase ${live ? 'text-alert-red' : 'opacity-60'}`}>{soon ? kickoffTime(m) : live ? (m.minute ? (/^\d/.test(String(m.minute)) ? `${m.minute}'` : m.minute) : 'live') : 'FT'}{m.competition ? ` · ${m.competition}` : ''}</span>
               {(m.mine ?? 0) > 0 && <span className="ml-1.5 bg-spot px-1 font-display text-[11px] font-black text-ink">{m.mine}</span>}
             </button>
           )
         })}
       </div>
-      <PlayByPlay key={current.fotmob_id} fotmobId={current.fotmob_id} live={current.status !== 'FULL_TIME'} bare />
+      {current.status === 'UPCOMING'
+        ? <div className="border-2 border-ink bg-paper px-5 py-6 font-display text-2xl font-black uppercase text-text">{current.home.short} v {current.away.short} · kicks off {kickoffTime(current)}</div>
+        : <PlayByPlay key={`${current.fotmob_id}-${current.status}`} fotmobId={current.fotmob_id} live={inPlay(current)} bare />}
     </section>
+  )
+}
+
+/** Matchday TV on a European night: your clubs' ties have no league row, so they get their own picker and pitch. */
+export function TvCups({ matches }: { matches: MatchHead[] }) {
+  const live = matches.filter(inPlay)
+  const [picked, setPicked] = useState<string | null>(null)
+  const current = live.find((m) => m.fotmob_id === picked) ?? live[0]
+  if (!current) return null
+  return (
+    <div className="grid h-full auto-rows-min gap-3 overflow-y-auto pr-1">
+      <PitchFor fotmobId={current.fotmob_id} className="!mb-0" />
+      {live.map((m) => (
+        <button key={m.fotmob_id} type="button" onClick={() => setPicked(m.fotmob_id)} className={`flex items-center justify-between border-2 p-4 text-left ${m.fotmob_id === current.fotmob_id ? 'border-[#ff4614]/70' : 'border-white/20'}`}>
+          <span className="font-display text-3xl font-black uppercase">{m.home.short} {m.score[0] ?? 0}–{m.score[1] ?? 0} {m.away.short}</span>
+          <span className="tabular font-display text-2xl font-black text-[#ffc400]">{m.minute ?? ''}</span>
+        </button>
+      ))}
+    </div>
   )
 }
 

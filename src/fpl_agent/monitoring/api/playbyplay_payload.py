@@ -1,14 +1,16 @@
 """PLAY BY PLAY - one match's ticker with the players named in FPL terms (`?fixture=` an FPL fixture or `?match=` a FotMob
 id), or the matches to choose from (no parameter): in play first (league, then your clubs' European and cup ties), then the
-latest finished. FotMob's ticker first (`ingestion/live_ticker`), the Premier League's commentary when FotMob has no file;
+latest finished, with your clubs' ties due in the next 14 hours beside them. FotMob's ticker first (`ingestion/live_ticker`), the Premier League's commentary when FotMob has no file;
 the Live Pitch address while a covered match is on."""
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from fpl_agent.ingestion.live_ticker import cached_ticker, match_live
 
 _MATCHES = 12
-_CUP_WINDOW_MINUTES = 150
+_CUP_PAST_HOURS = 30
+_CUP_AHEAD_HOURS = 14
 _SELECT = (
     "SELECT mi.fotmob_match_id, mi.fpl_fixture_id, mi.status, mi.home_score, mi.away_score, mi.live_minute, mi.home_team_id, "
     "mi.away_team_id, mi.kickoff_utc, ht.short_name AS home_short, at.short_name AS away_short, ht.code AS home_code, at.code AS away_code "
@@ -74,25 +76,25 @@ def _from_commentary(conn, fixture: int | None, head: dict) -> dict:
     return {"status": "ok", "source": "premier_league", "match": head, "live": bool(c.get("live")), "events": rows, "team_news": [], "reports": {}}
 
 
-def _cup_head(conn, row, state: dict | None) -> dict:
+def _cup_head(conn, row, state: dict | None, status: str = "LIVE") -> dict:
     club = conn.execute("SELECT short_name, code FROM teams WHERE id = ?", (row["team_id"],)).fetchone()
     other = {"short": (row["opponent_name"] or "")[:3].upper(), "code": None}
     ours = {"short": club["short_name"], "code": club["code"]}
     home, away = (ours, other) if row["is_home"] else (other, ours)
     score = (state or {}).get("score") or [None, None]
     return {
-        "fotmob_id": str(row["fotmob_match_id"]), "fixture": None, "status": "LIVE", "score": score, "minute": (state or {}).get("minute"),
+        "fotmob_id": str(row["fotmob_match_id"]), "fixture": None, "status": status, "score": score, "minute": (state or {}).get("minute"),
         "home": home, "away": away, "competition": row["competition"],
     }
 
 
 def _cup_rows(conn, now: datetime) -> list:
-    """Cup and European ties of Premier League clubs kicked off inside the last two and a half hours, one row a tie."""
-    lo = (now - timedelta(minutes=_CUP_WINDOW_MINUTES)).isoformat()
+    """Cup and European ties of Premier League clubs from the last day to the next 14 hours, one row a tie."""
+    lo = (now - timedelta(hours=_CUP_PAST_HOURS)).isoformat()
     seen, rows = set(), []
     for r in conn.execute(
         "SELECT * FROM team_other_competition_fixtures WHERE replace(kickoff_utc, 'Z', '+00:00') BETWEEN ? AND ? ORDER BY kickoff_utc",
-        (lo, now.isoformat()),
+        (lo, (now + timedelta(hours=_CUP_AHEAD_HOURS)).isoformat()),
     ):
         if r["fotmob_match_id"] not in seen:
             seen.add(r["fotmob_match_id"])
@@ -160,14 +162,22 @@ def _list_matches(conn) -> dict:
         "ORDER BY CASE WHEN mi.status IN ('LIVE','HALFTIME') THEN 0 ELSE 1 END, mi.kickoff_utc DESC LIMIT ?", (_MATCHES,),
     ).fetchall()
     league = [{**_head(m), "kickoff_utc": m["kickoff_utc"], "mine": teams.get(m["home_team_id"], 0) + teams.get(m["away_team_id"], 0)} for m in rows]
+    now = datetime.now(timezone.utc)
+    ties = _cup_rows(conn, now)
+    due = [r for r in ties if datetime.fromisoformat(r["kickoff_utc"].replace("Z", "+00:00")) <= now]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        states = dict(zip((r["fotmob_match_id"] for r in due), pool.map(lambda r: match_live(str(r["fotmob_match_id"])), due)))
     cups = []
-    for r in _cup_rows(conn, datetime.now(timezone.utc)):
-        state = match_live(str(r["fotmob_match_id"]))
-        if state and state["started"] and not state["finished"]:
-            cups.append({**_cup_head(conn, r, state), "kickoff_utc": r["kickoff_utc"], "mine": teams.get(r["team_id"], 0)})
-    cups.sort(key=lambda m: -m["mine"])
+    for r in ties:
+        state = states.get(r["fotmob_match_id"])
+        status = "UPCOMING" if not (state and state["started"]) else "FULL_TIME" if state["finished"] else "LIVE"
+        cups.append({**_cup_head(conn, r, state, status), "kickoff_utc": r["kickoff_utc"], "mine": teams.get(r["team_id"], 0)})
     live = [m for m in league if m["status"] != "FULL_TIME"]
-    return {"status": "ok", "matches": live + cups + [m for m in league if m["status"] == "FULL_TIME"]}
+    in_play = sorted((m for m in cups if m["status"] == "LIVE"), key=lambda m: -m["mine"])
+    soon = sorted((m for m in cups if m["status"] == "UPCOMING"), key=lambda m: m["kickoff_utc"])
+    done = sorted([m for m in league if m["status"] == "FULL_TIME"] + [m for m in cups if m["status"] == "FULL_TIME"],
+                  key=lambda m: m["kickoff_utc"].replace("Z", "+00:00"), reverse=True)
+    return {"status": "ok", "matches": live + in_play + soon + done}
 
 
 def build_playbyplay_payload(ctx=None, params: dict | None = None) -> dict:

@@ -67,6 +67,8 @@ def test_a_match_with_no_file_is_none_and_not_refetched_inside_the_hour():
     assert lt.cached_ticker("n", now=0, fetch=missing) is None
     assert lt.cached_ticker("n", now=10, fetch=missing) is None
     assert len(calls) == 1
+    assert lt.cached_ticker("n", now=lt.NO_FILE_TTL_SECONDS + 1, fetch=missing) is None
+    assert len(calls) == 2
 
 
 def _details(show=True, url="https://pub.fotmob.com/prod/news/api/law?matchid=x"):
@@ -99,3 +101,44 @@ def test_live_state_is_cached_and_survives_a_failed_refresh():
 
     assert lt.match_live("z", now=5, fetch=broken)["score"] == [1, 0]
     assert lt.match_live("z", now=100, fetch=broken)["score"] == [1, 0]
+
+
+def test_a_finished_match_is_not_read_again_every_cycle():
+    lt._LIVE_STATE.clear()
+    calls = []
+
+    def over(m):
+        calls.append(m)
+        d = _details()
+        d["header"]["status"]["finished"] = True
+        return d
+
+    lt.match_live("f", now=0, fetch=over)
+    lt.match_live("f", now=lt.LIVE_STATE_TTL_SECONDS + 1, fetch=over)
+    assert len(calls) == 1
+
+
+def _tie(mid, kickoff):
+    return {"fotmob_match_id": mid, "team_id": 1, "opponent_name": "Slavia Prague", "is_home": 0, "competition": "Champions League", "kickoff_utc": kickoff}
+
+
+def test_the_picker_orders_ties_live_then_due_then_finished(db_conn, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.monitoring.api import playbyplay_payload as pp
+
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,3,'Arsenal','ARS','t')")
+    now = datetime.now(timezone.utc)
+    stamp = lambda hours: (now + timedelta(hours=hours)).isoformat()
+    ties = [_tie(1, stamp(-20)), _tie(2, stamp(-1)), _tie(3, stamp(3)), _tie(4, stamp(-0.02))]
+    states = {
+        "1": {"started": True, "finished": True, "score": [2, 1], "minute": None},
+        "2": {"started": True, "finished": False, "score": [1, 0], "minute": "61"},
+        "4": {"started": False, "finished": False, "score": [0, 0], "minute": None},
+    }
+    monkeypatch.setattr(pp, "_cup_rows", lambda conn, at: ties)
+    monkeypatch.setattr(pp, "match_live", lambda m: states.get(m))
+    monkeypatch.setattr(pp, "_squad_context", lambda conn: (set(), None, set()))
+    got = pp._list_matches(db_conn)["matches"]
+    assert [(m["fotmob_id"], m["status"]) for m in got] == [("2", "LIVE"), ("4", "UPCOMING"), ("3", "UPCOMING"), ("1", "FULL_TIME")]
+    assert got[0]["score"] == [1, 0] and got[0]["minute"] == "61"

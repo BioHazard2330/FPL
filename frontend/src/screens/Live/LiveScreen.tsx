@@ -1,5 +1,5 @@
 import Chart from 'react-apexcharts'
-import { LivePlayByPlay } from '@/components/match/PlayByPlay'
+import { LivePlayByPlay, anyInPlay, useLiveMatches } from '@/components/match/PlayByPlay'
 import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
@@ -66,6 +66,7 @@ function LiveSkeleton() {
 }
 
 export function LiveScreen() {
+  const pbpMatches = useLiveMatches()
   const state = useFetch(fetchLiveSnapshot, [], 10000)
   const ready = state.status === 'ready' ? state.data : null
   const crowd = useCrowd(ready?.match_events ?? [], ready?.squad?.find((s) => s.is_captain)?.player_id ?? null)
@@ -127,7 +128,9 @@ export function LiveScreen() {
         </span>
       } />
 
-      {snapshotOld && (
+      {anyInPlay(pbpMatches) && <LivePlayByPlay matches={pbpMatches} />}
+
+      {snapshotOld && !anyInPlay(pbpMatches) && (
         <div className="border-b border-divider bg-panel px-10 py-3">
           <span className="text-[12px] font-bold text-broadcast-gold">This is an old snapshot</span>
           <span className="ml-3 text-sm text-text-muted">
@@ -321,7 +324,7 @@ export function LiveScreen() {
         </div>
       )}
 
-      <LivePlayByPlay />
+      {!anyInPlay(pbpMatches) && <LivePlayByPlay matches={pbpMatches} />}
 
       {(p.autosubs ?? []).length > 0 && (
         <section className="px-10 py-6">
@@ -619,7 +622,7 @@ function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
     <section className="px-10 py-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="voice text-lg text-text-muted">nothing in play · the match centre opens at kickoff</div>
+          <div className="voice text-lg text-text-muted">no league match in play · the match centre opens at kickoff</div>
           <h2 className="font-display text-text">GW{matches[0].event}: when your eleven play</h2>
         </div>
       </div>

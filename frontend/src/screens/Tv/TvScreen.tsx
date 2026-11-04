@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { PitchFor } from '@/components/match/PlayByPlay'
+import { PitchFor, TvCups, anyInPlay, useLiveMatches } from '@/components/match/PlayByPlay'
 import { Link } from 'react-router-dom'
 import confetti from 'canvas-confetti'
 import { Odometer } from '@/components/ui/Odometer'
@@ -45,6 +45,7 @@ function fmtRank(v: number | null | undefined) {
 
 export function TvScreen() {
   const state = useFetch(fetchLiveSnapshot, [], 10000)
+  const pbpMatches = useLiveMatches()
   const snap: LiveSnapshot | null = state.status === 'ready' ? state.data : null
   const captainId = snap?.squad?.find((s) => s.is_captain)?.player_id ?? null
   const crowd = useCrowd(snap?.match_events ?? [], captainId)
@@ -115,7 +116,7 @@ export function TvScreen() {
         <div className="flex items-center gap-4">
           <span className={`size-3 rounded-full ${live ? 'animate-pulse bg-[#ff4614]' : 'bg-paper/30'}`} />
           <span className="font-display text-[2rem] font-black uppercase tracking-[0.04em]">Matchday <span className="text-[#ffc400]">GW{snap?.gw?.event ?? snap?.event ?? ''}</span></span>
-          <span className="font-display text-[15px] font-black uppercase tracking-[0.2em] text-paper/50">{live ? 'live' : 'nothing in play'}</span>
+          <span className="font-display text-[15px] font-black uppercase tracking-[0.2em] text-paper/50">{live || anyInPlay(pbpMatches) ? 'live' : 'nothing in play'}</span>
         </div>
         <div className="flex items-center gap-5">
           <button type="button" onClick={crowd.toggle} className={`border-2 border-paper/40 px-3 py-1 font-display text-[13px] font-black uppercase ${crowd.on ? 'bg-[#ff4614] text-[#07090d]' : 'text-paper/80'}`}>{crowd.on ? 'Crowd on' : 'Crowd off'}</button>
@@ -160,7 +161,7 @@ export function TvScreen() {
         </div>
 
         <div className="min-h-0 overflow-hidden">
-          {matches.length > 0 ? (
+          {matches.length === 0 && anyInPlay(pbpMatches) ? <TvCups matches={pbpMatches} /> : matches.length > 0 ? (
             <div className="grid h-full auto-rows-min gap-3 overflow-y-auto pr-1">
               {pitchMatch?.fotmob_match_id && <PitchFor fotmobId={pitchMatch.fotmob_match_id} className="!mb-0" />}
               {matches.map((m) => {
