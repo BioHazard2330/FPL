@@ -31,6 +31,7 @@ const ScoutScreen = lazy(() => import('@/screens/Scout/ScoutScreen').then((m) =>
 const AdvancedScreen = lazy(() => import('@/screens/Advanced/AdvancedScreen').then((m) => ({ default: m.AdvancedScreen })))
 const EyeScreen = lazy(() => import('@/screens/Eye/EyeScreen').then((m) => ({ default: m.EyeScreen })))
 const WarRoomScreen = lazy(() => import('@/screens/WarRoom/WarRoomScreen').then((m) => ({ default: m.WarRoomScreen })))
+const SupercomputerScreen = lazy(() => import('@/screens/Supercomputer/SupercomputerScreen').then((m) => ({ default: m.SupercomputerScreen })))
 const DecideScreen = lazy(() => import('@/screens/Decide/DecideScreen').then((m) => ({ default: m.DecideScreen })))
 const AlbumScreen = lazy(() => import('@/screens/Album/AlbumScreen').then((m) => ({ default: m.AlbumScreen })))
 const ProgrammeScreen = lazy(() => import('@/screens/Programme/ProgrammeScreen').then((m) => ({ default: m.ProgrammeScreen })))
@@ -97,6 +98,7 @@ function App() {
             <Route path="/album" element={<AlbumScreen />} />
             <Route path="/war-room" element={<WarRoomScreen />} />
             <Route path="/decide" element={<DecideScreen />} />
+            <Route path="/supercomputer" element={<SupercomputerScreen />} />
             <Route path="/eye" element={<EyeScreen />} />
             <Route path="/leagues" element={<LeaguesScreen />} />
           </Routes>

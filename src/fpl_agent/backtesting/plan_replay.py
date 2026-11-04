@@ -243,7 +243,7 @@ def medoid_set(counts: dict[frozenset, int], base: frozenset) -> frozenset:
 def _plan_step(
     conn, run: PolicyRun, candidates: list[PlayerCandidate], by_id: dict, i: int, value, bar: float = BAR,
     horizon: int = HORIZON, tail: int = 0, tail_weight: float = 0.0, draws: int = 0, sigma: float = 0.3,
-    keep_share: float | None = None, ft_gain: int = 1,
+    keep_share: float | None = None, ft_gain: int = 1, bench_weight: float | None = None,
 ) -> bool:
     """Plan the horizon with `value(candidate, round)` and execute the first round's moves; True if the solve was proven.
     `tail` more rounds at `tail_weight` are the squad's value beyond the horizon (`plan_transfers_milp(terminal_value=)`).
@@ -259,6 +259,7 @@ def _plan_step(
             conn, [c.player_id for c in run.squad], run.free_transfers, run.bank, start_event=i + 1,
             horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, time_limit_seconds=SOLVE_SECONDS,
             model_chips=False, xp_cache=xp_cache, league_pool=ranked, transfer_penalty=bar, terminal_value=terminal,
+            bench_weight=bench_weight,
         )
 
     result = solve(cache)
@@ -376,11 +377,12 @@ def run_plan_replay(
         if i > 0:
             for name in plans:
                 horizon, tail, weight, *rest = (variants or {}).get(name, (HORIZON, 0, 0.0))
-                draws, sigma, keep, bars, ft_gain = (rest + [0, 0.3, None, None, 1][len(rest):])[:5]
+                draws, sigma, keep, bars, ft_gain, bench_weight = (rest + [0, 0.3, None, None, 1, None][len(rest):])[:6]
                 run = runs[name]
                 bar = BAR if bars is None else bars[min(run.free_transfers, len(bars)) - 1]
                 unproven += 0 if _plan_step(conn, run, candidates, by_id, i, values[name], bar=bar, horizon=horizon, tail=tail,
-                                            tail_weight=weight, draws=draws, sigma=sigma, keep_share=keep, ft_gain=ft_gain) else 1
+                                            tail_weight=weight, draws=draws, sigma=sigma, keep_share=keep, ft_gain=ft_gain,
+                                            bench_weight=bench_weight) else 1
 
             swap = runs["swap"]
             pool_by_position: dict[str, list[PlayerCandidate]] = {}
