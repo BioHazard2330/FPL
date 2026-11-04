@@ -1,0 +1,110 @@
+"""WHO TO CHEER: what each match still in play or to come is worth against the top 10k, and who has moved you so far.
+
+A player's stake is your multiplier minus the field's effective ownership (`rank_engine.build_field`, top 10k): a point he
+scores moves you against the field by that much. The edge so far is the sum of stake x live points over every player.
+
+A next goal for a side is the shares-weighted stake of its players on the pitch at FPL's scoring values, plus the assist
+on 0.9 of goals, less the clean sheet the other side loses while it still has one. A side is the one to cheer when its next
+goal beats the other's by `CHEER_BAND`.
+
+Assumptions: goal and assist shares come from the frozen projections' goals and assists parts (position weights when a
+gameweek has none); one player's share is rescaled over those on the pitch, so a sub on is counted at his projected share;
+bonus is left out; a clean sheet counts for anyone on the pitch, ignoring the 60-minute rule; bench players count at
+multiplier 0 until FPL makes the substitution. The field's ownership is a sample of 750."""
+import json
+import sqlite3
+
+GOAL_POINTS = {"GKP": 10, "DEF": 6, "MID": 5, "FWD": 4}
+CLEAN_SHEET_POINTS = {"GKP": 4, "DEF": 4, "MID": 1, "FWD": 0}
+ASSIST_POINTS = 3
+ASSISTED_RATE = 0.9
+CHEER_BAND = 0.5
+MOVERS = 6
+_FALLBACK_GOALS = {"GKP": 0.0, "DEF": 0.3, "MID": 1.0, "FWD": 2.0}
+_FALLBACK_ASSISTS = {"GKP": 0.05, "DEF": 0.4, "MID": 1.0, "FWD": 0.7}
+
+
+def side_next_goal(players: list[dict], enemy: list[dict], enemy_clean: bool) -> float:
+    """`players` are a side's men on the pitch: position, stake, goals and assists weights."""
+    goals = sum(p["goals"] for p in players)
+    assists = sum(p["assists"] for p in players)
+    value = 0.0
+    if goals > 0:
+        value += sum(p["goals"] / goals * GOAL_POINTS[p["position"]] * p["stake"] for p in players)
+    if assists > 0:
+        value += ASSISTED_RATE * sum(p["assists"] / assists * ASSIST_POINTS * p["stake"] for p in players)
+    if enemy_clean:
+        value -= sum(CLEAN_SHEET_POINTS[p["position"]] * p["stake"] for p in enemy)
+    return value
+
+
+def cheer_for(home: float, away: float) -> str | None:
+    if abs(home - away) < CHEER_BAND:
+        return None
+    return "home" if home > away else "away"
+
+
+def _squads(conn: sqlite3.Connection, event: int, team_ids: set[int], mine: dict[int, int], eo: dict[int, float]) -> dict[int, list[dict]]:
+    marks = ",".join("?" * len(team_ids))
+    parts = {r["player_id"]: json.loads(r["predicted_components"]) for r in conn.execute(
+        "SELECT player_id, predicted_components FROM prediction_outcomes WHERE event = ? AND predicted_components IS NOT NULL", (event,))}
+    out: dict[int, list[dict]] = {t: [] for t in team_ids}
+    for r in conn.execute(
+        f"SELECT p.id, p.web_name, p.code, p.team_id, t.code AS team_code, et.singular_name_short AS position FROM players p "
+        f"JOIN teams t ON t.id = p.team_id JOIN element_types et ON et.id = p.element_type WHERE p.team_id IN ({marks}) AND p.removed = 0",
+        sorted(team_ids),
+    ):
+        part = parts.get(r["id"])
+        out[r["team_id"]].append({
+            "player_id": r["id"], "name": r["web_name"], "photo_code": r["code"], "team_code": r["team_code"], "position": r["position"],
+            "stake": mine.get(r["id"], 0) - eo.get(r["id"], 0.0),
+            "goals": part.get("goals", 0.0) if part else _FALLBACK_GOALS[r["position"]],
+            "assists": part.get("assists", 0.0) if part else _FALLBACK_ASSISTS[r["position"]],
+        })
+    return out
+
+
+def _on_field(conn: sqlite3.Connection, state, players: list[dict], minutes: dict[int, int]) -> list[dict]:
+    from fpl_agent.models.live_forecast import _on_pitch
+
+    if state.status == "pre":
+        return players
+    return [p for p in players if _on_pitch(conn, state.fixture_id, p["player_id"], minutes.get(p["player_id"], 0), state.minute)]
+
+
+def swing(conn: sqlite3.Connection, event: int, picks: list[tuple[int, int]], stats: dict[int, dict], eo: dict[int, float], states: list) -> dict:
+    mine = dict(picks)
+    points = {pid: s.get("total_points", 0) for pid, s in stats.items()}
+    minutes = {pid: s.get("minutes", 0) for pid, s in stats.items()}
+    edge = sum((mine.get(pid, 0) - eo.get(pid, 0.0)) * pts for pid, pts in points.items())
+    players = {r["id"]: r for r in conn.execute(
+        "SELECT p.id, p.web_name, p.code, t.short_name, t.code AS team_code FROM players p JOIN teams t ON t.id = p.team_id")}
+    movers = []
+    for pid, pts in points.items():
+        stake = mine.get(pid, 0) - eo.get(pid, 0.0)
+        if pts and abs(stake * pts) >= 0.05 and pid in players:
+            p = players[pid]
+            movers.append({"player_id": pid, "name": p["web_name"], "photo_code": p["code"], "team_code": p["team_code"], "team_short": p["short_name"],
+                           "points": pts, "mine": mine.get(pid, 0), "eo": round(eo.get(pid, 0.0), 2), "edge": round(stake * pts, 1)})
+    movers.sort(key=lambda m: -m["edge"])
+    left = [s for s in states if s.status != "done"]
+    teams = {t for s in left for t in (s.home_id, s.away_id)}
+    squads = _squads(conn, event, teams, mine, eo) if teams else {}
+    shorts = {r["id"]: r for r in conn.execute("SELECT id, short_name, code FROM teams")}
+    cards = []
+    for s in sorted(left, key=lambda x: (x.status != "live", x.kickoff or "")):
+        home, away = _on_field(conn, s, squads[s.home_id], minutes), _on_field(conn, s, squads[s.away_id], minutes)
+        next_home = side_next_goal(home, away, s.away_goals == 0)
+        next_away = side_next_goal(away, home, s.home_goals == 0)
+        side = lambda team, goals, nxt: {"short": shorts[team]["short_name"], "code": shorts[team]["code"], "goals": goals, "next_goal": round(nxt, 1)}
+        at_stake = sorted((p for p in home + away if abs(p["stake"]) >= 0.05), key=lambda p: -abs(p["stake"]))[:3]
+        cards.append({
+            "fixture": s.fixture_id, "status": s.status, "minute": round(s.minute), "kickoff": s.kickoff,
+            "home": side(s.home_id, s.home_goals, next_home), "away": side(s.away_id, s.away_goals, next_away),
+            "cheer": cheer_for(next_home, next_away),
+            "key": [{k: p[k] for k in ("player_id", "name", "photo_code", "team_code")} | {"stake": round(p["stake"], 2)} for p in at_stake],
+        })
+    return {
+        "status": "ok", "event": event, "edge": round(edge, 1), "matches": cards,
+        "helping": [m for m in movers if m["edge"] > 0][:MOVERS], "hurting": [m for m in reversed(movers) if m["edge"] < 0][:MOVERS],
+    }

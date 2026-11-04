@@ -135,6 +135,7 @@ export function PlayByPlay({ fixtureId, fotmobId, live, bare = false }: { fixtur
   )
 }
 
+const WALL_MAX = 4
 const inPlay = (m: MatchHead) => m.status === 'LIVE' || m.status === 'HALFTIME'
 const kickoffTime = (m: MatchHead) => (m.kickoff_utc ? new Date(m.kickoff_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
 
@@ -149,7 +150,10 @@ export const anyInPlay = (matches: MatchHead[]) => matches.some(inPlay)
 /** The match picker for Live: anything in play first, then your clubs' ties due soon, then the latest finished, yours marked. */
 export function LivePlayByPlay({ matches }: { matches: MatchHead[] }) {
   const [picked, setPicked] = useState<string | null>(null)
+  const [single, setSingle] = useState(false)
   if (!matches.length) return null
+  const playing = matches.filter(inPlay)
+  const wall = !single && playing.length >= 2
   const first = matches.find(inPlay) ?? matches.find((m) => m.status === 'FULL_TIME' && (m.mine ?? 0) > 0) ?? matches[0]
   const current = matches.find((m) => m.fotmob_id === picked) ?? first
   return (
@@ -160,7 +164,7 @@ export function LivePlayByPlay({ matches }: { matches: MatchHead[] }) {
           const live = inPlay(m)
           const soon = m.status === 'UPCOMING'
           return (
-            <button key={m.fotmob_id} type="button" onClick={() => setPicked(m.fotmob_id)}
+            <button key={m.fotmob_id} type="button" onClick={() => { setPicked(m.fotmob_id); setSingle(true) }}
               className={`shrink-0 border-2 border-ink px-2.5 py-1 text-left ${on ? 'bg-ink text-paper shadow-[3px_3px_0_var(--spot)]' : 'bg-paper text-text hover:bg-raised'}`}>
               <span className="tabular font-display text-[15px] font-black">{m.home.short} {soon ? 'v' : `${m.score[0] ?? 0}–${m.score[1] ?? 0}`} {m.away.short}</span>
               <span className={`ml-2 text-[10.5px] font-bold uppercase ${live ? 'text-alert-red' : 'opacity-60'}`}>{soon ? kickoffTime(m) : live ? (m.minute ? (/^\d/.test(String(m.minute)) ? `${m.minute}'` : m.minute) : 'live') : 'FT'}{m.competition ? ` · ${m.competition}` : ''}</span>
@@ -169,10 +173,38 @@ export function LivePlayByPlay({ matches }: { matches: MatchHead[] }) {
           )
         })}
       </div>
-      {current.status === 'UPCOMING'
+      {playing.length >= 2 && (
+        <div className="mb-3 flex justify-end">
+          <button type="button" onClick={() => setSingle(wall)} className="border-2 border-ink bg-paper px-3 py-0.5 font-display text-[14px] font-black uppercase text-text hover:bg-raised">
+            {wall ? 'One match' : `All ${Math.min(playing.length, WALL_MAX)} pitches`}
+          </button>
+        </div>
+      )}
+      {wall ? <PitchWall matches={playing} onPick={(id) => { setPicked(id); setSingle(true) }} /> : current.status === 'UPCOMING'
         ? <div className="border-2 border-ink bg-paper px-5 py-6 font-display text-2xl font-black uppercase text-text">{current.home.short} v {current.away.short} · kicks off {kickoffTime(current)}</div>
         : <PlayByPlay key={`${current.fotmob_id}-${current.status}`} fotmobId={current.fotmob_id} live={inPlay(current)} bare />}
     </section>
+  )
+}
+
+/** Every match in play at once, yours first, for a Saturday 3pm. Click a score to go to that match alone. */
+function PitchWall({ matches, onPick }: { matches: MatchHead[]; onPick: (id: string) => void }) {
+  const shown = [...matches].sort((a, b) => (b.mine ?? 0) - (a.mine ?? 0)).slice(0, WALL_MAX)
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {shown.map((m) => (
+        <div key={m.fotmob_id} className="min-w-0">
+          <button type="button" onClick={() => onPick(m.fotmob_id)} className="mb-1 flex w-full items-center justify-between bg-ink px-2 py-1 text-paper hover:opacity-90">
+            <span className="tabular font-display text-[17px] font-black uppercase">{m.home.short} {m.score[0] ?? 0}–{m.score[1] ?? 0} {m.away.short}</span>
+            <span className="flex items-center gap-2 text-[11px] font-bold uppercase">
+              {(m.mine ?? 0) > 0 && <span className="bg-spot px-1 font-display text-[12px] font-black text-ink">{m.mine}</span>}
+              {m.minute ? (/^\d/.test(String(m.minute)) ? `${m.minute}'` : m.minute) : 'live'}
+            </span>
+          </button>
+          <PitchFor fotmobId={m.fotmob_id} className="!mb-0 !shadow-none" />
+        </div>
+      ))}
+    </div>
   )
 }
 

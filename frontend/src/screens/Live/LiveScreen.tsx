@@ -7,6 +7,7 @@ import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { BonusDefconRail } from '@/components/live/BonusDefconRail'
 import { DepartureBoard } from '@/components/live/DepartureBoard'
+import { SwingBoard } from '@/components/live/SwingBoard'
 import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
@@ -206,6 +207,8 @@ export function LiveScreen() {
           </div>
         </div>
       )}
+
+      <SwingBoard />
 
       <LiveCone />
 
