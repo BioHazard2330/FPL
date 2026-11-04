@@ -7,7 +7,7 @@ expected stats (`player_gw_stats`), the top-10k ownership sample of that gamewee
 predictions frozen at its deadline (`prediction_outcomes`) and the last week plan made before it
 (`decisions`, type `week_plan`).
 
-Stated simplifications: the plan's score is its eleven and armband on the real points with no automatic substitutions
+Stated simplifications: the plan's score is its eleven and armband on the real points with FPL's automatic substitutions from its bench
 (the vice takes the armband when the captain did not play), and its transfers are free (it never planned a hit that week
 unless its moves exceeded the free transfers, in which case the hit is charged); a player's points are his gameweek total
 (both matches in a double)."""
@@ -108,9 +108,16 @@ def autosub_watch(squad: list[dict], minutes: dict[int, int], done: dict[int, bo
     return result
 
 
+def _plan_score(after: dict, pts: dict[int, int], mins: dict[int, int]) -> int:
+    """The stored plan's lineup on the real points, its bench covering starters who did not play as FPL's would."""
+    rows = [{**p, "starting": True} for p in after["starting"]] + [{**p, "starting": False} for p in after.get("bench") or []]
+    swap = dict(automatic_subs([{**x, "minutes": mins.get(x["player_id"], 0)} for x in rows])) if after.get("bench") else {}
+    return _xi_score([swap.get(p["player_id"], p["player_id"]) for p in after["starting"]], after.get("captain_id"), after.get("vice_id"), pts, mins)
+
+
 def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
     """For every finished gameweek with a plan stored before its deadline: what that plan's eleven and armband scored on the
-    real points (no automatic substitutions, hits charged) against what you scored after hits."""
+    real points (automatic substitutions made, hits charged) against what you scored after hits."""
     from fpl_agent.models.rules import current_season
 
     season = current_season(conn)
@@ -127,7 +134,7 @@ def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
             "SELECT player_id, minutes FROM player_gw_stats WHERE season = ? AND event = ?", (season, r["event"]))}
         after = stored[0]["lineup_after"]
         hits = max(0, len(stored[0].get("moves", [])) - (stored[0].get("free_transfers") or 0)) * 4
-        plan_score = _xi_score([p["player_id"] for p in after["starting"]], after.get("captain_id"), after.get("vice_id"), pts, mins) - hits
+        plan_score = _plan_score(after, pts, mins) - hits
         held = (stored[0].get("eye") or {}).get("held_back")
         out.append({
             "event": r["event"], "plan": plan_score, "you": r["points"] - (r["event_transfers_cost"] or 0),
@@ -221,7 +228,7 @@ def gameweek_review(conn: sqlite3.Connection, entry_id: int, event: int) -> dict
         after = detail["lineup_after"]
         starting = [p["player_id"] for p in after["starting"]]
         plan_hits = max(0, len(detail.get("moves", [])) - (detail.get("free_transfers") or 0)) * 4
-        plan_score = _xi_score(starting, after.get("captain_id"), after.get("vice_id"), pts, mins) - plan_hits
+        plan_score = _plan_score(after, pts, mins) - plan_hits
         plan = {
             "made_at": made_at, "score": plan_score, "hits": plan_hits,
             "captain": {"player_id": after.get("captain_id"), **names.get(after.get("captain_id"), {}), "points": pts.get(after.get("captain_id"), 0)},

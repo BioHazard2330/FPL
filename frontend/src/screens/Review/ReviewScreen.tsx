@@ -11,7 +11,7 @@ import type { ReviewPayload, ReviewPlayer, ReviewSwing } from '@/lib/types'
 /** THE GAMEWEEK REPORT - a finished gameweek read back like the last page of a programme: the score against everyone and
  * against the top ten thousand, the rank move, the eleven as it scored, where the rank was won and lost, the armband, what
  * the plan of record would have scored, and how much of it was the model and how much luck. Every number is stored data
- * (`models/gw_review.py`); the plan's score has no automatic substitutions and says so. */
+ * (`models/gw_review.py`); the plan's score uses its own bench for automatic substitutions. */
 
 const signed = (v: number, d = 0) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
 const fmtRank = (r: number) => (r >= 1_000_000 ? `${(r / 1_000_000).toFixed(2)}m` : r >= 1_000 ? `${Math.round(r / 1_000)}k` : String(r))
@@ -236,7 +236,7 @@ function Verdicts({ d }: { d: ReviewPayload }) {
               ))}
               <li>Armband: {d.plan.captain.name} ({d.plan.captain.points}){d.plan.hits ? ` · ${d.plan.hits} in hits` : ''}</li>
             </ul>
-            <Note>Its eleven on the real points, no automatic substitutions.</Note>
+            <Note>Its eleven on the real points, its bench covering anyone who did not play.</Note>
             {(d.plan.eye_held_back ?? []).length > 0 && (
               <div className="mt-3 border-t-2 border-ink pt-2">
                 <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">the football eye held back</div>

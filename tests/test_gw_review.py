@@ -76,3 +76,15 @@ def test_gameweek_review_reads_a_week_back(db_conn, monkeypatch):
     swings = {g["player_id"]: g["swing"] for g in r["gains"]}
     assert swings[10] == 16.0  # the captain, owned by nobody in the sample
     assert swings[4] == 7.0  # 14 points, yours once, half the sample owns him
+
+
+def test_the_plans_bench_covers_a_starter_who_did_not_play():
+    from fpl_agent.models.gw_review import _plan_score
+
+    starting = [{"player_id": 1, "position": "GKP"}] + [{"player_id": i, "position": "DEF"} for i in range(2, 6)] + [{"player_id": i, "position": "MID"} for i in range(6, 10)] + [{"player_id": i, "position": "FWD"} for i in (10, 11)]
+    bench = [{"player_id": 12, "position": "GKP"}, {"player_id": 13, "position": "MID"}]
+    pts = {i: 2 for i in range(1, 12)} | {11: 0, 12: 9, 13: 7}
+    mins = {i: 90 for i in range(1, 14)} | {11: 0}
+    after = {"starting": starting, "bench": bench, "captain_id": 4, "vice_id": 9}
+    assert _plan_score(after, pts, mins) == 20 + 7 + 2
+    assert _plan_score({**after, "bench": []}, pts, mins) == 20 + 2
