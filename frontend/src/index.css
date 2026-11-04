@@ -849,3 +849,12 @@ main { view-transition-name: page; }
 @keyframes pundit-stamp { from { opacity: 0; transform: scale(2.2) rotate(-12deg); } to { opacity: 1; transform: scale(1) rotate(-3deg); } }
 @keyframes pundit-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: reduce) { .pundit-card, .pundit-stamp, .pundit-bar { animation: none; } }
+
+/* Play by play (match/PlayByPlay.tsx): a new line slides in from the top, a goal lands, the LIVE tag breathes. */
+.pbp-row { animation: pbp-in 0.35s ease-out both; }
+.pbp-goal { animation: pbp-goal 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.pbp-live { animation: pbp-pulse 1.6s ease-in-out infinite; }
+@keyframes pbp-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes pbp-goal { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes pbp-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .pbp-row, .pbp-goal, .pbp-live { animation: none; } }

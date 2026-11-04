@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { PitchFor } from '@/components/match/PlayByPlay'
 import { Link } from 'react-router-dom'
 import confetti from 'canvas-confetti'
 import { Odometer } from '@/components/ui/Odometer'
@@ -48,6 +49,7 @@ export function TvScreen() {
   const captainId = snap?.squad?.find((s) => s.is_captain)?.player_id ?? null
   const crowd = useCrowd(snap?.match_events ?? [], captainId)
   const [splash, setSplash] = useState<Splash | null>(null)
+  const [pitchId, setPitchId] = useState<number | null>(null)
   const prev = useRef<{ pts: Map<number, number>; ev: Map<string, number> } | null>(null)
   const [log, setLog] = useState<string[]>([])
   const [full, setFull] = useState(false)
@@ -98,6 +100,7 @@ export function TvScreen() {
 
   const points = snap?.points
   const matches = snap?.active_matches ?? []
+  const pitchMatch = matches.find((m) => m.match_id === pitchId) ?? matches.find((m) => m.status === 'LIVE' || m.status === 'HALFTIME')
   const live = matches.some((m) => m.status === 'LIVE' || m.status === 'HALFTIME')
   const starters = (snap?.squad ?? []).filter((s) => s.slot === 'starting')
   const bench = (snap?.squad ?? []).filter((s) => s.slot === 'bench')
@@ -159,10 +162,11 @@ export function TvScreen() {
         <div className="min-h-0 overflow-hidden">
           {matches.length > 0 ? (
             <div className="grid h-full auto-rows-min gap-3 overflow-y-auto pr-1">
+              {pitchMatch?.fotmob_match_id && <PitchFor fotmobId={pitchMatch.fotmob_match_id} className="!mb-0" />}
               {matches.map((m) => {
                 const inPlay = m.status === 'LIVE' || m.status === 'HALFTIME'
                 return (
-                  <div key={m.match_id} className={`border-2 p-4 ${m.is_squad_match ? 'border-[#ff4614]/70 bg-[#ff4614]/[0.07]' : 'border-paper/15'}`}>
+                  <div key={m.match_id} onClick={() => setPitchId(m.match_id)} className={`cursor-pointer border-2 p-4 ${m.is_squad_match ? 'border-[#ff4614]/70 bg-[#ff4614]/[0.07]' : 'border-paper/15'} ${pitchMatch?.match_id === m.match_id ? 'outline outline-2 outline-[#ffc400]' : ''}`}>
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 font-display text-3xl font-black uppercase">
                         {crestUrl(m.home_code) && <img src={crestUrl(m.home_code)!} alt="" className="size-9" />}{m.home_short}

@@ -88,6 +88,7 @@ def test_a_second_start_while_running_does_not_launch_another(monkeypatch):
             return None
 
     monkeypatch.setattr(sse_server.subprocess, "Popen", lambda *a, **k: launched.append(1) or _Proc())
+    monkeypatch.setattr(sse_server.RefreshJob, "_cycle_elsewhere", staticmethod(lambda: False))
     job = sse_server.RefreshJob()
 
     assert job.start() == "started"
@@ -147,3 +148,34 @@ def test_made_transfer_records_every_move_then_replans_once_and_rolls_back_a_ref
         assert len(replans) == 1
     finally:
         httpd.shutdown()
+
+
+def test_a_cycle_this_server_did_not_start_reads_as_running_and_is_not_started_again(monkeypatch):
+    monkeypatch.setattr(sse_server.RefreshJob, "_cycle_elsewhere", staticmethod(lambda: True))
+    job = sse_server.RefreshJob()
+    assert job.start() == "already_running"
+    assert job.status()["running"] is True
+
+
+def test_opening_the_page_starts_one_sync_and_a_reload_does_not_start_another(monkeypatch):
+    class Conn:
+        def close(self):
+            pass
+
+    class Job:
+        starts = 0
+
+        def start(self):
+            Job.starts += 1
+            return "started"
+
+    from fpl_agent.scheduler import power_window
+
+    monkeypatch.setattr(power_window, "gate_says_active", lambda now=None: False)
+    monkeypatch.setattr(power_window, "last_successful_cycle", lambda conn: None)
+    monkeypatch.setattr(sse_server, "_last_open_refresh", 0.0)
+    now = 1_000_000.0
+    assert sse_server.refresh_if_stale_on_open(Conn, now_epoch=now, job=Job()) == "started"
+    assert sse_server.refresh_if_stale_on_open(Conn, now_epoch=now + 8, job=Job()) is None
+    assert Job.starts == 1
+    assert sse_server.refresh_if_stale_on_open(Conn, now_epoch=now + 1000, job=Job()) == "started"

@@ -245,9 +245,19 @@ class RefreshJob:
                 return [str(scripts / name)]
         return [sys.executable, "-c", "from fpl_agent.cli.main import cli; cli()"]
 
+    @staticmethod
+    def _cycle_elsewhere() -> bool:
+        """A cycle this server did not start (the scheduler's, or one begun before a restart) holds `run_scheduled.lock`. A
+        child started beside it exits at once, so treating that as a finished sync reloaded every open page every few
+        seconds while the real cycle ran (found 2026-11-04)."""
+        from fpl_agent.config import DATA_DIR
+        from fpl_agent.scheduler.process_lock import lock_held_by_live_process
+
+        return lock_held_by_live_process(DATA_DIR / "run_scheduled.lock")
+
     def start(self) -> str:
         with self._lock:
-            if self._proc is not None and self._proc.poll() is None:
+            if (self._proc is not None and self._proc.poll() is None) or self._cycle_elsewhere():
                 return "already_running"
             flags = 0
             if sys.platform == "win32":
@@ -262,7 +272,7 @@ class RefreshJob:
 
     def status(self) -> dict:
         with self._lock:
-            running = self._proc is not None and self._proc.poll() is None
+            running = (self._proc is not None and self._proc.poll() is None) or self._cycle_elsewhere()
             code = None if self._proc is None else self._proc.poll()
             if self._proc is not None and not running and self._finished_at is None:
                 self._finished_at = datetime.now(timezone.utc).isoformat()
@@ -275,6 +285,8 @@ class RefreshJob:
 refresh_job = RefreshJob()
 
 STALE_ON_OPEN_HOURS = 6.0
+OPEN_REFRESH_COOLDOWN_SECONDS = 900.0
+_last_open_refresh = 0.0
 
 
 def refresh_if_stale_on_open(conn_factory, now_epoch: float | None = None, job: RefreshJob | None = None) -> str | None:
@@ -297,6 +309,11 @@ def refresh_if_stale_on_open(conn_factory, now_epoch: float | None = None, job: 
     now = time.time() if now_epoch is None else now_epoch
     if last is not None and now - last < STALE_ON_OPEN_HOURS * 3600:
         return None
+    # A cycle that ends without improving `last` (offline, deferred) must not be started again by the reload it causes.
+    global _last_open_refresh
+    if now - _last_open_refresh < OPEN_REFRESH_COOLDOWN_SECONDS:
+        return None
+    _last_open_refresh = now
     return (job or refresh_job).start()
 
 

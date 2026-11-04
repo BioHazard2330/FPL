@@ -152,3 +152,13 @@ def release_singleton_lock(lock_path: Path | None = None) -> None:
             lock_path.unlink()
         except OSError:
             pass
+
+
+def lock_held_by_live_process(lock_path: Path) -> bool:
+    """Whether another live process holds this lock, without taking it."""
+    try:
+        first = lock_path.read_text(encoding="utf-8").splitlines()[0]
+        pid = int(first.strip())
+    except (OSError, IndexError, ValueError):
+        return False
+    return pid != os.getpid() and _pid_is_alive(pid)

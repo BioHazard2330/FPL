@@ -64,7 +64,14 @@ export function SyncButton() {
         if (s.running) return
         stop()
         if (s.returncode === 0 || s.returncode === null) {
-          window.location.reload()
+          // never twice in five minutes, whatever the server says: a reload must not be able to cause the next one
+          const last = Number(sessionStorage.getItem('fpl-sync-reload') ?? 0)
+          if (Date.now() - last > 300000) {
+            sessionStorage.setItem('fpl-sync-reload', String(Date.now()))
+            window.location.reload()
+          } else {
+            setPhase('idle')
+          }
         } else {
           setPhase('failed')
         }

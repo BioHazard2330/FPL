@@ -1,4 +1,5 @@
 import Chart from 'react-apexcharts'
+import { LivePlayByPlay } from '@/components/match/PlayByPlay'
 import { Note } from '@/components/ui/Info'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
@@ -319,6 +320,8 @@ export function LiveScreen() {
           </Note>
         </div>
       )}
+
+      <LivePlayByPlay />
 
       {(p.autosubs ?? []).length > 0 && (
         <section className="px-10 py-6">

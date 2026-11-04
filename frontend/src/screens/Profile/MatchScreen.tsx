@@ -1,4 +1,4 @@
-import { Commentary } from '@/components/match/Commentary'
+import { PlayByPlay } from '@/components/match/PlayByPlay'
 import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
@@ -368,7 +368,7 @@ export function MatchScreen() {
 
       {p.story && <MatchAnalyst story={p.story} homeShort={m.home.short} awayShort={m.away.short} homeId={m.home.team_id} />}
 
-      {m.fpl_fixture_id !== null && <Commentary fixtureId={m.fpl_fixture_id} live={m.status === 'LIVE' || m.status === 'HALFTIME'} />}
+      {m.fpl_fixture_id !== null && <PlayByPlay fixtureId={m.fpl_fixture_id} live={m.status === 'LIVE' || m.status === 'HALFTIME'} />}
 
       {/* THE CONTEST */}
       {(hs || as) && (
