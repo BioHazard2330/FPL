@@ -76,3 +76,61 @@ def test_rolling_backup_set_prunes_oldest(tmp_path, monkeypatch):
 
     remaining = backup_mod.list_backups()
     assert len(remaining) == backup_mod.MAX_BACKUPS
+
+
+def _point_at(monkeypatch, tmp_path):
+    import sqlite3
+
+    from fpl_agent.database import backup as b
+
+    db = tmp_path / "live.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE schema_migrations (name TEXT)")
+    c.execute("INSERT INTO schema_migrations VALUES ('x')")
+    c.commit()
+    c.close()
+    monkeypatch.setattr(b, "DB_PATH", db)
+    monkeypatch.setattr(b, "BACKUP_DIR", tmp_path / "backups")
+    return b, db
+
+
+def test_a_compressed_backup_verifies_and_restores(tmp_path, monkeypatch):
+    import sqlite3
+
+    b, db = _point_at(monkeypatch, tmp_path)
+    path = b.create_compressed_backup()
+    assert path.name.endswith(".db.gz") and b.verify_backup(path).ok
+    c = sqlite3.connect(db)
+    c.execute("DELETE FROM schema_migrations")
+    c.commit()
+    c.close()
+    b.restore_backup(path)
+    c = sqlite3.connect(db)
+    assert c.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+    c.close()
+
+
+def test_a_corrupt_compressed_backup_is_refused(tmp_path, monkeypatch):
+    b, db = _point_at(monkeypatch, tmp_path)
+    b.BACKUP_DIR.mkdir()
+    bad = b.BACKUP_DIR / "fpl_20260101T000000.db.gz"
+    bad.write_bytes(b"not a backup")
+    assert not b.verify_backup(bad).ok
+
+
+def test_rotation_keeps_the_two_newest_and_one_a_week_old(tmp_path, monkeypatch):
+    import os
+    from datetime import datetime, timezone
+
+    b, db = _point_at(monkeypatch, tmp_path)
+    b.BACKUP_DIR.mkdir()
+    now = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    ages = [0, 1, 2, 3, 8, 9, 20]
+    for days in ages:
+        f = b.BACKUP_DIR / f"fpl_202611{20 - min(days, 19):02d}T000000.db.gz"
+        f.write_bytes(b"x")
+        t = now.timestamp() - days * 86400
+        os.utime(f, (t, t))
+    b._prune_compressed(now)
+    left = sorted(round((now.timestamp() - p.stat().st_mtime) / 86400) for p in b.BACKUP_DIR.glob("*.gz"))
+    assert left == [0, 1, 8]

@@ -153,6 +153,20 @@ def ownership_sample(conn, now):
     return got == max(past), f"top-10k ownership sampled to GW{got}, last deadline GW{max(past)}"
 
 
+def backup_recent(conn, now):
+    from fpl_agent.database.backup import latest_backup_age_hours
+
+    age = latest_backup_age_hours(now)
+    return age is not None and age < 48, "no backup on record" if age is None else f"last backup {age:.0f}h ago"
+
+
+def database_size(conn, now):
+    from fpl_agent.config import DB_PATH
+
+    mb = DB_PATH.stat().st_size / 1e6 if DB_PATH.exists() else 0.0
+    return mb < 400, f"database {mb:.0f}MB of the 500MB cap"
+
+
 def daemon_time(conn, now):
     rows = conn.execute("SELECT seconds, status FROM pipeline_run ORDER BY id DESC LIMIT 10").fetchall()
     if not rows:
@@ -168,7 +182,8 @@ CHECKS = (
     ("Gameweek stats are in", gameweek_stats, "act"), ("xG history is current", understat_lag, "act"),
     ("Understat answering", understat_up, "look"), ("Predictions settled", outcomes_settled, "look"), ("Match lineups read", match_detail, "look"),
     ("Start percentages arriving", start_feed, "look"), ("Top-10k ownership sampled", ownership_sample, "look"),
-    ("Background cycles inside their limit", daemon_time, "look"),
+    ("Background cycles inside their limit", daemon_time, "look"), ("Backup is recent", backup_recent, "act"),
+    ("Database under its cap", database_size, "look"),
 )
 
 

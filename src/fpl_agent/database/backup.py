@@ -4,10 +4,13 @@ Uses sqlite3's own backup API (consistent snapshot, safe even mid-write) rather
 than a raw file copy.
 """
 
+import contextlib
+import gzip
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fpl_agent.config import DATA_DIR, DB_PATH
@@ -42,7 +45,7 @@ def create_backup() -> Path:
 
 
 def _prune_old_backups() -> None:
-    backups = list_backups()
+    backups = sorted(BACKUP_DIR.glob("fpl_*.db"))
     while len(backups) > MAX_BACKUPS:
         backups.pop(0).unlink()
 
@@ -50,7 +53,55 @@ def _prune_old_backups() -> None:
 def list_backups() -> list[Path]:
     if not BACKUP_DIR.exists():
         return []
-    return sorted(BACKUP_DIR.glob("fpl_*.db"))
+    return sorted([*BACKUP_DIR.glob("fpl_*.db"), *BACKUP_DIR.glob("fpl_*.db.gz")], key=lambda p: p.name.split("_")[1][:15])
+
+
+def create_compressed_backup(now: datetime | None = None) -> Path:
+    """The daily backup: a consistent snapshot, verified, gzipped (200MB to about 48MB). Keeps the two newest and the newest
+    that is at least a week old, so a problem noticed days later still has a good copy behind it."""
+    now = now or datetime.now(timezone.utc)
+    plain = create_backup()
+    try:
+        result = verify_backup(plain)
+        if not result.ok:
+            raise ValueError(f"backup failed verification: {result.detail}")
+        dest = plain.with_suffix(".db.gz")
+        with open(plain, "rb") as f, gzip.open(dest, "wb", compresslevel=6) as g:
+            shutil.copyfileobj(f, g)
+    finally:
+        plain.unlink(missing_ok=True)
+    _prune_compressed(now)
+    return dest
+
+
+def _prune_compressed(now: datetime) -> None:
+    daily = sorted(BACKUP_DIR.glob("fpl_*.db.gz"), key=lambda p: p.stat().st_mtime, reverse=True)
+    week_ago = (now - timedelta(days=7)).timestamp()
+    keep = set(daily[:2]) | set([p for p in daily if p.stat().st_mtime <= week_ago][:1])
+    for p in daily:
+        if p not in keep:
+            p.unlink()
+
+
+def latest_backup_age_hours(now: datetime | None = None) -> float | None:
+    now = now or datetime.now(timezone.utc)
+    backups = list_backups()
+    if not backups:
+        return None
+    return (now.timestamp() - max(p.stat().st_mtime for p in backups)) / 3600
+
+
+@contextlib.contextmanager
+def _as_database(path: Path):
+    """The backup as a plain database file, decompressed to a temporary one if it is gzipped."""
+    if path.suffix != ".gz":
+        yield path
+        return
+    with tempfile.TemporaryDirectory(dir=BACKUP_DIR) as tmp:
+        plain = Path(tmp) / "restore.db"
+        with gzip.open(path, "rb") as g, open(plain, "wb") as f:
+            shutil.copyfileobj(g, f)
+        yield plain
 
 
 @dataclass(frozen=True)
@@ -63,10 +114,11 @@ def verify_backup(path: Path) -> VerifyResult:
     if not path.exists():
         return VerifyResult(False, "file not found")
     try:
-        conn = sqlite3.connect(path)
-        integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-        migration_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-        conn.close()
+        with _as_database(path) as plain:
+            conn = sqlite3.connect(plain)
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            migration_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+            conn.close()
     except Exception as e:
         return VerifyResult(False, str(e))
 
@@ -85,5 +137,11 @@ def restore_backup(path: Path) -> Path:
         raise ValueError(f"refusing to restore - backup failed verification: {result.detail}")
 
     pre_restore_backup = create_backup()
-    shutil.copy2(path, DB_PATH)
+    with _as_database(path) as plain:
+        src, dest = sqlite3.connect(plain), sqlite3.connect(DB_PATH)
+        try:
+            src.backup(dest)  # through SQLite, so a write-ahead log beside the live file cannot survive into the restored one
+        finally:
+            src.close()
+            dest.close()
     return pre_restore_backup

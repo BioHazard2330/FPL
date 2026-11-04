@@ -2360,6 +2360,13 @@ def _run_scheduled_cycle(gated: bool):
         logger.exception("run-scheduled effective-ownership trigger failed - not fatal to the sync itself")
 
     try:
+        maintenance_reason = _maybe_trigger_daily_maintenance()
+        if maintenance_reason:
+            logger.info("run-scheduled daily maintenance started: %s", maintenance_reason)
+    except Exception:
+        logger.exception("run-scheduled daily maintenance trigger failed - not fatal to the sync itself")
+
+    try:
         ladder_reason = _maybe_trigger_chip_ladder(conn)
         if ladder_reason:
             logger.info("run-scheduled auto-triggered chip ladder: %s", ladder_reason)
@@ -2892,6 +2899,36 @@ def _maybe_trigger_week_plan_refresh(conn, include_missing: bool = False) -> str
             stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(PROJECT_ROOT), creationflags=creationflags,
         )
     return reason
+
+
+MAINTENANCE_EVERY_HOURS = 20
+
+
+def _maybe_trigger_daily_maintenance() -> str | None:
+    """A detached backup-and-tidy once a day, never beside a match in play. It needs seconds of exclusive database time at
+    most, which a sync waits out; a file lock, because a backup that was never taken is the failure this exists to stop."""
+    from fpl_agent.database.backup import latest_backup_age_hours
+
+    age = latest_backup_age_hours()
+    if age is not None and age < MAINTENANCE_EVERY_HOURS:
+        return None
+    lock = DATA_DIR / "daily_maintenance.started"
+    try:
+        if lock.exists() and time.time() - lock.stat().st_mtime < 3600:
+            return None
+    except OSError:
+        pass
+    fpl_exe = Path(sys.executable).parent / ("fpl.exe" if sys.platform == "win32" else "fpl")
+    if not fpl_exe.exists():
+        return None
+    lock.write_text(datetime.now(timezone.utc).isoformat())
+    log_path = LOGS_DIR / "daily_maintenance.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS if sys.platform == "win32" else 0
+        subprocess.Popen([str(fpl_exe), "daily-maintenance"], stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         cwd=str(PROJECT_ROOT), creationflags=creationflags)
+    return f"last backup {age:.0f}h ago" if age is not None else "no backup on record"
 
 
 def _maybe_trigger_eo_sample(conn) -> str | None:
@@ -5628,6 +5665,19 @@ def backup():
     result = verify_backup(path)
     click.echo(f"backup created: {path.name}")
     click.echo(f"verify: {'OK' if result.ok else 'FAILED'} - {result.detail}")
+
+
+@cli.command("daily-maintenance")
+def daily_maintenance_cmd():
+    """Backup, thin old rows, reclaim space. Started once a day by run-scheduled."""
+    from fpl_agent.monitoring.cleanup import daily_maintenance
+
+    conn = get_connection()
+    try:
+        click.echo(daily_maintenance(conn))
+    finally:
+        conn.close()
+        (DATA_DIR / "daily_maintenance.started").unlink(missing_ok=True)
 
 
 @cli.command("backups")

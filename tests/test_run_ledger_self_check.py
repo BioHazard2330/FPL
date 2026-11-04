@@ -94,3 +94,26 @@ def test_a_feed_off_its_usual_grid_is_caught(db_conn):
         db_conn.execute("INSERT INTO player_start_probability_history (player_id, team_id, start_percent, fetched_at) VALUES (?,1,?,?)", (pid, minutes, now.isoformat()))
     ok, detail = sc.start_feed(db_conn, now)
     assert not ok and "grid" in detail
+
+
+def _momentum(conn, pid, stamps):
+    for t in stamps:
+        conn.execute("INSERT INTO player_transfer_momentum_history (player_id, transfers_in_event, transfers_out_event, transfers_in, transfers_out, valid_from, valid_until) "
+                     "VALUES (?,0,0,0,0,?,'x')", (pid, t))
+
+
+def test_thinning_keeps_what_the_price_model_reads_each_night(db_conn):
+    from fpl_agent.monitoring.cleanup import thin_momentum
+
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'A','AAA','t')")
+    db_conn.execute("INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) VALUES (1,'F','FWD','Fs','t')")
+    db_conn.execute("INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) VALUES (1,1,'P',1,1,'a',0,'t')")
+    day = "2026-09-01T"
+    _momentum(db_conn, 1, [day + h for h in ("00:15:00+00:00", "02:15:00+00:00", "02:45:00+00:00", "03:15:00+00:00", "09:00:00+00:00", "23:00:00+00:00")])
+    _momentum(db_conn, 1, ["2026-11-03T09:00:00+00:00", "2026-11-03T09:15:00+00:00"])
+    db_conn.execute("INSERT INTO player_transfer_momentum_history (player_id, transfers_in_event, transfers_out_event, transfers_in, transfers_out, valid_from, valid_until) VALUES (1,0,0,0,0,'2026-08-01T09:00:00+00:00',NULL)")
+    assert thin_momentum(db_conn, datetime(2026, 11, 4, tzinfo=timezone.utc)) == 3
+    left = {r[0][11:16] for r in db_conn.execute("SELECT valid_from FROM player_transfer_momentum_history WHERE valid_from LIKE '2026-09-01%'")}
+    assert left == {"02:15", "03:15", "23:00"}
+    assert db_conn.execute("SELECT COUNT(*) FROM player_transfer_momentum_history WHERE valid_from LIKE '2026-11-03%'").fetchone()[0] == 2
+    assert db_conn.execute("SELECT COUNT(*) FROM player_transfer_momentum_history WHERE valid_until IS NULL").fetchone()[0] == 1

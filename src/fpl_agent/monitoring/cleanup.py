@@ -57,6 +57,42 @@ class CleanupReport:
     news_items_pruned: int
 
 
+MOMENTUM_KEEP_DAYS = 30
+
+
+def thin_momentum(conn: sqlite3.Connection, now: datetime | None = None) -> int:
+    """`player_transfer_momentum_history` takes a row per player per sync (877,000 rows, 77MB, by GW9). Past
+    `MOMENTUM_KEEP_DAYS` keep what the price model reads for a night: each player's last snapshot before the 02:30 UTC run,
+    his first after 03:00, and the day's last. The current row is never touched."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=MOMENTUM_KEEP_DAYS)).isoformat()
+    n = conn.execute(
+        """DELETE FROM player_transfer_momentum_history WHERE id IN (
+            SELECT id FROM (
+                SELECT id,
+                    ROW_NUMBER() OVER (PARTITION BY player_id, substr(valid_from, 1, 10) ORDER BY valid_from DESC) AS day_last,
+                    CASE WHEN substr(valid_from, 12, 5) < '02:30' THEN ROW_NUMBER() OVER (
+                        PARTITION BY player_id, substr(valid_from, 1, 10), substr(valid_from, 12, 5) < '02:30' ORDER BY valid_from DESC) END AS before_run,
+                    CASE WHEN substr(valid_from, 12, 5) >= '03:00' THEN ROW_NUMBER() OVER (
+                        PARTITION BY player_id, substr(valid_from, 1, 10), substr(valid_from, 12, 5) >= '03:00' ORDER BY valid_from) END AS after_run
+                FROM player_transfer_momentum_history WHERE valid_from < ? AND valid_until IS NOT NULL
+            ) WHERE day_last > 1 AND COALESCE(before_run, 2) > 1 AND COALESCE(after_run, 2) > 1
+        )""", (cutoff,),
+    ).rowcount
+    conn.commit()
+    return n
+
+
+def daily_maintenance(conn: sqlite3.Connection) -> dict:
+    """The compressed backup first, then thinning, then giving the space back."""
+    from fpl_agent.database.backup import create_compressed_backup
+
+    path = create_compressed_backup()
+    thinned = thin_momentum(conn)
+    freed = _vacuum(conn) if thinned > 20000 else 0.0
+    return {"backup": path.name, "backup_mb": round(path.stat().st_size / 1e6, 1), "momentum_rows_thinned": thinned, "freed_mb": freed}
+
+
 def run_cleanup(conn: sqlite3.Connection) -> CleanupReport:
     budget = load_storage_budget()
     raw_pruned = prune_raw(budget.raw_retention_hours)
