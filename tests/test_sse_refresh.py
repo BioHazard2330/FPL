@@ -3,6 +3,8 @@ import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
 
+import pytest
+
 from fpl_agent.live import sse_server
 from fpl_agent.live.sse_server import Broadcaster, make_handler
 
@@ -33,6 +35,12 @@ def _post(url, headers=None):
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, None
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cycle(monkeypatch):
+    """A scheduled cycle holding the real lock must not change what these tests see."""
+    monkeypatch.setattr(sse_server.RefreshJob, "_cycle_elsewhere", staticmethod(lambda: False))
 
 
 def test_refresh_needs_the_custom_header(tmp_path, monkeypatch):
@@ -88,7 +96,6 @@ def test_a_second_start_while_running_does_not_launch_another(monkeypatch):
             return None
 
     monkeypatch.setattr(sse_server.subprocess, "Popen", lambda *a, **k: launched.append(1) or _Proc())
-    monkeypatch.setattr(sse_server.RefreshJob, "_cycle_elsewhere", staticmethod(lambda: False))
     job = sse_server.RefreshJob()
 
     assert job.start() == "started"
