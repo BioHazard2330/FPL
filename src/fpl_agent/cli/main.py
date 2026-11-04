@@ -1775,6 +1775,16 @@ def _record_self_check() -> None:
             conn.close()
     except Exception:
         logging.getLogger("fpl_agent.scheduler").exception("run-scheduled self-check failed - not fatal")
+    try:
+        from fpl_agent.models.decider import raise_tripped
+
+        conn = get_connection()
+        try:
+            raise_tripped(conn)
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger("fpl_agent.scheduler").exception("run-scheduled locked-call check failed - not fatal")
 
 
 def _run_scheduled_cycle(gated: bool):

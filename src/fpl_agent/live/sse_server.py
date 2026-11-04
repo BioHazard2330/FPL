@@ -383,11 +383,37 @@ def make_handler(
             if path == "/api/eye-note" and conn_factory is not None:
                 self._eye_note()
                 return
+            if path == "/api/decide/lock" and conn_factory is not None:
+                self._lock_call()
+                return
             if path != "/api/refresh":
                 self.send_error(404)
                 return
             outcome = refresh_job.start()
             self._send_json({"result": outcome, **refresh_job.status()})
+
+        def _lock_call(self) -> None:
+            """Lock a call (JSON body: event, kind, label, detail) or let one go (`?release=ID`)."""
+            from urllib.parse import parse_qs
+
+            from fpl_agent.models.decider import lock_call, release_call
+
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            conn = conn_factory()
+            try:
+                try:
+                    if "release" in q:
+                        release_call(conn, int(q["release"][0]))
+                        result = {"status": "released"}
+                    else:
+                        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                        result = {"status": "locked", "id": lock_call(conn, int(body["event"]), body["kind"], str(body["label"]), dict(body["detail"]))}
+                except (KeyError, ValueError, TypeError) as e:
+                    self.send_error(400, str(e))
+                    return
+            finally:
+                conn.close()
+            self._send_json(result)
 
         def _eye_note(self) -> None:
             """Save (`?player=&event=&rating=&tags=a,b&note=`) or delete (`&delete=1`) one eye-journal note; the squad screens'

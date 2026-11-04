@@ -1,8 +1,9 @@
-import { BookOpen, Clapperboard, Map as MapIcon, Target, Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
+import { Gavel, BookOpen, Clapperboard, Map as MapIcon, Target, Activity, BookImage, Eye, Shuffle, FileText, Medal, Crosshair, Goal, ListOrdered, Newspaper, Scale, ScanSearch, Swords, Telescope, LocateFixed, Radio, Receipt, SlidersHorizontal, Route, Search, Shield, Trophy, User, Users } from 'lucide-react'
 
 export const DESTINATIONS = [
   { to: '/', label: 'Command', icon: Crosshair, end: true },
   { to: '/my-team', label: 'My team', icon: Users },
+  { to: '/decide', label: 'Decide', icon: Gavel },
   { to: '/plan', label: 'Plan', icon: Route },
   { to: '/war-room', label: 'War room', icon: Shuffle },
   { to: '/album', label: 'Squad album', icon: BookImage },
@@ -32,7 +33,7 @@ export const DESTINATIONS = [
 /** Five groups, by the question each answers: what do I do this week, what is happening in the league, who should I buy,
  * how am I doing against everyone else, and is the machine healthy. Ordering inside a group runs from most to least used. */
 export const NAV_SECTIONS: { label: string; routes: string[] }[] = [
-  { label: 'This week', routes: ['/', '/my-team', '/album', '/programme', '/eye', '/plan', '/war-room', '/live'] },
+  { label: 'This week', routes: ['/', '/decide', '/my-team', '/album', '/programme', '/eye', '/plan', '/war-room', '/live'] },
   { label: 'The league', routes: ['/matchweek', '/map', '/table', '/previews', '/football', '/atlas'] },
   { label: 'Players', routes: ['/scout', '/compare', '/explorer', '/desk'] },
   { label: 'How I am doing', routes: ['/review', '/versus', '/story', '/leagues', '/field', '/audit', '/receipts'] },
