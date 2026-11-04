@@ -192,6 +192,7 @@ def _label(option: dict) -> str:
 
 
 def _transfer_card(conn: sqlite3.Connection, ideas, state: dict, event: int, sd: float, cache: dict) -> dict:
+    from fpl_agent.models.pundit_call import latest_call
     from fpl_agent.monitoring.api.whatif_payload import _briefs
     from fpl_agent.optimization.week_plan import excluded_team_ids, latest_week_plan
 
@@ -207,6 +208,12 @@ def _transfer_card(conn: sqlite3.Connection, ideas, state: dict, event: int, sd:
     options = [_option(conn, "roll", "roll", [], squad, base, event, ft, cache, brief)]
     if plan_pairs:
         options.append(_option(conn, "plan", "plan", plan_pairs, squad, base, event, ft, cache, brief))
+    called = latest_call(conn, event)
+    if called:
+        pundit_pairs = [(int(m["out"]), int(m["in"])) for m in called[0].get("moves", []) if int(m["out"]) in squad and int(m["in"]) not in squad]
+        if pundit_pairs and not any(sorted(o["pair_ids"]) == sorted(list(p) for p in pundit_pairs) for o in options):
+            brief.update(_briefs(conn, [p for pair in pundit_pairs for p in pair]))
+            options.append(_option(conn, "pundit", "pundit", pundit_pairs, squad, base, event, ft, cache, brief))
     refused = []
     banned = excluded_team_ids(conn)
     for n, idea in enumerate(ideas):
@@ -221,7 +228,7 @@ def _transfer_card(conn: sqlite3.Connection, ideas, state: dict, event: int, sd:
         swaps = max(1, len(set(a["squad"]) - set(b["squad"])))
         return beat_chance(a["gain"] - b["gain"], swaps, HORIZON_GW, sd)
 
-    pool = [o for o in options if o["source"] != "plan"] if any(o["source"] == "you" for o in options) else options
+    pool = [o for o in options if o["source"] not in ("plan", "pundit")] if any(o["source"] == "you" for o in options) else [o for o in options if o["source"] != "pundit"]
     top = pool[0]
     call, tie_break = top, False
     if top["pair_ids"]:

@@ -4694,6 +4694,56 @@ def plan_replay_cmd(seasons: tuple[str, ...]):
     (DATA_DIR / "plan_replay.json").write_text(json.dumps({"seasons": out}, indent=1), encoding="utf-8")
 
 
+@cli.command("pundit-dossier")
+@click.option("--file", "path", default=None, help="write here instead of printing")
+def pundit_dossier_cmd(path: str | None):
+    """The week's evidence for the pundit's call (`.claude/skills/fpl-pundit`)."""
+    from fpl_agent.models.pundit_call import dossier
+    from fpl_agent.models.projection_memo import projection_memo
+
+    conn = get_connection()
+    try:
+        with projection_memo(conn):
+            text = dossier(conn)
+    finally:
+        conn.close()
+    if path:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        click.echo(text)
+
+
+@cli.command("pundit-call")
+@click.option("--file", "path", required=True, help="the call as JSON")
+def pundit_call_cmd(path: str):
+    """Check a pundit's call is legal and store it."""
+    import json
+
+    from fpl_agent.models.pundit_call import store_call
+
+    conn = get_connection()
+    try:
+        with open(path, encoding="utf-8") as f:
+            click.echo(f"stored call {store_call(conn, json.load(f))}")
+    finally:
+        conn.close()
+
+
+@cli.command("pundit-due")
+def pundit_due_cmd():
+    """Says when a gameweek's deadline is close with no pundit's call."""
+    from fpl_agent.models.pundit_call import due
+
+    conn = get_connection()
+    try:
+        event = due(conn)
+    finally:
+        conn.close()
+    if event is not None:
+        click.echo(f"GW{event} has no pundit's call and its deadline is under 48 hours away: run the fpl-pundit skill.")
+
+
 @cli.command("made-transfer")
 @click.argument("out_player", required=False)
 @click.argument("in_player", required=False)

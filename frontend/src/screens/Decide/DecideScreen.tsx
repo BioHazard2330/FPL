@@ -4,6 +4,7 @@ import { Info } from '@/components/ui/Info'
 import { Masthead } from '@/components/shell/Masthead'
 import { ScreenError, Skel } from '@/components/shell/ScreenStates'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
+import { PunditCall } from '@/components/command/PunditCall'
 import { fetchPlayersIndex, getJson } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import type { PlayerIndexRow } from '@/lib/types'
@@ -16,7 +17,7 @@ import type { PlayerIndexRow } from '@/lib/types'
 interface Person { player_id: number; name: string; photo_code?: number | null; team_code: number | null; team_short: string; xp?: number }
 interface LockBlob { label: string; detail: Record<string, unknown> }
 interface Option {
-  key: string; source: 'roll' | 'plan' | 'you'; pairs: { out: Person; into: Person }[]; hits: number; gain: number
+  key: string; source: 'roll' | 'plan' | 'you' | 'pundit'; pairs: { out: Person; into: Person }[]; hits: number; gain: number
   starts: { event: number; started: boolean[] }[]; benched_weeks: number; beats_it: number | null; lock: LockBlob
 }
 interface TransferCard {
@@ -129,7 +130,7 @@ function OptionCard({ o, chosen, event, onDone }: { o: Option; chosen: boolean; 
     <div className={`flex min-w-0 flex-col justify-between gap-3 border-2 border-ink p-3 ${chosen ? 'bg-paper shadow-[4px_4px_0_var(--spot)]' : 'bg-paper/60'}`}>
       <div>
         <div className="flex items-start justify-between gap-2">
-          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">{o.source === 'plan' ? `the plan · ${o.pairs.length} moves` : o.source === 'roll' ? 'do nothing' : 'your idea'}</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">{o.source === 'plan' ? `the plan · ${o.pairs.length} moves` : o.source === 'pundit' ? `the pundit · ${o.pairs.length} moves` : o.source === 'roll' ? 'do nothing' : 'your idea'}</span>
           <span className={`tabular font-display text-2xl font-black leading-none ${o.gain >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{signed(o.gain)}</span>
         </div>
         {faces.length === 0 && <div className="mt-2 font-display text-lg font-black uppercase text-text">Roll</div>}
@@ -281,6 +282,7 @@ export function DecideScreen() {
           </div>
         )}
       </div>
+      <div className="bare"><PunditCall /></div>
       <div className="bare"><TransferSection d={d} ideas={ideas} setIdeas={setIdeas} onDone={refresh} locked={of('transfer')} /></div>
       <div className="bare grid gap-6 lg:grid-cols-2">
         {d.cards.armband && (

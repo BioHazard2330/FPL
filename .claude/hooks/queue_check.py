@@ -39,5 +39,17 @@ def main() -> int:
     return 0
 
 
+def pundit_due() -> None:
+    if not _FPL_EXE.exists():
+        return
+    try:
+        result = subprocess.run([str(_FPL_EXE), "pundit-due"], capture_output=True, text=True, timeout=20, cwd=str(_PROJECT_ROOT))
+    except Exception:
+        return
+    if (result.stdout or "").strip():
+        print(result.stdout.strip())
+
+
 if __name__ == "__main__":
+    pundit_due()
     sys.exit(main())
