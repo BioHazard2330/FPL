@@ -4,6 +4,7 @@ import { Disclosure, Panel } from '@/components/ui/kit'
 import { DecisionAudit } from '@/components/advanced/DecisionAudit'
 import { WeekPlanAudit } from '@/components/advanced/WeekPlanAudit'
 import { Knowledge } from '@/components/advanced/Knowledge'
+import { DaemonHealth } from '@/components/advanced/DaemonHealth'
 import { ModelParts } from '@/components/advanced/ModelParts'
 import { fetchAdvancedPayload } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
@@ -135,6 +136,7 @@ export function AdvancedScreen() {
         </details>
       </Panel>
 
+      <DaemonHealth />
       <ModelParts />
       <Knowledge />
 

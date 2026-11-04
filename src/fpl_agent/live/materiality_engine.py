@@ -36,6 +36,7 @@ project's real event vocabulary):
   become material only through its downstream AVAILABILITY_CHANGED (e.g.
   a resulting injury) - never routed here directly, to avoid firing an
   expensive real beam search on every single in-play kick of the ball."""
+import sqlite3
 import logging
 import threading
 from contextlib import contextmanager
@@ -113,11 +114,19 @@ def suspended():
                 )
 
 
+GATE_BUSY_MILLISECONDS = 1500
+GATE_RETRY_SECONDS = 60.0
+_retry: threading.Timer | None = None
+
+
 def _run_gate(event_label: str, entity_label: object) -> None:
     from fpl_agent.cli.main import _maybe_trigger_strategic_plan_recompute, _maybe_trigger_week_plan_refresh
     from fpl_agent.database.connection import get_connection
 
     conn = get_connection()
+    # These handlers run inside the emitting sync's own write transaction: waiting out the 30s default only ends in
+    # "database is locked" (about 140 times by 2026-11-03), with the sync stalled meanwhile. Fail fast and try again later.
+    conn.execute(f"PRAGMA busy_timeout = {GATE_BUSY_MILLISECONDS}")
     try:
         reason = _maybe_trigger_strategic_plan_recompute(conn)
         if reason is not None:
@@ -135,6 +144,24 @@ def _run_gate(event_label: str, entity_label: object) -> None:
         conn.close()
 
 
+def _retry_later(label: str) -> None:
+    """One delayed retry at a time; a burst of events during a sync needs only one check after it."""
+    global _retry
+    with _STATE_LOCK:
+        if _retry is not None and _retry.is_alive():
+            return
+
+        def run() -> None:
+            try:
+                _run_gate(label, "after-sync")
+            except Exception:
+                _logger.info("materiality engine: retry after a locked database did not get through; the cycle's own check covers it")
+
+        _retry = threading.Timer(GATE_RETRY_SECONDS, run)
+        _retry.daemon = True
+        _retry.start()
+
+
 def _on_routed_event(event: Event) -> None:
     global _pending
     with _STATE_LOCK:
@@ -143,6 +170,10 @@ def _on_routed_event(event: Event) -> None:
             return
     try:
         _run_gate(event.event_type.value, event.entity_id)
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc):
+            raise
+        _retry_later(event.event_type.value)
     except Exception:
         _logger.exception(
             "materiality engine: recompute check failed for a real %s event - continuing, "

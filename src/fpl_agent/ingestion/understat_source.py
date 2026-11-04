@@ -96,30 +96,34 @@ def _season_start_year(season: str) -> str:
     return season.split("-")[0]  # '2024-25' -> '2024' (Understat indexes by start year)
 
 
+def _get_text(url: str, attempts: int = 3) -> str:
+    """Timeouts here were transient and cost whole days of xG (2026-11-02 to 04: three cycles failed, the site was fine)."""
+    for attempt in range(attempts):
+        try:
+            resp = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=_AJAX_HEADERS)
+            resp.raise_for_status()
+            return resp.text
+        except requests.RequestException as exc:
+            if attempt == attempts - 1:
+                raise UnderstatFetchError(f"failed to fetch {url}: {exc}") from exc
+            time.sleep(2 ** attempt)
+    raise UnderstatFetchError(f"failed to fetch {url}")
+
+
 def fetch_understat_season_page(season: str) -> str:
-    url = f"https://understat.com/getLeagueData/EPL/{_season_start_year(season)}"
-    try:
-        resp = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=_AJAX_HEADERS)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise UnderstatFetchError(f"failed to fetch {url}: {exc}") from exc
-    return resp.text
+    return _get_text(f"https://understat.com/getLeagueData/EPL/{_season_start_year(season)}")
 
 
 def fetch_understat_match_page(match_id: str) -> str:
-    url = f"https://understat.com/getMatchData/{match_id}"
-    try:
-        resp = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=_AJAX_HEADERS)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise UnderstatFetchError(f"failed to fetch {url}: {exc}") from exc
-    return resp.text
+    return _get_text(f"https://understat.com/getMatchData/{match_id}")
 
 
 def _parse_json(text: str, context: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
+        if "come back soon" in text:
+            raise UnderstatParseError("Understat is offline (its page says it will come back soon)") from exc
         raise UnderstatParseError(f"could not parse {context} as JSON: {exc}") from exc
 
 

@@ -81,7 +81,7 @@ class Alert:
 
 
 EVENT_TITLES = {
-    "status_change": "Availability changed", "price_change": "Price change", "lineup_confirmed": "Team news",
+    "daemon_failing": "Background step failing", "self_check": "Self-check failed", "status_change": "Availability changed", "price_change": "Price change", "lineup_confirmed": "Team news",
     "kickoff_reminder": "Kickoff soon", "early_withdrawal": "Taken off early", "cup_withdrawal": "Taken off early in a cup tie",
     "cup_absence": "Out of a cup tie", "injury_headline": "Injury headline", "manager_change": "Managerial change",
     "predicted_lineup_change": "Predicted lineup changed", "start_percent_change": "Start chance changed",

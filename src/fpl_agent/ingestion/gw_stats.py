@@ -75,7 +75,12 @@ def sync_gw_stats(conn) -> dict:
     again. Returns the events touched; a failed fetch is recorded against source
     health and does not stop the others."""
     season = current_season(conn)
-    finished = [r["id"] for r in conn.execute("SELECT id FROM events WHERE finished = 1 ORDER BY id")]
+    from fpl_agent.models.fixtures import PLAYED_FIXTURE_SQL
+
+    # FPL can take two days to mark a gameweek finished after its last match; every fixture played is enough.
+    finished = sorted({r["id"] for r in conn.execute("SELECT id FROM events WHERE finished = 1")} | {r["event"] for r in conn.execute(
+        f"SELECT f.event, COUNT(*) AS n, SUM(CASE WHEN {PLAYED_FIXTURE_SQL} THEN 1 ELSE 0 END) AS played FROM fixtures f "
+        "WHERE f.event IS NOT NULL GROUP BY f.event HAVING n = played")})
     if not finished:
         return {"events": [], "rows": 0}
     have = {r["event"] for r in conn.execute("SELECT DISTINCT event FROM player_gw_stats WHERE season=?", (season,))}

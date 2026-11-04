@@ -928,6 +928,7 @@ def week_plan_refresh_cmd():
         reason = refresh_week_plan_if_needed(conn)
     finally:
         conn.close()
+        (DATA_DIR / "week_plan_refresh.started").unlink(missing_ok=True)
     click.echo(f"rebuilt: {reason}" if reason else "plan is current")
 
 
@@ -1753,6 +1754,30 @@ def decision_backtest_cmd(season: str | None):
     "Without the flag the cycle always runs, as before.",
 )
 def run_scheduled(gated: bool):
+    """One background cycle, recorded step by step in the run ledger (scheduler/run_ledger.py)."""
+    from fpl_agent.scheduler.run_ledger import is_a_run, record_run
+
+    with record_run(gated, DATA_DIR, get_connection) as ledger:
+        _run_scheduled_cycle(gated)
+    if is_a_run(ledger.rows):
+        _record_self_check()
+
+
+def _record_self_check() -> None:
+    """After every cycle, whatever it did: does the stored state hold together (models/self_check.py)? Non-fatal."""
+    try:
+        from fpl_agent.models.self_check import store_checks
+
+        conn = get_connection()
+        try:
+            store_checks(conn)
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger("fpl_agent.scheduler").exception("run-scheduled self-check failed - not fatal")
+
+
+def _run_scheduled_cycle(gated: bool):
     """The actual entrypoint the OS scheduler invokes (section 19) - not `fpl sync`
     directly. Checks resources first (defers if constrained), syncs, then delivers
     any newly-pending HIGH+ alerts. Logs to the rotating log file, not just stdout,
@@ -2018,8 +2043,19 @@ def run_scheduled(gated: bool):
                 "run-scheduled xg backfill: %d new match(es) processed, %d player row(s)",
                 xg_backfill["matches_processed"], xg_backfill["player_rows_inserted"],
             )
+            from fpl_agent.ingestion.xg_fallback import clear_provisional
+
+            cleared = clear_provisional(conn, season_for_backfill)
+            if cleared:
+                logger.info("run-scheduled xg: Understat is back, %d provisional FotMob row(s) removed", cleared)
         except Exception:
             logger.exception("run-scheduled xg backfill failed - not fatal to the sync itself")
+            try:
+                from fpl_agent.ingestion.xg_fallback import fill_from_fotmob
+
+                logger.info("run-scheduled xg fallback from FotMob: %s", fill_from_fotmob(conn, season_for_backfill))
+            except Exception:
+                logger.exception("run-scheduled xg fallback failed - not fatal to the sync itself")
 
     # Predicted-lineup + start-percent CHANGE detection (2026-08-21, live-
     # gameweek layer) - both sources were already synced by this project
@@ -2330,12 +2366,11 @@ def run_scheduled(gated: bool):
     except Exception:
         logger.exception("run-scheduled chip ladder trigger failed - not fatal to the sync itself")
 
+    # Off the cycle: a rebuild took seven of the task's ten minutes by 2026-11-04, and a killed cycle loses its alerts and gate file.
     try:
-        from fpl_agent.optimization.week_plan import refresh_week_plan_if_needed
-
-        plan_reason = refresh_week_plan_if_needed(conn)
+        plan_reason = _maybe_trigger_week_plan_refresh(conn, include_missing=True)
         if plan_reason:
-            logger.info("run-scheduled week plan rebuilt: %s", plan_reason)
+            logger.info("run-scheduled week plan rebuild started: %s", plan_reason)
     except Exception:
         logger.exception("run-scheduled week plan refresh failed - not fatal to the sync itself")
 
@@ -2817,18 +2852,18 @@ def _maybe_trigger_strategic_plan_recompute(conn) -> str | None:
 _EO_SAMPLE_AUTO_STALE_MINUTES = 120
 
 
-_WEEK_PLAN_AUTO_STALE_MINUTES = 6
+_WEEK_PLAN_AUTO_STALE_MINUTES = 15
 
 
-def _maybe_trigger_week_plan_refresh(conn) -> str | None:
+def _maybe_trigger_week_plan_refresh(conn, include_missing: bool = False) -> str | None:
     """Starts `fpl week-plan-refresh` as a detached, idle-priority process when the stored plan is out of date (a match
     finished, news landed, the squad moved). Called from the live engine the moment such an event arrives, so a gameweek's
-    plan follows its results instead of waiting for the next 15-minute cycle. An in-flight start blocks a second for six
-    minutes; the refresh itself decides again whether anything is owed."""
+    plan follows its results instead of waiting for the next 15-minute cycle, and at the end of every cycle. An in-flight
+    start blocks a second until it finishes (15 minutes at most); the refresh itself decides again whether anything is owed."""
     from fpl_agent.optimization.week_plan import refresh_reason
 
     reason = refresh_reason(conn)
-    if reason is None or reason.startswith("no week plan"):
+    if reason is None or (reason.startswith("no week plan") and not include_missing):
         return None
     now = datetime.now(timezone.utc)
     # A file, not an app_meta row: this runs inside the live engine's event handler while the emitting sync still holds its own
@@ -2920,6 +2955,10 @@ def _maybe_trigger_chip_ladder(conn) -> str | None:
 
     if not ladder_events(conn):
         return None
+    from fpl_agent.optimization.week_plan import refresh_reason
+
+    if refresh_reason(conn) is not None:
+        return None  # a plan rebuild comes first; the ladder is read from the plan's own state and can wait a cycle
     now = datetime.now(timezone.utc)
     have = stored_ladder(conn)
     if have:
