@@ -11,7 +11,7 @@ interface Card {
   fixture: number; status: 'pre' | 'live'; minute: number; kickoff: string | null; home: Side; away: Side; cheer: 'home' | 'away' | null
   key: { player_id: number; name: string; photo_code: number | null; team_code: number | null; stake: number }[]
 }
-interface Swing { status: string; event?: number; edge?: number; matches?: Card[]; helping?: Mover[]; hurting?: Mover[]; field?: string }
+interface Swing { status: string; event?: number; edge?: number; matches?: Card[]; helping?: Mover[]; hurting?: Mover[]; field?: string; field_event?: number | null; subs?: number; bonus_pending?: number }
 
 const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`
 const tone = (v: number) => (v >= 0 ? 'text-pitch-green' : 'text-alert-red')
@@ -75,8 +75,21 @@ function MoverColumn({ title, rows }: { title: string; rows: Mover[] }) {
   )
 }
 
+/** The edge alone, for Matchday TV. */
+export function EdgeLine() {
+  const state = useFetch(() => getJson<Swing>('/api/swing'), [], 15000)
+  if (state.status !== 'ready' || state.data.status !== 'ok') return null
+  const edge = state.data.edge ?? 0
+  return (
+    <div className="mt-3 flex items-baseline gap-2">
+      <span className={`tabular font-display text-4xl font-black ${edge >= 0 ? 'text-[#4fd88a]' : 'text-[#ff6b57]'}`}>{signed(edge)}</span>
+      <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">on the top 10k</span>
+    </div>
+  )
+}
+
 export function SwingBoard({ event }: { event?: number }) {
-  const state = useFetch(() => getJson<Swing>(`/api/swing${event ? `?event=${event}` : ''}`), [event], 30000)
+  const state = useFetch(() => getJson<Swing>(`/api/swing${event ? `?event=${event}` : ''}`), [event], 15000)
   if (state.status !== 'ready' || state.data.status !== 'ok') return null
   const d = state.data
   const edge = d.edge ?? 0
@@ -88,9 +101,14 @@ export function SwingBoard({ event }: { event?: number }) {
           <div className="mt-1 flex items-center gap-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
             on the top 10k this gameweek
             <Info label="How this is worked out">
-              Every player&apos;s live points times your multiplier minus his effective ownership among the top 10k ({d.field}). Next-goal numbers share a goal across the side&apos;s players on the pitch by their projected goals and assists, and take off the clean sheet the other side loses. Bonus is left out, and your bench counts for nothing until FPL makes the substitution.
+              Every player&apos;s live points, with provisional bonus, times your multiplier minus his effective ownership among the top 10k ({d.field}). Your substitutions and armband follow FPL&apos;s rules once a match ends; the field&apos;s are as locked. A next goal is shared across the side&apos;s players on the pitch by their projected goals and assists, with the bonus a goal usually carries, and takes off what the other side&apos;s 60-minute players lose.
             </Info>
           </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[12px] font-bold uppercase">
+          {(d.bonus_pending ?? 0) > 0 && <span className="border-2 border-ink px-2 py-0.5 text-text">Bonus provisional</span>}
+          {(d.subs ?? 0) > 0 && <span className="border-2 border-ink px-2 py-0.5 text-text">{d.subs} auto-sub{d.subs === 1 ? '' : 's'} in</span>}
+          {d.field_event != null && d.field_event !== d.event && <span className="border-2 border-broadcast-gold px-2 py-0.5 text-text">Top 10k: GW{d.field_event} picks, aged</span>}
         </div>
       </div>
       {(d.matches ?? []).length > 0 && (

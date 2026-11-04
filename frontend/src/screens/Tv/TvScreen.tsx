@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { EdgeLine } from '@/components/live/SwingBoard'
 import { PitchFor, TvCups, anyInPlay, useLiveMatches } from '@/components/match/PlayByPlay'
 import { Link } from 'react-router-dom'
 import confetti from 'canvas-confetti'
@@ -139,6 +140,7 @@ export function TvScreen() {
             ))}
           </div>
           <div className="mt-6 border-2 border-paper/15 p-4">
+            <EdgeLine />
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">overall rank, live estimate</div>
             <div className="flex items-baseline gap-3">
               <span className="tabular font-display text-6xl font-black">{fmtRank(rank?.estimated_rank)}</span>

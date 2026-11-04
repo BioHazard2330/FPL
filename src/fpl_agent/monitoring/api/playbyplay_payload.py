@@ -76,9 +76,14 @@ def _from_commentary(conn, fixture: int | None, head: dict) -> dict:
     return {"status": "ok", "source": "premier_league", "match": head, "live": bool(c.get("live")), "events": rows, "team_news": [], "reports": {}}
 
 
+def _short(name: str | None) -> str:
+    words = (name or "").split()
+    return (words[1] if len(words) > 1 and len(words[0]) < 3 else words[0] if words else "")[:3].upper()
+
+
 def _cup_head(conn, row, state: dict | None, status: str = "LIVE") -> dict:
     club = conn.execute("SELECT short_name, code FROM teams WHERE id = ?", (row["team_id"],)).fetchone()
-    other = {"short": (row["opponent_name"] or "")[:3].upper(), "code": None}
+    other = {"short": _short(row["opponent_name"]), "code": None}
     ours = {"short": club["short_name"], "code": club["code"]}
     home, away = (ours, other) if row["is_home"] else (other, ours)
     score = (state or {}).get("score") or [None, None]
