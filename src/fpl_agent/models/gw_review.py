@@ -7,7 +7,8 @@ expected stats (`player_gw_stats`), the top-10k ownership sample of that gamewee
 predictions frozen at its deadline (`prediction_outcomes`) and the last week plan made before it
 (`decisions`, type `week_plan`).
 
-Stated simplifications: the plan's score is its eleven and armband on the real points with FPL's automatic substitutions from its bench
+Until FPL marks a gameweek finished your score is your eleven's points after substitutions (FPL's stored total can lag a
+day), and `provisional` says so. Stated simplifications: the plan's score is its eleven and armband on the real points with FPL's automatic substitutions from its bench
 (the vice takes the armband when the captain did not play), and its transfers are free (it never planned a hit that week
 unless its moves exceeded the free transfers, in which case the hit is charged); a player's points are his gameweek total
 (both matches in a double)."""
@@ -115,12 +116,38 @@ def _plan_score(after: dict, pts: dict[int, int], mins: dict[int, int]) -> int:
     return _xi_score([swap.get(p["player_id"], p["player_id"]) for p in after["starting"]], after.get("captain_id"), after.get("vice_id"), pts, mins)
 
 
+def _finished(conn: sqlite3.Connection, event: int) -> bool:
+    row = conn.execute("SELECT finished FROM events WHERE id = ?", (event,)).fetchone()
+    return bool(row and row["finished"])
+
+
+def _picks_score(conn: sqlite3.Connection, entry_id: int, event: int, pts: dict[int, int], mins: dict[int, int]) -> int | None:
+    """Your eleven on the real points with FPL's substitutions, for a gameweek FPL has not finished counting. None with a chip."""
+    picks = conn.execute(
+        "SELECT k.player_id, k.multiplier, k.is_captain, k.is_vice_captain, k.active_chip, et.singular_name_short AS position "
+        "FROM my_team_picks k JOIN players p ON p.id = k.player_id JOIN element_types et ON et.id = p.element_type "
+        "WHERE k.entry_id = ? AND k.event = ? ORDER BY k.squad_slot", (entry_id, event),
+    ).fetchall()
+    if not picks or any(r["active_chip"] for r in picks):
+        return None
+    after = {
+        "starting": [{"player_id": r["player_id"], "position": r["position"]} for r in picks if r["multiplier"] > 0],
+        "bench": [{"player_id": r["player_id"], "position": r["position"]} for r in picks if r["multiplier"] == 0],
+        "captain_id": next((r["player_id"] for r in picks if r["is_captain"]), None),
+        "vice_id": next((r["player_id"] for r in picks if r["is_vice_captain"]), None),
+    }
+    return _plan_score(after, pts, mins)
+
+
 def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
     """For every finished gameweek with a plan stored before its deadline: what that plan's eleven and armband scored on the
     real points (automatic substitutions made, hits charged) against what you scored after hits."""
     from fpl_agent.models.rules import current_season
 
+    from fpl_agent.models.pundit_call import call_score, latest_call
+
     season = current_season(conn)
+    positions = {r["id"]: r["pos"] for r in conn.execute("SELECT p.id, et.singular_name_short AS pos FROM players p JOIN element_types et ON et.id = p.element_type")}
     out = []
     for r in conn.execute("SELECT event, points, event_transfers_cost FROM my_team_gw_summary WHERE entry_id = ? ORDER BY event", (entry_id,)):
         stored = plan_of_record(conn, r["event"])
@@ -136,8 +163,11 @@ def plan_ledger(conn: sqlite3.Connection, entry_id: int) -> list[dict]:
         hits = max(0, len(stored[0].get("moves", [])) - (stored[0].get("free_transfers") or 0)) * 4
         plan_score = _plan_score(after, pts, mins) - hits
         held = (stored[0].get("eye") or {}).get("held_back")
+        yours = r["points"] if _finished(conn, r["event"]) else (_picks_score(conn, entry_id, r["event"], pts, mins) or r["points"])
+        called = latest_call(conn, r["event"])
         out.append({
-            "event": r["event"], "plan": plan_score, "you": r["points"] - (r["event_transfers_cost"] or 0),
+            "pundit": call_score(called[0], positions, pts, mins) if called else None,
+            "event": r["event"], "plan": plan_score, "you": yours - (r["event_transfers_cost"] or 0),
             "eye_won": sum(pts.get(o, 0) - pts.get(i, 0) for o, i in held) if held else None,
         })
     return out
@@ -248,10 +278,14 @@ def gameweek_review(conn: sqlite3.Connection, entry_id: int, event: int) -> dict
 
     autopsy = next((a for a in captain_autopsy(conn, entry_id) if a["event"] == event), None)
     top = sorted(((pid, p) for pid, p in pts.items()), key=lambda kv: -kv[1])[:5]
+    final = _finished(conn, event)
+    shown = scored if final else sum(x["points"] * x["multiplier"] for x in counted) - hits
     return {
-        "event": event, "chip": chip, "points": scored, "raw_points": me["points"], "hits": hits,
-        "average": ev["average_entry_score"] if ev else None, "highest": ev["highest_score"] if ev else None,
-        "top10k_field": field, "total": me["total_points"], "rank": me["overall_rank"],
+        "event": event, "chip": chip, "points": shown,
+        "provisional": not final, "raw_points": me["points"], "hits": hits,
+        "average": ev["average_entry_score"] if ev and final else None, "highest": ev["highest_score"] if ev and final else None,
+        "top10k_field": field, "total": me["total_points"] if final else (prev["total_points"] + shown if prev else None),
+        "rank": me["overall_rank"] if final else None,
         "previous_rank": prev["overall_rank"] if prev else None, "bench_points": me["points_on_bench"],
         "squad": squad, "predicted": round(predicted_total, 1), "deserved": round(deserved_total, 1),
         "counted": sum(x["points"] * x["multiplier"] for x in counted),

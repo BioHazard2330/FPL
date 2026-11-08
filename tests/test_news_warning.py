@@ -59,3 +59,13 @@ def test_an_injury_headline_for_a_squad_player_raises_one_high_event(db_conn, mo
     assert detect_injury_headlines(db_conn, {1, 2}, {1}, now.isoformat()) == 0
     rows = {r["entity_id"]: r["severity"] for r in db_conn.execute("SELECT entity_id, severity FROM change_events WHERE event_type='injury_headline'")}
     assert rows == {1: "HIGH", 2: "MEDIUM"}
+
+
+def test_the_injury_word_belongs_to_its_owner_and_a_list_keeps_everyone():
+    from fpl_agent.models.news_warning import injury_owners
+
+    assert injury_owners("Okafor’s Leeds winner adds insult to Tel’s injury for Tottenham as Bogle escapes red", [(1, "Okafor"), (3, "Bogle")]) == set()
+    assert injury_owners("Fernandes, Gakpo & Dorgu join international break's injury list", [(1, "Fernandes"), (2, "Gakpo"), (3, "Dorgu")]) == {1, 2, 3}
+    assert injury_owners("Kamada earns Palace injury-time Hoffenheim draw", [(4, "Kamada")]) == set()
+    assert injury_owners("Hincapie and Zubimendi injured in training", [(5, "Hincapie"), (6, "Zubimendi")]) == {5, 6}
+    assert injury_owners("Saka hamstring scan", [(7, "Saka")]) == {7}

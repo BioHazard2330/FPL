@@ -129,18 +129,28 @@ def dossier(conn: sqlite3.Connection) -> str:
     box = {r["player_id"]: (r["b"] or 0) / (r["m"] / 90) for r in conn.execute(
         f"SELECT player_id, SUM(touches_box) AS b, SUM(minutes) AS m FROM player_physical WHERE competition LIKE '%Premier%' AND player_id IN ({marks}) AND touches_box IS NOT NULL GROUP BY player_id HAVING SUM(minutes) >= 90", ids)}
     eye = latest_reads(conn)
+    net = {r["player_id"]: r["n"] for r in conn.execute(
+        "SELECT m.player_id, m.transfers_in_event - m.transfers_out_event AS n FROM player_transfer_momentum_history m "
+        "WHERE m.valid_until IS NULL")}
+    order = sorted(net.values(), reverse=True)
+    crowd = {pid: (n, sum(1 for v in order if v > n) / max(len(order), 1)) for pid, n in net.items()}
+    solio = {r["player_id"]: r["pr_points"] for r in conn.execute(
+        f"SELECT s.player_id, s.pr_points FROM solio_player_projection s WHERE s.snapshot_id = (SELECT id FROM solio_snapshot WHERE gameweek = ? ORDER BY retrieved_at DESC LIMIT 1) "
+        f"AND s.player_id IN ({marks})", (event, *ids))}
     midweek = conn.execute(
         "SELECT a.player_id, a.role, a.minutes, a.sub_off_minute, a.goals, a.assists, a.absent_kind, m.competition FROM cup_appearance a JOIN cup_match m ON m.fotmob_match_id = a.fotmob_match_id "
         "WHERE m.kickoff_utc >= ? ", ((datetime.now(timezone.utc) - timedelta(days=4)).isoformat(),)
     ).fetchall() if _has_cup(conn) else []
     lines = [f"# GW{event} dossier", "", f"Free transfers {state['free_transfers']}, bank £{state['bank_tenths'] / 10:.1f}m. No-buy clubs: {sorted(banned)}.",
              f"Plan of record: {[(m['out']['name'], m['into']['name']) for m in plan.get('moves', [])]}, gain {plan.get('gain_vs_roll')}, armband {players[plan['lineup_after']['captain_id']]['web_name'] if plan['lineup_after'].get('captain_id') in players else None}.",
-             f"Field sample: {field.label if field else 'none'}. Fixtures read club goals-opponent goals from the ratings.", "", "## Squad"]
+             f"Field sample: {field.label if field else 'none'}. Fixtures read club goals-opponent goals from the ratings. Solio is a second opinion: blended with ours it ranked the top 60 best in GW8-10 (0.35 against 0.31 each), ours alone is the more accurate on points. Crowd net transfers are a lean, not proof: controlling for our projection, the top 5% most bought before the deadline beat it by -0.15, +1.55, +1.21 in GW8-10.", "", "## Squad"]
     def row(pid: int) -> str:
         p = players[pid]
-        extra = ""
+        extra = f" | Solio GW{event} {solio[pid]:.1f}" if solio.get(pid) is not None else ""
+        if pid in crowd and abs(crowd[pid][0]) >= 5000:
+            extra += f" | crowd net {crowd[pid][0] / 1000:+.0f}k (top {crowd[pid][1]:.0%})" if crowd[pid][0] > 0 else f" | crowd net {crowd[pid][0] / 1000:+.0f}k"
         if pid in eye:
-            extra = f" | your eye {eye[pid]['rating']:+d} {eye[pid].get('note') or ''}"
+            extra += f" | your eye {eye[pid]['rating']:+d} {eye[pid].get('note') or ''}"
         return "- " + _line(p, form.get(pid), xp.get(pid, 0.0), fixtures.get(p["team_id"], []), eo.get(pid, 0.0), _read(conn, football_read, pid, event), starts.get(pid), takers.get(pid, ""), prior.get(pid), box.get(pid)) + extra
     lines += [row(p) for p in sorted(squad, key=lambda q: (_POSITIONS.index(players[q]["position"]), -xp.get(q, 0)))]
     lines += ["", "## Candidates"]
@@ -244,5 +254,5 @@ def ledger(conn: sqlite3.Connection, entry_id: int) -> dict:
         if found is None or not stats or event not in plan:
             continue
         pts, mins = {r["player_id"]: r["total_points"] for r in stats}, {r["player_id"]: r["minutes"] for r in stats}
-        rows.append({"event": event, "pundit": call_score(found[0], positions, pts, mins), "plan": plan[event]["plan"], "you": plan[event]["you"]})
+        rows.append({"event": event, "pundit": plan[event]["pundit"], "plan": plan[event]["plan"], "you": plan[event]["you"]})
     return {"rows": rows, "pundit": sum(r["pundit"] for r in rows), "plan": sum(r["plan"] for r in rows), "you": sum(r["you"] for r in rows)}

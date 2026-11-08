@@ -183,15 +183,34 @@ def _club_runs(league: League, left: list[dict], next_event: int | None) -> dict
             for i, t in enumerate(league.teams)}
 
 
+RIVER_KEY = "supercomputer_river"
+
+
 def _river(conn: sqlite3.Connection, last_played: int) -> list[dict]:
-    """The title and relegation race as it stood after each finished gameweek, from the data of that moment."""
+    """The title and relegation race as it stood after each finished gameweek, from the data of that moment. A finished
+    gameweek's point is kept in `app_meta` with the scores it was built from, so each week adds one simulation, not all."""
+    row = conn.execute("SELECT value FROM app_meta WHERE key = ?", (RIVER_KEY,)).fetchone()
+    kept = json.loads(row["value"]) if row and row["value"] else {}
     out = []
     for event in range(1, last_played + 1):
+        stamp = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(team_h_score + team_a_score), 0) AS g FROM fixtures WHERE event <= ? AND team_h_score IS NOT NULL", (event,)).fetchone()
+        key = f"{stamp['n']}:{stamp['g']}"
+        hit = kept.get(str(event))
+        if hit and hit.get("stamp") == key:
+            out.append(hit["point"])
+            continue
         league, _, _ = league_state(conn, through_event=event)
         result = simulate_table(league, HISTORY_SIMULATIONS, STRENGTH_SD, seed=100 + event)
         odds = _odds(result, HISTORY_SIMULATIONS)
-        out.append({"event": event, "title": {t: round(float(odds["title"][i]), 3) for i, t in enumerate(league.teams)},
-                    "down": {t: round(float(odds["down"][i]), 3) for i, t in enumerate(league.teams)}})
+        point = {"event": event, "title": {t: round(float(odds["title"][i]), 3) for i, t in enumerate(league.teams)},
+                 "down": {t: round(float(odds["down"][i]), 3) for i, t in enumerate(league.teams)}}
+        kept[str(event)] = {"stamp": key, "point": point}
+        out.append(point)
+    conn.execute(
+        "INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (RIVER_KEY, json.dumps(kept), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
     return out
 
 

@@ -10,11 +10,16 @@ sidelined, setback, scan, strain were followed 52 of 80 times (65%); "miss" 9 of
 near 2% over 72 hours. Next-match minutes of regulars behind an injury headline were 0.89x their record (19 cases, 90%
 0.75 to 1.02): not enough to move a projection, so this is a warning only.
 
-Headlines are matched to players by the news desk's own tagging (`news_item_players`); a headline about a namesake or
-a past injury can be tagged, which is part of what the measured rate already carries."""
+Headlines are matched to players by the news desk's own tagging (`news_item_players`). Two readings are refused
+(2026-11-09): "injury time" (Kamada's injury-time equaliser), and a possessive owner who is someone else ("Okafor's Leeds
+winner adds insult to Tel's injury ... as Bogle escapes red" had warned about Bogle). A list of names keeps them all, as
+"Fernandes, Gakpo & Dorgu join the injury list" should; giving the word to the nearest name alone lost 12 real
+warnings of 19. A name with no possessive is left to the list rule, so "Neto double ... marred by Martinez head injury" still tags Neto: "Hincapie and Zubimendi injured" needs both. A headline about a namesake or a past injury
+can still be tagged, which is part of what the measured rate carries."""
 import re
 import sqlite3
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 INJURY = re.compile(r"\b(injur\w*|hamstring|knock|sidelined|setback|scan|strain|limp\w*)\b", re.I)
@@ -46,10 +51,46 @@ def _headlines(conn: sqlite3.Connection, player_ids: list[int] | None = None, si
         clause += " AND ni.published_at >= ?"
         params.append(since)
     rows = conn.execute(
-        "SELECT nip.player_id, ni.title, ni.published_at, ni.source FROM news_item_players nip "
+        "SELECT nip.news_item_id AS item, nip.player_id, ni.title, ni.published_at, ni.source FROM news_item_players nip "
         f"JOIN news_items ni ON ni.id = nip.news_item_id WHERE ni.published_at IS NOT NULL{clause}", params,
     ).fetchall()
-    return [(r["player_id"], _ts(r["published_at"]), r["title"] or "", r["source"] or "") for r in rows if INJURY.search(r["title"] or "")]
+    rows = [r for r in rows if INJURY.search(r["title"] or "")]
+    if not rows:
+        return []
+    items = sorted({r["item"] for r in rows})
+    tagged: dict[int, list[tuple[int, str]]] = {}
+    for r in conn.execute(
+        f"SELECT nip.news_item_id AS item, nip.player_id, p.web_name FROM news_item_players nip JOIN players p ON p.id = nip.player_id "
+        f"WHERE nip.news_item_id IN ({','.join('?' * len(items))})", items,
+    ):
+        tagged.setdefault(r["item"], []).append((r["player_id"], r["web_name"] or ""))
+    return [(r["player_id"], _ts(r["published_at"]), r["title"] or "", r["source"] or "")
+            for r in rows if r["player_id"] in injury_owners(r["title"] or "", tagged.get(r["item"], []))]
+
+
+def _plain(text: str) -> str:
+    return unicodedata.normalize("NFKD", text.replace("\u2019", "'")).encode("ascii", "ignore").decode()
+
+
+def injury_owners(title: str, players: list[tuple[int, str]]) -> set[int]:
+    """Which of the tagged players a headline's injury word is about. Lists keep everyone ("A, B & C join the injury
+    list"); a possessive name keeps only him ("Tel's injury ... as Bogle escapes red" is about Tel, so not Bogle);
+    "injury time" is stoppage time, about nobody."""
+    plain = _plain(title)
+    words = [m for m in INJURY.finditer(plain) if not re.match(r"injury[- ]time", plain[m.start():m.start() + 12], re.I)]
+    if not words:
+        return set()
+    keys = {pid: _plain(name.split(".")[-1].strip()).lower() for pid, name in players}
+    for m in words:
+        owner = re.search(r"([A-Z][A-Za-z-]+)'s?\s+(?:[a-z]+\s+)?$", plain[:m.start()])
+        if owner:
+            return {pid for pid, key in keys.items() if key and key == owner.group(1).lower()}
+    return set(keys)
+
+
+def nearest_to_injury(title: str, players: list[tuple[int, str]]) -> int | None:
+    owners = injury_owners(title, players)
+    return next(iter(owners)) if len(owners) == 1 else None
 
 
 def warning_rate(conn: sqlite3.Connection) -> dict | None:

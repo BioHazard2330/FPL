@@ -2058,8 +2058,13 @@ def _run_scheduled_cycle(gated: bool):
             cleared = clear_provisional(conn, season_for_backfill)
             if cleared:
                 logger.info("run-scheduled xg: Understat is back, %d provisional FotMob row(s) removed", cleared)
-        except Exception:
-            logger.exception("run-scheduled xg backfill failed - not fatal to the sync itself")
+        except Exception as exc:
+            from fpl_agent.ingestion.understat_source import UnderstatParseError
+
+            if isinstance(exc, UnderstatParseError) and "offline" in str(exc):
+                logger.warning("run-scheduled xg: Understat is offline, provisional FotMob figures stand in (the self-check tracks it)")
+            else:
+                logger.exception("run-scheduled xg backfill failed - not fatal to the sync itself")
             try:
                 from fpl_agent.ingestion.xg_fallback import fill_from_fotmob
 

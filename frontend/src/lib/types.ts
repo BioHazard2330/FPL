@@ -2749,7 +2749,7 @@ export interface ReviewRef { player_id: number | null; name?: string; team_short
 /** One finished gameweek read back (`models/gw_review.gameweek_review`). */
 export interface ReviewPayload {
   status: 'ok' | 'none' | 'no_entry'
-  event: number; chip: string | null; points: number; raw_points: number; hits: number; average: number | null; highest: number | null
+  event: number; chip: string | null; points: number; provisional?: boolean; raw_points: number; hits: number; average: number | null; highest: number | null
   top10k_field: number | null; total: number; rank: number | null; previous_rank: number | null; bench_points: number | null
   squad: ReviewPlayer[]; predicted: number; deserved: number; counted: number; subs: { out?: string; into?: string }[]
   gains: ReviewSwing[]; losses: ReviewSwing[]
@@ -2760,7 +2760,7 @@ export interface ReviewPayload {
   captain: { multiplier: number; captain: { player_id: number; name: string; actual: number; deserved: number }; best_actual: { player_id: number; name: string; actual: number }; best_deserved: { player_id: number; name: string; deserved: number }; cost: number; owed: number } | null
   stars: ReviewRef[]
   history: { event: number; points: number; rank: number | null; average: number | null }[]
-  ledger?: { event: number; plan: number; you: number; eye_won?: number | null }[]
+  ledger?: { event: number; plan: number; you: number; pundit?: number | null; eye_won?: number | null }[]
   events: number[]
 }
 

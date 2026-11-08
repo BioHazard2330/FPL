@@ -71,7 +71,7 @@ function Hero({ d, pick }: { d: ReviewPayload; pick: (e: number) => void }) {
             <div className="voice text-xl text-paper/70">the gameweek {d.event} report{d.chip ? ` · ${CHIP[d.chip] ?? d.chip}` : ''}</div>
             <div className="flex items-end gap-4">
               <div className="tabular font-display text-[9.5rem] font-black leading-[0.78] [text-shadow:6px_6px_0_var(--spot)]">{d.points}</div>
-              <div className="pb-3 font-display text-2xl font-black uppercase leading-none text-paper/80">points{d.hits ? <><br /><span className="text-alert-red">−{d.hits} hits</span></> : null}</div>
+              <div className="pb-3 font-display text-2xl font-black uppercase leading-none text-paper/80">points{d.hits ? <><br /><span className="text-alert-red">−{d.hits} hits</span></> : null}{d.provisional ? <><br /><span className="text-broadcast-gold" title="FPL has not finished counting this gameweek: this is your eleven on the player points so far. Its average and your rank catch up later.">provisional</span></> : null}</div>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-[2px] self-end border-2 border-paper/30 bg-paper/30">
@@ -266,6 +266,7 @@ function Verdicts({ d }: { d: ReviewPayload }) {
             {(d.ledger ?? []).length > 1 && (() => {
               const L = d.ledger ?? []
               const you = L.reduce((n, r) => n + r.you, 0), planned = L.reduce((n, r) => n + r.plan, 0)
+              const called = L.filter((r) => r.pundit != null)
               return (
                 <div className="mt-3 border-t-2 border-ink pt-2">
                   <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-faint">every week a plan existed</div>
@@ -279,6 +280,11 @@ function Verdicts({ d }: { d: ReviewPayload }) {
                   <div className="mt-1 font-display text-lg font-black text-text">
                     you {you} · plan {planned} <span className={you >= planned ? 'text-pitch-green' : 'text-alert-red'}>({you >= planned ? '+' : ''}{you - planned} you)</span>
                   </div>
+                  {called.length > 0 && (
+                    <div className="mt-1 text-[13px] font-semibold text-text-muted" title="Gameweeks with a pundit's call only">
+                      With a pundit&apos;s call ({called.map((r) => `GW${r.event}`).join(', ')}): pundit {called.reduce((n, r) => n + (r.pundit ?? 0), 0)} · plan {called.reduce((n, r) => n + r.plan, 0)} · you {called.reduce((n, r) => n + r.you, 0)}
+                    </div>
+                  )}
                 </div>
               )
             })()}

@@ -88,3 +88,15 @@ def test_the_plans_bench_covers_a_starter_who_did_not_play():
     after = {"starting": starting, "bench": bench, "captain_id": 4, "vice_id": 9}
     assert _plan_score(after, pts, mins) == 20 + 7 + 2
     assert _plan_score({**after, "bench": []}, pts, mins) == 20 + 2
+
+
+def test_an_unfinished_gameweek_counts_your_eleven_not_fpls_stale_total(db_conn):
+    from fpl_agent.models.gw_review import _finished
+
+    columns = {r[1]: r for r in db_conn.execute("PRAGMA table_info(events)")}
+    required = [c for c, r in columns.items() if r[3] and r[4] is None and c not in ("id", "finished")]
+    names = ["id", "finished"] + required
+    for event, done in ((9, 1), (10, 0)):
+        values = [event, done] + [0 if columns[c][2].upper().startswith("INT") else "x" for c in required]
+        db_conn.execute(f"INSERT INTO events ({','.join(names)}) VALUES ({','.join('?' * len(names))})", values)
+    assert _finished(db_conn, 9) and not _finished(db_conn, 10) and not _finished(db_conn, 99)
