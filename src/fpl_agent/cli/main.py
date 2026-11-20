@@ -4735,6 +4735,40 @@ def pundit_call_cmd(path: str):
         conn.close()
 
 
+@cli.command("pundit-view")
+@click.argument("player_id", type=int, required=False)
+@click.argument("factor", type=float, required=False)
+@click.option("--through", "through_event", type=int, help="last gameweek it applies to (default: the next one)")
+@click.option("--reason", default="", help="the change of situation behind it")
+@click.option("--revoke", "revoke_id", type=int, default=None, help="withdraw a view by id")
+@click.option("--list", "show", is_flag=True, help="views in force and how past ones scored")
+def pundit_view_cmd(player_id, factor, through_event, reason, revoke_id, show):
+    """Scale one player's projection for a run of gameweeks, for a change of situation the numbers cannot see. Every
+    decision reads it; it is scored afterwards (`models/pundit_views.py`)."""
+    from fpl_agent.cli.main import _maybe_trigger_week_plan_refresh
+    from fpl_agent.models import pundit_views as pv
+    from fpl_agent.models.fixtures import _reference_event
+
+    conn = get_connection()
+    try:
+        if revoke_id is not None:
+            pv.revoke(conn, revoke_id)
+            click.echo(f"revoked view {revoke_id}")
+        elif show or player_id is None:
+            for r in conn.execute("SELECT v.id, p.web_name, v.factor, v.from_event, v.through_event, v.reason FROM pundit_view v JOIN players p ON p.id = v.player_id WHERE v.revoked_at IS NULL ORDER BY v.id"):
+                click.echo(f"{r[0]:>3} {r[1]:<16} x{r[2]:<5g} GW{r[3]}-{r[4]}  {r[5]}")
+            board = pv.ledger(conn)
+            click.echo(f"scored player-weeks {board['scored']}, helped {board['helped']}, net {board['net']:+}, trust {board['trust']}")
+            return
+        else:
+            event = _reference_event(conn)
+            view_id = pv.add_view(conn, player_id, factor, event, through_event or event, reason)
+            click.echo(f"view {view_id} stored")
+        click.echo(f"plan refresh: {_maybe_trigger_week_plan_refresh(conn)}")
+    finally:
+        conn.close()
+
+
 @cli.command("pundit-due")
 def pundit_due_cmd():
     """Says when a gameweek's deadline is close with no pundit's call."""

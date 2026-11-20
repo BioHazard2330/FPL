@@ -183,9 +183,11 @@ def _gw_xp(conn: sqlite3.Connection, player_id: int, event: int, cache: dict) ->
     horizon are reading identical per-player numbers. Any divergence between
     the two planners is then a difference in SEARCH, never in valuation -
     which is the only thing that makes comparing them meaningful."""
+    from fpl_agent.models.pundit_views import view_factor
+
     key = (player_id, event)
     if key not in cache:
-        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median
+        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event)
     return cache[key]
 
 

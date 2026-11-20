@@ -227,14 +227,17 @@ def new_results_since(conn: sqlite3.Connection, detail: dict) -> int:
     return max(0, finished_match_count(conn) - int(detail["matches_finished"]))
 
 
-def calibration_id() -> str:
-    """Identifies the constants that change a projection without changing any input row: the qualitative adjustment sizes and the
-    projection model version. A stored plan made under a different id is rebuilt rather than served."""
+def calibration_id(conn: sqlite3.Connection | None = None) -> str:
+    """Identifies what changes a projection without changing any input row: the qualitative adjustment sizes, the projection
+    model version and, with `conn`, the pundit views in force. A stored plan made under a different id is rebuilt."""
     from fpl_agent.models.expected_points import MODEL_VERSION, PROJECTION_REVISION
+    from fpl_agent.models.pundit_views import signature
     from fpl_agent.models.qualitative_feed import CALIBRATED_FRACTIONS, MAX_ADJUSTMENT_FRACTION
 
     sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
-    return f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
+    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
+    views = signature(conn) if conn is not None else ""
+    return f"{base}|views={views}" if views else base
 
 
 def _start_percents(conn: sqlite3.Connection, ids: set[int]) -> dict[int, int]:
@@ -693,7 +696,7 @@ def plan_changes(conn: sqlite3.Connection, previous: tuple | None, event: int, p
     prev_cap = prev.get("lineup_after", {}).get("captain_id")
     return {
         "since": prev_at,
-        "model_changed": prev.get("calibration") != calibration_id(),
+        "model_changed": prev.get("calibration") != calibration_id(conn),
         "matches_finished": max(0, finished_match_count(conn) - (prev.get("matches_finished") or 0)),
         "dropped": [{"out": who(o), "into": who(i)} for o, i in prev_pairs if (o, i) not in pairs],
         "added": [{"out": who(o), "into": who(i)} for o, i in pairs if (o, i) not in prev_pairs],
@@ -1355,6 +1358,15 @@ def build_week_plan(
         notes.append(f"Not buying from {', '.join(names)} (your setting).")
     if free_transfers >= 5 and not moves:
         notes.append("Rolling at the cap discards a free transfer: next week you hold five either way.")
+    from fpl_agent.models.pundit_views import active as active_views
+
+    views, view_trust = active_views(conn)
+    in_force = [(pid, s, e, f) for pid, rows in views.items() for s, e, f in rows if s <= event + horizon - 1 and e >= event]
+    if in_force:
+        names_v = {r["id"]: r["web_name"] for r in conn.execute(
+            f"SELECT id, web_name FROM players WHERE id IN ({','.join('?' * len(in_force))})", [v[0] for v in in_force])}
+        notes.append("Pundit views applied: " + "; ".join(f"{names_v.get(pid, pid)} x{f:g} GW{s}-{e}" for pid, s, e, f in in_force)
+                     + ("" if view_trust == 1.0 else f" (halved: past views have not helped)") + ".")
     for joint in selection.joints:
         names = {r["id"]: r["web_name"] for r in conn.execute(
             f"SELECT id, web_name FROM players WHERE id IN ({','.join('?' * (2 * len(joint['moves'])))})",
@@ -1383,7 +1395,7 @@ def build_week_plan(
         },
         proven_optimal=proven, min_move_gain=min_move_gain, squad_ids=sorted(squad_ids),
         computed_at=datetime.now(timezone.utc).isoformat(), notes=notes, captain_ladder=captain_ladder,
-        team_outlook=team_outlook, calibration=calibration_id(), matches_finished=finished_match_count(conn),
+        team_outlook=team_outlook, calibration=calibration_id(conn), matches_finished=finished_match_count(conn),
         eye={
             "penalty": EYE_PENALTY,
             "protected": sorted(eye_sell), "blocked": sorted(eye_buy),
@@ -1581,8 +1593,12 @@ def week_plan_staleness(conn: sqlite3.Connection, detail: dict, created_at: str)
         reasons.append("a new gameweek has started")
     if state["free_transfers"] != detail.get("free_transfers"):
         reasons.append("your free transfers have changed")
-    if detail.get("calibration") != calibration_id():
-        reasons.append("the projection model's calibration has changed")
+    stored_id = detail.get("calibration") or ""
+    if stored_id != calibration_id(conn):
+        if stored_id.split("|views=")[0] == calibration_id():
+            reasons.append("the pundit's views have changed")
+        else:
+            reasons.append("the projection model's calibration has changed")
     watch = set(ids) | {m["into"]["player_id"] for m in detail.get("moves", [])} | {
         m["into"]["player_id"] for m in detail.get("declined", [])
     }

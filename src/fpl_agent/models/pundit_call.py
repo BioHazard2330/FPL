@@ -208,6 +208,10 @@ def store_call(conn: sqlite3.Connection, call: dict, now: datetime | None = None
     shape = {k: sum(1 for p in starting if brief[p]["position"] == k) for k in _POSITIONS}
     if shape["GKP"] != 1 or shape["DEF"] < 3 or shape["MID"] < 2 or shape["FWD"] < 1:
         raise ValueError(f"not a legal formation: {shape}")
+    from fpl_agent.models.pundit_views import add_view
+
+    for v in call.get("views", []):
+        add_view(conn, int(v["player_id"]), float(v["factor"]), int(call["event"]), int(v.get("through", call["event"])), str(v["reason"]))
     cur = conn.execute("INSERT INTO pundit_call (event, made_at, detail) VALUES (?,?,?)",
                        (int(call["event"]), (now or datetime.now(timezone.utc)).isoformat(), json.dumps({**call, "free_transfers": state["free_transfers"]})))
     conn.commit()

@@ -12,6 +12,8 @@ interface Row { event: number; pundit: number; plan: number; you: number }
 interface Payload {
   status: string; event: number; made_at?: string; headline?: string; moves?: Move[]; hold?: { name: string; why: string }[]; captain?: Person & { why?: string }; vice?: Person
   differs?: string; watch?: string[]; ledger: { rows: Row[]; pundit?: number; plan?: number; you?: number }
+  views?: { id: number; name: string; factor: number; from: number; through: number; reason: string }[]
+  view_ledger?: { scored: number; helped: number; net: number; trust: number }
 }
 
 export function PunditCall() {
@@ -60,6 +62,21 @@ export function PunditCall() {
       {(d.hold ?? []).length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13.5px]">
           {d.hold!.map((h) => <span key={h.name}><b className="font-display uppercase">Keep {h.name}:</b> {h.why}</span>)}
+        </div>
+      )}
+      {(d.views ?? []).length > 0 && (
+        <div className="mt-3 border-t border-paper/25 pt-2">
+          <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.14em] text-paper/60">
+            In the plan&apos;s numbers
+            <Info label="Pundit views">Each view scales one player&apos;s projection for its gameweeks, for a change of situation the numbers cannot see, and every decision reads it: the plan, the eleven, the armband, the Decider. Scored afterwards against what he did{d.view_ledger && d.view_ledger.scored > 0 ? `: ${d.view_ledger.helped} of ${d.view_ledger.scored} player-weeks helped so far` : ''}; a run of wrong reads halves them.</Info>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {d.views!.map((v) => (
+              <span key={v.id} className="border-2 border-paper/40 px-2 py-0.5 text-[13.5px]" title={v.reason}>
+                <b className="font-display uppercase">{v.name}</b> <span className={`tabular font-black ${v.factor < 1 ? 'text-alert-red' : 'text-pitch-green'}`}>×{v.factor}</span> <span className="text-paper/60">GW{v.from}{v.through !== v.from ? `-${v.through}` : ''}</span> · {v.reason}
+              </span>
+            ))}
+          </div>
         </div>
       )}
       {d.differs && <div className="mt-3 border-t border-paper/25 pt-2 text-[14px]"><b className="font-display uppercase text-spot">Against the plan:</b> {d.differs}</div>}

@@ -12,12 +12,18 @@ def build_punditcall_payload(ctx=None, params: dict | None = None) -> dict:
 
     conn = get_connection()
     try:
+        from fpl_agent.models import pundit_views as pv
+
         event = _reference_event(conn)
         entry = get_my_team_entry_id(conn)
+        views = [{"id": r[0], "name": r[1], "factor": r[2], "from": r[3], "through": r[4], "reason": r[5]} for r in conn.execute(
+            "SELECT v.id, p.web_name, v.factor, v.from_event, v.through_event, v.reason FROM pundit_view v JOIN players p ON p.id = v.player_id "
+            "WHERE v.revoked_at IS NULL AND v.through_event >= ? ORDER BY v.id", (event,))] if pv._has_table(conn) else []
+        view_board = pv.ledger(conn)
         board = ledger(conn, entry) if entry is not None else {"rows": []}
         found = latest_call(conn, event)
         if found is None:
-            return {"status": "none", "event": event, "ledger": board}
+            return {"status": "none", "event": event, "ledger": board, "views": views, "view_ledger": view_board}
         call, made_at = found
         ids = [int(p) for m in call.get("moves", []) for p in (m["out"], m["in"])] + [int(call["captain"]), int(call["vice"])]
         brief = _briefs(conn, list(dict.fromkeys(ids)))
@@ -29,7 +35,7 @@ def build_punditcall_payload(ctx=None, params: dict | None = None) -> dict:
             "status": "ok", "event": event, "made_at": made_at, "headline": call.get("headline"), "moves": moves, "hold": call.get("hold", []),
             "captain": {**brief[int(call["captain"])], "why": call.get("captain_why")}, "vice": brief[int(call["vice"])], "differs": call.get("differs"), "watch": call.get("watch", []),
             "plan_moves": [{"out": m["out"]["name"], "into": m["into"]["name"]} for m in plan.get("moves", [])],
-            "plan_captain": (plan.get("lineup_after") or {}).get("captain_id"), "ledger": board,
+            "plan_captain": (plan.get("lineup_after") or {}).get("captain_id"), "ledger": board, "views": views, "view_ledger": view_board,
         })
     finally:
         conn.close()

@@ -380,9 +380,11 @@ def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: d
     evaluate_transfer's (player_id, n, from_event) 3-tuple cache keys, so the two
     lookup families can share one dict (as search_transfer_sequences does) with no
     collision risk."""
+    from fpl_agent.models.pundit_views import view_factor
+
     key = (player_id, event)
     if key not in cache:
-        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median
+        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event)
     return cache[key]
 
 

@@ -540,6 +540,8 @@ def build_player_pool_for_ids(
     because strategic paths overlap heavily on early GWs/squad membership -
     without it, 5 paths x 8 GWs would recompute the same real per-player
     projection dozens of times over."""
+    from fpl_agent.models.pundit_views import view_factor
+
     if not player_ids:
         return []
     xp_cache = xp_cache if xp_cache is not None else {}
@@ -560,12 +562,13 @@ def build_player_pool_for_ids(
         if key not in xp_cache:
             xp_cache[key] = expected_points(conn, r["id"], n_gw=1, from_event=event)
         ep = xp_cache[key]
+        f = view_factor(conn, r["id"], event)
         pool.append(
             PlayerCandidate(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 team_id=r["team_id"], team_short=r["team_short"],
                 price_tenths=price_row["value_tenths"] if price_row is not None else 0,
-                xp=ep.median, median=ep.median, floor=ep.floor, ceiling=ep.ceiling,
+                xp=ep.median * f, median=ep.median * f, floor=ep.floor * f, ceiling=ep.ceiling * f,
                 confidence=ep.confidence, expected_minutes=ep.expected_minutes,
             )
         )
