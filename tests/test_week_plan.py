@@ -665,3 +665,15 @@ def test_route_to_reports_an_owned_player_without_solving(db_conn, monkeypatch):
     _seed_two_players_two_teams(db_conn)
     assert wp.route_to(db_conn, 1)["status"] == "owned"
     assert wp.route_to(db_conn, 99999)["status"] == "unknown_player"
+
+
+def test_sale_prices_keep_only_half_of_a_rise(db_conn, monkeypatch):
+    from fpl_agent.optimization import week_plan
+
+    monkeypatch.setattr(week_plan, "_strict_sell_shortfall_tenths", lambda conn, ids: {31: 2}.get(ids[0], 0))
+    db_conn.execute("INSERT INTO teams (id, code, name, short_name, updated_at) VALUES (1,1,'A','AAA','t')")
+    db_conn.execute("INSERT INTO element_types (id, singular_name, singular_name_short, plural_name, updated_at) VALUES (2,'D','DEF','Ds','t')")
+    for pid, price in ((31, 49), (305, 40)):
+        db_conn.execute("INSERT INTO players (id, code, web_name, team_id, element_type, status, removed, updated_at) VALUES (?,?,?,1,2,'a',0,'t')", (pid, pid, f"P{pid}"))
+        db_conn.execute("INSERT INTO player_price_history (player_id, value_tenths, valid_from) VALUES (?,?,'t')", (pid, price))
+    assert week_plan.squad_sell_prices(db_conn, [31, 305]) == {31: 47, 305: 40}

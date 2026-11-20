@@ -517,6 +517,18 @@ def _lineup_as_set(locked: LockedSquadState, xp_by_id: dict[int, float], starts:
     )
 
 
+def squad_sell_prices(conn: sqlite3.Connection, squad_ids: list[int]) -> dict[int, int]:
+    """What each owned player raises when sold, in tenths: current price, less the half of any rise FPL keeps
+    (`_strict_sell_shortfall_tenths`). Passed to every plan solve so a plan is never over budget at FPL's own prices
+    (2026-11-20: the plan's four GW11 moves were £0.1m short in FPL because Konsa's sale was priced at £4.9m, not £4.7m)."""
+    out = {}
+    for pid in squad_ids:
+        row = conn.execute("SELECT value_tenths FROM player_price_history WHERE player_id=? AND valid_until IS NULL", (pid,)).fetchone()
+        if row is not None:
+            out[pid] = int(row["value_tenths"]) - _strict_sell_shortfall_tenths(conn, [pid])
+    return out
+
+
 def _strict_sell_shortfall_tenths(conn: sqlite3.Connection, out_ids: list[int]) -> int:
     """Largest amount the sales could raise below current price, if purchase
     prices are what the transfer log says. FPL pays back half of any rise."""
@@ -818,7 +830,7 @@ def build_road_ahead(
         start_event=event, horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT,
         time_limit_seconds=SOLVE_SECONDS, model_chips=False, xp_cache=cache, league_pool=pool,
         transfer_penalty=min_move_gain, evidence_matches=evidence_matches(conn), evidence_k=EVIDENCE_K,
-        sell_penalty=eye_sell, buy_penalty=eye_buy,
+        sell_penalty=eye_sell, buy_penalty=eye_buy, sell_prices_tenths=squad_sell_prices(conn, squad_ids),
     )
     plan = plan_transfers_milp(
         conn, squad_ids, free_transfers, bank, max_first_gw_transfers=len(pairs),
@@ -1172,6 +1184,7 @@ def build_week_plan(
     cache: dict = {}
 
     evidence = evidence_matches(conn)
+    sell_prices = squad_sell_prices(conn, squad_ids)
     eye_sell, eye_buy, eye_labels = eye_gates(conn, squad_ids, pool)
     previous = latest_week_plan(conn)
     standing = standing_moves(previous[0] if previous else None, event, squad_ids)
@@ -1187,7 +1200,7 @@ def build_week_plan(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
-            evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_prices_tenths=sell_prices,
             sell_penalty=sell_pen if gated else None, buy_penalty=buy_pen if gated else None,
         )
 
@@ -1440,6 +1453,7 @@ def plan_with_view(
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=merged or None,
             evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_penalty=eye_sell, buy_penalty=eye_buy,
+            sell_prices_tenths=squad_sell_prices(conn, squad_ids),
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -1713,6 +1727,7 @@ def route_to(conn: sqlite3.Connection, target: int, horizon: int = HORIZON_GW, m
     cache: dict = {}
     evidence = evidence_matches(conn)
     eye_sell, eye_buy, _ = eye_gates(conn, squad_ids, pool)
+    sell_prices = squad_sell_prices(conn, squad_ids)
     buy_pen = {k: v for k, v in eye_buy.items() if k != target}
 
     def solve(k: int, forced: frozenset):
@@ -1721,6 +1736,7 @@ def route_to(conn: sqlite3.Connection, target: int, horizon: int = HORIZON_GW, m
             pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT, time_limit_seconds=SOLVE_SECONDS,
             model_chips=False, xp_cache=cache, max_first_gw_transfers=k, league_pool=pool,
             forced_in_first=forced, forced_out_first=frozenset(), evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            sell_prices_tenths=sell_prices,
             sell_penalty=eye_sell, buy_penalty=buy_pen,
         )
 
