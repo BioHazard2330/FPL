@@ -6,7 +6,7 @@ Sources: `team_match_state` (FotMob team stats per match and its opponent's row 
 (`state_profile`: chances for and against by game state; `subs`: every substitution with its minute and kind),
 `player_match_state` (who started, minute off), `match_coach` (the manager on the sheet). All Premier League matches
 at full time this season. Each measure is set against the league as a percentile; style labels are rules over those
-percentiles. Game-state rates need 90+ minutes in that state; under that they are shown as missing.
+percentiles. Game-state rates need 180+ minutes in that state; under that they are shown as missing.
 
 Display and the pundit's evidence only. Measured before (2026-10-16) and refused as a projection input: a club's
 rotation index adds nothing to a player's own minutes record. Hook timing per player is already in his own minutes
@@ -15,7 +15,7 @@ import json
 import sqlite3
 from statistics import median
 
-MIN_STATE_MINUTES = 90
+MIN_STATE_MINUTES = 180
 
 
 def _pct_rank(values: dict[int, float | None]) -> dict[int, float | None]:
@@ -177,12 +177,12 @@ def _labels(p: dict) -> list[dict]:
     add(hi("xg_against"), "Opens up", "bad", f"{m['xg_against']:.2f} xG conceded a match" if m["xg_against"] else "")
     lead = _push(p, "leading")
     if lead is not None:
-        add(q.get("leading_push") is not None and q["leading_push"] <= 25, "Sits on a lead", "neutral", f"attack {lead:.0%} of its level-score rate when ahead")
-        add(q.get("leading_push") is not None and q["leading_push"] >= 75, "Keeps going when ahead", "good", f"attack {lead:.0%} of its level-score rate when ahead")
+        add(q.get("leading_push") is not None and q["leading_push"] <= 25, "Sits on a lead", "neutral", f"attack {lead:.0%} of its level-score rate when ahead, over {p['states']['leading']['minutes']} minutes ahead")
+        add(q.get("leading_push") is not None and q["leading_push"] >= 75, "Keeps going when ahead", "good", f"attack {lead:.0%} of its level-score rate when ahead, over {p['states']['leading']['minutes']} minutes ahead")
     trail = _push(p, "trailing")
     if trail is not None:
-        add(q.get("trailing_push") is not None and q["trailing_push"] >= 75, "Chases hard when behind", "good", f"attack {trail:.0%} of its level-score rate when behind")
-        add(q.get("trailing_push") is not None and q["trailing_push"] <= 25, "Flat when behind", "bad", f"attack {trail:.0%} of its level-score rate when behind")
+        add(q.get("trailing_push") is not None and q["trailing_push"] >= 75, "Chases hard when behind", "good", f"attack {trail:.0%} of its level-score rate when behind, over {p['states']['trailing']['minutes']} minutes behind")
+        add(q.get("trailing_push") is not None and q["trailing_push"] <= 25, "Flat when behind", "bad", f"attack {trail:.0%} of its level-score rate when behind, over {p['states']['trailing']['minutes']} minutes behind")
     add(lo("first_sub"), "Early changes", "bad", f"first change at {m['first_sub']:.0f}' (median)" if m["first_sub"] else "")
     add(hi("first_sub"), "Late changes", "good", f"first change at {m['first_sub']:.0f}' (median)" if m["first_sub"] else "")
     add(hi("rotation"), "Rotates", "bad", f"{m['rotation']:.1f} changes to the eleven a match" if m["rotation"] is not None else "")
