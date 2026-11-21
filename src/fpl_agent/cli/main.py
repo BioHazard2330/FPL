@@ -1944,6 +1944,15 @@ def _run_scheduled_cycle(gated: bool):
         logger.exception("run-scheduled manager-change detection failed - not fatal to the sync itself")
 
     try:
+        from fpl_agent.models.situation_scan import raise_alerts
+
+        fired = raise_alerts(conn)
+        if fired:
+            logger.info("run-scheduled suggested pundit views: %d", fired)
+    except Exception:
+        logger.exception("run-scheduled situation scan failed - not fatal to the sync itself")
+
+    try:
         from fpl_agent.ingestion.gw_stats import sync_gw_stats
 
         gw_result = sync_gw_stats(conn)
@@ -2059,9 +2068,11 @@ def _run_scheduled_cycle(gated: bool):
             if cleared:
                 logger.info("run-scheduled xg: Understat is back, %d provisional FotMob row(s) removed", cleared)
         except Exception as exc:
+            import requests
+
             from fpl_agent.ingestion.understat_source import UnderstatParseError
 
-            if isinstance(exc, UnderstatParseError) and "offline" in str(exc):
+            if (isinstance(exc, UnderstatParseError) and "offline" in str(exc)) or isinstance(exc, (requests.ConnectionError, requests.Timeout)):
                 logger.warning("run-scheduled xg: Understat is offline, provisional FotMob figures stand in (the self-check tracks it)")
             else:
                 logger.exception("run-scheduled xg backfill failed - not fatal to the sync itself")
@@ -4765,6 +4776,34 @@ def pundit_view_cmd(player_id, factor, through_event, reason, revoke_id, show):
             view_id = pv.add_view(conn, player_id, factor, event, through_event or event, reason)
             click.echo(f"view {view_id} stored")
         click.echo(f"plan refresh: {_maybe_trigger_week_plan_refresh(conn)}")
+    finally:
+        conn.close()
+
+
+@cli.command("situation-scan")
+@click.option("--accept", "key", default=None, help="write the suggestion with this key as a view")
+@click.option("--all", "everyone", is_flag=True, help="scan every player, not only the squad and the plan's targets")
+def situation_scan_cmd(key, everyone):
+    """Changes of situation the projections lag (a starter back pushing out his cover, an injury the press has first),
+    each as a suggested pundit view (`models/situation_scan.py`)."""
+    from fpl_agent.cli.main import _maybe_trigger_week_plan_refresh
+    from fpl_agent.models import situation_scan as ss
+
+    conn = get_connection()
+    try:
+        if key:
+            result = ss.accept(conn, key)
+            click.echo(result)
+            if result["status"] == "accepted":
+                click.echo(f"plan refresh: {_maybe_trigger_week_plan_refresh(conn)}")
+            return
+        watch = {r[0] for r in conn.execute("SELECT id FROM players")} if everyone else ss.watched(conn)
+        found = ss.suggestions(conn, watch)
+        for s in found:
+            click.echo(f"{s['name']:<16} x{s['factor']:<5g} {s['weeks']} GW  {s['reason']}")
+            click.echo(f"    --accept {s['key']}")
+        if not found:
+            click.echo("no suggestions")
     finally:
         conn.close()
 

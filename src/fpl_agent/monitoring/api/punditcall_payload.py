@@ -20,10 +20,15 @@ def build_punditcall_payload(ctx=None, params: dict | None = None) -> dict:
             "SELECT v.id, p.web_name, v.factor, v.from_event, v.through_event, v.reason FROM pundit_view v JOIN players p ON p.id = v.player_id "
             "WHERE v.revoked_at IS NULL AND v.through_event >= ? ORDER BY v.id", (event,))] if pv._has_table(conn) else []
         view_board = pv.ledger(conn)
+        try:
+            from fpl_agent.models.situation_scan import suggestions, watched
+            suggested = [{**x, "from": event, "through": event + x["weeks"] - 1} for x in suggestions(conn, watched(conn))]
+        except Exception:
+            suggested = []
         board = ledger(conn, entry) if entry is not None else {"rows": []}
         found = latest_call(conn, event)
         if found is None:
-            return {"status": "none", "event": event, "ledger": board, "views": views, "view_ledger": view_board}
+            return {"status": "none", "event": event, "ledger": board, "views": views, "view_ledger": view_board, "suggested": suggested}
         call, made_at = found
         ids = [int(p) for m in call.get("moves", []) for p in (m["out"], m["in"])] + [int(call["captain"]), int(call["vice"])]
         brief = _briefs(conn, list(dict.fromkeys(ids)))
@@ -35,7 +40,7 @@ def build_punditcall_payload(ctx=None, params: dict | None = None) -> dict:
             "status": "ok", "event": event, "made_at": made_at, "headline": call.get("headline"), "moves": moves, "hold": call.get("hold", []),
             "captain": {**brief[int(call["captain"])], "why": call.get("captain_why")}, "vice": brief[int(call["vice"])], "differs": call.get("differs"), "watch": call.get("watch", []),
             "plan_moves": [{"out": m["out"]["name"], "into": m["into"]["name"]} for m in plan.get("moves", [])],
-            "plan_captain": (plan.get("lineup_after") or {}).get("captain_id"), "ledger": board, "views": views, "view_ledger": view_board,
+            "plan_captain": (plan.get("lineup_after") or {}).get("captain_id"), "ledger": board, "views": views, "view_ledger": view_board, "suggested": suggested,
         })
     finally:
         conn.close()

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { Info } from '@/components/ui/Info'
@@ -14,6 +15,44 @@ interface Payload {
   differs?: string; watch?: string[]; ledger: { rows: Row[]; pundit?: number; plan?: number; you?: number }
   views?: { id: number; name: string; factor: number; from: number; through: number; reason: string }[]
   view_ledger?: { scored: number; helped: number; net: number; trust: number }
+  suggested?: { key: string; kind: string; player_id: number; name: string; factor: number; from: number; through: number; reason: string }[]
+}
+
+/** Changes of situation the projections lag, found by the daemon (`models/situation_scan.py`); one click writes the view. */
+function Suggested({ items }: { items: NonNullable<Payload['suggested']> }) {
+  const [done, setDone] = useState<Record<string, string>>({})
+  if (items.length === 0) return null
+  const accept = async (key: string) => {
+    setDone((d) => ({ ...d, [key]: '…' }))
+    try {
+      const res = await fetch(`/api/pundit-view?accept=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'X-FPL-Refresh': '1' } })
+      const body = await res.json()
+      setDone((d) => ({ ...d, [key]: body.status === 'accepted' ? 'In the plan · rebuilding' : 'Gone' }))
+    } catch {
+      setDone((d) => ({ ...d, [key]: 'Failed' }))
+    }
+  }
+  return (
+    <div className="mt-3 border-t border-paper/25 pt-2">
+      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.14em] text-spot">
+        Situation changes the numbers lag
+        <Info label="Suggested views">Found each cycle for your squad and the plan&apos;s targets: a regular fit again whose cover is still listed to start (the start feed cannot have both), or an injury headline FPL has not flagged (regulars behind one played 60+ at 0.89x their record). Nothing changes until you accept; an accepted view is scored like any other.</Info>
+      </div>
+      <div className="mt-1 grid gap-2">
+        {items.map((s) => (
+          <div key={s.key} className="flex flex-wrap items-center gap-3 text-[13.5px]">
+            <b className="font-display uppercase">{s.name}</b>
+            <span className="tabular font-black text-alert-red">×{s.factor}</span>
+            <span className="text-paper/60">GW{s.from}{s.through !== s.from ? `-${s.through}` : ''}</span>
+            <span className="min-w-0 flex-1 text-paper/85">{s.reason}</span>
+            {done[s.key] ? <span className="text-[12px] font-bold uppercase text-paper/70">{done[s.key]}</span> : (
+              <button type="button" onClick={() => accept(s.key)} className="border-2 border-paper bg-paper px-2 py-0.5 text-[12px] font-black uppercase text-ink hover:bg-spot">Accept</button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 export function PunditCall() {
@@ -79,6 +118,7 @@ export function PunditCall() {
           </div>
         </div>
       )}
+      <Suggested items={d.suggested ?? []} />
       {d.differs && <div className="mt-3 border-t border-paper/25 pt-2 text-[14px]"><b className="font-display uppercase text-spot">Against the plan:</b> {d.differs}</div>}
       {(d.watch ?? []).length > 0 && <div className="mt-2 text-[13.5px] text-paper/75"><b className="font-display uppercase">Changes my mind:</b> {d.watch!.join(' · ')}</div>}
     </section>

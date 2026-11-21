@@ -386,6 +386,9 @@ def make_handler(
             if path == "/api/decide/lock" and conn_factory is not None:
                 self._lock_call()
                 return
+            if path == "/api/pundit-view" and conn_factory is not None:
+                self._accept_view()
+                return
             if path != "/api/refresh":
                 self.send_error(404)
                 return
@@ -441,6 +444,32 @@ def make_handler(
                     invalidate(conn, {"album", "plan", "command", "myteam"})
                 except Exception:
                     pass
+            finally:
+                conn.close()
+            self._send_json(result)
+
+        def _accept_view(self) -> None:
+            """Accept a situation-scan suggestion as a pundit view (`?accept=KEY`) or revoke a view (`?revoke=ID`); the plan rebuilds."""
+            from urllib.parse import parse_qs
+
+            from fpl_agent.cli.main import _maybe_trigger_week_plan_refresh
+            from fpl_agent.live.payload_snapshots import invalidate
+            from fpl_agent.models.pundit_views import revoke
+            from fpl_agent.models.situation_scan import accept
+
+            query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            conn = conn_factory()
+            try:
+                if "revoke" in query:
+                    revoke(conn, int(query["revoke"][0]))
+                    result = {"status": "revoked"}
+                elif "accept" in query:
+                    result = accept(conn, query["accept"][0])
+                else:
+                    result = {"status": "refused", "reason": "accept or revoke"}
+                if result["status"] in ("accepted", "revoked"):
+                    invalidate(conn, {"command", "plan", "myteam"})
+                    result["plan_refresh"] = _maybe_trigger_week_plan_refresh(conn)
             finally:
                 conn.close()
             self._send_json(result)
