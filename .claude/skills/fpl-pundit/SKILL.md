@@ -32,3 +32,7 @@ The solver sits near what the stored numbers support. This skill reads what they
 ## Discipline
 
 Apply `fpl-football-intelligence`: every claim carries a number or a named source; no invented causes. Do not re-argue what was measured and refused (see the blockers in CLAUDE.md): form streaks do not carry, finishing luck does not carry, weighting this season above the model does not help. A view that goes against those needs a reason specific to the player, like a new role. Say what is unknown. If the plan is right, say so and call the same moves: disagreeing for its own sake is noise.
+
+## Judgements (every week, with the call)
+
+Also write `data/judgements/gw{N}.json`: for every club (by FPL short name) a `verdict` (how the side plays, from `fpl pundit-dossier`'s Dugout section and the matches), `fpl` (which of its players it helps or hurts) and `gw` (this week's matchup), and a one-line call for each squad player and target (`players`, keyed by FPL id). Plain football language with the numbers behind it; no hedging about sample size on style, shape or game state - ten matches is a quarter of a season. They show on the Dugout, previews and the dossier.

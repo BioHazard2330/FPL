@@ -173,6 +173,11 @@ def dossier(conn: sqlite3.Connection) -> str:
             if not c:
                 continue
             st = " ".join(f"{k} {s['for90']}-{s['against90']}" for k, s in c["states"].items() if s["for90"] is not None)
+            from fpl_agent.models.judgements import for_club, latest as latest_judgements
+
+            j = for_club(latest_judgements(conn), c["short"])
+            if j:
+                lines.append(f"- {c['short']} last judged: {j['verdict']} FPL: {j['fpl']}")
             mc = c.get("manager_change")
             if mc:
                 lines.append(f"- {c['short']}: NEW MANAGER {mc['new']} after {mc['previous']}, {mc['matches']} league matches; the figures below are mostly {mc['previous']}'s")

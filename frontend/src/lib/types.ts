@@ -2084,6 +2084,7 @@ export interface FixtureConditions {
 }
 
 export interface DugoutSide {
+  judgement?: { verdict: string; fpl: string; gw?: string } | null
   manager: string | null; formation: string | null; labels: { text: string; tone: 'good' | 'bad' | 'neutral'; evidence: string }[]
   states: Record<string, { minutes: number; for90: number | null; against90: number | null }>; first_sub: number | null; rotation: number | null; possession: number | null
 }

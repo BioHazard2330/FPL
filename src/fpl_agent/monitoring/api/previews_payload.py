@@ -199,11 +199,15 @@ def _build_previews_uncached() -> dict:
         except Exception:
             dug = {}
 
+        from fpl_agent.models.judgements import for_club, latest as latest_judgements
+
+        judged = latest_judgements(conn)
+
         def _dug(tid):
             c = dug.get(tid)
             if not c:
                 return None
-            return {"manager": c["manager"], "formation": c["formation"], "labels": c["labels"], "states": c["states"],
+            return {"judgement": for_club(judged, c["short"]),"manager": c["manager"], "formation": c["formation"], "labels": c["labels"], "states": c["states"],
                     "first_sub": c["m"]["first_sub"], "rotation": c["m"]["rotation"], "possession": c["m"]["possession"]}
         reading_ctx = reading_context(conn)
         out = []

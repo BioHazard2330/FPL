@@ -11,13 +11,25 @@ def build_dugout_payload(ctx=None, params: dict | None = None) -> dict:
     params = params or {}
     conn = get_connection()
     try:
+        from fpl_agent.models.judgements import for_club, for_player, latest
+
         out = dugout(conn)
+        judged = latest(conn)
+        out["judged_event"] = (judged or {}).get("event")
+        for c in out["clubs"]:
+            c["judgement"] = for_club(judged, c["short"])
         team = params.get("team")
         if team:
             out["usage"] = player_usage(conn, team_id=int(team))
         state = light_squad_state(conn)
         squad = list(state["squad_ids"]) if state else []
-        out["squad_usage"] = player_usage(conn, player_ids=squad) if squad else []
+        ids = list(dict.fromkeys(squad + [int(k) for k in ((judged or {}).get("players") or {})]))
+        out["squad_usage"] = player_usage(conn, player_ids=ids) if ids else []
+        for u in out["squad_usage"]:
+            u["in_squad"] = u["player_id"] in squad
+        for rows in (out.get("usage") or [], out["squad_usage"]):
+            for u in rows:
+                u["judgement"] = for_player(judged, u["player_id"])
         return attach_photo_codes(conn, out)
     finally:
         conn.close()

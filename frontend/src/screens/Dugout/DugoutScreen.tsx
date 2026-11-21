@@ -10,18 +10,19 @@ import { useFetch } from '@/lib/useFetch'
 
 /** THE DUGOUT: every club and its manager read from the season's matches (`models/dugout.py`) - style with and without the
  * ball, what the side does ahead and behind, when the manager changes it, how much he rotates, and whose minutes are safe. */
+interface Judgement { verdict: string; fpl: string; gw?: string }
 interface Label { text: string; tone: 'good' | 'bad' | 'neutral'; evidence: string }
 interface State { minutes: number; for90: number | null; against90: number | null }
 interface Club {
   team_id: number; name: string; short: string; code: number; manager: string | null; manager_change: { new: string; previous: string; matches: number } | null; played: number; points: number; gf: number; ga: number
   formation: string | null; formations: Record<string, number>; m: Record<string, number | null>; pct: Record<string, number | null>
-  states: Record<string, State>; subs_per_match: number | null; labels: Label[]
+  states: Record<string, State>; subs_per_match: number | null; labels: Label[]; judgement?: Judgement | null
 }
 interface Usage {
   player_id: number; name: string; team_id: number; position: string; photo_code?: number | null; starts: number; bench_apps: number; club_matches: number
-  hooked_before_60: number; full_90: number; avg_start_minutes: number | null; typical_off: number | null; security: string
+  hooked_before_60: number; full_90: number; avg_start_minutes: number | null; typical_off: number | null; security: string; judgement?: string | null; in_squad?: boolean
 }
-interface Payload { clubs: Club[]; usage?: Usage[]; squad_usage: Usage[]; min_state_minutes: number }
+interface Payload { clubs: Club[]; usage?: Usage[]; squad_usage: Usage[]; min_state_minutes: number; judged_event?: number | null }
 
 const TONE: Record<string, string> = { good: 'bg-pitch-green text-paper', bad: 'bg-alert-red text-paper', neutral: 'bg-paper text-ink' }
 const SECURITY: Record<string, string> = { nailed: 'bg-pitch-green text-paper', regular: 'bg-spot text-ink', rotation: 'bg-alert-red text-paper', bench: 'bg-ink/20 text-ink', unused: 'bg-ink/10 text-ink/60' }
@@ -76,6 +77,13 @@ function ClubCard({ c, open, onOpen }: { c: Club; open: boolean; onOpen: () => v
           <div className="tabular text-[11px] uppercase text-text/60">{c.gf}-{c.ga} in {c.played}</div>
         </div>
       </div>
+      {c.judgement && (
+        <div className="mt-3 border-l-4 border-spot pl-2">
+          <div className="text-[14px] font-semibold leading-snug text-text">{c.judgement.verdict}</div>
+          <div className="mt-1 text-[13px] leading-snug text-text/80"><b className="font-display uppercase">FPL:</b> {c.judgement.fpl}</div>
+          {c.judgement.gw && <div className="mt-1 text-[13px] leading-snug text-text/80"><b className="font-display uppercase text-spot">This week:</b> {c.judgement.gw}</div>}
+        </div>
+      )}
       {c.manager_change && (
         <div className="mt-2 border-2 border-alert-red px-2 py-1 text-[12px] font-bold text-alert-red">
           New manager: {c.manager_change.new} after {c.manager_change.previous}, {c.manager_change.matches} league match{c.manager_change.matches === 1 ? '' : 'es'} in charge. These figures are mostly {c.manager_change.previous}&apos;s.
@@ -162,8 +170,9 @@ function UsageTable({ rows, clubs, showClub = false }: { rows: Usage[]; clubs: R
                 <Link to={`/player/${u.player_id}`} className="flex items-center gap-2 hover:underline">
                   <PlayerPhoto code={u.photo_code ?? null} teamCode={clubs[u.team_id]?.code ?? null} isGkp={u.position === 'GKP'} className="h-8 w-7" bare />
                   <span className="font-display font-black uppercase text-text">{u.name}</span>
-                  <span className="text-[11px] text-text/55">{u.position}{showClub && clubs[u.team_id] ? ` · ${clubs[u.team_id].short}` : ''}</span>
+                  <span className="text-[11px] text-text/55">{u.position}{showClub && clubs[u.team_id] ? ` · ${clubs[u.team_id].short}` : ''}{u.in_squad === false ? ' · target' : ''}</span>
                 </Link>
+                {u.judgement && <div className="mt-0.5 max-w-md text-[12.5px] font-semibold leading-snug text-text">{u.judgement}</div>}
               </td>
               <td className="w-48">
                 <span className="flex h-3 border border-ink/50 bg-paper" title={`${u.starts} of ${u.club_matches} started; ${u.avg_start_minutes ?? 0} minutes a start`}>
@@ -194,7 +203,8 @@ export function DugoutScreen() {
   const byId = Object.fromEntries(d.clubs.map((c) => [c.team_id, c]))
   const club = team ? byId[team] : null
   const usage = detail.status === 'ready' && detail.data ? detail.data.usage ?? [] : []
-  const risky = d.squad_usage.filter((u) => u.security !== 'nailed')
+  const mine = d.squad_usage.filter((u) => u.in_squad !== false)
+  const risky = mine.filter((u) => u.security !== 'nailed')
   return (
     <div className="space-y-6 pb-10">
       <Masthead right={<span>{d.clubs.reduce((n, c) => n + c.played, 0) / 2} league matches read</span>} />
@@ -202,15 +212,15 @@ export function DugoutScreen() {
         <div className="flex items-center gap-2">
           <h2 className="font-display text-text">The Dugout</h2>
           <Info label="How this is read">
-            Every Premier League match at full time this season: FotMob&apos;s team figures for and against, the chances each side made and gave away while ahead, level and behind (a state needs {d.min_state_minutes}+ minutes before it is shown), every substitution and its minute, and who started. Labels mark the top or bottom quarter of the twenty clubs and show their number on hover. Ten matches is a small sample, so read styles as how a side has played, not what it will do. Display only: a club&apos;s rotation added nothing to a player&apos;s own minutes record when measured, so the projections read each player&apos;s own minutes.
+            Every Premier League match at full time this season: FotMob&apos;s team figures for and against, the chances each side made and gave away while ahead, level and behind (a state needs {d.min_state_minutes}+ minutes before it is shown), every substitution and its minute, and who started. Labels mark the top or bottom quarter of the twenty clubs and show their number on hover. The written calls are the pundit&apos;s judgement from these numbers and the matches behind them{d.judged_event ? ` (made for GW${d.judged_event})` : ''}; they sit beside the projections, not inside them.
           </Info>
         </div>
       </section>
       <section className="px-10">
         <div className="border-2 border-ink bg-ink p-5 text-paper shadow-[6px_6px_0_var(--spot)]">
-          <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-paper/60">Your fifteen under their managers</div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-paper/60">Your fifteen and your targets: the pundit&apos;s read</div>
           <div className="mt-1 font-display text-2xl font-black uppercase">
-            {risky.length === 0 ? 'Every one nailed' : `${d.squad_usage.length - risky.length} nailed · ${risky.map((u) => `${u.name} (${u.security})`).join(' · ')}`}
+            {risky.length === 0 ? 'Every one nailed' : `${mine.length - risky.length} nailed · ${risky.map((u) => `${u.name} (${u.security})`).join(' · ')}`}
           </div>
           <div className="mt-3 bg-paper p-3 text-ink"><UsageTable rows={d.squad_usage} clubs={byId} showClub /></div>
         </div>

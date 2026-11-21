@@ -126,6 +126,7 @@ function DugoutPanel({ f }: { f: PreviewFixture }) {
   const side = (s: DugoutSide | null, short: string) => s && (
     <div className="min-w-0">
       <div className="font-display text-[15px] font-black uppercase text-text">{short} · {s.manager ?? '-'} <span className="text-text/60">{s.formation ?? ''}</span></div>
+      {s.judgement && <div className="mt-1 text-[13.5px] font-semibold leading-snug text-text">{s.judgement.gw ?? s.judgement.verdict}</div>}
       <div className="mt-1 flex flex-wrap gap-1">
         {s.labels.map((l) => <span key={l.text} title={l.evidence} className={`border border-ink px-1.5 py-0.5 text-[10.5px] font-black uppercase ${DUG_TONE[l.tone]}`}>{l.text}</span>)}
       </div>
