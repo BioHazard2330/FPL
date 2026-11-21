@@ -117,3 +117,21 @@ def test_thinning_keeps_what_the_price_model_reads_each_night(db_conn):
     assert left == {"02:15", "03:15", "23:00"}
     assert db_conn.execute("SELECT COUNT(*) FROM player_transfer_momentum_history WHERE valid_from LIKE '2026-11-03%'").fetchone()[0] == 2
     assert db_conn.execute("SELECT COUNT(*) FROM player_transfer_momentum_history WHERE valid_until IS NULL").fetchone()[0] == 1
+
+
+def test_a_running_cycles_journal_is_not_taken_for_a_killed_one(db_conn, tmp_path, monkeypatch):
+    from fpl_agent.scheduler import process_lock
+
+    rows = [{"t": 1000.0, "level": "INFO", "text": "sync ok"}, {"t": 1010.0, "level": "INFO", "text": "news sync"}]
+    live = tmp_path / "run_ledger.4242.jsonl"
+    live.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    monkeypatch.setattr(process_lock, "_pid_is_alive", lambda pid: pid == 4242)
+    with rl.record_run(True, tmp_path, _Keep(db_conn)):
+        pass
+    assert live.exists()
+    assert db_conn.execute("SELECT COUNT(*) FROM pipeline_run WHERE status = 'killed'").fetchone()[0] == 0
+    monkeypatch.setattr(process_lock, "_pid_is_alive", lambda pid: False)
+    with rl.record_run(True, tmp_path, _Keep(db_conn)):
+        pass
+    assert not live.exists()
+    assert db_conn.execute("SELECT COUNT(*) FROM pipeline_run WHERE status = 'killed'").fetchone()[0] == 1

@@ -14,6 +14,7 @@ reaches the manager as an alert once a day."""
 import contextlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -127,14 +128,35 @@ def alert_failures(conn: sqlite3.Connection, now: datetime | None = None) -> int
     return fired
 
 
+def _journals(data_dir: Path) -> list[tuple[Path, int | None]]:
+    out = []
+    legacy = data_dir / JOURNAL
+    if legacy.exists():
+        out.append((legacy, None))
+    for f in data_dir.glob("run_ledger.*.jsonl"):
+        try:
+            out.append((f, int(f.name.split(".")[1])))
+        except ValueError:
+            continue
+    return out
+
+
 @contextlib.contextmanager
 def record_run(gated: bool, data_dir: Path, conn_factory: Callable[[], sqlite3.Connection]) -> Iterator[_Listener]:
-    path = data_dir / JOURNAL
-    try:
-        _salvage(path, conn_factory)
-    except Exception:
-        _logger.exception("run ledger: could not read an earlier journal")
-        path.unlink(missing_ok=True)
+    """Each process writes its own journal (`run_ledger.<pid>.jsonl`), and only a journal whose process has gone is
+    salvaged as a killed cycle. One shared journal let a second invocation that started while a cycle was running read
+    that cycle's live journal and record it as killed (2026-11-21: "a cycle was cut off after 0s")."""
+    from fpl_agent.scheduler.process_lock import _pid_is_alive
+
+    for old, pid in _journals(data_dir):
+        if pid is not None and (pid == os.getpid() or _pid_is_alive(pid)):
+            continue
+        try:
+            _salvage(old, conn_factory)
+        except Exception:
+            _logger.exception("run ledger: could not read an earlier journal")
+            old.unlink(missing_ok=True)
+    path = data_dir / f"run_ledger.{os.getpid()}.jsonl"
     listener = _Listener(path)
     root = logging.getLogger("fpl_agent")
     root.addHandler(listener)
