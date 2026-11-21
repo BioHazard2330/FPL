@@ -71,11 +71,11 @@ export function MatchRail({ squad, byPlayer, threats }: { squad: LiveSquadPlayer
           </div>
         </div>
       ))}
-      {threats.length > 0 && (
+      {threats.filter((t) => t.points >= 3).length > 0 && (
         <div>
           <div className="mb-1 font-display text-[12px] font-black uppercase tracking-[0.14em] text-alert-red">Hurting you: template picks you don&apos;t own</div>
           <div className="space-y-1">
-            {threats.slice(0, 6).map((t) => (
+            {threats.filter((t) => t.points >= 3).slice(0, 6).map((t) => (
               <Link key={t.player_id} to={`/player/${t.player_id}`} className="flex items-center gap-2 border-2 border-ink bg-paper px-2 py-1 text-[13px] hover:bg-spot">
                 <span className="tabular w-7 bg-alert-red text-center font-display font-black text-paper">{t.points}</span>
                 <span className="font-display font-black uppercase">{t.web_name}</span>

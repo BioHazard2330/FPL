@@ -28,7 +28,8 @@ function Card({ s, live, b, goals, assists, kickoff, bench }: {
   const state = live?.play_state ?? 'yet_to_play'
   const started = state !== 'yet_to_play'
   const pts = started && live ? live.points * (bench ? 1 : live.multiplier) : null
-  const bonus = b?.provisional_bonus ?? b?.confirmed_bonus ?? 0
+  // FPL's provisional bonus is noise early in a match (three players on +3 after 3 minutes on 2026-11-21); shown from 45'
+  const bonus = b?.confirmed_bonus ?? ((b?.minutes ?? 0) >= 45 ? b?.provisional_bonus ?? 0 : 0)
   const flagged = s.classification && s.classification !== 'FIT'
   const box = state === 'live' ? 'bg-alert-red text-paper' : started ? 'bg-ink text-paper' : 'bg-paper text-ink/60 border-2 border-ink'
   return (
