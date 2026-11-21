@@ -243,10 +243,9 @@ def get_used_chips(conn: sqlite3.Connection, entry_id: int, event: int | None = 
 
     `event` defaults to the next gameweek to plan."""
     if event is None:
-        row = conn.execute("SELECT id FROM events WHERE is_next=1 LIMIT 1").fetchone()
-        if row is None:
-            row = conn.execute("SELECT MIN(id) AS id FROM events WHERE finished=0").fetchone()
-        event = row["id"] if row is not None and row["id"] is not None else None
+        from fpl_agent.models.fixtures import _reference_event
+
+        event = _reference_event(conn)
     played = conn.execute(
         "SELECT active_chip AS name, event FROM my_team_picks WHERE entry_id=? AND active_chip IS NOT NULL",
         (entry_id,),

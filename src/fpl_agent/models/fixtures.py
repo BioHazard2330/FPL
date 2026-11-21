@@ -130,8 +130,24 @@ def team_fixture_ticker(conn: sqlite3.Connection, team_id: int, n_gw: int = 5, f
 
 
 def _reference_event(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT id FROM events WHERE is_next=1 LIMIT 1").fetchone()
+    """The gameweek being planned for: FPL's `is_next`, unless its deadline has already passed and a later deadline is
+    still ahead. FPL answers 503 or stale flags for a while after every deadline, and a sync then stored the old
+    `is_next` (2026-11-21: the plan rebuilt for GW11 with the pre-deadline squad half an hour after its deadline)."""
+    from datetime import datetime, timezone
+
+    row = conn.execute("SELECT id, deadline_time FROM events WHERE is_next=1 LIMIT 1").fetchone()
     if row is not None:
+        try:
+            passed = row["deadline_time"] and datetime.fromisoformat(row["deadline_time"].replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        except (TypeError, ValueError):
+            passed = False
+        if passed:
+            later = conn.execute(
+                "SELECT id FROM events WHERE id > ? AND deadline_time > ? ORDER BY deadline_time LIMIT 1",
+                (row["id"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
+            ).fetchone()
+            if later is not None:
+                return later["id"]
         return row["id"]
     row = conn.execute("SELECT MIN(id) AS id FROM events WHERE finished=0").fetchone()
     if row is not None and row["id"] is not None:

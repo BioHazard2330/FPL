@@ -240,3 +240,19 @@ def test_live_or_reference_event_moves_on_once_gw1s_fixture_is_finished(db_conn)
     _seed_two_events(db_conn, gw1_started=1, gw1_finished=1)
 
     assert live_or_reference_event(db_conn) == 2
+
+
+def test_reference_event_moves_on_when_fpl_flags_lag_a_passed_deadline(db_conn):
+    from datetime import datetime, timedelta, timezone
+
+    from fpl_agent.models.fixtures import _reference_event
+
+    now = datetime.now(timezone.utc)
+    fmt = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")
+    for eid, deadline, nxt in ((11, now - timedelta(hours=1), 1), (12, now + timedelta(days=6), 0)):
+        db_conn.execute(
+            "INSERT INTO events (id, name, deadline_time, deadline_time_epoch, finished, is_previous, is_current, is_next, updated_at) "
+            "VALUES (?, ?, ?, 0, 0, 0, 0, ?, 't')", (eid, f"GW{eid}", fmt(deadline), nxt))
+    assert _reference_event(db_conn) == 12
+    db_conn.execute("UPDATE events SET deadline_time = ? WHERE id = 11", (fmt(now + timedelta(hours=1)),))
+    assert _reference_event(db_conn) == 11

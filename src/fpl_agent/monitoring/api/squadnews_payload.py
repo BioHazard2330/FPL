@@ -37,8 +37,10 @@ BAN_RISK_FLAG = 0.15
 
 def _event_context(conn) -> tuple[int | None, int | None]:
     cur = conn.execute("SELECT id FROM events WHERE is_current=1 ORDER BY id DESC LIMIT 1").fetchone()
+    from fpl_agent.models.fixtures import _reference_event
+
     nxt = conn.execute("SELECT id FROM events WHERE is_next=1 ORDER BY id LIMIT 1").fetchone()
-    return (cur["id"] if cur else None, nxt["id"] if nxt else None)
+    return (cur["id"] if cur else None, _reference_event(conn) if nxt else None)
 
 
 def _fixture_label(conn, match_id: int, team_id: int) -> str:

@@ -60,8 +60,10 @@ def build_leagues_payload(ctx=None, params: dict | None = None) -> dict:
         if entry_id is None or not leagues:
             return {"status": "none", "leagues": []}
         locked = conn.execute("SELECT MAX(event) AS e FROM rival_event").fetchone()["e"]
-        nxt = conn.execute("SELECT id FROM events WHERE is_next=1 LIMIT 1").fetchone()
-        next_event = nxt["id"] if nxt else (locked + 1 if locked else None)
+        from fpl_agent.models.fixtures import _reference_event
+
+        has_next = conn.execute("SELECT 1 FROM events WHERE is_next=1").fetchone()
+        next_event = _reference_event(conn) if has_next else (locked + 1 if locked else None)
         state = light_squad_state(conn)
         my_squad = set(state["squad_ids"]) if state else set()
         plan = latest_week_plan(conn)
