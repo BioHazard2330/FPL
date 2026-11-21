@@ -128,7 +128,10 @@ def locked_picks_due(conn: sqlite3.Connection, cohort: str = COHORT) -> int | No
         "SELECT COUNT(DISTINCT p.entry_id) AS n FROM cohort_pick p JOIN cohort_entry c ON c.entry_id = p.entry_id "
         "WHERE c.cohort = ? AND p.event = ?", (cohort, event),
     ).fetchone()["n"]
-    return event if have == 0 else None
+    total = conn.execute("SELECT COUNT(*) AS n FROM cohort_entry WHERE cohort = ?", (cohort,)).fetchone()["n"]
+    # Due until every entry is read: a sync cut short by FPL's post-deadline 503s read 9 of 50 for GW11 (2026-11-21)
+    # and, while "due" meant "nothing read yet", never came back for the rest.
+    return event if total and have < total else None
 
 
 GIVE_UP_AFTER = 3  # FPL answers 503 for a while after every deadline; stop rather than spend the cycle retrying 50 entries
@@ -142,7 +145,8 @@ def sync_locked_picks(conn: sqlite3.Connection, event: int, client: FPLApiAdapte
     client = client or FPLApiAdapter()
     at = datetime.now(timezone.utc).isoformat()
     read = failed = 0
-    for entry in [r["entry_id"] for r in conn.execute("SELECT entry_id FROM cohort_entry WHERE cohort = ?", (cohort,))]:
+    done = {r[0] for r in conn.execute("SELECT DISTINCT entry_id FROM cohort_pick WHERE event = ?", (event,))}
+    for entry in [r["entry_id"] for r in conn.execute("SELECT entry_id FROM cohort_entry WHERE cohort = ?", (cohort,)) if r["entry_id"] not in done]:
         try:
             data = client.fetch_entry_picks(entry, event).data
         except SourceFetchError as e:

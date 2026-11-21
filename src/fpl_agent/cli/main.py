@@ -2372,8 +2372,13 @@ def _run_scheduled_cycle(gated: bool):
                 my_team_entry_id, my_team_result["picks"]["fetched"],
             )
         conn2.close()
-    except Exception:
-        logger.exception("run-scheduled my-team sync failed - not fatal to the sync itself")
+    except Exception as exc:
+        from fpl_agent.ingestion.fpl_api import SourceFetchError
+
+        if isinstance(exc, SourceFetchError) and any(code in str(exc) for code in ("503", "502", "504")):
+            logger.warning("run-scheduled my-team sync: FPL is unavailable (%s) - retried next cycle", exc)
+        else:
+            logger.exception("run-scheduled my-team sync failed - not fatal to the sync itself")
 
     # Real "optimizer must run automatically" fix (2026-08-29, master
     # automation pass) - see _maybe_trigger_strategic_plan_recompute's own

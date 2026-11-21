@@ -12,12 +12,19 @@ def build_review_payload(ctx=None, params: dict | None = None) -> dict:
         if entry is None:
             return {"status": "no_entry"}
         event = (params or {}).get("event")
-        if event is None:
-            row = conn.execute("SELECT MAX(event) AS e FROM my_team_gw_summary WHERE entry_id = ?", (entry,)).fetchone()
-            event = row["e"] if row else None
+        if event is not None:
+            review = gameweek_review(conn, entry, int(event))
+        else:
+            # The newest gameweek with a report: right after a deadline the new gameweek is in the history with nothing
+            # to read yet, and the page went blank instead of showing the last one (2026-11-21).
+            review = None
+            for (e,) in conn.execute("SELECT DISTINCT event FROM my_team_gw_summary WHERE entry_id = ? ORDER BY event DESC LIMIT 3", (entry,)):
+                event = e
+                review = gameweek_review(conn, entry, int(e))
+                if review is not None:
+                    break
         if event is None:
             return {"status": "none"}
-        review = gameweek_review(conn, entry, int(event))
         if review is None:
             return {"status": "none", "event": int(event)}
         return {"status": "ok", **review}

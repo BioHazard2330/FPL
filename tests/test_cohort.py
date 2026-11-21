@@ -94,3 +94,24 @@ def test_locked_picks_stop_after_a_few_failures_while_fpl_is_down(db_conn):
 
     out = sync_locked_picks(db_conn, 11, client=Down(), pause=0)
     assert out["status"] == "unavailable" and len(calls) == GIVE_UP_AFTER
+
+
+def test_locked_picks_stay_due_until_every_entry_is_read(db_conn, monkeypatch):
+    from fpl_agent.ingestion import cohort as co
+
+    for e in (1, 2, 3):
+        db_conn.execute("INSERT INTO cohort_entry (entry_id, cohort, rank_at_sample, total_at_sample, sampled_event, retrieved_at) VALUES (?, ?, ?, 0, 10, 't')", (e, co.COHORT, e))
+    monkeypatch.setattr(co, "_locked_event", lambda conn: 11)
+    assert co.locked_picks_due(db_conn) == 11
+    calls = []
+
+    class Up:
+        def fetch_entry_picks(self, entry, event):
+            calls.append(entry)
+            return SimpleNamespace(data={"picks": [{"element": 1, "position": 1, "multiplier": 2, "is_captain": True}], "entry_history": {}})
+
+    db_conn.execute("INSERT INTO cohort_pick (entry_id, event, player_id, position, multiplier) VALUES (1, 11, 1, 1, 2)")
+    assert co.locked_picks_due(db_conn) == 11
+    co.sync_locked_picks(db_conn, 11, client=Up(), pause=0)
+    assert calls == [2, 3]
+    assert co.locked_picks_due(db_conn) is None
