@@ -32,9 +32,9 @@ function Card({ s, live, b, goals, assists, kickoff, bench }: {
   const flagged = s.classification && s.classification !== 'FIT'
   const box = state === 'live' ? 'bg-alert-red text-paper' : started ? 'bg-ink text-paper' : 'bg-paper text-ink/60 border-2 border-ink'
   return (
-    <Link to={`/player/${s.player_id}`} className={`group relative flex w-[7.6rem] flex-col items-center ${bench ? 'opacity-80' : ''}`}>
+    <Link to={`/player/${s.player_id}`} className={`group relative flex w-[6.6rem] flex-col items-center ${bench ? 'opacity-80' : ''}`}>
       <div className="relative">
-        <PlayerPhoto code={s.photo_code ?? null} teamCode={s.team_code ?? null} isGkp={s.position === 'GKP'} className="h-[4.6rem] w-16" />
+        <PlayerPhoto code={s.photo_code ?? null} teamCode={s.team_code ?? null} isGkp={s.position === 'GKP'} className="h-12 w-11" />
         {(s.is_captain || s.is_vice) && (
           <span className={`absolute -left-2 top-0 flex size-6 items-center justify-center border-2 border-ink font-display text-[12px] font-black ${s.is_captain ? 'bg-broadcast-gold text-ink' : 'bg-paper text-ink'}`}>{s.is_captain ? 'C' : 'V'}</span>
         )}
@@ -44,7 +44,7 @@ function Card({ s, live, b, goals, assists, kickoff, bench }: {
       <div className="w-full border-2 border-ink bg-paper px-1 text-center font-display text-[13px] font-black uppercase leading-tight text-ink group-hover:bg-spot">
         <span className="block truncate">{s.web_name}</span>
       </div>
-      <div className={`tabular w-full text-center font-display text-xl font-black leading-tight ${box}`}>
+      <div className={`tabular w-full text-center font-display text-lg font-black leading-tight ${box}`}>
         {pts !== null ? pts : s.xp !== null ? <span className="text-[13px]">{s.xp.toFixed(1)} xP</span> : '-'}
       </div>
       <div className="mt-0.5 flex min-h-[1.1rem] flex-wrap items-center justify-center gap-0.5 text-[10px] font-black uppercase">
@@ -74,17 +74,17 @@ export function LivePitch({ squad, byPlayer, bonus, events, upcoming }: Props) {
   )
   return (
     <div className="border-2 border-ink shadow-[6px_6px_0_var(--ink)]">
-      <div className="relative overflow-hidden px-4 pb-4 pt-5" style={{ background: 'repeating-linear-gradient(0deg, #1f7a3a 0 44px, #23863f 44px 88px)' }}>
+      <div className="relative overflow-hidden px-3 pb-2 pt-3" style={{ background: 'repeating-linear-gradient(0deg, #1f7a3a 0 44px, #23863f 44px 88px)' }}>
         <svg viewBox="0 0 68 60" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" aria-hidden="true">
           <g fill="none" stroke="white" strokeOpacity="0.35" strokeWidth="0.35">
             <rect x="1" y="1" width="66" height="58" /><rect x="18" y="1" width="32" height="12" /><rect x="26" y="1" width="16" height="4.5" />
             <path d="M 25 59 A 9 9 0 0 1 43 59" />
           </g>
         </svg>
-        <div className="relative space-y-3">
+        <div className="relative space-y-1.5">
           {ROWS.map((pos) => {
             const row = starting.filter((s) => s.position === pos)
-            return row.length ? <div key={pos} className="flex justify-center gap-3">{row.map((s) => card(s))}</div> : null
+            return row.length ? <div key={pos} className="flex justify-center gap-2">{row.map((s) => card(s))}</div> : null
           })}
         </div>
       </div>
