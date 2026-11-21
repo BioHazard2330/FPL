@@ -161,18 +161,24 @@ def _autosub_block(conn: sqlite3.Connection, squad: list[dict], live_payload: di
     if not any(st.status != "pre" for st in states):
         return []
     team_done: dict[int, bool] = {}
+    team_started: dict[int, bool] = {}
     for st in states:
         for team in (st.home_id, st.away_id):
             team_done[team] = team_done.get(team, True) and st.status == "done"
+            team_started[team] = team_started.get(team, False) or st.status != "pre"
     ids = [p["player_id"] for p in squad]
     team_of = {r["id"]: r["team_id"] for r in conn.execute(f"SELECT id, team_id FROM players WHERE id IN ({','.join('?' * len(ids))})", ids)}
     minutes = {e["id"]: (e.get("stats") or {}).get("minutes", 0) or 0 for e in live_payload.get("elements", []) if "id" in e}
     rows = [{"player_id": p["player_id"], "position": p["position"], "starting": p["slot"] == "starting"} for p in squad]
     done = {pid: team_done.get(team_of.get(pid), False) for pid in ids}
     names = {p["player_id"]: p["web_name"] for p in squad}
+    # A starter whose match has not kicked off is not a substitution in waiting: on 2026-11-21 every starter still to
+    # play was listed as standby. Standby is for a starter on 0 minutes in a match under way.
+    started = {pid: team_started.get(team_of.get(pid), False) for pid in ids}
     return [
         {**w, "out_name": names.get(w["out"]), "into_name": names.get(w["into"]) if w["into"] else None}
         for w in autosub_watch(rows, minutes, done)
+        if w["status"] == "made" or started.get(w["out"], False)
     ]
 
 
