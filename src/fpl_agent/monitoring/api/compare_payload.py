@@ -51,8 +51,12 @@ build_players_index.needs_context = False
 
 
 def _next_event(conn: sqlite3.Connection) -> int | None:
-    row = conn.execute("SELECT MIN(event) AS e FROM fixtures WHERE finished=0 AND event IS NOT NULL").fetchone()
-    return row["e"] if row else None
+    """The gameweek transfers are being decided for (the next deadline), not the first gameweek with an unplayed
+    fixture: during a gameweek that was the one already locked, so Compare and player projections counted matches
+    already played and disagreed with the plan (2026-11-21)."""
+    from fpl_agent.models.fixtures import _reference_event
+
+    return _reference_event(conn)
 
 
 def _player(conn: sqlite3.Connection, player_id: int, event: int | None, mine: set[int]) -> dict:
