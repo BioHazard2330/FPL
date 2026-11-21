@@ -192,6 +192,19 @@ def _build_previews_uncached() -> dict:
 
         profiles = team_profiles(conn)
         means = league_means(profiles)
+        try:
+            from fpl_agent.models.dugout import club_profiles
+
+            dug = club_profiles(conn)
+        except Exception:
+            dug = {}
+
+        def _dug(tid):
+            c = dug.get(tid)
+            if not c:
+                return None
+            return {"manager": c["manager"], "formation": c["formation"], "labels": c["labels"], "states": c["states"],
+                    "first_sub": c["m"]["first_sub"], "rotation": c["m"]["rotation"], "possession": c["m"]["possession"]}
         reading_ctx = reading_context(conn)
         out = []
         for f in conn.execute(
@@ -220,6 +233,7 @@ def _build_previews_uncached() -> dict:
                 lens["takers"] = source_takers(conn, shooter, head["source"])
             out.append({
                 "fixture_id": f["id"], "kickoff": f["kickoff_time"], "home": sides["home"], "away": sides["away"], "lens": lens,
+                "dugout": {"home": _dug(f["team_h"]), "away": _dug(f["team_a"])},
                 "reading": fixture_reading(conn, f["team_h"], f["team_a"], sides["home"]["short"], sides["away"]["short"], reading_ctx),
                 "xg": {"home": round(home_goals, 2), "away": round(away_goals, 2)},
                 "model": outcome_grid(home_goals, away_goals, rho),

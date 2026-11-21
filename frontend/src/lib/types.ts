@@ -2083,8 +2083,14 @@ export interface FixtureConditions {
   forecast_gust: number | null; forecast_code: number | null; forecast_at: string | null
 }
 
+export interface DugoutSide {
+  manager: string | null; formation: string | null; labels: { text: string; tone: 'good' | 'bad' | 'neutral'; evidence: string }[]
+  states: Record<string, { minutes: number; for90: number | null; against90: number | null }>; first_sub: number | null; rotation: number | null; possession: number | null
+}
+
 export interface PreviewFixture {
   fixture_id: number
+  dugout?: { home: DugoutSide | null; away: DugoutSide | null }
   conditions?: FixtureConditions | null
   reading?: FixtureReading | null
   kickoff: string | null

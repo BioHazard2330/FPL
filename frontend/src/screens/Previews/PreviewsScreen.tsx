@@ -7,7 +7,7 @@ import { crestUrl, fetchPreviewsPayload } from '@/lib/api'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fdrFill } from '@/lib/fdr'
 import { useFetch } from '@/lib/useFetch'
-import type { PreviewFixture, PreviewKeyPlayer, PreviewLens, PreviewSide } from '@/lib/types'
+import type { DugoutSide, PreviewFixture, PreviewKeyPlayer, PreviewLens, PreviewSide } from '@/lib/types'
 
 /** MATCH PREVIEWS - the next gameweek, one fixture at a time.
  *
@@ -113,6 +113,35 @@ function Side({ side, home, cs }: { side: PreviewSide; home: boolean; cs: number
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const DUG_TONE: Record<string, string> = { good: 'bg-pitch-green text-paper', bad: 'bg-alert-red text-paper', neutral: 'bg-paper text-ink' }
+
+/** The two dugouts side by side (`models/dugout.py`): manager, shape, style labels, what each side does ahead and behind. */
+function DugoutPanel({ f }: { f: PreviewFixture }) {
+  const d = f.dugout
+  if (!d || (!d.home && !d.away)) return null
+  const side = (s: DugoutSide | null, short: string) => s && (
+    <div className="min-w-0">
+      <div className="font-display text-[15px] font-black uppercase text-text">{short} · {s.manager ?? '-'} <span className="text-text/60">{s.formation ?? ''}</span></div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {s.labels.map((l) => <span key={l.text} title={l.evidence} className={`border border-ink px-1.5 py-0.5 text-[10.5px] font-black uppercase ${DUG_TONE[l.tone]}`}>{l.text}</span>)}
+      </div>
+      <div className="tabular mt-1 text-[12px] text-text/70">
+        {(['leading', 'level', 'trailing'] as const).map((k) => {
+          const st = s.states[k]
+          return st?.for90 != null ? `${k === 'leading' ? 'Ahead' : k === 'level' ? 'Level' : 'Behind'} ${st.for90}-${st.against90}` : null
+        }).filter(Boolean).join(' · ')}
+        {s.first_sub != null ? ` · first change ${Math.round(s.first_sub)}'` : ''}
+      </div>
+    </div>
+  )
+  return (
+    <div className="mt-3 border-t border-ink/20 pt-2">
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text/60">The dugouts <Link to="/dugout" className="underline">all clubs</Link> · xG made-given per 90 by score</div>
+      <div className="grid gap-4 md:grid-cols-2">{side(d.home, f.home.short)}{side(d.away, f.away.short)}</div>
     </div>
   )
 }
@@ -290,6 +319,7 @@ function Card({ f }: { f: PreviewFixture }) {
         </div>
         <Reading f={f} />
         {f.lens && <LensPanel lens={f.lens} home={f.home} away={f.away} />}
+        <DugoutPanel f={f} />
       </article>
     </details>
   )
