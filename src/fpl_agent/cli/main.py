@@ -5268,9 +5268,28 @@ def strategic_plan_cmd(
                 "planner cross-check failed - not fatal, the real plan above is unaffected"
             )
 
-        existing_latest = latest_decision_of_type(conn, "strategic_plan")
-        superseded = existing_latest is not None and existing_latest.created_at > computation_started_at
-        if superseded:
+        # Superseded only by a valid run that STARTED later (any newer row used to count, even one itself superseded,
+        # so overlapping runs marked each other superseded while a run on the pre-deadline squad that finished last
+        # stayed "current"), or when the squad changed while this run was computing (2026-11-21: Command kept selling
+        # Konsa three hours after he had gone).
+        from fpl_agent.database.decisions import list_decisions_of_type
+
+        existing_latest = next(
+            (d for d in list_decisions_of_type(conn, "strategic_plan", limit=20)
+             if not d.detail.get("superseded") and (d.detail.get("computation_started_at") or d.created_at) > computation_started_at),
+            None,
+        )
+        try:
+            from fpl_agent.optimization.locked_squad import get_locked_squad as _now_locked
+
+            _now = _now_locked(conn)
+            squad_moved = _now is not None and set(_now.squad_ids) != set(squad_ids)
+        except Exception:
+            squad_moved = False
+        superseded = existing_latest is not None or squad_moved
+        if squad_moved and existing_latest is None:
+            click.echo("WARNING: the squad changed while this run was computing - publishing this result as superseded", err=True)
+        elif superseded:
             click.echo(
                 f"WARNING: a newer strategic_plan decision (#{existing_latest.id}, "
                 f"{existing_latest.created_at}) was already logged while this run was computing "
