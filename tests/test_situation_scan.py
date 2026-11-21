@@ -79,3 +79,14 @@ def test_accepting_writes_a_view_and_the_suggestion_goes(db_conn):
     assert result["status"] == "accepted"
     assert view_factor(db_conn, 2, 11) == ss.COVER_FACTOR and view_factor(db_conn, 2, 12) == ss.COVER_FACTOR
     assert ss.suggestions(db_conn, {2}, NOW) == []
+
+
+def test_a_move_further_forward_is_suggested(db_conn):
+    import json
+
+    _player(db_conn, 7)
+    for m, (role, x) in enumerate([("CB", 0.29)] * 3 + [("W", 0.68)] * 2, start=1):
+        _match(db_conn, m, f"10-0{m}", {})
+        db_conn.execute("INSERT INTO player_match_detail VALUES (?,700,7,1,1,?,?,0.1,'4-3-3',?,'t')", (m, role, x, json.dumps({"minutes_played": 90})))
+    found = ss._role_reads(db_conn, {7}, NOW)
+    assert [(s["kind"], s["factor"]) for s in found] == [("role_move", ss.ROLE_UP)]

@@ -89,6 +89,10 @@ def suggestions(conn: sqlite3.Connection, watch: set[int], now: datetime | None 
         out.append({"kind": "injury_headline", "player_id": pid, "name": names.get(pid), "factor": HEADLINE_FACTOR, "weeks": 1,
                     "reason": f"\"{w['title']}\" ({w['source']}); FPL has not flagged him", "key": f"headline:{pid}:{w['published_at']}"})
     out += _covered(conn, watch, now)
+    try:
+        out += _role_reads(conn, watch, now)
+    except Exception:
+        pass
     in_force = {r[0] for r in conn.execute("SELECT player_id FROM pundit_view WHERE revoked_at IS NULL")} if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE name='pundit_view'").fetchone() else set()
     seen, unique = set(), []
@@ -98,6 +102,63 @@ def suggestions(conn: sqlite3.Connection, watch: set[int], now: datetime | None 
         seen.add((s["kind"], s["player_id"]))
         unique.append(s)
     return unique
+
+
+DEPTH = {"GK": 0, "CB": 1, "FB": 1, "WB": 2, "DM": 2, "CM": 3, "AM": 4, "W": 4, "ST": 5}
+ROLE_UP, ROLE_DOWN = 1.1, 0.9
+CORNERS_GAINED, CORNERS_LOST = 1.06, 0.95
+MIDWEEK_REST = 0.8
+
+
+def _role_reads(conn: sqlite3.Connection, watch: set[int], now: datetime) -> list[dict]:
+    """The role engine's reads as suggestions (factors are judgement, none fitted): a move to a more advanced or a deeper
+    slot for his last two starts (x1.1 / x0.9, two gameweeks); taking over or losing the club's corners (x1.06 / x0.95,
+    two gameweeks); a manager who rested him after midweek football this season, with a cup or European tie in the four
+    days before the next deadline (x0.8, one gameweek)."""
+    from fpl_agent.models import roles
+    from fpl_agent.models.manager_brain import manager_brain
+
+    if not watch:
+        return []
+    names = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT id, web_name, team_id FROM players")}
+    out = []
+    for pid, r in roles.player_roles(conn, sorted(watch)).items():
+        ch = r.get("change")
+        if not ch or pid not in names:
+            continue
+        up = DEPTH.get(ch["to"].split("-")[0], 0) - DEPTH.get(ch["from"].split("-")[0], 0)
+        if up == 0:
+            continue
+        out.append({"kind": "role_move", "player_id": pid, "name": names[pid][0], "factor": ROLE_UP if up > 0 else ROLE_DOWN, "weeks": 2,
+                    "reason": f"moved from {ch['from']} to {ch['to']} for his last 2 starts", "key": f"role:{pid}:{ch['from']}:{ch['to']}"})
+    teams = {names[p][1] for p in watch if p in names}
+    for tid in teams:
+        sp = roles.set_pieces(conn, tid)
+        t = sp["new_corner_taker"]
+        if not t:
+            continue
+        lead = sp["corners"][0]["player_id"] if sp["corners"] else None
+        if t["player_id"] in watch:
+            out.append({"kind": "corners", "player_id": t["player_id"], "name": t["name"], "factor": CORNERS_GAINED, "weeks": 2,
+                        "reason": f"took {t['recent']} corners in the last 3 matches; {t['previous']} led the season", "key": f"corners:{t['player_id']}:{t['recent']}"})
+        if lead in watch and lead != t["player_id"]:
+            out.append({"kind": "corners", "player_id": lead, "name": names[lead][0], "factor": CORNERS_LOST, "weeks": 2,
+                        "reason": f"{t['name']} took {t['recent']} corners in the last 3 matches; he led the season", "key": f"corners-lost:{lead}:{t['recent']}"})
+    deadline = conn.execute("SELECT deadline_time FROM events WHERE deadline_time > ? ORDER BY deadline_time LIMIT 1", (now.isoformat(),)).fetchone()
+    if deadline and conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'cup_match'").fetchone():
+        dl = deadline[0]
+        for tid in teams:
+            tie = conn.execute("SELECT kickoff_utc, opponent_name FROM cup_match WHERE team_id = ? AND kickoff_utc < ? AND kickoff_utc > datetime(?, '-4 days')",
+                               (tid, dl, dl)).fetchone()
+            if not tie:
+                continue
+            for rest in (manager_brain(conn, tid)["midweek"] or {}).get("rested") or []:
+                pid = next((p for p in watch if names.get(p, ("",))[0] == rest["name"] and names[p][1] == tid), None)
+                if pid:
+                    out.append({"kind": "midweek_rest", "player_id": pid, "name": rest["name"], "factor": MIDWEEK_REST, "weeks": 1,
+                                "reason": f"his manager started him {rest['after_cup']} after midweek football ({rest['otherwise']} otherwise), and they play {tie[1]} on {tie[0][:10]}",
+                                "key": f"rest:{pid}:{tie[0][:10]}"})
+    return out
 
 
 def watched(conn: sqlite3.Connection) -> set[int]:
