@@ -13,7 +13,7 @@ import { useFetch } from '@/lib/useFetch'
 interface Label { text: string; tone: 'good' | 'bad' | 'neutral'; evidence: string }
 interface State { minutes: number; for90: number | null; against90: number | null }
 interface Club {
-  team_id: number; name: string; short: string; code: number; manager: string | null; played: number; points: number; gf: number; ga: number
+  team_id: number; name: string; short: string; code: number; manager: string | null; manager_change: { new: string; previous: string; matches: number } | null; played: number; points: number; gf: number; ga: number
   formation: string | null; formations: Record<string, number>; m: Record<string, number | null>; pct: Record<string, number | null>
   states: Record<string, State>; subs_per_match: number | null; labels: Label[]
 }
@@ -76,6 +76,11 @@ function ClubCard({ c, open, onOpen }: { c: Club; open: boolean; onOpen: () => v
           <div className="tabular text-[11px] uppercase text-text/60">{c.gf}-{c.ga} in {c.played}</div>
         </div>
       </div>
+      {c.manager_change && (
+        <div className="mt-2 border-2 border-alert-red px-2 py-1 text-[12px] font-bold text-alert-red">
+          New manager: {c.manager_change.new} after {c.manager_change.previous}, {c.manager_change.matches} league match{c.manager_change.matches === 1 ? '' : 'es'} in charge. These figures are mostly {c.manager_change.previous}&apos;s.
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-1">
         {c.labels.map((l) => (
           <span key={l.text} title={l.evidence} className={`border border-ink px-1.5 py-0.5 text-[11px] font-black uppercase ${TONE[l.tone]}`}>{l.text}</span>

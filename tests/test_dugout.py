@@ -34,3 +34,10 @@ def test_player_usage_counts_starts_hooks_and_bench(db_conn):
     assert u[1]["starts"] == 2 and u[1]["full_90"] == 2 and u[1]["security"] == "nailed"
     assert u[2]["hooked_before_60"] == 2 and u[2]["typical_off"] == 55 and u[2]["security"] == "regular"
     assert u[3]["bench_apps"] == 1 and u[3]["security"] == "bench"
+
+
+def test_a_new_name_on_the_sheet_is_flagged_until_five_matches():
+    runs = [{"name": "Sage", "finished": 3}, {"name": "Frank", "finished": 0}]
+    assert dugout._manager_change(runs) == {"new": "Frank", "previous": "Sage", "matches": 0}
+    assert dugout._manager_change([{"name": "Sage", "finished": 3}, {"name": "Frank", "finished": 5}]) is None
+    assert dugout._manager_change([{"name": "Sage", "finished": 3}]) is None

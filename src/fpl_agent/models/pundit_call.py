@@ -173,6 +173,9 @@ def dossier(conn: sqlite3.Connection) -> str:
             if not c:
                 continue
             st = " ".join(f"{k} {s['for90']}-{s['against90']}" for k, s in c["states"].items() if s["for90"] is not None)
+            mc = c.get("manager_change")
+            if mc:
+                lines.append(f"- {c['short']}: NEW MANAGER {mc['new']} after {mc['previous']}, {mc['matches']} league matches; the figures below are mostly {mc['previous']}'s")
             lines.append(f"- {c['short']} ({c['manager']}, {c['formation']}): {', '.join(l['text'] + ' [' + l['evidence'] + ']' for l in c['labels'])} | {st} | first change {c['m']['first_sub']}', {c['m']['rotation']} XI changes")
         lines += ["", "## Minutes security (starts/club matches, off before 60, usually off)"]
         lines += [f"- {u['name']}: {u['starts']}/{u['club_matches']}, {u['hooked_before_60']} off before 60, off ~{u['typical_off']}' -> {u['security']}" for u in player_usage(conn, player_ids=ids)]

@@ -50,9 +50,14 @@ def club_profiles(conn: sqlite3.Connection) -> dict[int, dict]:
     xi: dict[tuple[int, int], set[int]] = {}
     for r in conn.execute(f"SELECT match_id, team_id, player_id FROM player_match_state WHERE started = 1 AND match_id IN ({marks})", ids):
         xi.setdefault((r["match_id"], r["team_id"]), set()).add(r["player_id"])
-    coach = {}
-    for r in conn.execute("SELECT mc.team_id, mc.coach_name, mc.formation, mi.kickoff_utc FROM match_coach mc JOIN match_intelligence mi ON mi.id = mc.match_id ORDER BY mi.kickoff_utc"):
+    coach, coach_runs = {}, {}
+    for r in conn.execute("SELECT mc.team_id, mc.coach_name, mi.status FROM match_coach mc JOIN match_intelligence mi ON mi.id = mc.match_id ORDER BY mi.kickoff_utc"):
         coach[r["team_id"]] = r["coach_name"]
+        runs = coach_runs.setdefault(r["team_id"], [])
+        if not runs or runs[-1]["name"] != r["coach_name"]:
+            runs.append({"name": r["coach_name"], "finished": 0})
+        if r["status"] == "FULL_TIME":
+            runs[-1]["finished"] += 1
 
     acc: dict[int, dict] = {}
     for m in matches:
@@ -105,7 +110,7 @@ def club_profiles(conn: sqlite3.Connection) -> dict[int, dict]:
         xg = mean(st, "xg")
         out[tid] = {
             "team_id": tid, "name": teams[tid]["name"], "short": teams[tid]["short_name"], "code": teams[tid]["code"],
-            "manager": coach.get(tid), "played": a["n"], "points": a["pts"], "gf": a["gf"], "ga": a["ga"],
+            "manager": coach.get(tid), "manager_change": _manager_change(coach_runs.get(tid, [])), "played": a["n"], "points": a["pts"], "gf": a["gf"], "ga": a["ga"],
             "formation": max(a["formations"], key=a["formations"].get) if a["formations"] else None,
             "formations": dict(sorted(a["formations"].items(), key=lambda kv: -kv[1])),
             "m": {
@@ -132,6 +137,13 @@ def club_profiles(conn: sqlite3.Connection) -> dict[int, dict]:
         p["m"] = {k: (round(v, 2) if isinstance(v, float) else v) for k, v in p["m"].items()}
         p["labels"] = _labels(p)
     return out
+
+
+def _manager_change(runs: list[dict]) -> dict | None:
+    """A new name on the sheet with fewer than five finished league matches: the style figures are mostly his predecessor's."""
+    if len(runs) < 2 or runs[-1]["finished"] >= 5:
+        return None
+    return {"new": runs[-1]["name"], "previous": runs[-2]["name"], "matches": runs[-1]["finished"]}
 
 
 def _push(p: dict, state: str) -> float | None:
