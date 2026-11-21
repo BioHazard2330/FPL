@@ -163,6 +163,21 @@ def dossier(conn: sqlite3.Connection) -> str:
         ((datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),),
     ).fetchall()
     lines += ["", "## News, last 5 days"] + [f"- {r['event_type']} {players[r['entity_id']]['web_name'] if r['entity_id'] in players else ''}: {r['fpl_impact'] or r['new_value']}" for r in news]
+    try:
+        from fpl_agent.models.dugout import club_profiles, player_usage
+
+        clubs = club_profiles(conn)
+        lines += ["", "## The Dugout (clubs of the squad and candidates; ahead/level/behind = xG made-given per 90 in that state)"]
+        for tid in dict.fromkeys(players[p]["team_id"] for p in ids):
+            c = clubs.get(tid)
+            if not c:
+                continue
+            st = " ".join(f"{k} {s['for90']}-{s['against90']}" for k, s in c["states"].items() if s["for90"] is not None)
+            lines.append(f"- {c['short']} ({c['manager']}, {c['formation']}): {', '.join(l['text'] + ' [' + l['evidence'] + ']' for l in c['labels'])} | {st} | first change {c['m']['first_sub']}', {c['m']['rotation']} XI changes")
+        lines += ["", "## Minutes security (starts/club matches, off before 60, usually off)"]
+        lines += [f"- {u['name']}: {u['starts']}/{u['club_matches']}, {u['hooked_before_60']} off before 60, off ~{u['typical_off']}' -> {u['security']}" for u in player_usage(conn, player_ids=ids)]
+    except Exception:
+        pass
     return "\n".join(lines)
 
 

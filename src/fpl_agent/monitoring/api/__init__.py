@@ -52,6 +52,7 @@ from fpl_agent.monitoring.api.viewplan_payload import build_view_plan
 from fpl_agent.monitoring.api.weekplan_payload import build_week_plan_payload
 from fpl_agent.monitoring.api.punditcall_payload import build_punditcall_payload
 from fpl_agent.monitoring.api.supercomputer_payload import build_supercomputer_payload
+from fpl_agent.monitoring.api.dugout_payload import build_dugout_payload
 from fpl_agent.monitoring.api.swing_payload import build_swing_payload
 from fpl_agent.monitoring.api.whatif_payload import build_whatif_payload
 
@@ -95,6 +96,7 @@ API_BUILDERS = {
     "livecone": build_livecone_payload,
     "swing": build_swing_payload,
     "supercomputer": build_supercomputer_payload,
+    "dugout": build_dugout_payload,
     "punditcall": build_punditcall_payload,
     "whatif": build_whatif_payload,
     "viewplan": build_view_plan,
