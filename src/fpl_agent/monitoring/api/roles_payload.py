@@ -14,7 +14,9 @@ def build_roles_payload(ctx=None, params: dict | None = None) -> dict:
         team = params.get("team")
         if team:
             tid = int(team)
-            out = {"depth": roles.depth_chart(conn, tid), "set_pieces": roles.set_pieces(conn, tid)}
+            from fpl_agent.models.manager_brain import manager_brain
+
+            out = {"depth": roles.depth_chart(conn, tid), "set_pieces": roles.set_pieces(conn, tid), "manager": manager_brain(conn, tid)}
         else:
             out = {"changes": roles.league_changes(conn), "out_of_position": roles.out_of_position(conn)}
         return attach_photo_codes(conn, out)

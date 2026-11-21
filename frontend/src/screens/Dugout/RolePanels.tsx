@@ -10,6 +10,13 @@ interface Slot { x: number; y: number; role: string; slot: string; starter: Pers
 interface Depth { formation: string | null; matches: number; eleven: Slot[] }
 interface Taker { player_id: number; name: string; count: number }
 interface SetPieces { corners: Taker[]; corners_last3: Taker[]; penalties: Taker[]; free_kicks: Taker[]; new_corner_taker: { name: string; recent: number; previous: string } | null }
+interface Brain {
+  matches: number; first_change: Record<string, { median: number; matches: number }>; kinds: Record<string, number>
+  first_off: { player_id: number; name: string; times: number; usual_minute: number }[]; pairs: { off: string; on: string; times: number }[]
+  impact_subs: { player_id: number; name: string; apps: number; goals: number; assists: number }[]
+  midweek: { after_cup: number | null; after_matches?: number; otherwise: number | null; rested: { name: string; after_cup: string; otherwise: string }[] } | null
+  cover: { player_id: number; name: string; slot: string; missed: number; stand_ins: { name: string; times: number }[] }[]
+}
 interface Change { kind: string; player_id: number; name: string; team: string; text: string }
 interface Oop { player_id: number; name: string; team: string; fpl_position: string; plays_as: string; share: string; recent: string[]; price_tenths: number | null; photo_code?: number | null; per90: Record<string, number | null> }
 
@@ -17,6 +24,59 @@ const ROLE_NAME: Record<string, string> = {
   GK: 'Goalkeeper', CB: 'Centre-back', 'FB-L': 'Left-back', 'FB-R': 'Right-back', 'WB-L': 'Left wing-back', 'WB-R': 'Right wing-back', DM: 'Holding midfield',
   CM: 'Central midfield', AM: 'Number 10', 'W-L': 'Left wing', 'W-R': 'Right wing', ST: 'Striker',
 }
+const SUB_KIND: Record<string, string> = {
+  LIKE_FOR_LIKE: 'like for like', MANAGED_MINUTES: 'managing minutes', TACTICAL: 'tactical', CHASING: 'chasing', INJURY_LINKED: 'injury',
+  HALF_TIME: 'at half-time', PROTECTING_LEAD: 'protecting a lead',
+}
+
+function ManagerBrain({ b }: { b: Brain }) {
+  const total = Object.values(b.kinds).reduce((a, n) => a + n, 0) || 1
+  const order = ['ahead', 'level', 'behind'] as const
+  return (
+    <div className="mt-6 grid gap-6 border-t-2 border-ink pt-4 lg:grid-cols-3">
+      <div>
+        <div className="font-display text-xl font-black uppercase text-text">First change, by score</div>
+        <div className="mt-2 space-y-1.5">
+          {order.map((k) => b.first_change[k] && (
+            <div key={k} className="grid grid-cols-[4rem_minmax(0,1fr)_3.5rem] items-center gap-2 text-[13px]">
+              <span className="font-bold uppercase text-text/70">{k}</span>
+              <span className="relative h-4 border-2 border-ink bg-paper">
+                <span className="absolute inset-y-0 left-0 bg-ink" style={{ width: `${(b.first_change[k].median / 90) * 100}%` }} />
+                <span className="absolute inset-y-0 left-1/2 w-px bg-spot" />
+              </span>
+              <span className="tabular text-right font-black text-text">{Math.round(b.first_change[k].median)}&apos; <span className="text-[10.5px] font-normal text-text/55">×{b.first_change[k].matches}</span></span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex h-4 overflow-hidden border-2 border-ink">
+          {Object.entries(b.kinds).map(([k, n], i) => (
+            <span key={k} title={`${SUB_KIND[k] ?? k}: ${n}`} className="h-full" style={{ width: `${(n / total) * 100}%`, background: ['#141414', '#e4572e', '#2e7d32', '#f0c419', '#5c6bc0', '#8d6e63', '#9e9e9e'][i % 7] }} />
+          ))}
+        </div>
+        <div className="mt-1 text-[11.5px] text-text/70">{Object.entries(b.kinds).slice(0, 4).map(([k, n]) => `${SUB_KIND[k] ?? k} ${Math.round((n / total) * 100)}%`).join(' · ')}</div>
+      </div>
+      <div className="space-y-2 text-[13px]">
+        <div className="font-display text-xl font-black uppercase text-text">Who he moves</div>
+        {b.first_off.length > 0 && <div><b className="font-display uppercase">First off:</b> {b.first_off.map((x) => `${x.name} ×${x.times} (~${x.usual_minute}')`).join(', ')}</div>}
+        {b.pairs.length > 0 && <div><b className="font-display uppercase">Swaps he repeats:</b> {b.pairs.map((x) => `${x.off} → ${x.on} ×${x.times}`).join(', ')}</div>}
+        {b.impact_subs.length > 0 && <div><b className="font-display uppercase">Off the bench:</b> {b.impact_subs.map((x) => `${x.name} ${x.apps} apps, ${x.goals}G ${x.assists}A`).join(' · ')}</div>}
+      </div>
+      <div className="space-y-2 text-[13px]">
+        <div className="font-display text-xl font-black uppercase text-text">Rotation and cover</div>
+        {b.midweek && b.midweek.after_cup != null && (
+          <div className={b.midweek.otherwise != null && b.midweek.after_cup >= b.midweek.otherwise + 1 ? 'border-2 border-alert-red px-2 py-1 font-semibold' : ''}>
+            <b className="font-display uppercase">After midweek football:</b> {b.midweek.after_cup} changes to the eleven ({b.midweek.after_matches} matches) against {b.midweek.otherwise ?? '-'} otherwise
+            {b.midweek.rested.length > 0 && <>; rests {b.midweek.rested.map((r) => `${r.name} (${r.after_cup} after, ${r.otherwise} otherwise)`).join(', ')}</>}
+          </div>
+        )}
+        {b.cover.slice(0, 4).map((c) => (
+          <div key={c.player_id}><b className="font-display uppercase">{c.name} out ({c.missed}):</b> {c.stand_ins.map((x) => `${x.name} ×${x.times}`).join(', ')} {c.stand_ins.length ? 'came in' : ''}</div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const KIND: Record<string, { label: string; cls: string }> = {
   role: { label: 'New role', cls: 'bg-spot text-ink' },
   corner_taker: { label: 'Corners', cls: 'bg-pitch-green text-paper' },
@@ -81,9 +141,9 @@ function Chip({ p, main }: { p: Person; main?: boolean }) {
 }
 
 export function ClubRoles({ team }: { team: number }) {
-  const state = useFetch(() => getJson<{ depth: Depth | null; set_pieces: SetPieces }>(`/api/roles?team=${team}`), [team])
+  const state = useFetch(() => getJson<{ depth: Depth | null; set_pieces: SetPieces; manager?: Brain }>(`/api/roles?team=${team}`), [team])
   if (state.status !== 'ready' || !state.data.depth) return null
-  const { depth, set_pieces: sp } = state.data
+  const { depth, set_pieces: sp, manager } = state.data
   const list = (rows: Taker[]) => rows.length ? rows.map((t) => `${t.name} ${t.count}`).join(' · ') : '-'
   return (
     <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
@@ -117,6 +177,7 @@ export function ClubRoles({ team }: { team: number }) {
         <div><b className="font-display uppercase">Penalties taken:</b> {list(sp.penalties)}</div>
         <div><b className="font-display uppercase">Direct free kicks shot:</b> {list(sp.free_kicks)}</div>
       </div>
+      {manager && <div className="lg:col-span-2"><ManagerBrain b={manager} /></div>}
     </div>
   )
 }

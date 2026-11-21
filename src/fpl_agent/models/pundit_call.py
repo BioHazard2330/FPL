@@ -192,6 +192,17 @@ def dossier(conn: sqlite3.Connection) -> str:
                   for p, r in role_map.items() if p in players]
         lines += ["", "## League changes (role moves, new corner takers, into/out of the eleven)"]
         lines += [f"- {c['kind']} {c['team']} {c['name']}: {c['text']}{' [yours/candidate]' if c['player_id'] in named_ids else ''}" for c in roles.league_changes(conn)]
+        from fpl_agent.models.manager_brain import manager_brain
+
+        lines += ["", "## Manager brain (clubs of the squad and candidates)"]
+        for tid in dict.fromkeys(players[p]["team_id"] for p in ids):
+            b = manager_brain(conn, tid)
+            fc = ", ".join(f"{k} {v['median']:.0f}' ({v['matches']})" for k, v in b["first_change"].items())
+            mw = b["midweek"] or {}
+            rested = "; rests after midweek: " + ", ".join(f"{r['name']} {r['after_cup']} vs {r['otherwise']}" for r in mw.get("rested") or []) if mw.get("rested") else ""
+            cover = "; cover: " + ", ".join(f"{c['name']} out -> {'/'.join(s['name'] for s in c['stand_ins'])}" for c in b["cover"][:3]) if b["cover"] else ""
+            lines.append(f"- {clubs[tid]['short'] if tid in clubs else tid}: first change {fc}; first off {', '.join(f'{x['name']} x{x['times']}' for x in b['first_off'])}; "
+                         f"XI changes after midweek {mw.get('after_cup')} vs {mw.get('otherwise')}{rested}{cover}; impact subs {', '.join(f'{x['name']} {x['goals']}G{x['assists']}A' for x in b['impact_subs'][:2])}")
         lines += ["", "## Out of position (FPL lists him deeper than he plays)"]
         lines += [f"- {o['name']} ({o['team']}, FPL {o['fpl_position']}, £{(o['price_tenths'] or 0) / 10:.1f}m) plays {o['plays_as']}, {o['share']}" for o in roles.out_of_position(conn)]
         lines += ["", "## Minutes security (starts/club matches, off before 60, usually off)"]
