@@ -2,6 +2,7 @@ import { Fragment } from 'react'
 import { Note } from '@/components/ui/Info'
 import { ScoutingReport } from '@/components/football/ScoutingReport'
 import { FootballRead } from '@/components/football/FootballRead'
+import { GodsEye } from '@/components/football/GodsEye'
 import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
@@ -170,6 +171,8 @@ export function PlayerScreen() {
       )}
 
       <ProjectionBand playerId={pl.player_id} />
+
+      <GodsEye playerId={pl.player_id} />
 
       {p.football_read && <FootballRead r={p.football_read} />}
 

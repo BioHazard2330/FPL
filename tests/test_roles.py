@@ -56,3 +56,14 @@ def test_set_pieces_and_depth_chart(db_conn):
     assert sp["corners"][0]["name"] == "Taker" and sp["corners"][0]["count"] == 10
     depth = roles.depth_chart(db_conn, 1)
     assert {s["slot"] for s in depth["eleven"]} == {"W-L", "CM"} and depth["matches"] == 4
+
+
+def test_player_eye_reads_a_match_against_his_own_numbers(db_conn):
+    from fpl_agent.models.gods_eye import player_eye
+
+    _seed(db_conn)
+    db_conn.execute("UPDATE player_match_detail SET stats_json = ? WHERE match_id = 4 AND player_id = 10", (json.dumps({"minutes_played": 90, "touches_opp_box": 12, "goals": 1}),))
+    db_conn.commit()
+    eye = player_eye(db_conn, 10)
+    assert eye["usual_role"] == "left winger" and len(eye["strip"]) == 4
+    assert eye["reads"][0]["read"].startswith("1 goal; 12 box touches")
