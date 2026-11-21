@@ -3897,7 +3897,10 @@ def live_match_poll_cmd(interval: int, max_hours: float, gated: bool):
             try:
                 from fpl_agent.monitoring.live_snapshot import write_live_snapshot
 
-                live_payload = maybe_fetch_live_payload(conn) if any_live else None
+                # Every tick, not only while a match is in play: between matches (and after the last whistle) the
+                # points already scored still have to show. `maybe_fetch_live_payload` fetches only once a fixture
+                # of the gameweek has kicked off (2026-11-21: Haaland's points vanished at full time until 15:00).
+                live_payload = maybe_fetch_live_payload(conn)
                 write_live_snapshot(conn, live_payload, path=DATA_DIR / "live_snapshot.json")
             except Exception as e:
                 click.echo(f"live-match-poll: live snapshot write failed this tick ({e}) - continuing", err=True)

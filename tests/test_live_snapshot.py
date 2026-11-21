@@ -656,3 +656,13 @@ def test_upcoming_block_lists_the_next_gameweeks_kickoffs_with_squad_players(db_
     assert block[0]["players"][0]["is_captain"] is True
     assert [p["web_name"] for p in block[1]["players"]] == ["Isak"]
     assert _upcoming_block(db_conn, squad, "2026-12-01T00:00:00Z") == []
+
+
+def test_returns_list_only_squad_players():
+    from types import SimpleNamespace
+
+    from fpl_agent.monitoring.live_snapshot import _match_events_block
+
+    rows = [SimpleNamespace(player_id=1, web_name="Mine", goals_scored=1, assists=0, red_cards=0),
+            SimpleNamespace(player_id=2, web_name="Theirs", goals_scored=2, assists=1, red_cards=0)]
+    assert _match_events_block(rows, frozenset({1})) == [{"player_id": 1, "web_name": "Mine", "kind": "goal", "count": 1}]

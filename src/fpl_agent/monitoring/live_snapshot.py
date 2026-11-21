@@ -249,7 +249,7 @@ def _threats_block(conn: sqlite3.Connection, live_payload: dict | None, squad_id
     return rows[:_THREATS_LIMIT]
 
 
-def _match_events_block(live_bonus_rows: list) -> list[dict]:
+def _match_events_block(live_bonus_rows: list, squad_ids=None) -> list[dict]:
     """Real current-state events for squad players who have actually
     played - goals/assists/red cards straight off the already-computed
     `compute_live_bonus` rows (no second live-payload pass). Cumulative
@@ -258,6 +258,8 @@ def _match_events_block(live_bonus_rows: list) -> list[dict]:
     not a notification stream)."""
     events = []
     for r in live_bonus_rows:
+        if squad_ids is not None and r.player_id not in squad_ids:
+            continue
         if r.goals_scored:
             events.append({"player_id": r.player_id, "web_name": r.web_name, "kind": "goal", "count": r.goals_scored})
         if r.assists:
@@ -689,7 +691,7 @@ def build_live_snapshot(conn: sqlite3.Connection, live_payload: dict | None) -> 
         "autosubs": _autosub_block(conn, squad_rows, live_payload, event),
         "active_matches": _active_matches_block(conn, squad_ids),
         "bonus_defcon": _bonus_defcon_block(live_bonus_rows, squad_ids),
-        "match_events": _match_events_block(live_bonus_rows),
+        "match_events": _match_events_block(live_bonus_rows, squad_ids),
         "recent_changes": _recent_changes_block(conn, squad_ids),
         "points_changes": _points_changes_block(conn, squad_ids),
         "recommendation": _recommendation_block(conn, squad_ids),
