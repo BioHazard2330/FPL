@@ -77,3 +77,20 @@ def test_week_moves_counts_ins_outs_and_leaves_chip_squads_apart(db_conn):
     assert [(r["player_id"], r["count"]) for r in d["ins"]] == [(2, 1)]
     assert [(r["player_id"], r["count"]) for r in d["outs"]] == [(1, 1)]
     assert d["chips"] == {"freehit": 0.33}
+
+
+def test_locked_picks_stop_after_a_few_failures_while_fpl_is_down(db_conn):
+    from fpl_agent.ingestion.cohort import COHORT, GIVE_UP_AFTER, sync_locked_picks
+    from fpl_agent.ingestion.fpl_api import SourceFetchError
+
+    for e in range(1, 11):
+        db_conn.execute("INSERT INTO cohort_entry (entry_id, cohort, rank_at_sample, total_at_sample, sampled_event, retrieved_at) VALUES (?, ?, ?, 0, 10, 't')", (e, COHORT, e))
+    calls = []
+
+    class Down:
+        def fetch_entry_picks(self, entry, event):
+            calls.append(entry)
+            raise SourceFetchError("503")
+
+    out = sync_locked_picks(db_conn, 11, client=Down(), pause=0)
+    assert out["status"] == "unavailable" and len(calls) == GIVE_UP_AFTER

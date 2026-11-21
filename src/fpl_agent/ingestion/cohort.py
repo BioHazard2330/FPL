@@ -131,6 +131,9 @@ def locked_picks_due(conn: sqlite3.Connection, cohort: str = COHORT) -> int | No
     return event if have == 0 else None
 
 
+GIVE_UP_AFTER = 3  # FPL answers 503 for a while after every deadline; stop rather than spend the cycle retrying 50 entries
+
+
 def sync_locked_picks(conn: sqlite3.Connection, event: int, client: FPLApiAdapter | None = None, cohort: str = COHORT,
                       pause: float = PAUSE_SECONDS) -> dict:
     """The cohort's picks for a gameweek as locked at its deadline (FPL publishes them then): fifteen, captain, chip and the
@@ -145,6 +148,9 @@ def sync_locked_picks(conn: sqlite3.Connection, event: int, client: FPLApiAdapte
         except SourceFetchError as e:
             _logger.warning("cohort locked picks %s GW%s failed: %s", entry, event, e)
             failed += 1
+            if read == 0 and failed >= GIVE_UP_AFTER:
+                conn.commit()
+                return {"status": "unavailable", "event": event, "read": 0, "failed": failed}
             continue
         captain, mult = None, None
         for p in data.get("picks") or []:

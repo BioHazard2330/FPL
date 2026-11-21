@@ -6,16 +6,16 @@ import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
 import { LivePitch } from '@/components/live/LivePitch'
-import { DepartureBoard } from '@/components/live/DepartureBoard'
+import { MatchRail } from '@/components/live/MatchRail'
 import { SwingBoard } from '@/components/live/SwingBoard'
-import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
+import { fetchLiveSnapshot } from '@/lib/api'
 import { describeChange, eventLabel } from '@/lib/text'
 import { relativeTime } from '@/lib/time'
 import { useFetch } from '@/lib/useFetch'
 import { useCrowd } from '@/lib/crowd'
 import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
-import type { LiveMatchEvent, LiveSnapshot, LiveSquadPlayer, UpcomingMatch } from '@/lib/types'
+import type { LiveMatchEvent, LiveSnapshot, LiveSquadPlayer } from '@/lib/types'
 
 const RETURN_KIND: Record<LiveMatchEvent['kind'], { label: string; color: string }> = {
   goal: { label: 'Goal', color: 'text-pitch-green' },
@@ -131,12 +131,18 @@ export function LiveScreen() {
       <Scoreboard p={p} starting={starting} />
 
       {squad.length > 0 && (
-        <section className="px-10 py-6">
-          <div className="mb-3 flex flex-wrap items-baseline gap-3">
-            <h2 className="font-display text-text">Your eleven, live</h2>
-            <span className="text-[13px] text-text-faint">points with the armband once he has minutes, xP before · red box: playing now · bonus is provisional until the match settles</span>
+        <section className="grid gap-6 px-10 py-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <div>
+            <div className="mb-3 flex flex-wrap items-baseline gap-3">
+              <h2 className="font-display text-text">Your eleven, live</h2>
+              <span className="text-[13px] text-text-faint">points with the armband once he has minutes, xP before · red box: playing now · bonus provisional until the match settles</span>
+            </div>
+            <LivePitch squad={squad} byPlayer={livePointsById} bonus={bonusDefcon} events={events} upcoming={p.upcoming ?? []} />
           </div>
-          <LivePitch squad={squad} byPlayer={livePointsById} bonus={bonusDefcon} events={events} upcoming={p.upcoming ?? []} />
+          <aside className="xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
+            <h2 className="mb-3 font-display text-text">GW{p.event ?? ''} matches</h2>
+            <MatchRail squad={squad} byPlayer={livePointsById} threats={p.threats} />
+          </aside>
         </section>
       )}
 
@@ -248,9 +254,7 @@ export function LiveScreen() {
             {matches.map((m) => <MatchCard key={m.match_id} m={m} />)}
           </div>
         </div>
-      ) : (p.upcoming ?? []).length > 0 ? (
-        <Upcoming matches={p.upcoming ?? []} />
-      ) : (
+      ) : (p.upcoming ?? []).length > 0 ? null : (
         <div className="border-b border-divider px-10 py-8">
           <div className="font-display text-2xl font-bold text-text-faint">No match is live right now</div>
           <Note>
@@ -278,31 +282,6 @@ export function LiveScreen() {
             ))}
           </div>
         </section>
-      )}
-
-      {/* THREATS - real gap found 2026-09-12 (direct user ask to match
-          livefpl.net's own framing): the template's top-owned players you
-          do NOT own, ranked by their real live points right now - the
-          players actively working against your relative rank, straight
-          off the same live payload your own squad's points already come
-          from (no new source, no new network call). */}
-      {p.threats.length > 0 && (
-        <div className="border-t border-divider bg-void px-10 py-8">
-          <div className="mb-1 text-[13px] font-bold text-text-faint">Threats</div>
-          <Note>Template picks you don't own, hauling right now.</Note>
-          <div className="flex flex-wrap gap-x-10 gap-y-3">
-            {p.threats.map((t) => (
-              <div key={t.player_id} className="flex items-baseline gap-2">
-                <span className="tabular font-display text-2xl font-bold text-alert-red">{t.points}</span>
-                <Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-alert-red">
-                  {t.web_name}
-                </Link>
-                <span className="bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{t.position}</span>
-                <span className="text-[12px] text-text-faint">{t.ownership_percent.toFixed(1)}% owned</span>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
 
       {/* SQUAD RETURNS + CHANGE WIRE - cumulative real returns (not a
@@ -446,60 +425,6 @@ export function LiveScreen() {
       )}
 
     </div>
-  )
-}
-
-/** THE COMING GAMEWEEK, between matches: every kickoff still to come, by day, with the squad players in each. The match
- * centre takes this place the moment a fixture kicks off. */
-function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
-  const days = new Map<string, UpcomingMatch[]>()
-  for (const m of matches) {
-    const day = new Date(m.kickoff_time).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })
-    days.set(day, [...(days.get(day) ?? []), m])
-  }
-  const yours = matches.reduce((n, m) => n + m.players.filter((x) => x.slot === 'starting').length, 0)
-  return (
-    <section className="px-10 py-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="voice text-lg text-text-muted">no league match in play · the match centre opens at kickoff</div>
-          <h2 className="font-display text-text">GW{matches[0].event}: when your eleven play</h2>
-        </div>
-      </div>
-      <div className="mt-5"><DepartureBoard matches={matches} /></div>
-      <div className="mt-2 text-[13px] text-text-faint">{yours} of your starters across {matches.length} matches</div>
-      <div className="mt-5 grid gap-6 xl:grid-cols-2">
-        {[...days.entries()].map(([day, list]) => (
-          <div key={day}>
-            <div className="mb-2 border-b-2 border-ink pb-1 font-display text-lg font-black uppercase text-text">{day}</div>
-            {list.map((m) => {
-              const home = crestUrl(m.home_code), away = crestUrl(m.away_code)
-              return (
-                <div key={m.fixture_id} className={`grid grid-cols-[3.5rem_9.5rem_1fr] items-center gap-3 border-b border-divider py-2 ${m.players.length ? '' : 'opacity-55'}`}>
-                  <span className="tabular font-display text-lg font-black text-text">
-                    {new Date(m.kickoff_time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
-                  </span>
-                  <span className="flex items-center gap-1.5 font-display text-[17px] font-black uppercase text-text">
-                    {home && <img src={home} alt="" className="size-5" onError={(e) => { e.currentTarget.style.display = 'none' }} />}{m.home}
-                    <span className="text-text-faint">v</span>
-                    {m.away}{away && <img src={away} alt="" className="size-5" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
-                  </span>
-                  <span className="flex flex-wrap gap-1.5">
-                    {m.players.map((x) => (
-                      <Link key={x.player_id} to={`/player/${x.player_id}`}
-                        className={`border-2 px-1.5 py-0.5 text-[12px] font-bold ${x.slot === 'starting' ? 'border-ink bg-paper text-text' : 'border-divider text-text-faint'}`}>
-                        {x.is_captain && <span className="mr-1 bg-broadcast-gold px-1 text-broadcast-gold-ink">C</span>}
-                        {x.web_name}{x.xp !== null && <span className="ml-1 tabular text-pitch-green">{x.xp.toFixed(1)}</span>}
-                      </Link>
-                    ))}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        ))}
-      </div>
-    </section>
   )
 }
 
