@@ -446,7 +446,7 @@ function Scoreboard({ p, starting }: { p: LiveSnapshot; starting: LiveSquadPlaye
           {p.gw?.state && <div className="mt-1 inline-block bg-alert-red px-2 font-display text-[12px] font-black uppercase">{p.gw.state === 'LIVE' ? 'Live' : p.gw.state.replace(/_/g, ' ').toLowerCase()}</div>}
         </div>
         <div className="border-b-2 border-paper/15 p-5 md:border-b-0 md:border-r-2">
-          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">Live rank{rank?.precision ? ` · ${rank.precision}` : ''}</div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">{kicked ? `Live rank${rank?.precision ? ` · ${rank.precision}` : ''}` : `Rank after GW${(p.event ?? 1) - 1}`}</div>
           <div className="tabular font-display text-4xl font-black">{rank?.estimated_rank != null ? `~${rank.estimated_rank.toLocaleString()}` : '-'}</div>
           {up !== null && rank?.rank_gain != null && (
             <div className={`mt-1 font-display text-lg font-black ${up ? 'text-pitch-green' : 'text-alert-red'}`}>{up ? '▲' : '▼'} {Math.abs(rank.rank_gain).toLocaleString()}</div>
