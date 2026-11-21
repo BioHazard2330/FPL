@@ -703,13 +703,13 @@ def maybe_fetch_live_payload(conn: sqlite3.Connection) -> dict | None:
     the CLI's own `fpl dashboard` regen - see `get_cached_dashboard_context`
     below for the real bug that split caused.
     """
-    from fpl_agent.models.fixtures import live_or_reference_event
+    from fpl_agent.models.fixtures import KICKED_OFF_SQL, live_or_reference_event
 
     event_num = live_or_reference_event(conn)
     if event_num is None:
         return None
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
+        "SELECT COUNT(*) AS n FROM fixtures f WHERE f.event=? AND " + KICKED_OFF_SQL, (event_num,)
     ).fetchone()
     if not row or not row["n"]:
         return None

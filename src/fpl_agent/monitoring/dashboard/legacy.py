@@ -2314,9 +2314,11 @@ def _player_play_states(conn: sqlite3.Connection, player_ids, event: int | None)
     # after the match had genuinely finished). Never the reverse - a
     # stale/absent FotMob row can never un-finish a fixture FPL's own API
     # already confirmed.
+    from fpl_agent.models.fixtures import KICKED_OFF_SQL
+
     finished_ids = finished_fixture_ids_fast(conn, event)
     rows = conn.execute(
-        f"SELECT p.id AS player_id, f.id AS fixture_id, f.started AS started, f.finished AS finished "
+        f"SELECT p.id AS player_id, f.id AS fixture_id, CASE WHEN f.id IS NOT NULL AND {KICKED_OFF_SQL} THEN 1 ELSE 0 END AS started, f.finished AS finished "
         f"FROM players p LEFT JOIN fixtures f ON (f.team_h = p.team_id OR f.team_a = p.team_id) AND f.event=? "
         f"WHERE p.id IN ({placeholders})",
         (event, *player_ids),

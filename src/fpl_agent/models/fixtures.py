@@ -175,7 +175,7 @@ def current_live_event(conn: sqlite3.Connection) -> int | None:
     # final whistle (observed 2026-10-13), which made every played GW6 fixture
     # look live and kept the whole system in its tightest cadence.
     row = conn.execute(
-        "SELECT DISTINCT f.event FROM fixtures f WHERE f.started=1 AND f.finished=0 "
+        "SELECT DISTINCT f.event FROM fixtures f WHERE " + KICKED_OFF_SQL + " AND f.finished=0 "
         "AND NOT " + PLAYED_FIXTURE_SQL + " "
         "AND f.kickoff_time >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 hours') "
         "ORDER BY f.event LIMIT 1"
@@ -231,6 +231,16 @@ def live_or_reference_event(conn: sqlite3.Connection) -> int | None:
 # alone silently drops a whole gameweek of real, final scores. A fixture also
 # counts as played when FotMob confirms FULL_TIME, the same two-signal rule
 # `finished_fixture_ids_fast` applies per event; never the reverse.
+# "This fixture has kicked off", over a `fixtures` row aliased `f`. FPL's `started` flag only reaches this database on
+# the next bootstrap sync (every 15-30 minutes), so on its own it left the live screen without points for the first
+# part of every match (2026-11-21: Man City v Fulham at 9' with no live points). A kickoff in the last three hours,
+# or the match feed reading it live, counts too.
+KICKED_OFF_SQL = (
+    "(f.started = 1 OR (f.kickoff_time <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+    "AND f.kickoff_time >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-3 hours')) OR f.id IN ("
+    "SELECT fpl_fixture_id FROM match_intelligence WHERE status IN ('LIVE', 'HALFTIME') AND fpl_fixture_id IS NOT NULL))"
+)
+
 PLAYED_FIXTURE_SQL = (
     "(f.finished = 1 OR f.id IN ("
     "SELECT fpl_fixture_id FROM match_intelligence "

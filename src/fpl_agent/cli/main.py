@@ -2663,8 +2663,10 @@ def _maybe_refresh_live_rank(conn) -> dict | None:
     event_num = live_or_reference_event(conn)
     if event_num is None:
         return None
+    from fpl_agent.models.fixtures import KICKED_OFF_SQL
+
     started_row = conn.execute(
-        "SELECT COUNT(*) AS n FROM fixtures WHERE event=? AND started=1", (event_num,)
+        "SELECT COUNT(*) AS n FROM fixtures f WHERE f.event=? AND " + KICKED_OFF_SQL, (event_num,)
     ).fetchone()
     if not started_row or not started_row["n"]:
         return None

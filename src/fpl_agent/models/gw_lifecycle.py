@@ -113,8 +113,10 @@ def compute_gw_lifecycle_state(conn: sqlite3.Connection) -> GWLifecycleState | N
     if event is None:
         return None
 
+    from fpl_agent.models.fixtures import KICKED_OFF_SQL
+
     fixtures_raw = conn.execute(
-        "SELECT id, started, finished FROM fixtures WHERE event=?", (event,)
+        "SELECT f.id, CASE WHEN " + KICKED_OFF_SQL + " THEN 1 ELSE 0 END AS started, f.finished FROM fixtures f WHERE f.event=?", (event,)
     ).fetchall()
     finished_ids = finished_fixture_ids_fast(conn, event)
     resolved_finished = [
