@@ -182,6 +182,18 @@ def dossier(conn: sqlite3.Connection) -> str:
             if mc:
                 lines.append(f"- {c['short']}: NEW MANAGER {mc['new']} after {mc['previous']}, {mc['matches']} league matches; the figures below are mostly {mc['previous']}'s")
             lines.append(f"- {c['short']} ({c['manager']}, {c['formation']}): {', '.join(l['text'] + ' [' + l['evidence'] + ']' for l in c['labels'])} | {st} | first change {c['m']['first_sub']}', {c['m']['rotation']} XI changes")
+        from fpl_agent.models import roles
+
+        named_ids = set(ids)
+        role_map = roles.player_roles(conn, ids)
+        lines += ["", "## Roles (usual slot on FotMob's grid, last 3 starts, per 90: chances created / box touches / CBIT, defcon hits)"]
+        lines += [f"- {players[p]['web_name']}: {r['usual']} last {r['last']}{' MOVED ' + r['change']['from'] + '->' + r['change']['to'] if r['change'] else ''} | "
+                  f"{r['per90'].get('chances_created')} / {r['per90'].get('touches_opp_box')} / {r['per90'].get('cbit')} | defcon {r['defcon']['hits'] if r['defcon'] else '-'}/{r['defcon']['matches'] if r['defcon'] else '-'} | corners {r['corners']}"
+                  for p, r in role_map.items() if p in players]
+        lines += ["", "## League changes (role moves, new corner takers, into/out of the eleven)"]
+        lines += [f"- {c['kind']} {c['team']} {c['name']}: {c['text']}{' [yours/candidate]' if c['player_id'] in named_ids else ''}" for c in roles.league_changes(conn)]
+        lines += ["", "## Out of position (FPL lists him deeper than he plays)"]
+        lines += [f"- {o['name']} ({o['team']}, FPL {o['fpl_position']}, £{(o['price_tenths'] or 0) / 10:.1f}m) plays {o['plays_as']}, {o['share']}" for o in roles.out_of_position(conn)]
         lines += ["", "## Minutes security (starts/club matches, off before 60, usually off)"]
         lines += [f"- {u['name']}: {u['starts']}/{u['club_matches']}, {u['hooked_before_60']} off before 60, off ~{u['typical_off']}' -> {u['security']}" for u in player_usage(conn, player_ids=ids)]
     except Exception:

@@ -2315,6 +2315,15 @@ def _run_scheduled_cycle(gated: bool):
     except Exception:
         logger.exception("run-scheduled match analyst failed - not fatal to the sync itself")
 
+    try:
+        from fpl_agent.ingestion.match_detail import sync_details
+
+        detail = sync_details(conn, limit=12)
+        if detail["matches"] or detail["remapped"]:
+            logger.info("run-scheduled match details: %s", detail)
+    except Exception:
+        logger.exception("run-scheduled match details failed - not fatal to the sync itself")
+
     # Post-GW pipeline (automation-lifecycle pass, 2026-08-22) - a cheap,
     # idempotent no-op unless the real lifecycle state says a gameweek has
     # genuinely finished (all real fixtures resolved AND the fixtures source

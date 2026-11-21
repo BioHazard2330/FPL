@@ -7,6 +7,7 @@ import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { crestUrl, getJson } from '@/lib/api'
 import { clubColors } from '@/lib/clubs'
 import { useFetch } from '@/lib/useFetch'
+import { ClubRoles, LeagueChanges } from '@/screens/Dugout/RolePanels'
 
 /** THE DUGOUT: every club and its manager read from the season's matches (`models/dugout.py`) - style with and without the
  * ball, what the side does ahead and behind, when the manager changes it, how much he rotates, and whose minutes are safe. */
@@ -225,6 +226,7 @@ export function DugoutScreen() {
           <div className="mt-3 bg-paper p-3 text-ink"><UsageTable rows={d.squad_usage} clubs={byId} showClub /></div>
         </div>
       </section>
+      <section className="px-10"><LeagueChanges /></section>
       <section className="px-10">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {d.clubs.map((c) => (
@@ -246,6 +248,7 @@ export function DugoutScreen() {
                     <div className="mb-2 font-display text-xl font-black uppercase text-text">Whose minutes are safe under {club.manager ?? 'the manager'}</div>
                     {detail.status === 'loading' ? <Skel className="h-40 w-full" /> : <UsageTable rows={usage} clubs={byId} />}
                   </div>
+                  <div className="lg:col-span-2"><ClubRoles team={club.team_id} /></div>
                 </div>
               )}
             </div>
