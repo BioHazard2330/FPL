@@ -166,3 +166,12 @@ def test_assess_freshness_not_stale_for_a_player_outside_squad_and_target(db_con
     result = assess_recommendation_freshness(db_conn, decision, {1})
 
     assert result.is_stale is False
+
+
+def test_has_material_change_since_ignores_system_health_alerts(db_conn):
+    cutoff = datetime(2026, 11, 21, 8, 0, tzinfo=timezone.utc).isoformat()
+    later = datetime(2026, 11, 21, 8, 10, tzinfo=timezone.utc).isoformat()
+    record_event(db_conn, "daemon_failing", "system", 0, None, "a cycle was cut off after 0s", later, "run_ledger", "DERIVED", "HIGH")
+    record_event(db_conn, "self_check", "system", 0, "ok", "failing", later, "self_check", "DERIVED", "HIGH")
+    db_conn.commit()
+    assert has_material_change_since(db_conn, cutoff, squad_ids={1}) is None
