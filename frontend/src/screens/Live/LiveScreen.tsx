@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
 import { LiveCone } from '@/components/live/LiveCone'
 import { MatchCard } from '@/components/live/MatchCentre'
-import { BonusDefconRail } from '@/components/live/BonusDefconRail'
+import { LivePitch } from '@/components/live/LivePitch'
 import { DepartureBoard } from '@/components/live/DepartureBoard'
 import { SwingBoard } from '@/components/live/SwingBoard'
 import { crestUrl, fetchLiveSnapshot } from '@/lib/api'
@@ -15,15 +15,7 @@ import { useFetch } from '@/lib/useFetch'
 import { useCrowd } from '@/lib/crowd'
 import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
-import type { LiveMatchEvent, UpcomingMatch } from '@/lib/types'
-
-const CLASS_COLOR: Record<string, string> = {
-  FIT: 'text-pitch-green',
-  'FIT BUT MONITORED': 'text-broadcast-gold',
-  DOUBTFUL: 'text-broadcast-gold',
-  'LIKELY UNAVAILABLE': 'text-alert-red',
-  'CONFIRMED UNAVAILABLE': 'text-alert-red',
-}
+import type { LiveMatchEvent, LiveSnapshot, LiveSquadPlayer, UpcomingMatch } from '@/lib/types'
 
 const RETURN_KIND: Record<LiveMatchEvent['kind'], { label: string; color: string }> = {
   goal: { label: 'Goal', color: 'text-pitch-green' },
@@ -94,13 +86,10 @@ export function LiveScreen() {
   const matches = p.active_matches ?? []
   const events = p.match_events ?? []
   const changes = p.recent_changes ?? []
-  const rank = p.rank
   const points = p.points
   const livePointsById = new Map((points?.by_player ?? []).map((x) => [x.player_id, x]))
   const squad = p.squad ?? []
   const starting = squad.filter((s) => s.slot === 'starting')
-  const bench = squad.filter((s) => s.slot === 'bench')
-  const rankArrowUp = rank?.rank_gain !== null && rank?.rank_gain !== undefined ? rank.rank_gain > 0 : null
   const charts = p.charts
   const snapshotAgeMs = p.generated_at ? Date.now() - new Date(p.generated_at).getTime() : null
   const snapshotOld = !isLive && snapshotAgeMs !== null && snapshotAgeMs > 30 * 60 * 1000
@@ -129,8 +118,6 @@ export function LiveScreen() {
         </span>
       } />
 
-      {anyInPlay(pbpMatches) && <LivePlayByPlay matches={pbpMatches} />}
-
       {snapshotOld && !anyInPlay(pbpMatches) && (
         <div className="border-b border-divider bg-panel px-10 py-3">
           <span className="text-[12px] font-bold text-broadcast-gold">This is an old snapshot</span>
@@ -141,72 +128,19 @@ export function LiveScreen() {
         </div>
       )}
 
-      {/* THE BOTTOM LINE - real gap found 2026-09-12 (direct user report:
-          "cant even see where my live points is", plus a direct comparison
-          against livefpl.net's own live-rank page). The actual live
-          gameweek points total and the LiveFPL rank-change fields
-          (old_rank/rank_gain/change_pct/safety_score/template_pct) were
-          already computed server-side every real refresh - this project's
-          own connector fetches them - but nothing on this screen ever
-          rendered them. This is the one number the whole screen exists
-          for; it now leads, at hero scale, before any operational status. */}
-      {points && (
-        <div className="border-b border-divider bg-panel px-10 py-8">
-          <div className="flex flex-wrap items-end gap-10">
-            <div>
-              <div className="text-[13px] font-bold text-text-faint">Points this gameweek</div>
-              <div className="tabular font-display text-7xl font-bold leading-none text-text">{points.points.toFixed(0)}</div>
-            </div>
-            {rank?.estimated_rank != null && (
-              <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold text-text-faint">
-                  Live rank{rank.precision ? ` · ${rank.precision}` : ''}
-                </div>
-                <div className={`tabular font-display text-3xl font-bold ${rank.is_current ? 'text-text' : 'text-text-faint'}`}>
-                  ~{rank.estimated_rank.toLocaleString()}
-                  {!rank.is_current && <span className="ml-2 text-xs font-normal text-text-faint">not current</span>}
-                </div>
-                {rankArrowUp !== null && rank.rank_gain !== null && (
-                  <div className={`mt-0.5 flex items-center gap-1.5 text-sm font-bold ${rankArrowUp ? 'text-pitch-green' : 'text-alert-red'}`}>
-                    <span aria-hidden="true">{rankArrowUp ? '▲' : '▼'}</span>
-                    {Math.abs(rank.rank_gain).toLocaleString()}
-                    {rank.change_pct !== null && <span className="text-text-faint">({rank.change_pct >= 0 ? '+' : ''}{rank.change_pct.toFixed(1)}%)</span>}
-                  </div>
-                )}
-              </div>
-            )}
-            {rank?.safety_score != null && (
-              <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold text-text-faint">Cushion</div>
-                <div className="tabular font-display text-3xl font-bold text-text">{rank.safety_score.toFixed(0)}</div>
-                <div className="mt-0.5 text-[12px] text-text-faint">points above the next rank band</div>
-              </div>
-            )}
-            {rank?.template_pct != null && (
-              <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold text-text-faint">Overlap with the top 10k</div>
-                <div className="tabular font-display text-3xl font-bold text-text">{rank.template_pct.toFixed(0)}%</div>
-                <div className="mt-0.5 text-[12px] text-text-faint">of your team matches the template</div>
-              </div>
-            )}
-            {points.captain_name && (
-              <div className="border-l border-divider pl-10">
-                <div className="text-[13px] font-bold text-text-faint">Captain</div>
-                <div className="tabular font-display text-3xl font-bold text-broadcast-gold">
-                  {points.captain_points ?? 0}
-                  <span className="ml-2 font-sans text-base font-semibold text-text">{points.captain_name}</span>
-                </div>
-              </div>
-            )}
+      <Scoreboard p={p} starting={starting} />
+
+      {squad.length > 0 && (
+        <section className="px-10 py-6">
+          <div className="mb-3 flex flex-wrap items-baseline gap-3">
+            <h2 className="font-display text-text">Your eleven, live</h2>
+            <span className="text-[13px] text-text-faint">points with the armband once he has minutes, xP before · red box: playing now · bonus is provisional until the match settles</span>
           </div>
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-text-faint">
-            <span>{points.played} played</span>
-            <span>{points.live} live</span>
-            <span>{points.yet_to_play} yet to play</span>
-            <span>{points.bench} on the bench</span>
-          </div>
-        </div>
+          <LivePitch squad={squad} byPlayer={livePointsById} bonus={bonusDefcon} events={events} upcoming={p.upcoming ?? []} />
+        </section>
       )}
+
+      {anyInPlay(pbpMatches) && <LivePlayByPlay matches={pbpMatches} />}
 
       <SwingBoard />
 
@@ -344,103 +278,6 @@ export function LiveScreen() {
             ))}
           </div>
         </section>
-      )}
-
-      {/* SQUAD IMPACT + LIVE BONUS/DEFCON - the two questions that only
-          matter about MY squad during a live window, side by side. */}
-      {squad.length > 0 && (
-        <div className="grid grid-cols-1 gap-px bg-divider lg:grid-cols-[3fr_2fr]">
-          <div className="bg-void px-10 py-8">
-            <div className="mb-4 flex flex-wrap items-baseline gap-3">
-              <span className="text-[13px] font-bold text-text-faint">Live squad impact</span>
-              <span className="text-[13px] text-text-faint">actual points once a player has minutes, xP before kickoff</span>
-            </div>
-            <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
-              <div>
-                <div className="pb-1 text-[12px] font-bold text-text-faint">Starting XI</div>
-                <div className="divide-y divide-divider">
-                  {starting.map((s) => {
-                    const live = livePointsById.get(s.player_id)
-                    const hasActual = live !== undefined && live.play_state !== 'yet_to_play'
-                    const actual = hasActual ? live.points * live.multiplier : null
-                    // Real differential tag (2026-09-12, direct user ask to
-                    // match livefpl.net's own framing): low real ownership%
-                    // (FPL's own official figure, not fabricated) hauling a
-                    // real live score - the exact combination that moves
-                    // rank the most. Thresholds are presentation-only, same
-                    // convention as this file's own CLASS_COLOR/tie labels.
-                    const isDiff = hasActual && (actual ?? 0) >= 5 && s.ownership_percent !== null && s.ownership_percent < 10
-                    return (
-                      <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
-                        {s.is_captain && <span className="flex size-4 shrink-0 items-center justify-center bg-broadcast-gold text-[12px] font-bold text-broadcast-gold-ink">C</span>}
-                        {s.is_vice && <span className="flex size-4 shrink-0 items-center justify-center bg-raised text-[12px] font-bold text-text">V</span>}
-                        <Link to={`/player/${s.player_id}`} className="shrink-0 font-bold text-text hover:text-pitch-green">
-                          {s.web_name}
-                        </Link>
-                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
-                        {s.ownership_percent !== null && (
-                          <span className="min-w-0 truncate text-[12px] text-text-faint">{s.ownership_percent.toFixed(1)}% owned</span>
-                        )}
-                        {isDiff && <span className="shrink-0 text-[12px] font-bold text-broadcast-gold">Diff</span>}
-                        {s.classification && s.classification !== 'FIT' && (
-                          <span className={`shrink-0 text-[12px] font-bold ${CLASS_COLOR[s.classification] ?? 'text-text-faint'}`}>
-                            {s.classification}
-                          </span>
-                        )}
-                        {hasActual ? (
-                          <span className="tabular ml-auto shrink-0 font-display font-bold text-text">
-                            {actual}
-                            {live.play_state === 'live' && <span className="ml-1 size-1.5 shrink-0 rounded-full bg-alert-red align-middle" />}
-                          </span>
-                        ) : (
-                          <span className="tabular ml-auto shrink-0 font-semibold text-text-faint">{s.xp !== null ? `${s.xp.toFixed(1)} xP` : '—'}</span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="mt-6 md:mt-0">
-                <div className="pb-1 text-[12px] font-bold text-text-faint">Bench</div>
-                <div className="divide-y divide-divider opacity-70">
-                  {bench.map((s) => {
-                    const live = livePointsById.get(s.player_id)
-                    const hasActual = live !== undefined && live.play_state !== 'yet_to_play'
-                    const actual = hasActual ? live.points * live.multiplier : null
-                    return (
-                      <div key={s.player_id} className="flex items-center gap-2.5 py-2 text-sm">
-                        <span className="truncate font-bold text-text">{s.web_name}</span>
-                        <span className="shrink-0 bg-raised px-1.5 py-0.5 text-[12px] font-bold text-text-muted">{s.position}</span>
-                        {hasActual ? (
-                          <span className="tabular ml-auto shrink-0 font-semibold text-text">{actual}</span>
-                        ) : (
-                          <span className="tabular ml-auto shrink-0 font-semibold text-text-muted">{s.xp !== null ? `${s.xp.toFixed(1)} xP` : '—'}</span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-void px-10 py-8">
-            <div className="mb-1 text-[13px] font-bold text-text-faint">Bonus &amp; defensive contribution</div>
-            {bonusDefcon.some((r) => (r.minutes ?? 0) > 0) ? (
-              <>
-                <Note>
-                  Provisional bonus is exactly that &mdash; BPS can still move until the match is settled.
-                </Note>
-                <BonusDefconRail rows={bonusDefcon} />
-              </>
-            ) : (
-              <p className="mt-2 max-w-sm text-sm text-text-muted">
-                No squad player has minutes on the board yet. Live BPS standings and progress toward each player's real
-                defensive-contribution threshold appear here once they do.
-              </p>
-            )}
-          </div>
-        </div>
       )}
 
       {/* THREATS - real gap found 2026-09-12 (direct user ask to match
@@ -661,6 +498,53 @@ function Upcoming({ matches }: { matches: UpcomingMatch[] }) {
             })}
           </div>
         ))}
+      </div>
+    </section>
+  )
+}
+
+/** The scoreboard: the gameweek's points (or the eleven's projection before a ball is kicked), rank and its move, the
+ * armband's haul and how many of the eleven have played, are playing and are still to play. */
+function Scoreboard({ p, starting }: { p: LiveSnapshot; starting: LiveSquadPlayer[] }) {
+  const points = p.points
+  const rank = p.rank
+  const projected = starting.reduce((t, s) => t + (s.xp ?? 0) * (s.is_captain ? 2 : 1), 0)
+  const up = rank?.rank_gain != null ? rank.rank_gain > 0 : null
+  const kicked = points && (points.played > 0 || points.live > 0)
+  const next = (p.upcoming ?? [])[0]
+  return (
+    <section className="px-10 pt-6">
+      <div className="grid border-2 border-ink bg-ink text-paper shadow-[6px_6px_0_var(--spot)] md:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))]">
+        <div className="border-b-2 border-paper/15 p-5 md:border-b-0 md:border-r-2">
+          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">GW{p.event ?? ''} · {kicked ? 'points' : 'projected'}</div>
+          <div className="tabular font-display text-[5.5rem] font-black leading-none">{kicked ? points!.points.toFixed(0) : projected.toFixed(0)}</div>
+          {p.gw?.state && <div className="mt-1 inline-block bg-alert-red px-2 font-display text-[12px] font-black uppercase">{p.gw.state === 'LIVE' ? 'Live' : p.gw.state.replace(/_/g, ' ').toLowerCase()}</div>}
+        </div>
+        <div className="border-b-2 border-paper/15 p-5 md:border-b-0 md:border-r-2">
+          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">Live rank{rank?.precision ? ` · ${rank.precision}` : ''}</div>
+          <div className="tabular font-display text-4xl font-black">{rank?.estimated_rank != null ? `~${rank.estimated_rank.toLocaleString()}` : '-'}</div>
+          {up !== null && rank?.rank_gain != null && (
+            <div className={`mt-1 font-display text-lg font-black ${up ? 'text-pitch-green' : 'text-alert-red'}`}>{up ? '▲' : '▼'} {Math.abs(rank.rank_gain).toLocaleString()}</div>
+          )}
+        </div>
+        <div className="border-b-2 border-paper/15 p-5 md:border-b-0 md:border-r-2">
+          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">Armband</div>
+          <div className="tabular font-display text-4xl font-black text-broadcast-gold">{kicked && points?.captain_points != null ? points.captain_points : '-'}</div>
+          <div className="font-display text-lg font-black uppercase">{points?.captain_name ?? starting.find((s) => s.is_captain)?.web_name ?? ''}</div>
+        </div>
+        <div className="p-5">
+          <div className="text-[12px] font-bold uppercase tracking-[0.16em] text-paper/60">Your eleven</div>
+          {points ? (
+            <div className="mt-1 grid grid-cols-3 gap-1 text-center">
+              {([['Done', points.played, 'bg-paper text-ink'], ['Playing', points.live, 'bg-alert-red text-paper'], ['To play', points.yet_to_play, 'border-2 border-paper/50']] as const).map(([l, n, c]) => (
+                <div key={l} className={`py-1 ${c}`}><div className="tabular font-display text-3xl font-black leading-none">{n}</div><div className="text-[10.5px] font-black uppercase">{l}</div></div>
+              ))}
+            </div>
+          ) : next ? (
+            <div className="mt-1 text-[14px]">First up: <b>{next.home}-{next.away}</b>, {new Date(next.kickoff_time).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+          ) : null}
+          {rank?.template_pct != null && <div className="mt-2 text-[12px] text-paper/70">{rank.template_pct.toFixed(0)}% of your team matches the top 10k</div>}
+        </div>
       </div>
     </section>
   )
