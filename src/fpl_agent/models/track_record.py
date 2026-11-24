@@ -8,12 +8,21 @@ Raw points per 90 do not carry beyond the projection (coefficient about 0, blend
 the season's returns reach the projection through this - "the model keeps being wrong about him" - and not as raw form.
 
 The adjustment is added to every gameweek's projection where decisions read it (`milp_planner._gw_xp`,
-`transfers._player_gw_ev`, `squad.build_player_pool_for_ids`), beside the pundit's views."""
+`transfers._player_gw_ev`, `squad.build_player_pool_for_ids`), beside the pundit's views.
+
+ROTATION (2026-11-24, the McGinn case: benched last match, the projection still read him as a starter): the same frozen
+projections run high on players who have not been starting. Among projections of 2.5+, players who started 81%+ of their
+last five came in +0.09 against the projection, 61-80% -0.21, 41-60% -0.74, 40% or less -0.81. A discount of
+`ROT` x (1 - start share over the last five gameweeks) on the projection lowered the squared error in the three latest
+weeks (GW9 6.06 to 6.01, GW10 7.23 to 7.16, GW11 8.68 to 8.59) and over GW7-11 in total (42.55 to 42.43); GW7-8 were
+slightly worse, their five-week windows reaching back into the season's first weeks. 0.2 to 0.3 were best; 0.2 is used."""
 import sqlite3
 import threading
 import time
 
 K = 0.1
+ROT = 0.2
+ROT_WEEKS = 5
 MIN_WEEKS = 2
 LAST_WEEKS = 8
 _CACHE: dict[str, tuple[float, dict[int, dict]]] = {}
@@ -59,6 +68,42 @@ def records(conn: sqlite3.Connection) -> dict[int, dict]:
         with _LOCK:
             _CACHE[key] = (now, out)
     return out
+
+
+def start_shares(conn: sqlite3.Connection) -> dict[int, float]:
+    """Per player: the share of his last five gameweeks with a fixture that he started (three or more needed)."""
+    key = "starts:" + _db_key(conn)
+    now = time.time()
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < _TTL:
+            return hit[1]
+    from fpl_agent.models.rules import current_season
+
+    try:
+        season = current_season(conn)
+    except Exception:
+        return {}
+    by: dict[int, list[int]] = {}
+    for pid, starts in conn.execute(
+        "SELECT player_id, starts FROM player_gw_stats WHERE season = ? AND fixtures > 0 ORDER BY event", (season,),
+    ):
+        by.setdefault(pid, []).append(min(int(starts or 0), 1))
+    out = {pid: sum(r[-ROT_WEEKS:]) / len(r[-ROT_WEEKS:]) for pid, r in by.items() if len(r) >= 3}
+    if not key.endswith(":memory:"):
+        with _LOCK:
+            _CACHE[key] = (now, out)
+    return out
+
+
+def rotation_factor(conn: sqlite3.Connection, player_id: int) -> float:
+    share = start_shares(conn).get(player_id)
+    return 1.0 if share is None else 1.0 - ROT * (1.0 - share)
+
+
+def apply(conn: sqlite3.Connection, player_id: int, xp: float) -> float:
+    """A gameweek projection with the rotation discount and the track-record carry, never below zero."""
+    return max(0.0, xp * rotation_factor(conn, player_id) + adjustment(conn, player_id))
 
 
 def adjustment(conn: sqlite3.Connection, player_id: int) -> float:

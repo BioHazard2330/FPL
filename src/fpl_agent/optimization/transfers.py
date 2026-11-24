@@ -384,10 +384,9 @@ def _player_gw_ev(conn: sqlite3.Connection, player_id: int, event: int, cache: d
 
     key = (player_id, event)
     if key not in cache:
-        from fpl_agent.models.track_record import adjustment
+        from fpl_agent.models.track_record import apply
 
-        cache[key] = max(0.0, expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event)
-                         + adjustment(conn, player_id))
+        cache[key] = apply(conn, player_id, expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event))
     return cache[key]
 
 

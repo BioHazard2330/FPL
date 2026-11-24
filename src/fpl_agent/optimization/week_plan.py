@@ -235,9 +235,9 @@ def calibration_id(conn: sqlite3.Connection | None = None) -> str:
     from fpl_agent.models.qualitative_feed import CALIBRATED_FRACTIONS, MAX_ADJUSTMENT_FRACTION
 
     sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
-    from fpl_agent.models.track_record import K as TRACK_K
+    from fpl_agent.models.track_record import K as TRACK_K, ROT
 
-    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}"
+    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}|rot={ROT}"
     views = signature(conn) if conn is not None else ""
     return f"{base}|views={views}" if views else base
 

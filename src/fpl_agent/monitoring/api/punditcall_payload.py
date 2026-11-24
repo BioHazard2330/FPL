@@ -73,7 +73,7 @@ def _build(ctx=None, params: dict | None = None) -> dict:
         squad_block = None
         if call.get("starting") and call.get("bench"):
             from fpl_agent.models.expected_points import expected_points
-            from fpl_agent.models.track_record import adjustment
+            from fpl_agent.models.track_record import apply
 
             lineup_ids = [int(x) for x in call["starting"]] + [int(x) for x in call["bench"]]
             lb = _briefs(conn, lineup_ids)
@@ -81,7 +81,7 @@ def _build(ctx=None, params: dict | None = None) -> dict:
 
             def tile(pid: int) -> dict:
                 try:
-                    xp = max(0.0, expected_points(conn, pid, n_gw=1, from_event=event).median + adjustment(conn, pid))
+                    xp = apply(conn, pid, expected_points(conn, pid, n_gw=1, from_event=event).median)
                 except Exception:
                     xp = 0.0
                 b = lb[pid]

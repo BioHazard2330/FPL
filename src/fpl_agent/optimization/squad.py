@@ -563,9 +563,10 @@ def build_player_pool_for_ids(
             xp_cache[key] = expected_points(conn, r["id"], n_gw=1, from_event=event)
         ep = xp_cache[key]
         f = view_factor(conn, r["id"], event)
-        from fpl_agent.models.track_record import adjustment
+        from fpl_agent.models.track_record import adjustment, rotation_factor
 
         adj = adjustment(conn, r["id"])
+        f = f * rotation_factor(conn, r["id"])
         pool.append(
             PlayerCandidate(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
