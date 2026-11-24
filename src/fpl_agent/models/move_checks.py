@@ -79,8 +79,24 @@ def check_player(conn: sqlite3.Connection, pid: int, now: datetime | None = None
         flags.append({"check": "feed", "level": "red" if feed[0] < 50 else "amber", "text": f"start feed {feed[0]}%"})
 
     if p["pos"] in ("MID", "FWD", "DEF"):
-        flags += _returners(conn, p, now)
+        back = _returners(conn, p, now)
+        if back and _out_of_position(conn, pid):
+            # His advanced role exists while the regular is out: when that regular is back, the role is the first thing
+            # to go (De Cuyper on the left wing while Mitoma was injured, 2026-11-24).
+            for f in back:
+                f["level"] = "red"
+                f["text"] += "; FPL lists him deeper than he plays, so that role may go"
+        flags += back
     return flags
+
+
+def _out_of_position(conn: sqlite3.Connection, pid: int) -> bool:
+    try:
+        from fpl_agent.models.roles import out_of_position
+
+        return any(o["player_id"] == pid for o in out_of_position(conn))
+    except Exception:
+        return False
 
 
 def _returners(conn: sqlite3.Connection, p: sqlite3.Row, now: datetime) -> list[dict]:

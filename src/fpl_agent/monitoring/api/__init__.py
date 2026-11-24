@@ -56,6 +56,7 @@ from fpl_agent.monitoring.api.dugout_payload import build_dugout_payload
 from fpl_agent.monitoring.api.roles_payload import build_roles_payload
 from fpl_agent.monitoring.api.godseye_payload import build_godseye_payload
 from fpl_agent.monitoring.api.gwfixtures_payload import build_gwfixtures_payload
+from fpl_agent.monitoring.api.verdicts_payload import build_verdicts_payload
 from fpl_agent.monitoring.api.swing_payload import build_swing_payload
 from fpl_agent.monitoring.api.whatif_payload import build_whatif_payload
 
@@ -103,6 +104,7 @@ API_BUILDERS = {
     "roles": build_roles_payload,
     "godseye": build_godseye_payload,
     "gwfixtures": build_gwfixtures_payload,
+    "verdicts": build_verdicts_payload,
     "punditcall": build_punditcall_payload,
     "whatif": build_whatif_payload,
     "viewplan": build_view_plan,

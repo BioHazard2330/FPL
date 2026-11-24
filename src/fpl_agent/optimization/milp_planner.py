@@ -187,7 +187,10 @@ def _gw_xp(conn: sqlite3.Connection, player_id: int, event: int, cache: dict) ->
 
     key = (player_id, event)
     if key not in cache:
-        cache[key] = expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event)
+        from fpl_agent.models.track_record import adjustment
+
+        cache[key] = max(0.0, expected_points_window(conn, player_id, 1, from_event=event).total_median * view_factor(conn, player_id, event)
+                         + adjustment(conn, player_id))
     return cache[key]
 
 

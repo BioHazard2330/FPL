@@ -144,6 +144,13 @@ def dossier(conn: sqlite3.Connection) -> str:
     lines = [f"# GW{event} dossier", "", f"Free transfers {state['free_transfers']}, bank £{state['bank_tenths'] / 10:.1f}m. No-buy clubs: {sorted(banned)}.",
              f"Plan of record: {[(m['out']['name'], m['into']['name']) for m in plan.get('moves', [])]}, gain {plan.get('gain_vs_roll')}, armband {players[plan['lineup_after']['captain_id']]['web_name'] if plan['lineup_after'].get('captain_id') in players else None}.",
              f"Field sample: {field.label if field else 'none'}. Fixtures read club goals-opponent goals from the ratings. Solio is a second opinion: blended with ours it ranked the top 60 best in GW8-10 (0.35 against 0.31 each), ours alone is the more accurate on points. Crowd net transfers are a lean, not proof: controlling for our projection, the top 5% most bought before the deadline beat it by -0.15, +1.55, +1.21 in GW8-10.", "", "## Squad"]
+    try:
+        from fpl_agent.models.verdict import build as build_verdicts
+
+        verdicts = build_verdicts(conn, ids)
+    except Exception:
+        verdicts = {}
+
     def row(pid: int) -> str:
         p = players[pid]
         extra = f" | Solio GW{event} {solio[pid]:.1f}" if solio.get(pid) is not None else ""
@@ -151,14 +158,12 @@ def dossier(conn: sqlite3.Connection) -> str:
             extra += f" | crowd net {crowd[pid][0] / 1000:+.0f}k (top {crowd[pid][1]:.0%})" if crowd[pid][0] > 0 else f" | crowd net {crowd[pid][0] / 1000:+.0f}k"
         if pid in eye:
             extra += f" | your eye {eye[pid]['rating']:+d} {eye[pid].get('note') or ''}"
-        try:
-            from fpl_agent.models.move_checks import check_player
-
-            fl = check_player(conn, pid)
-            if fl:
-                extra += " | CHECKS " + "; ".join(f"{f['level'].upper()} {f['text']}" for f in fl)
-        except Exception:
-            pass
+        v = verdicts.get(pid)
+        if v:
+            lz = " ".join(f"{k[:3]}{x}" for k, x in v["lenses"].items() if x is not None)
+            extra += f" | VERDICT {v['label']} {v['score']} ({lz}) last6 {v['facts']['last6']}" + (f" - {'; '.join(v['notes'])}" if v["notes"] else "")
+            if v["flags"]:
+                extra += " | CHECKS " + "; ".join(f"{f['level'].upper()} {f['text']}" for f in v["flags"])
         return "- " + _line(p, form.get(pid), xp.get(pid, 0.0), fixtures.get(p["team_id"], []), eo.get(pid, 0.0), _read(conn, football_read, pid, event), starts.get(pid), takers.get(pid, ""), prior.get(pid), box.get(pid)) + extra
     lines += [row(p) for p in sorted(squad, key=lambda q: (_POSITIONS.index(players[q]["position"]), -xp.get(q, 0)))]
     lines += ["", "## Candidates"]

@@ -235,7 +235,9 @@ def calibration_id(conn: sqlite3.Connection | None = None) -> str:
     from fpl_agent.models.qualitative_feed import CALIBRATED_FRACTIONS, MAX_ADJUSTMENT_FRACTION
 
     sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
-    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}"
+    from fpl_agent.models.track_record import K as TRACK_K
+
+    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}"
     views = signature(conn) if conn is not None else ""
     return f"{base}|views={views}" if views else base
 
@@ -379,8 +381,28 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
         except Exception:
             continue
     squad = set(squad_ids)
-    sell = {p: EYE_PENALTY for p in squad if labels.get(p) == "backs him"}
+    # The multi-lens verdict (models/verdict.py) decides protection: the football read backing a player on his expected
+    # numbers no longer keeps him when his returns, value and track record say otherwise (2026-11-24: the plan kept
+    # protecting Palmer, -1 to 8 points a week at £9.8m, because the read backed his expected output).
+    try:
+        from fpl_agent.models.verdict import build as build_verdicts
+
+        verdicts = build_verdicts(conn, list(squad | {c.player_id for c in pool}), with_checks=False)
+    except Exception:
+        _logger.exception("verdicts failed - the football read gates alone")
+        verdicts = {}
+    sell = {}
+    for p in squad:
+        v = verdicts.get(p)
+        if v is not None:
+            if v["label"] == "Strong":
+                sell[p] = EYE_PENALTY
+        elif labels.get(p) == "backs him":
+            sell[p] = EYE_PENALTY
     buy = {p: EYE_PENALTY for p, lab in labels.items() if p not in squad and lab == "against him"}
+    for p, v in verdicts.items():
+        if p not in squad and v["label"] in ("Weak", "Avoid"):
+            buy[p] = EYE_PENALTY
     # The manager's own eye (models/eye_journal) overrides the read: rated +1 or better protects, -1 or worse unprotects
     # an owned player and gates a target.
     try:

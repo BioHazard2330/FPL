@@ -1,3 +1,4 @@
+import { SquadVerdict } from '@/components/verdict/SquadVerdict'
 import { CaptainFaceOff } from '@/components/command/CaptainFaceOff'
 import { DeadlineChecklist } from '@/components/command/DeadlineChecklist'
 import { DeskStrip } from '@/components/command/DeskStrip'
@@ -206,6 +207,7 @@ export function CommandScreen() {
         {live?.gw?.state === 'LIVE' || (live?.active_matches?.length ?? 0) > 0 ? <LiveStrip /> : null}
         <MatchdayHeader plan={plan} />
         <CommandStage plan={plan} />
+        <SquadVerdict />
         <LastReport />
         <nav className="bare -mb-4 flex items-end gap-2 border-b-[3px] border-ink" aria-label="Command sections">
           {tabs.map((t, i) => (
@@ -227,8 +229,8 @@ export function CommandScreen() {
         </nav>
         {tab === 'week' && (
           <>
-            <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
             <div className="bare"><PunditCall /></div>
+            <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
             <LockedCalls />
             <LinedUp plan={plan} />
             <PunditDesk plan={plan} />

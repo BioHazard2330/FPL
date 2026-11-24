@@ -3,6 +3,7 @@ import { Note } from '@/components/ui/Info'
 import { ScoutingReport } from '@/components/football/ScoutingReport'
 import { FootballRead } from '@/components/football/FootballRead'
 import { GodsEye } from '@/components/football/GodsEye'
+import { PlayerVerdict } from '@/components/verdict/PlayerVerdict'
 import { Link, useParams } from 'react-router-dom'
 import Chart from 'react-apexcharts'
 import { Masthead } from '@/components/shell/Masthead'
@@ -171,6 +172,8 @@ export function PlayerScreen() {
       )}
 
       <ProjectionBand playerId={pl.player_id} />
+
+      <PlayerVerdict playerId={pl.player_id} />
 
       <GodsEye playerId={pl.player_id} />
 

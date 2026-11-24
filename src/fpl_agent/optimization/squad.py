@@ -563,12 +563,16 @@ def build_player_pool_for_ids(
             xp_cache[key] = expected_points(conn, r["id"], n_gw=1, from_event=event)
         ep = xp_cache[key]
         f = view_factor(conn, r["id"], event)
+        from fpl_agent.models.track_record import adjustment
+
+        adj = adjustment(conn, r["id"])
         pool.append(
             PlayerCandidate(
                 player_id=r["id"], web_name=r["web_name"], position=r["position"],
                 team_id=r["team_id"], team_short=r["team_short"],
                 price_tenths=price_row["value_tenths"] if price_row is not None else 0,
-                xp=ep.median * f, median=ep.median * f, floor=ep.floor * f, ceiling=ep.ceiling * f,
+                xp=max(0.0, ep.median * f + adj), median=max(0.0, ep.median * f + adj), floor=max(0.0, ep.floor * f + adj),
+                ceiling=max(0.0, ep.ceiling * f + adj),
                 confidence=ep.confidence, expected_minutes=ep.expected_minutes,
             )
         )
