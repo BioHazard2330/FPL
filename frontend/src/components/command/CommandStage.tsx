@@ -1,3 +1,5 @@
+import { getJson } from '@/lib/api'
+import { useFetch } from '@/lib/useFetch'
 import { lazy, Suspense, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { crestUrl, shirtUrl } from '@/lib/api'
@@ -130,7 +132,14 @@ function Player({ p, block, fixtures, scale, moveIn }: { p: ActionSquadPlayer; b
 }
 
 function Spotlight({ plan }: { plan: WeekPlanPayload }) {
-  const cap = plan.captain?.best
+  // The pundit's armband leads when his call for this gameweek names a different captain; the model's pick is the line
+  // beneath (2026-11-24: header and spotlight disagreed).
+  const pundit = useFetch(() => getJson<{ status: string; event: number; captain?: { player_id: number; name: string; photo_code?: number | null; team_code: number | null; position?: string } }>('/api/punditcall'), [], 300000)
+  const pc = pundit.status === 'ready' && pundit.data.status === 'ok' && pundit.data.event === plan.event ? pundit.data.captain : undefined
+  const model = plan.captain?.best
+  const useP = pc && model && pc.player_id !== model.player_id
+  const cap = useP ? { ...model, player_id: pc.player_id, name: pc.name, photo_code: pc.photo_code ?? null, team_code: pc.team_code, position: pc.position ?? model.position,
+    median: plan.captain?.second?.player_id === pc.player_id ? plan.captain.second.median : NaN } : model
   if (!cap) return null
   const c = clubColors(cap.team_code)
   const next = cap.team_code !== null ? plan.fixtures?.[String(cap.team_code)]?.[0] : undefined
@@ -159,11 +168,12 @@ function Spotlight({ plan }: { plan: WeekPlanPayload }) {
           {cap.name}
         </Link>
         <div className="mt-3 flex items-baseline gap-4">
-          <span className="font-display text-4xl font-bold tabular text-pitch-green">{cap.median.toFixed(1)}</span>
-          <span className="text-[13px] text-paper/70">expected points, doubled</span>
+          {Number.isFinite(cap.median) && <span className="font-display text-4xl font-bold tabular text-pitch-green">{cap.median.toFixed(1)}</span>}
+          <span className="text-[13px] text-paper/70">{useP ? "the pundit's armband" : 'expected points, doubled'}</span>
           {next && <span className={`ml-auto px-2 py-0.5 text-[12px] font-bold ${fdrFill(next.difficulty)}`}>{next.opponent_short} {next.is_home ? 'H' : 'A'}</span>}
         </div>
-        {second && <div className="mt-2 font-serif text-[17px] italic text-paper/75">next best, {second.name} on {second.median.toFixed(1)}</div>}
+        {useP && model ? <div className="mt-2 font-serif text-[17px] italic text-paper/75">the model's pick, {model.name} on {model.median.toFixed(1)}</div>
+          : second && <div className="mt-2 font-serif text-[17px] italic text-paper/75">next best, {second.name} on {second.median.toFixed(1)}</div>}
       </div>
     </div>
   )
@@ -229,7 +239,7 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_25rem]">
         <div className="relative overflow-hidden bg-panel">
           <div className={`absolute left-6 top-5 z-10 ${floodlit ? '[&_*]:!text-paper' : ''}`}>
-            <h2 className="font-display text-xl font-semibold text-text">Your GW{plan.event} eleven</h2>
+            <h2 className="font-display text-xl font-semibold text-text">{plan.moves?.length ? `The model's GW${plan.event} eleven` : `Your GW${plan.event} eleven`}</h2>
             <div className="mt-1 text-[13px] text-text-muted">
               {formation} · <span className="font-semibold text-text">{total.toFixed(1)}</span> xP from the eleven
               {(plan.moves ?? []).length > 0 ? ' · after the moves' : ''}

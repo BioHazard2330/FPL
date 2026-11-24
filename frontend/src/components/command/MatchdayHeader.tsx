@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Flap } from '@/components/ui/Flap'
-import { fetchLeagues } from '@/lib/api'
+import { fetchLeagues, getJson } from '@/lib/api'
 import { formatCountdown, useCountdown } from '@/lib/clock'
 import { useFetch } from '@/lib/useFetch'
 import { useLiveMeta } from '@/lib/useLiveMeta'
@@ -33,16 +33,25 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
   const lastAvg = gw ? gw.average[gw.average.length - 1] : null
   const fmtRank = (v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(2)}m` : v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`)
 
+  // The pundit's call leads when there is one for this gameweek: it weighs the verdict (model, returns, value, track,
+  // fixtures, nailed) and the eye, and it has beaten the model's plan on the real points. The plan becomes the second
+  // opinion beneath it (2026-11-24).
+  const pundit = useFetch(() => getJson<{ status: string; event: number; headline?: string; moves?: { out: { name: string }; into: { name: string } }[]; captain?: { name: string } }>('/api/punditcall'), [], 300000)
+  const pc = pundit.status === 'ready' && pundit.data.status === 'ok' && pundit.data.event === plan.event ? pundit.data : null
   const moves = plan.moves ?? []
-  const call = moves.length === 0 ? 'Roll' : moves.length === 1 ? '1 transfer' : `${moves.length} transfers`
-  const callSub = moves.length === 0
-    ? `${plan.free_transfers ?? 0} free transfer${plan.free_transfers === 1 ? '' : 's'} · ${Math.min((plan.free_transfers ?? 0) + 1, 5)} next week`
-    : `+${(plan.gain_vs_roll ?? 0).toFixed(1)} over ${plan.horizon ?? 5} GWs against rolling`
+  const planCall = moves.length === 0 ? 'Roll' : moves.length === 1 ? '1 transfer' : `${moves.length} transfers`
+  const pcMoves = pc?.moves ?? []
+  const call = pc ? (pcMoves.length === 0 ? 'Roll' : pcMoves.map((m) => m.into.name).join(' + ')) : planCall
+  const callSub = pc
+    ? `${pcMoves.length ? 'for ' + pcMoves.map((m) => m.out.name).join(', ') + ' · ' : ''}the model's plan: ${planCall}${moves.length ? ' (' + moves.map((m) => m.into.name).join(', ') + ')' : ''}`
+    : moves.length === 0
+      ? `${plan.free_transfers ?? 0} free transfer${plan.free_transfers === 1 ? '' : 's'} · ${Math.min((plan.free_transfers ?? 0) + 1, 5)} next week`
+      : `+${(plan.gain_vs_roll ?? 0).toFixed(1)} over ${plan.horizon ?? 5} GWs against rolling`
 
   const race = leagues.status === 'ready'
     ? leagues.data.leagues.filter((l) => l.odds?.p_lead != null).sort((a, b) => (b.odds?.p_lead ?? 0) - (a.odds?.p_lead ?? 0))[0]
     : undefined
-  const captain = plan.captain?.best?.name
+  const captain = pc?.captain?.name ?? plan.captain?.best?.name
   const top10k = plan.rank_targets?.targets.find((t) => t.rank === 10000)
 
   return (
@@ -55,8 +64,8 @@ export function MatchdayHeader({ plan }: { plan: WeekPlanPayload }) {
           )}
       <div className="grid grid-cols-[minmax(0,1.15fr)_repeat(4,minmax(0,1fr))] items-stretch divide-x-2 divide-ink overflow-hidden border-2 border-ink bg-panel shadow-[6px_6px_0_var(--ink)]">
         <div className="verdict-block relative bg-spot px-8 py-5 pr-16 text-ink">
-          <div className="text-[11.5px] font-bold uppercase tracking-[0.16em] opacity-70">GW{plan.event} · the call</div>
-          <div className="mt-1 font-display text-[clamp(3rem,4.4vw,4.4rem)] font-black uppercase leading-[0.82]">{call}</div>
+          <div className="text-[11.5px] font-bold uppercase tracking-[0.16em] opacity-70">GW{plan.event} · {pc ? "the pundit's call" : 'the call'}</div>
+          <div className={`mt-1 font-display font-black uppercase leading-[0.82] ${call.length > 14 ? 'text-[clamp(2rem,3vw,3rem)]' : 'text-[clamp(3rem,4.4vw,4.4rem)]'}`}>{call}</div>
           <div className="mt-2 text-[13px] font-semibold opacity-80">
             {callSub}
             {captain && <> · armband {captain}</>}
