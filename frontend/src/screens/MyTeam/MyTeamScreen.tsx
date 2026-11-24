@@ -486,40 +486,46 @@ export function MyTeamScreen() {
         {/* RIGHT: a real analysis rail, not a near-empty margin - carrying,
             pressure, and risk each get their own real visual treatment,
             stacked to run the full height beside the pitch. */}
-        <aside className="bg-panel px-7 py-10">
-          <div className="text-[13px] font-bold text-text-faint">About this squad</div>
-
+        <aside className="bg-panel px-7 py-8">
           {p.strong_link && (
-            <div className="mt-5 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold text-pitch-green">Best projected</div>
-              <div className="mt-1 font-display text-2xl font-bold text-text">{p.strong_link.name}</div>
-              <div className="tabular text-sm text-pitch-green">{p.strong_link.median.toFixed(1)} xP &middot; {p.strong_link.team_short}</div>
+            <div className="bg-ink px-4 py-3 text-paper">
+              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-paper/60">Best projected</div>
+              <div className="mt-1 flex items-end justify-between gap-3">
+                <span className="truncate font-display text-3xl font-black uppercase leading-none">{p.strong_link.name}</span>
+                <span className="tabular font-display text-4xl font-black leading-none text-pitch-green">{p.strong_link.median.toFixed(1)}</span>
+              </div>
+              <div className="mt-1 text-[12px] text-paper/70">{p.strong_link.team_short} &middot; points expected this week</div>
             </div>
           )}
 
           {p.weak_links && p.weak_links.length > 0 && (
-            <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold text-alert-red">Weakest starters</div>
-              <div className="mt-3 divide-y divide-divider">
-                {p.weak_links.map((w) => (
-                  <div key={w.name} className="flex items-baseline justify-between py-2.5">
-                    <span className="text-sm font-semibold text-text">{w.name}</span>
-                    <span className="tabular text-xl font-bold text-alert-red">{w.median.toFixed(1)}</span>
-                  </div>
-                ))}
+            <div className="mt-6">
+              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-alert-red">Weakest starters</div>
+              <div className="space-y-1.5">
+                {p.weak_links.map((w) => {
+                  const top = p.strong_link?.median || Math.max(...p.weak_links!.map((x) => x.median), 1)
+                  return (
+                    <div key={w.name} className="grid grid-cols-[6.5rem_minmax(0,1fr)_2.4rem] items-center gap-2">
+                      <span className="truncate text-[13px] font-bold text-text">{w.name}</span>
+                      <span className="h-3 bg-raised"><span className="block h-full bg-alert-red" style={{ width: `${Math.max(4, (w.median / top) * 100)}%` }} /></span>
+                      <span className="tabular text-right font-display text-lg font-black text-alert-red">{w.median.toFixed(1)}</span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
 
           {p.analyst && p.analyst.length > 0 && (
-            <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold text-text-faint">From the latest matches</div>
-              <div className="mt-0.5 text-[12px] text-text-faint">one note per player, the most worrying first</div>
-              <div className="mt-3 space-y-3">
+            <div className="mt-6">
+              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-text-faint">Last match, one line each</div>
+              <div className="divide-y divide-divider border-y-2 border-ink">
                 {p.analyst.slice(0, 5).map((n) => (
-                  <Link key={n.player_id} to={`/match/${n.match_id}`} className={`block tone pl-3 hover:bg-raised/40 ${n.direction === 'NEGATIVE' ? 'border-alert-red' : n.direction === 'WATCH' ? 'border-broadcast-gold' : n.direction === 'POSITIVE' ? 'border-pitch-green' : 'border-divider'}`}>
-                    <div className="text-sm font-bold text-text">{n.name ?? 'Player'} <span className="text-[12px] font-bold text-text-faint">{n.match}</span></div>
-                    <p className="text-[13px] leading-snug text-text-muted">{plain(n.observed)}</p>
+                  <Link key={n.player_id} to={`/match/${n.match_id}`} title={plain(n.observed)}
+                    className="grid grid-cols-[0.6rem_6rem_minmax(0,1fr)] items-center gap-2 py-2 hover:bg-raised/40">
+                    <span className={`size-2.5 rounded-full ${n.direction === 'NEGATIVE' ? 'bg-alert-red' : n.direction === 'WATCH' ? 'bg-broadcast-gold' : n.direction === 'POSITIVE' ? 'bg-pitch-green' : 'bg-text-faint'}`} />
+                    <span className="truncate text-[13px] font-bold text-text">{n.name ?? 'Player'}</span>
+                    <span className="truncate text-[12px] text-text-muted">{plain(n.observed)}</span>
                   </Link>
                 ))}
               </div>
@@ -527,14 +533,13 @@ export function MyTeamScreen() {
           )}
 
           {p.risks && p.risks.length > 0 && (
-            <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold text-broadcast-gold">Things to watch</div>
-              <div className="mt-3 space-y-3">
-                {p.risks.map((r, i) => (
-                  <p key={i} className="tone border-broadcast-gold text-sm leading-relaxed text-text-muted">
-                    {r.replace(/: ([A-Z][A-Z _]+)$/, (_m: string, st: string) => ` - ${st.toLowerCase().replace(/_/g, ' ')}`)}
-                  </p>
-                ))}
+            <div className="mt-6">
+              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-broadcast-gold">Watch</div>
+              <div className="flex flex-wrap gap-1.5">
+                {p.risks.map((r, i) => {
+                  const text = r.replace(/: ([A-Z][A-Z _]+)$/, (_m: string, st: string) => ` - ${st.toLowerCase().replace(/_/g, ' ')}`)
+                  return <span key={i} title={text} className="max-w-full truncate border-2 border-broadcast-gold bg-broadcast-gold/10 px-2 py-0.5 text-[12px] font-bold text-text">{text.split(/[(:,.]/)[0]}</span>
+                })}
               </div>
             </div>
           )}
@@ -546,9 +551,8 @@ export function MyTeamScreen() {
               one a manager asks right after "who is in my team", and this
               rail previously just ended in dead space. */}
           {p.fixtures && Object.keys(p.fixtures).length > 0 && (
-            <div className="mt-6 border-t border-divider pt-4">
-              <div className="text-[12px] font-bold text-text-faint">Fixtures ahead</div>
-              <div className="mt-0.5 text-[12px] text-text-faint">next five, easiest run first</div>
+            <div className="mt-6">
+              <div className="mb-1 text-[11px] font-black uppercase tracking-[0.16em] text-text-faint">Fixtures ahead &middot; easiest first</div>
               <div className="mt-3 space-y-2.5">
                 {squadClubs(p).map((c) => (
                   <div key={c.code} className="flex items-center gap-2">

@@ -2,6 +2,7 @@ import { VerdictTag } from '@/components/verdict/VerdictTag'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
+import { BuyBoard } from '@/components/verdict/BuyBoard'
 import { Disclosure } from '@/components/ui/kit'
 import { crestUrl, fetchScoutPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
@@ -318,6 +319,8 @@ export function ScoutScreen() {
         { label: 'Fixture swings', value: opp.fixture_swing.length, tone: 'spot' as const, sub: 'runs turning in their favour' },
         { label: 'Best buys flagged', value: oppCategories.reduce((n: number, c: { rows?: unknown[] }) => n + (c.rows?.length ?? 0), 0) },
       ] : undefined} />
+
+      <BuyBoard />
 
       {opp && (oppCategories.length > 0 || opp.fixture_swing.length > 0) && (
         <div className="grid grid-cols-1 gap-x-10 gap-y-8 px-8 py-6 lg:grid-cols-2">

@@ -6,7 +6,7 @@ Lenses, each a 0-100 percentile among players of his FPL position with 450+ leag
 - value: real FPL points per £m.
 - track: how far his real points have run above or below the model's frozen projections (`models/track_record.py`).
 - fixtures: his club's next five, expected goals for an attacker, clean-sheet chance for a defender or keeper.
-- security: the pre-flight checks (`models/move_checks.py`): clean 100, amber 60, red 15.
+- security: the pre-flight checks (`models/move_checks.py`): clean 100, amber 60, red 15, capped at his start share over the last five gameweeks; boards that skip the full checks read the start checks from FPL's gameweek rows.
 - crowd: FPL net transfers since the deadline (context only, weight 0).
 
 Score = 0.30 expected + 0.20 returns + 0.10 value + 0.10 track + 0.15 fixtures + 0.15 security. The weights are a
@@ -21,6 +21,20 @@ import sqlite3
 WEIGHTS = {"expected": 0.30, "returns": 0.20, "value": 0.10, "track": 0.10, "fixtures": 0.15, "security": 0.15}
 LABELS = ((80, "Strong"), (65, "Good"), (50, "Mixed"), (35, "Weak"), (0, "Avoid"))
 MIN_MINUTES = 450
+
+
+def _light_flags(hist: list[int] | None) -> list[dict]:
+    """The start checks read from FPL's own gameweek rows, for boards that skip the full pre-flight run: a player who
+    did not start his last gameweek, or started under four of his last five, is not shown as nailed."""
+    if not hist or len(hist) < 3:
+        return []
+    flags = []
+    if hist[-1] == 0:
+        flags.append({"check": "benched_last", "level": "red", "text": "did not start his last gameweek"})
+    last = hist[-5:]
+    if sum(last) < 4:
+        flags.append({"check": "starts", "level": "red" if sum(last) < 3 else "amber", "text": f"started {sum(last)} of his last {len(last)} gameweeks"})
+    return flags
 
 
 def _pct(values: dict[int, float], pid: int) -> float | None:
@@ -100,6 +114,20 @@ def build(conn: sqlite3.Connection, player_ids: list[int] | None = None, with_ch
         price = players[q]["value_tenths"]
         return d["p"] / (price / 10) if d and price else None
 
+    from fpl_agent.models.track_record import start_shares
+
+    start_share = start_shares(conn)
+    starts_hist: dict[int, list[int]] = {}
+    try:
+        from fpl_agent.models.rules import current_season
+
+        for q, st in conn.execute(
+            "SELECT player_id, starts FROM player_gw_stats WHERE season = ? AND fixtures > 0 ORDER BY event", (current_season(conn),)
+        ):
+            starts_hist.setdefault(q, []).append(min(int(st or 0), 1))
+    except Exception:
+        pass
+
     out = {}
     for pid in targets:
         p = players.get(pid)
@@ -130,7 +158,11 @@ def build(conn: sqlite3.Connection, player_ids: list[int] | None = None, with_ch
                 flags = check_player(conn, pid)
             except Exception:
                 flags = []
-        lenses["security"] = 15 if any(f["level"] == "red" for f in flags) else 60 if flags else 100
+        if not with_checks:
+            flags = _light_flags(starts_hist.get(pid))
+        share = start_share.get(pid)
+        checked = 15 if any(f["level"] == "red" for f in flags) else 60 if flags else 100
+        lenses["security"] = checked if share is None else min(checked, round(100 * share))
         have = {k: v for k, v in lenses.items() if v is not None}
         wsum = sum(WEIGHTS[k] for k in have)
         score = round(sum(WEIGHTS[k] * v for k, v in have.items()) / wsum) if wsum else None
