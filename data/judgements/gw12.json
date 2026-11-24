@@ -78,7 +78,7 @@
     },
     "BHA": {
       "verdict": "Second-best attack (1.97 xG a match) but they lost 2-0 at Hull with 2.24 xG; flat when behind now. A settled eleven.",
-      "fpl": "Their attacking players: Groß (4 goals, 4 assists, 30 corners) and De Cuyper, a left winger FPL prices as a £5.5m defender (2 goals, 3 assists). Verbruggen is fine against weak attacks.",
+      "fpl": "Groß is the attacking pick (4 goals, 6 assists, set pieces). De Cuyper has played left wing only while Mitoma is out (hamstring, back 2 Dec); once Mitoma returns he is a left-back again. Vuskovic and Verbruggen are the defence.",
       "gw": "Home to Newcastle, who open up (1.65 conceded) and chase when behind. Good for De Cuyper and Groß; a clean sheet is a 50-50."
     },
     "LIV": {
@@ -104,8 +104,6 @@
   },
   "players": {
     "4": "In for Davis. Best defender in the best defence; five-week value (MCI, BRE, TOT, BOU, MUN), not one week.",
-    "15": "In for Palmer: plays 90, took 13 corners in the last 3 matches, takes penalties, for the best side. Frees the money for Gabriel.",
-    "115": "In for Vuskovic. FPL lists him as a defender but he plays left wing: 2 goals, 4 assists, Brighton's corners. Home to an open Newcastle.",
     "166": "Captain. Away at Ipswich, the most open defence in the league; he takes Villa's penalties.",
     "346": "Vice. Home to Coventry's deep block; on penalties and headers, 6 shots and 1.34 xG at Chelsea.",
     "411": "Not the armband this week: away at Arsenal. Keep him; LEE, BRE, CHE, HUL follow.",
@@ -117,6 +115,8 @@
     "40": "Bench: Chelsea away at Forest's block.",
     "566": "Bench this week only (Fulham away); back in from GW14.",
     "8": "Bench: City at home is the hardest Arsenal match; Saliba's return could rotate the back line.",
-    "496": "Second keeper."
+    "496": "Second keeper.",
+    "45": "In for Palmer: Villa's right winger, started his last five with 2 goals and 2 assists; IPS away, EVE and CRY at home next.",
+    "504": "Kept. Same Brighton defence as De Cuyper, and De Cuyper's winger role ends when Mitoma returns (2 Dec)."
   }
 }

@@ -38,6 +38,22 @@ def _starts(conn: sqlite3.Connection, team_id: int) -> dict[int, list[tuple[str,
     return out
 
 
+def _same_slot(conn: sqlite3.Connection, a: int, b: int, pos_a: str, pos_b: str) -> bool:
+    """Same place in the team: the slot each usually plays on the formation grid (`models/roles.py`) where both have
+    one, FPL's position otherwise. FPL's position missed a winger listed as a defender covering for a midfielder
+    (2026-11-24: De Cuyper at left wing while Mitoma was out)."""
+    try:
+        from fpl_agent.models.roles import player_roles
+
+        r = player_roles(conn, [a, b])
+        sa, sb = (r.get(a) or {}).get("usual"), (r.get(b) or {}).get("usual")
+        if sa and sb:
+            return sa == sb
+    except Exception:
+        pass
+    return pos_a == pos_b
+
+
 def _covered(conn: sqlite3.Connection, watch: set[int], now: datetime) -> list[dict]:
     info = {r[0]: r for r in conn.execute(
         "SELECT p.id, p.web_name, p.team_id, p.status, et.singular_name_short AS pos FROM players p JOIN element_types et ON et.id = p.element_type")}
@@ -62,7 +78,7 @@ def _covered(conn: sqlite3.Connection, watch: set[int], now: datetime) -> list[d
             continue
         for pid, rows in starts.items():
             cover = info.get(pid)
-            if cover is None or pid == back["id"] or cover["pos"] != back["pos"] or pid not in watch:
+            if cover is None or pid == back["id"] or not _same_slot(conn, back["id"], pid, back["pos"], cover["pos"]) or pid not in watch:
                 continue
             pre = [s for d, s in rows if d < flagged[:10]]
             during = [s for d, s in rows if d >= flagged[:10]]
