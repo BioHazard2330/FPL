@@ -1,0 +1,122 @@
+{
+  "event": 12,
+  "clubs": {
+    "MCI": {
+      "verdict": "The most dangerous attack in the league and it never takes its foot off: 2.44 xG per 90 when ahead, more than when level. Best chance quality going (0.14 a shot, 38 box touches).",
+      "fpl": "Haaland is the armband every week they play a side that tries to play. The catch is Maresca: he rotates (2.2 changes a match) and hooks early (first change 56'), so anyone not called Haaland is a minutes gamble.",
+      "gw": "Away at Arsenal: Haaland's worst fixture of the run. City still create (2.04 xG a match) but Arsenal give away the fewest chances in the league."
+    },
+    "FUL": {
+      "verdict": "A good-looking ball side that gets into the box (32 touches a match) and never panics: settled eleven, latest changes in the league (68').",
+      "fpl": "Minutes are bankable, but they give chances away when level (1.43 per 90), so their defenders are not.",
+      "gw": "Home to Bournemouth: Fulham keep the ball but give chances away."
+    },
+    "ARS": {
+      "verdict": "Still the best team: 0.83 xG conceded a match even after 2-2 at Newcastle. Ødegaard has taken over corners.",
+      "fpl": "The defence is the asset. Gabriel has started all 10 and played 90 every time. The goals spread across the attack, so no single forward is a lock.",
+      "gw": "Home to City: the hardest match of their run, then BRE, TOT, BOU, MUN. Gabriel's value is the five weeks, not this one."
+    },
+    "NEW": {
+      "verdict": "Chaos. They run hard, rotate, attack whatever the score and leave the door open (1.67 xG conceded). When the game is level they barely create (0.76 per 90).",
+      "fpl": "Target attackers against them. Avoid their defenders.",
+      "gw": "Away at Brighton: Newcastle concede plenty; their attackers chase games."
+    },
+    "AVL": {
+      "verdict": "Good when level, loose once ahead (they conceded 3.11 per 90 when leading earlier), but their attack is creating again.",
+      "fpl": "Villa defenders are a trap. Their games stay open, which suits N.Jackson and whoever faces them.",
+      "gw": "Away at the league's most open defence. N.Jackson (penalties, 6 goals) is the armband shout; Villa clean sheet unlikely."
+    },
+    "SUN": {
+      "verdict": "They shoot from good positions (0.13 a shot) but can't keep games tight (1.64 conceded) and have hardly led all season.",
+      "fpl": "Nothing at the back. Attackers only in open games.",
+      "gw": "Home to Spurs: Sunderland chase hard when behind and shoot from good spots."
+    },
+    "BOU": {
+      "verdict": "The most complete side outside the top two. They win the ball back (27.7 a match), concede only 10.3 shots, create quality chances (0.13 a shot), and play the same whether ahead or level. Rose trusts his eleven and changes late.",
+      "fpl": "Their defenders are real, which is why keeping Silva was right. Tavernier starts every week and gets good chances (4.2 xG).",
+      "gw": "Away at Fulham: Bournemouth create quality chances (0.13 a shot); Silva benched this week only because Fulham have the ball at home."
+    },
+    "NFO": {
+      "verdict": "Deep block, win it back, break. Hard to break down (10 shots conceded a match), but they take long shots and only come alive once ahead.",
+      "fpl": "Sneaky defenders, low-quality attack. Gibbs-White creates (2.6 xA) but has one goal.",
+      "gw": "Home to Chelsea, who just lost 1-4 at home to Leeds and go flat when behind. Forest keep teams to 10 shots a match: a tight one, a decent Forest clean-sheet shout."
+    },
+    "CHE": {
+      "verdict": "Alonso's side is coming apart: 1-4 at home to Leeds, 20 goals conceded in 11 (1.60 xG a match), shoot from distance (low quality chances), rotate 2.7 changes a match and go flat behind (0.76 per 90).",
+      "fpl": "Only the nailed core: Palmer and Rogers have started 10 of 10. Everyone else is a coin flip on minutes. The defence is not a buy.",
+      "gw": "Away at Forest's block: low chance quality. Palmer and Rogers are nailed but this is not a week to want Chelsea attackers."
+    },
+    "LEE": {
+      "verdict": "Farke's Leeds are the form side outside the top four: 4-1 at Chelsea, hard to create against now (1.19 xG conceded a match), a settled eleven and late changes.",
+      "fpl": "Calvert-Lewin is the whole attack (4.4 xG). Bogle is nailed.",
+      "gw": "Home to Coventry, who sit deep and score 1.04 a match. Leeds clean sheet is a good shout; Calvert-Lewin (penalties, 3 headers at Chelsea) gets the box chances against a team that defends the box."
+    },
+    "COV": {
+      "verdict": "Lampard sits deep (39% possession), defends the box, protects a lead and goes flat behind. A low-event team.",
+      "fpl": "Rudoni is their threat (2.2 xG, 1.7 xA). Clean sheets are shaky (1.5 xG conceded).",
+      "gw": "Away at Leeds: a low-event match. Coventry attackers have little."
+    },
+    "CRY": {
+      "verdict": "Frank lost his first game 3-2 at Coventry. The defence is still the league's worst (2.15 xG conceded a match).",
+      "fpl": "Attack them until Frank shows otherwise.",
+      "gw": "Home to Hull: attack them until Frank fixes it."
+    },
+    "TOT": {
+      "verdict": "De Zerbi's side has the ball (63%) but shoots from distance (0.08 a shot): sterile up front, solid at the back (1.2 conceded). Rotates and hooks early (56').",
+      "fpl": "The value is at the back: Kinsky and Van Hecke. The attackers frustrate.",
+      "gw": "Away at Sunderland: Spurs are solid (1.13 conceded) but shoot from distance."
+    },
+    "IPS": {
+      "verdict": "Open at both ends. They shoot well but concede 1.95 a match.",
+      "fpl": "Davis is nailed, but the defence behind him is not a clean-sheet side, so selling him is right.",
+      "gw": "Home to Villa: Ipswich concede 2.02 xG a match, the most in the league, and open further when chasing."
+    },
+    "HUL": {
+      "verdict": "5-4-1 low block with 33% of the ball, and they fold once ahead (2.29 conceded per 90 when leading).",
+      "fpl": "Attack them.",
+      "gw": "Away at Palace's open defence after beating Brighton 2-0: Hull attackers have a shot."
+    },
+    "BHA": {
+      "verdict": "Second-best attack (1.97 xG a match) but they lost 2-0 at Hull with 2.24 xG; flat when behind now. A settled eleven.",
+      "fpl": "Their attacking players: Groß (4 goals, 4 assists, 30 corners) and De Cuyper, a left winger FPL prices as a £5.5m defender (2 goals, 3 assists). Verbruggen is fine against weak attacks.",
+      "gw": "Home to Newcastle, who open up (1.65 conceded) and chase when behind. Good for De Cuyper and Groß; a clean sheet is a 50-50."
+    },
+    "LIV": {
+      "verdict": "Iraola's Liverpool are scoring freely again (4-0 against United, 1.78 xG a match) and chase hard when behind.",
+      "fpl": "Their attackers return in chase games. Their defenders do fine when protecting a lead (0.83 conceded per 90 when ahead).",
+      "gw": "Away at Everton's deep block: harder than the 4-0 suggests, but Wirtz (2 goals, 6 assists, penalties) is the creator."
+    },
+    "MUN": {
+      "verdict": "Pochettino has one match in charge (0-4 at Liverpool). Under Carrick they opened up (1.99 conceded a match).",
+      "fpl": "Not for us.",
+      "gw": "Home to Brentford: new-manager week, so read it carefully; the defence they inherit is among the worst."
+    },
+    "EVE": {
+      "verdict": "Moyes's Everton are organised and settled, but they sit on leads and go flat behind. A low ceiling.",
+      "fpl": "Barry carries the attack. Little else.",
+      "gw": "Home to Liverpool after a 0-4 at Brentford. Everton sit deep and defend the box, but go flat behind."
+    },
+    "BRE": {
+      "verdict": "Andrews' Brentford win it back, keep attacking when ahead (4-0 against Everton) and rotate a little.",
+      "fpl": "Attackers in home games. The defence leaks shots.",
+      "gw": "Away at a United side conceding 1.99 a match under a manager in his second game. Good for Brentford attackers."
+    }
+  },
+  "players": {
+    "4": "In for Davis. Best defender in the best defence; five-week value (MCI, BRE, TOT, BOU, MUN), not one week.",
+    "15": "In for Palmer: plays 90, took 13 corners in the last 3 matches, takes penalties, for the best side. Frees the money for Gabriel.",
+    "115": "In for Vuskovic. FPL lists him as a defender but he plays left wing: 2 goals, 4 assists, Brighton's corners. Home to an open Newcastle.",
+    "166": "Captain. Away at Ipswich, the most open defence in the league; he takes Villa's penalties.",
+    "346": "Vice. Home to Coventry's deep block; on penalties and headers, 6 shots and 1.34 xG at Chelsea.",
+    "411": "Not the armband this week: away at Arsenal. Keep him; LEE, BRE, CHE, HUL follow.",
+    "366": "14 points last week. Away at Everton's block, but he creates everything for Liverpool.",
+    "124": "Home to Newcastle; Brighton's set pieces and 4 goals, 6 assists.",
+    "68": "Away at Fulham; nailed, 5 goals, on Bournemouth's penalties.",
+    "330": "Home to Coventry, a strong Leeds clean-sheet shout.",
+    "109": "Home to Newcastle; a 50-50 clean sheet.",
+    "40": "Bench: Chelsea away at Forest's block.",
+    "566": "Bench this week only (Fulham away); back in from GW14.",
+    "8": "Bench: City at home is the hardest Arsenal match; Saliba's return could rotate the back line.",
+    "496": "Second keeper."
+  }
+}
