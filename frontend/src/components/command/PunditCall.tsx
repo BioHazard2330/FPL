@@ -4,6 +4,12 @@ import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { Info } from '@/components/ui/Info'
 import { getJson } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { LABEL_STYLE, LensBars, type Verdict } from '@/components/verdict/VerdictCard'
+
+function useFullVerdicts(): Map<number, Verdict> | null {
+  const st = useFetch(() => getJson<{ players: Verdict[] }>('/api/verdicts'), [])
+  return st.status === 'ready' ? new Map(st.data.players.map((p) => [p.player_id, p])) : null
+}
 
 /** THE PUNDIT'S CALL: Claude's reasoned decision for the gameweek, made in a session from the week's dossier. A separate voice
  * beside the plan of record, scored on the real points in the ledger (`models/pundit_call.py`). */
@@ -57,6 +63,7 @@ function Suggested({ items }: { items: NonNullable<Payload['suggested']> }) {
 
 export function PunditCall() {
   const state = useFetch(() => getJson<Payload>('/api/punditcall'), [])
+  const vmap = useFullVerdicts()
   if (state.status !== 'ready' || state.data.status !== 'ok') return null
   const d = state.data
   const b = d.ledger
@@ -77,26 +84,44 @@ export function PunditCall() {
         )}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {(d.moves ?? []).map((m) => (
-          <Link key={m.into.player_id} to={`/player/${m.into.player_id}`} className="flex gap-3 border-2 border-paper/30 bg-paper p-3 text-ink hover:border-spot">
-            <PlayerPhoto code={m.into.photo_code} teamCode={m.into.team_code} className="h-16 w-12" />
-            <div className="min-w-0">
-              <div className="truncate font-display text-xl font-black uppercase leading-none">{m.into.name}</div>
-              <div className="truncate text-[12px] text-text-faint line-through">{m.out.name}</div>
-              <p className="mt-1 text-[13.5px] leading-snug">{m.why}</p>
-            </div>
-          </Link>
-        ))}
-        {d.captain && (
-          <Link to={`/player/${d.captain.player_id}`} className="flex gap-3 border-2 border-spot bg-paper p-3 text-ink">
-            <PlayerPhoto code={d.captain.photo_code} teamCode={d.captain.team_code} className="h-16 w-12" />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 truncate font-display text-xl font-black uppercase leading-none">{d.captain.name}<span className="bg-spot px-1 text-[13px] text-ink">C</span></div>
-              <div className="text-[12px] text-text-faint">vice {d.vice?.name}</div>
-              <p className="mt-1 text-[13.5px] leading-snug">{d.captain.why}</p>
-            </div>
-          </Link>
-        )}
+        {(d.moves ?? []).map((m) => {
+          const vi = vmap?.get(m.into.player_id), vo = vmap?.get(m.out.player_id)
+          return (
+            <Link key={m.into.player_id} to={`/player/${m.into.player_id}`} title={m.why} className="group flex flex-col border-2 border-paper/30 bg-paper p-3 text-ink hover:border-spot">
+              <div className="flex items-center gap-3">
+                <PlayerPhoto code={m.into.photo_code} teamCode={m.into.team_code} className="h-16 w-12" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-display text-xl font-black uppercase leading-none">{m.into.name}</div>
+                  <div className="truncate text-[12px] text-text-faint">for <span className="line-through">{m.out.name}</span></div>
+                </div>
+                <div className="flex items-center gap-1 font-display font-black tabular">
+                  {vo?.score != null && <span className={`px-1.5 py-0.5 text-[15px] opacity-60 ${LABEL_STYLE[vo.label] ?? ''}`}>{vo.score}</span>}
+                  <span className="text-text-faint">→</span>
+                  {vi?.score != null && <span className={`px-1.5 py-0.5 text-[20px] ${LABEL_STYLE[vi.label] ?? ''}`}>{vi.score}</span>}
+                </div>
+              </div>
+              {vi && <div className="mt-2"><LensBars lenses={vi.lenses} compact /></div>}
+              <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug text-text-muted group-hover:line-clamp-none">{m.why}</p>
+            </Link>
+          )
+        })}
+        {d.captain && (() => {
+          const vc = vmap?.get(d.captain.player_id)
+          return (
+            <Link to={`/player/${d.captain.player_id}`} title={d.captain.why} className="group flex flex-col border-2 border-spot bg-paper p-3 text-ink">
+              <div className="flex items-center gap-3">
+                <PlayerPhoto code={d.captain.photo_code} teamCode={d.captain.team_code} className="h-16 w-12" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 truncate font-display text-xl font-black uppercase leading-none">{d.captain.name}<span className="bg-spot px-1 text-[13px] text-ink">C</span></div>
+                  <div className="text-[12px] text-text-faint">vice {d.vice?.name}</div>
+                </div>
+                {vc?.score != null && <span className={`px-1.5 py-0.5 font-display text-[20px] font-black tabular ${LABEL_STYLE[vc.label] ?? ''}`}>{vc.score}</span>}
+              </div>
+              {vc && <div className="mt-2"><LensBars lenses={vc.lenses} compact /></div>}
+              <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug text-text-muted group-hover:line-clamp-none">{d.captain.why}</p>
+            </Link>
+          )
+        })()}
       </div>
       {(d.hold ?? []).length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13.5px]">

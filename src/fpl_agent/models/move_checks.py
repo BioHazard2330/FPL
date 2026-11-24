@@ -13,13 +13,14 @@ before, and De Cuyper for a winger's role that ends when Mitoma returns):
   with a return date inside three weeks or was available again in the last week - the regular whose place he may be
   keeping (amber). Positions are FPL's plus the grid slot where one exists, so it is a prompt to check, not a verdict.
 
-Red flags are a judgement gate, not a fitted size: `RED_PENALTY` in the plan's objective, the same size as the eye gate,
-and held-back moves are scored with the eye gate's ledger."""
+Red flags are a judgement gate, not a fitted size, and since 2026-11-24 they block a purchase outright: at 1.5 (the eye
+gate's size) the plan bought De Cuyper again at +3.3 over five weeks, a move the manager had already turned down for the
+very reason his red flag gives (his role is Mitoma's, back 2 Dec). Held-back moves are scored with the eye gate's ledger."""
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-RED_PENALTY = 1.5
+RED_PENALTY = 50.0
 _MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 
