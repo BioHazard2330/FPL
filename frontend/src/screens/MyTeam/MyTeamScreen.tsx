@@ -13,6 +13,7 @@ import { pressureInk, runPressure } from '@/lib/fdr'
 import { PitchMarkings } from '@/components/football/PitchMarkings'
 import type { ActionSquadPlayer, FixtureContext, SquadPlayer } from '@/lib/types'
 import { plain } from '@/lib/text'
+import { SquadVerdict } from '@/components/verdict/SquadVerdict'
 
 const CHIP_DISPLAY_NAME: Record<string, string> = {
   wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
@@ -366,6 +367,7 @@ export function MyTeamScreen() {
   return (
     <div className="data-in pb-16">
       <Masthead />
+      <div className="px-8 pt-6"><SquadVerdict /></div>
 
       <div className="grid grid-cols-2 gap-x-8 gap-y-5 px-8 py-6 md:grid-cols-5">
         <div>

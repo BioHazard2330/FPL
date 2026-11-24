@@ -1,3 +1,6 @@
+import { LABEL_STYLE } from '@/components/verdict/VerdictCard'
+import { useFetch } from '@/lib/useFetch'
+import { getJson } from '@/lib/api'
 import { Link } from 'react-router-dom'
 import { Face } from '@/components/ui/Face'
 import { clubColors } from '@/lib/clubs'
@@ -289,6 +292,27 @@ function MatchupBoard({ m, board, startEvent, horizon }: { m: WeekPlanMove; boar
   )
 }
 
+function VerdictPair({ outId, inId }: { outId: number; inId: number }) {
+  const state = useFetch(() => getJson<{ players: { player_id: number; name: string; score: number | null; label: string; notes: string[] }[] }>('/api/verdicts'), [])
+  if (state.status !== 'ready') return null
+  const by = new Map(state.data.players.map((p) => [p.player_id, p]))
+  const o = by.get(outId), i = by.get(inId)
+  if (!o && !i) return null
+  const chip = (v?: { name: string; score: number | null; label: string; notes: string[] }) => v && (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`px-1.5 font-display text-[12px] font-black uppercase ${LABEL_STYLE[v.label] ?? ''}`}>{v.label} {v.score}</span>
+      <span className="font-semibold text-text">{v.name}</span>
+      {v.notes[0] && <span className="text-text-muted">· {v.notes[0]}</span>}
+    </span>
+  )
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-divider pt-3 text-[13px]">
+      <span className="text-[11px] font-black uppercase tracking-widest text-text-faint">Verdict</span>
+      {chip(o)}<span className="text-text-faint">→</span>{chip(i)}
+    </div>
+  )
+}
+
 export function MoveCard({ m, horizon, fixtures, startEvent, board }: { m: WeekPlanMove; horizon: number; fixtures?: FixtureContext; startEvent: number; board?: MatchupBoardData }) {
   return (
     <div className="rounded-lg border border-divider bg-void/40 p-5">
@@ -305,6 +329,7 @@ export function MoveCard({ m, horizon, fixtures, startEvent, board }: { m: WeekP
           ))}
         </div>
       )}
+      <VerdictPair outId={m.out.player_id} inId={m.into.player_id} />
       <GwCompare m={m} fixtures={fixtures} startEvent={startEvent} />
       <MatchupBoard m={m} board={board} startEvent={startEvent} horizon={horizon} />
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-divider pt-3 text-[13px] text-text-muted">
