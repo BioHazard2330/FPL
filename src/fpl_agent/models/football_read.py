@@ -211,8 +211,14 @@ def _minutes(conn: sqlite3.Connection, player_id: int) -> list[dict]:
     if role:
         parts.append({"STARTING": "started his last match", "BENCH": "on the bench last match",
                       "NOT_IN_SQUAD": "left out of the last matchday squad"}.get(role[0], role[0].lower()))
-        if role[0] == "NOT_IN_SQUAD":
+        if role[0] in ("NOT_IN_SQUAD", "BENCH"):
             lean = -1
+    from fpl_agent.models.track_record import start_shares
+
+    share = start_shares(conn).get(player_id)
+    if share is not None and share < 0.8:
+        parts.append(f"started {round(share * 5)} of his last five gameweeks (players under four of five ran 0.2-0.8 a week below the projection)")
+        lean = -1
     from fpl_agent.models.news_warning import fresh_warnings
 
     warning = fresh_warnings(conn, [player_id]).get(player_id)

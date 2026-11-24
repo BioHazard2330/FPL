@@ -78,11 +78,14 @@ export function GodsEye({ playerId }: { playerId: number }) {
         <div className="font-display text-xl font-black uppercase text-text">How he played</div>
         <div className="mt-2 divide-y divide-ink/15 border-y-2 border-ink">
           {d.reads.map((r) => (
-            <div key={r.match_id} className="grid grid-cols-[3.5rem_9rem_minmax(0,1fr)_3rem] items-baseline gap-3 py-1.5 text-[13.5px]">
-              <Link to={`/match/${r.match_id}`} className="font-display font-black uppercase text-text hover:underline">{r.opponent}</Link>
-              <span className="text-text/60">{r.where}</span>
-              <span className="font-semibold text-text">{r.read}</span>
-              <span className="tabular text-right font-black text-text">{r.rating?.toFixed(1) ?? ''}</span>
+            <div key={r.match_id} className="grid grid-cols-[3.5rem_3.2rem_minmax(0,1fr)_7rem] items-center gap-3 py-1.5 text-[13.5px]">
+              <Link to={`/match/${r.match_id}`} className="font-display text-lg font-black uppercase text-text hover:underline">{r.opponent}</Link>
+              <span title={r.where} className={`py-0.5 text-center text-[10.5px] font-black uppercase ${/^start/i.test(r.where) ? 'bg-ink text-paper' : 'bg-alert-red text-alert-red-ink'}`}>{/^start/i.test(r.where) ? 'Start' : 'Sub'}</span>
+              <span className="min-w-0 truncate font-semibold text-text" title={`${r.where} · ${r.read}`}>{r.read}</span>
+              <span className="flex items-center gap-2">
+                <span className="h-2.5 flex-1 bg-ink/10"><span className={`block h-full ${(r.rating ?? 0) >= 7.5 ? 'bg-pitch-green' : (r.rating ?? 0) >= 6.6 ? 'bg-broadcast-blue' : 'bg-alert-red'}`} style={{ width: `${Math.max(0, Math.min(100, (((r.rating ?? 5) - 5) / 4) * 100))}%` }} /></span>
+                <span className="tabular w-7 text-right font-black text-text">{r.rating?.toFixed(1) ?? ''}</span>
+              </span>
             </div>
           ))}
         </div>

@@ -39,20 +39,56 @@ function Row({ l, dense }: { l: FootballReadLine; dense?: boolean }) {
   )
 }
 
+function Tile({ l }: { l: FootballReadLine }) {
+  const w = WEIGHT[l.weight]
+  const edge = l.lean > 0 ? 'bg-pitch-green' : l.lean < 0 ? 'bg-alert-red' : 'bg-text-faint/40'
+  return (
+    <li className="group relative flex min-w-0 flex-col border-2 border-ink bg-paper" title={l.text}>
+      <span className={`h-1.5 ${edge}`} />
+      <div className="flex items-center justify-between gap-2 px-3 pt-2">
+        <span className="flex min-w-0 items-center gap-1.5 font-display text-[15px] font-black uppercase leading-none text-text">
+          <Lean lean={l.lean} /><span className="truncate">{l.topic}</span>
+        </span>
+        <span className={`shrink-0 border px-1.5 text-[10px] font-black uppercase ${w.tone}`} title={w.hint}>{w.label}</span>
+      </div>
+      <div className="px-3 pb-2.5 pt-1"><p className="line-clamp-3 text-[12.5px] leading-snug text-text-muted group-hover:line-clamp-none">{l.text}</p></div>
+    </li>
+  )
+}
+
 export function FootballRead({ r }: { r: FootballReadData }) {
+  const forHim = r.lines.filter((l) => l.lean > 0).length
+  const against = r.lines.filter((l) => l.lean < 0).length
+  const held = r.lines.filter((l) => l.weight === 'carries')
+  const heldFor = held.filter((l) => l.lean > 0).length, heldAgainst = held.filter((l) => l.lean < 0).length
   return (
     <div className="border-b border-divider px-10 py-8">
-      <div className="mb-1 flex flex-wrap items-baseline gap-3">
-        <h2 className="font-display text-2xl font-bold text-text">The football read</h2>
-        <span className="text-[13px] text-text-faint">what the stored evidence says about him, and which of it has held up from match to match</span>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="font-display text-2xl font-bold text-text">The football read</h2>
+          <p className={`voice mt-1 text-[18px] ${VERDICT_TONE[r.verdict.label]}`}>{r.verdict.text}</p>
+        </div>
+        <div className="flex border-2 border-ink text-center">
+          <div className="bg-ink px-4 py-1.5 text-paper">
+            <div className="font-display text-[11px] font-black uppercase tracking-[0.14em] text-paper/60">Read</div>
+            <div className={`font-display text-xl font-black uppercase leading-none ${r.verdict.label === 'backs him' ? 'text-pitch-green' : r.verdict.label === 'against him' ? 'text-alert-red' : 'text-broadcast-gold'}`}>{r.verdict.label}</div>
+          </div>
+          <div className="border-l-2 border-ink px-4 py-1.5">
+            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-text-faint">For / against</div>
+            <div className="tabular font-display text-xl font-black leading-none"><span className="text-pitch-green">{forHim}</span> <span className="text-text-faint">/</span> <span className="text-alert-red">{against}</span></div>
+          </div>
+          <div className="border-l-2 border-ink px-4 py-1.5" title="Only lines measured to carry into the next match">
+            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-text-faint">That hold up</div>
+            <div className="tabular font-display text-xl font-black leading-none"><span className="text-pitch-green">{heldFor}</span> <span className="text-text-faint">/</span> <span className="text-alert-red">{heldAgainst}</span></div>
+          </div>
+        </div>
       </div>
-      <p className={`mb-4 mt-3 text-[16px] font-semibold ${VERDICT_TONE[r.verdict.label]}`}>{r.verdict.text}</p>
-      <ul className="grid gap-x-10 divide-y divide-divider/60 md:grid-cols-2 md:divide-y-0">
-        {r.lines.map((l) => <Row key={l.topic} l={l} />)}
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {r.lines.map((l) => <Tile key={l.topic} l={l} />)}
       </ul>
       <Note>
         A read beside the projection, not part of it. "Holds up": chance volume, minutes and fixtures, measured to carry into the next match.
-        "Doesn't carry": finishing above or below the chances and hot or cold spells, measured not to.
+        "Doesn't carry": finishing above or below the chances and hot or cold spells, measured not to. Hover a tile for its full line.
       </Note>
     </div>
   )
