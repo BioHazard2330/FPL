@@ -1776,6 +1776,8 @@ export interface ViewPlanPayload {
 export interface WeekPlanMove {
   out: WeekPlanPlayer
   into: WeekPlanPlayer
+  /** Pre-flight checks on the player bought (`models/move_checks.py`). */
+  checks?: { check: string; level: 'red' | 'amber'; text: string }[]
   confidence?: MoveConfidence | null
   gain: number
   cost_tenths: number

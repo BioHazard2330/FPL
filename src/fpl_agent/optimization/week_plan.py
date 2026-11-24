@@ -395,6 +395,15 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
             buy[p] = EYE_PENALTY
     except Exception:
         _logger.exception("eye journal gate failed - the read's gate stands")
+    # Pre-flight checks (models/move_checks.py): a candidate benched last match, flagged, or off the start feed is held
+    # back the same way as one the read is against.
+    try:
+        from fpl_agent.models.move_checks import buy_gates
+
+        for p, pen in buy_gates(conn, [c.player_id for c in pool], squad).items():
+            buy[p] = max(buy.get(p, 0.0), pen)
+    except Exception:
+        _logger.exception("pre-flight checks failed - the read's gate stands")
     return sell, buy, labels
 
 

@@ -151,6 +151,14 @@ def dossier(conn: sqlite3.Connection) -> str:
             extra += f" | crowd net {crowd[pid][0] / 1000:+.0f}k (top {crowd[pid][1]:.0%})" if crowd[pid][0] > 0 else f" | crowd net {crowd[pid][0] / 1000:+.0f}k"
         if pid in eye:
             extra += f" | your eye {eye[pid]['rating']:+d} {eye[pid].get('note') or ''}"
+        try:
+            from fpl_agent.models.move_checks import check_player
+
+            fl = check_player(conn, pid)
+            if fl:
+                extra += " | CHECKS " + "; ".join(f"{f['level'].upper()} {f['text']}" for f in fl)
+        except Exception:
+            pass
         return "- " + _line(p, form.get(pid), xp.get(pid, 0.0), fixtures.get(p["team_id"], []), eo.get(pid, 0.0), _read(conn, football_read, pid, event), starts.get(pid), takers.get(pid, ""), prior.get(pid), box.get(pid)) + extra
     lines += [row(p) for p in sorted(squad, key=lambda q: (_POSITIONS.index(players[q]["position"]), -xp.get(q, 0)))]
     lines += ["", "## Candidates"]

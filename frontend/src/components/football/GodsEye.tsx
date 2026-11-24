@@ -7,7 +7,7 @@ import { useFetch } from '@/lib/useFetch'
 interface Stat { per90: number; pct: number; peers: number }
 interface Payload {
   status: string; usual_role: string; role_change: { from: string; to: string } | null; judgement: string | null
-  strip: { match_id: number; opponent: string; slot: string | null; minutes: number; rating: number | null; goals: number; assists: number }[]
+  strip: { match_id: number; opponent: string; started?: boolean; slot: string | null; minutes: number; rating: number | null; goals: number; assists: number }[]
   profile: Record<string, Stat>; defcon: { hits: number; matches: number } | null
   duties: { corners: number; corner_share: number | null; penalties: number; free_kicks: number }
   manager: { first_off: { times: number; usual_minute: number } | null; typical_off: number | null; security: string | null; starts: string | null
@@ -40,7 +40,7 @@ export function GodsEye({ playerId }: { playerId: number }) {
         {d.strip.map((s) => (
           <Link key={s.match_id} to={`/match/${s.match_id}`} className="w-16 shrink-0 border-2 border-ink bg-paper text-center hover:bg-spot">
             <div className="bg-ink font-display text-[11px] font-black uppercase text-paper">{s.opponent}</div>
-            <div className="font-display text-lg font-black text-text">{s.slot ? SLOT[s.slot] ?? s.slot : '-'}</div>
+            <div className={`font-display text-lg font-black ${s.started === false ? 'text-alert-red' : 'text-text'}`}>{s.started === false ? 'SUB' : s.slot ? SLOT[s.slot] ?? s.slot : '-'}</div>
             <div className="tabular text-[11px] text-text/70">{s.minutes}&apos; · {s.rating?.toFixed(1) ?? '-'}</div>
             <div className="h-4 text-[10.5px] font-black uppercase text-pitch-green">{s.goals ? `${s.goals}G ` : ''}{s.assists ? `${s.assists}A` : ''}</div>
           </Link>

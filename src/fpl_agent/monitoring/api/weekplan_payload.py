@@ -345,6 +345,13 @@ def build_week_plan_payload(ctx: DashboardContext) -> dict:
         _attach_rank_targets(conn, payload)
         _attach_analyst(conn, payload)
         _attach_form(conn, payload, list(detail.get("squad_ids", [])))
+        try:
+            from fpl_agent.models.move_checks import check_player
+
+            for m in payload.get("moves") or []:
+                m["checks"] = check_player(conn, m["into"]["player_id"])
+        except Exception:
+            _logger.exception("pre-flight checks on the plan's moves failed")
         _attach_pundit(conn, payload, detail)
         return attach_photo_codes(conn, payload)
     finally:

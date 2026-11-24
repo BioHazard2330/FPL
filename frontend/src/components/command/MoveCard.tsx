@@ -296,6 +296,15 @@ export function MoveCard({ m, horizon, fixtures, startEvent, board }: { m: WeekP
         <Side p={m.out} side="out" fixtures={fixtures} />
         <Side p={m.into} side="into" fixtures={fixtures} />
       </div>
+      {(m.checks ?? []).length > 0 && (
+        <div className="mt-4 space-y-1">
+          {m.checks!.map((c) => (
+            <div key={c.check + c.text} className={`border-2 px-2 py-1 text-[13px] font-semibold ${c.level === 'red' ? 'border-alert-red bg-alert-red/10 text-alert-red' : 'border-broadcast-gold bg-broadcast-gold/10 text-text'}`}>
+              <b className="mr-1 font-display uppercase">{c.level === 'red' ? 'Red flag' : 'Check'}:</b>{m.into.name} {c.text}
+            </div>
+          ))}
+        </div>
+      )}
       <GwCompare m={m} fixtures={fixtures} startEvent={startEvent} />
       <MatchupBoard m={m} board={board} startEvent={startEvent} horizon={horizon} />
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-divider pt-3 text-[13px] text-text-muted">

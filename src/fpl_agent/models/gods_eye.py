@@ -70,9 +70,12 @@ def player_eye(conn: sqlite3.Connection, pid: int) -> dict | None:
     usual90 = {k: sum(float(r["stats"].get(k) or 0) for r in rows) * 90 / mins for k in READ} if mins else {}
 
     strip = []
-    for r in [r for r in rows if r["started"]][-10:]:
+    # Every league match he was in the squad for, not only his starts: a strip of starts read "started his last five" for
+    # a player benched the match before (McGinn, 2026-11-24).
+    for r in rows[-10:]:
         s = r["stats"]
-        strip.append({"match_id": r["match_id"], "opponent": teams.get(opp.get(r["match_id"])), "slot": roles._slot(r["role"], r["y"]),
+        strip.append({"match_id": r["match_id"], "opponent": teams.get(opp.get(r["match_id"])), "started": bool(r["started"]),
+                      "slot": roles._slot(r["role"], r["y"]) if r["started"] else None,
                       "minutes": s.get("minutes_played"), "rating": s.get("rating_title"), "goals": s.get("goals", 0), "assists": s.get("assists", 0)})
 
     reads = []
