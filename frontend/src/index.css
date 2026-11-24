@@ -858,3 +858,63 @@ main { view-transition-name: page; }
 @keyframes pbp-goal { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes pbp-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .pbp-row, .pbp-goal, .pbp-live { animation: none; } }
+
+/* ===================================================================
+   PROGRAMME 2.0 (2026-11-24, the user: "massive upgrades" to the look)
+   One pass over the frame every screen shares, so each screen lifts at once:
+   bands with a lit spot edge and real depth, tables as broadcast tables,
+   calmer body copy, and buttons that answer the pointer.
+   =================================================================== */
+.screen-frame > * > *:not(.bare) {
+  box-shadow: 6px 6px 0 0 var(--ink), 0 22px 44px -26px color-mix(in srgb, var(--ink) 55%, transparent);
+  background-image: linear-gradient(90deg, var(--spot) 0, var(--spot) 72px, var(--ink) 72px, var(--ink) 100%);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  background-position: top left;
+}
+.screen-frame > * > .no-tab,
+.screen-frame > * > details {
+  background-image: none;
+}
+.screen-frame > * > *:not(.bare):hover {
+  box-shadow: 7px 7px 0 0 var(--ink), 0 26px 50px -26px color-mix(in srgb, var(--ink) 60%, transparent);
+}
+
+/* Tables: an ink header in tracked capitals, zebra rows, a lit row under the pointer, figures in tabular digits. */
+.screen-frame table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.screen-frame table thead th {
+  font-family: var(--font-display);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+}
+.screen-frame table tbody tr:nth-child(even) { background-color: color-mix(in srgb, var(--ink) 3.5%, transparent); }
+.screen-frame table tbody tr { transition: background-color 120ms ease; }
+.screen-frame table tbody tr:hover { background-color: color-mix(in srgb, var(--spot) 9%, transparent); }
+
+/* Body copy: a touch more air and contrast for anything that reads as a sentence. */
+.screen-frame p { line-height: 1.55; }
+.screen-frame [class~="text-[12px]"]:not(.font-black):not(.font-display) { font-size: 12.5px; }
+
+/* Buttons and links that act: a press, not just a colour change. */
+.screen-frame button:not(:disabled) { transition: transform 120ms ease, background-color 120ms ease, color 120ms ease; }
+.screen-frame button:not(:disabled):active { transform: translate(1px, 1px); }
+
+/* Section chyrons: a spot underline that runs under the title, the lower third's rule. */
+.screen-frame h2.font-display {
+  background-image: linear-gradient(var(--spot), var(--spot));
+  background-size: 2.2em 3px;
+  background-repeat: no-repeat;
+  background-position: 0.6em 100%;
+  padding-bottom: 0.18em;
+}
+
+/* Page entry: bands rise in one after another. */
+@keyframes band-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.screen-frame > * > * { animation: band-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.screen-frame > * > *:nth-child(2) { animation-delay: 40ms; }
+.screen-frame > * > *:nth-child(3) { animation-delay: 80ms; }
+.screen-frame > * > *:nth-child(4) { animation-delay: 120ms; }
+.screen-frame > * > *:nth-child(n+5) { animation-delay: 160ms; }
+@media (prefers-reduced-motion: reduce) { .screen-frame > * > * { animation: none; } }

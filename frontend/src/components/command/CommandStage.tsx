@@ -214,11 +214,14 @@ function Ticker({ block, fixtures, event }: { block: ActionSquadBlock; fixtures?
 }
 
 export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
-  const block = plan.action_squad
+  // The pundit's eleven when his call for this gameweek is on file (it leads Command); the model's otherwise.
+  const pundit = useFetch(() => getJson<{ status: string; event: number; squad_block?: WeekPlanPayload['action_squad'] }>('/api/punditcall'), [], 300000)
+  const pBlock = pundit.status === 'ready' && pundit.data.status === 'ok' && pundit.data.event === plan.event ? pundit.data.squad_block : null
+  const block = pBlock ?? plan.action_squad
   const [floodlit, setFloodlit] = useState(false)
   if (!block || block.starting.length === 0) return null
   const moveIn: Record<number, string> = {}
-  for (const m of plan.moves ?? []) moveIn[m.out.player_id] = m.into.name
+  if (!pBlock) for (const m of plan.moves ?? []) moveIn[m.out.player_id] = m.into.name
   const placed = spots(block.starting)
   const total = block.starting.reduce((s, p) => s + p.median, 0)
   const formation = ['DEF', 'MID', 'FWD'].map((k) => block.starting.filter((p) => p.position === k).length).join('-')
@@ -239,7 +242,7 @@ export function CommandStage({ plan }: { plan: WeekPlanPayload }) {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_25rem]">
         <div className="relative overflow-hidden bg-panel">
           <div className={`absolute left-6 top-5 z-10 ${floodlit ? '[&_*]:!text-paper' : ''}`}>
-            <h2 className="font-display text-xl font-semibold text-text">{plan.moves?.length ? `The model's GW${plan.event} eleven` : `Your GW${plan.event} eleven`}</h2>
+            <h2 className="font-display text-xl font-semibold text-text">{pBlock ? `The pundit's GW${plan.event} eleven` : `Your GW${plan.event} eleven`}</h2>
             <div className="mt-1 text-[13px] text-text-muted">
               {formation} · <span className="font-semibold text-text">{total.toFixed(1)}</span> xP from the eleven
               {(plan.moves ?? []).length > 0 ? ' · after the moves' : ''}
