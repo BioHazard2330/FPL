@@ -1,3 +1,4 @@
+import { VerdictTag } from '@/components/verdict/VerdictTag'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
@@ -30,7 +31,7 @@ function MarketCard({ p, picked, onPick }: { p: ExplorerPlayer; picked: boolean;
     >
       <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className="h-11 w-9" />
       <span className="min-w-0">
-        <span className="block truncate font-display text-[15px] font-black uppercase leading-tight text-text">{p.name}</span>
+        <span className="block truncate font-display text-[15px] font-black uppercase leading-tight text-text">{p.name}<VerdictTag id={p.player_id} /></span>
         <span className="flex items-center gap-1 text-[11px] text-text-faint">
           {p.team_short} · £{p.price?.toFixed(1)}m
           {p.fixtures.slice(0, 3).map((f, i) => (

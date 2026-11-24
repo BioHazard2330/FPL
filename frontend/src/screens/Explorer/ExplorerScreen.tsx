@@ -1,3 +1,4 @@
+import { VerdictTag } from '@/components/verdict/VerdictTag'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
@@ -151,7 +152,7 @@ export function ExplorerScreen() {
               <PlayerPhoto code={p.photo_code} teamCode={p.team_code} isGkp={p.position === 'GKP'} className="h-9 w-7 shrink-0" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <Link to={`/player/${p.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">{p.name}</Link>
+                  <Link to={`/player/${p.player_id}`} className="truncate font-bold text-text hover:text-pitch-green">{p.name}</Link><VerdictTag id={p.player_id} />
                   {p.mine && <span className="rounded bg-pitch-green px-1 text-[12px] font-bold leading-4 text-pitch-green-ink">yours</span>}
                   {statusChip(p)}
                 </div>

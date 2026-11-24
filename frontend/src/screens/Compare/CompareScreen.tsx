@@ -1,3 +1,5 @@
+import { getJson } from '@/lib/api'
+import { VerdictCard, type Verdict } from '@/components/verdict/VerdictCard'
 import { Pizza } from '@/components/football/Pizza'
 import { Note } from '@/components/ui/Info'
 import { useMemo, useState } from 'react'
@@ -392,6 +394,25 @@ function CraftCompare({ a, b }: { a: ComparePlayer; b: ComparePlayer }) {
   )
 }
 
+/** Both players' verdicts side by side: every lens, the last six weeks and where model and returns disagree. */
+function VerdictCompare({ a, b }: { a: number; b: number }) {
+  const va = useFetch(() => getJson<{ player: Verdict | null }>(`/api/verdicts?player=${a}`), [a])
+  const vb = useFetch(() => getJson<{ player: Verdict | null }>(`/api/verdicts?player=${b}`), [b])
+  const pa = va.status === 'ready' ? va.data.player : null
+  const pb = vb.status === 'ready' ? vb.data.player : null
+  if (!pa || !pb) return null
+  const lead = (pa.score ?? 0) === (pb.score ?? 0) ? null : (pa.score ?? 0) > (pb.score ?? 0) ? pa : pb
+  return (
+    <section className="px-10 py-8">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
+        <h2 className="font-display text-text">The verdict</h2>
+        {lead && <span className="text-[14px] text-text-muted"><b className="text-text">{lead.name}</b> leads by {Math.abs((pa.score ?? 0) - (pb.score ?? 0))} on the six lenses</span>}
+      </div>
+      <div className="grid gap-5 md:grid-cols-2"><VerdictCard v={pa} /><VerdictCard v={pb} /></div>
+    </section>
+  )
+}
+
 export function CompareScreen() {
   const [params, setParams] = useSearchParams()
   const a = Number(params.get('a')) || null
@@ -446,6 +467,7 @@ export function CompareScreen() {
           <section className="border-b border-divider px-10 py-7">
             {compare.data.rows.map((r) => <Row key={r.key} r={r} />)}
           </section>
+          <VerdictCompare a={compare.data.a.player_id} b={compare.data.b.player_id} />
           <Components a={compare.data.a} b={compare.data.b} />
           <ReadCompare a={compare.data.a} b={compare.data.b} />
           <CraftCompare a={compare.data.a} b={compare.data.b} />

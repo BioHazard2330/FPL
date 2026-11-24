@@ -1,3 +1,4 @@
+import { VerdictTag } from '@/components/verdict/VerdictTag'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Masthead } from '@/components/shell/Masthead'
@@ -485,6 +486,7 @@ export function ScoutScreen() {
                           >
                             {r.name}
                           </Link>
+                          <VerdictTag id={r.player_id} />
                           <span className="font-normal text-text-faint">{r.team_short}</span>
                           {r.is_mine && <span className="rounded bg-broadcast-gold/20 px-1.5 py-0.5 text-[12px] font-semibold text-broadcast-gold">yours</span>}
                         </span>

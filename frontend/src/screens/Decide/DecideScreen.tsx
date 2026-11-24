@@ -1,3 +1,4 @@
+import { VerdictTag } from '@/components/verdict/VerdictTag'
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Info } from '@/components/ui/Info'
@@ -138,8 +139,8 @@ function OptionCard({ o, chosen, event, onDone }: { o: Option; chosen: boolean; 
           <div key={p.into.player_id} className="mt-2 flex items-center gap-2">
             <PlayerPhoto code={p.into.photo_code} teamCode={p.into.team_code} className="h-10 w-8" />
             <div className="min-w-0">
-              <div className="truncate font-display text-[16px] font-black uppercase leading-tight text-text">{p.into.name}</div>
-              <div className="truncate text-[12px] text-text-faint line-through">{p.out.name}</div>
+              <div className="truncate font-display text-[16px] font-black uppercase leading-tight text-text">{p.into.name} <VerdictTag id={p.into.player_id} /></div>
+              <div className="truncate text-[12px] text-text-faint"><span className="line-through">{p.out.name}</span> <VerdictTag id={p.out.player_id} /></div>
             </div>
           </div>
         ))}
@@ -235,7 +236,7 @@ function PersonSection({ title, kind, card, d, onDone, locked, tip, doubled }: {
         {card.options.map((o) => (
           <div key={o.player_id} className={`flex min-w-0 flex-1 flex-col items-center gap-1 border-2 border-ink p-2 ${o.player_id === card.call ? 'bg-paper shadow-[4px_4px_0_var(--spot)]' : 'bg-paper/60'}`}>
             <PlayerPhoto code={o.photo_code} teamCode={o.team_code} className="h-16 w-12" />
-            <div className="w-full truncate text-center font-display text-[15px] font-black uppercase text-text">{o.name}</div>
+            <div className="w-full truncate text-center font-display text-[15px] font-black uppercase text-text">{o.name} <VerdictTag id={o.player_id} /></div>
             <div className="tabular font-display text-xl font-black text-text">{((o.xp ?? 0) * (doubled ? 2 : 1)).toFixed(1)}</div>
             {o.player_id !== card.call && <LockButton event={d.event} kind={kind} blob={o.lock} onDone={onDone} />}
           </div>
