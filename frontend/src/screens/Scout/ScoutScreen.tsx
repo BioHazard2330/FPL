@@ -313,7 +313,11 @@ export function ScoutScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead right={<>{filtered.length} of {rows.length} players</>} />
+      <Masthead right={<>{filtered.length} of {rows.length} players</>} stats={opp ? [
+        { label: 'Players in view', value: filtered.length, sub: `of ${rows.length}` },
+        { label: 'Fixture swings', value: opp.fixture_swing.length, tone: 'spot' as const, sub: 'runs turning in their favour' },
+        { label: 'Best buys flagged', value: oppCategories.reduce((n: number, c: { rows?: unknown[] }) => n + (c.rows?.length ?? 0), 0) },
+      ] : undefined} />
 
       {opp && (oppCategories.length > 0 || opp.fixture_swing.length > 0) && (
         <div className="grid grid-cols-1 gap-x-10 gap-y-8 px-8 py-6 lg:grid-cols-2">

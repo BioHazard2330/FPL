@@ -109,6 +109,17 @@ export function ExplorerScreen() {
         edition="Explorer"
         title="Every player, sortable"
         right={<span className="text-text-muted">{filtered.length} of {rows.length} players · GW{state.data.event} onward</span>}
+        stats={(() => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const r: any[] = filtered as any[]
+          const xpKey = r.length && 'xp_5' in r[0] ? 'xp_5' : r.length && 'xp' in r[0] ? 'xp' : null
+          const top = xpKey ? [...r].sort((a, b) => (b[xpKey] ?? 0) - (a[xpKey] ?? 0))[0] : null
+          return [
+            { label: 'Players shown', value: filtered.length, sub: `of ${rows.length}` },
+            { label: 'Top projection', value: top?.name ?? '–', sub: top && xpKey ? `${Number(top[xpKey]).toFixed(1)} xP` : undefined, tone: 'spot' as const },
+            { label: 'From', value: `GW${state.data.event}` },
+          ]
+        })()}
       />
 
       <section className="allow-overflow relative z-30 px-10 py-5">

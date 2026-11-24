@@ -337,7 +337,20 @@ export function ReviewScreen() {
   const state = useFetch(() => fetchReviewPayload(event), [event])
   return (
     <div className="data-in pb-16">
-      <Masthead right={state.status === 'ready' && state.data.status === 'ok' ? <span>{state.data.total} points after GW{state.data.event}</span> : undefined} />
+      <Masthead
+        right={state.status === 'ready' && state.data.status === 'ok' ? <span>{state.data.total} points after GW{state.data.event}</span> : undefined}
+        stats={state.status === 'ready' && state.data.status === 'ok' ? (() => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const r: any = state.data
+          const edge = r.top10k_field != null ? r.points - r.top10k_field : null
+          return [
+            { label: `GW${r.event} score`, value: r.points, sub: r.provisional ? 'provisional until FPL confirms bonus' : 'final' },
+            { label: 'On the top 10k', value: edge == null ? '–' : `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}`, tone: edge == null ? undefined : edge >= 0 ? 'good' as const : 'bad' as const, sub: r.top10k_field != null ? `field ${r.top10k_field.toFixed(1)}` : undefined },
+            { label: 'Overall rank', value: r.rank ? r.rank.toLocaleString() : r.previous_rank ? `~${r.previous_rank.toLocaleString()}` : '–', sub: r.rank && r.previous_rank ? `from ${r.previous_rank.toLocaleString()}` : undefined },
+            { label: 'Left on the bench', value: r.bench_points ?? '–', tone: (r.bench_points ?? 0) >= 10 ? 'bad' as const : undefined },
+          ]
+        })() : undefined}
+      />
       {state.status === 'loading' && <div className="animate-pulse px-10 py-8"><Skel className="h-72 w-full" /><Skel className="mt-6 h-96 w-full" /></div>}
       {state.status === 'error' && <ScreenError title="The report is unavailable" description="The gameweek could not be read back." message={state.error.message} />}
       {state.status === 'ready' && state.data.status !== 'ok' && <p className="px-10 py-8 text-sm text-text-muted">No finished gameweek with your picks and FPL's per-player points yet.</p>}

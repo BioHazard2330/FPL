@@ -97,7 +97,12 @@ export function AdvancedScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead />
+      <Masthead stats={[
+        { label: 'Readiness', value: `${p.readiness.filter((r) => /ok|ready|pass/i.test(r.status)).length}/${p.readiness.length}`, sub: 'checks passing' },
+        { label: 'Sources failing', value: p.sources.filter((s) => s.failure_count > 0 && s.active !== false).length, tone: p.sources.some((s) => s.failure_count > 0 && s.active !== false) ? 'bad' as const : 'good' as const, sub: `of ${p.sources.length}` },
+        { label: 'Pipeline', value: `${p.pipeline.filter((s) => /ok|done|pass/i.test(s.status)).length}/${p.pipeline.length}`, sub: 'stages healthy' },
+        { label: 'Chips planned', value: p.chips.length },
+      ]} />
 
       {p.week_plan_audit ? (
         <WeekPlanAudit audit={p.week_plan_audit} />

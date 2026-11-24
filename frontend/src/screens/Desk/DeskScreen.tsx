@@ -281,6 +281,12 @@ export function DeskScreen() {
         edition="The Desk"
         title="What is being said, in the order it matters to you"
         right={<span className="text-text-muted">{d.counts.articles} articles · {d.counts.yours} name your players · {d.counts.targets} name a plan target</span>}
+        stats={[
+          { label: 'On the wire', value: d.wire.length, sub: `${d.counts.articles} articles read` },
+          { label: 'Your players', value: d.counts.yours, tone: 'spot' as const, sub: 'stories naming them' },
+          { label: 'Plan targets', value: d.counts.targets },
+          { label: 'Fitness stories', value: d.wire.filter((a) => a.injury).length, tone: d.wire.some((a) => a.injury && a.relevance >= 2) ? 'bad' as const : undefined },
+        ]}
       />
 
       {d.lead && <Lead a={d.lead} />}

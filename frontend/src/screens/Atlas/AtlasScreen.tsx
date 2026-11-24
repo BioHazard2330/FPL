@@ -176,7 +176,13 @@ export function AtlasScreen() {
 
   return (
     <div className="pb-16">
-      <Masthead edition="The Atlas" title={hero !== null && heroShots[0] ? heroShots[0].player : 'Every shot this season'} />
+      <Masthead edition="The Atlas" title={hero !== null && heroShots[0] ? heroShots[0].player : 'Every shot this season'}
+        stats={data ? [
+          { label: 'Shots this season', value: data.totals.shots.toLocaleString(), sub: `${data.totals.matches} matches` },
+          { label: 'Goals', value: data.totals.goals, sub: `from ${data.totals.xg.toFixed(1)} xG` },
+          { label: 'Shots by your players', value: data.totals.mine_shots, tone: 'spot' as const, sub: `${data.totals.mine_goals} goals from ${data.totals.mine_xg.toFixed(1)} xG` },
+          { label: 'Your finishing', value: `${data.totals.mine_goals - data.totals.mine_xg >= 0 ? '+' : ''}${(data.totals.mine_goals - data.totals.mine_xg).toFixed(1)}`, sub: 'goals over xG', tone: data.totals.mine_goals >= data.totals.mine_xg ? 'good' as const : 'bad' as const },
+        ] : undefined} />
 
       {hero !== null && heroShots.length > 0 ? (
         <HeroBand shots={heroShots} onClear={() => setHero(null)} />

@@ -338,7 +338,12 @@ export function PlanScreen() {
   if (state.status !== 'ready') {
     return (
       <div className="data-in pb-16">
-        <Masthead />
+        <Masthead stats={week ? [
+          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
+          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
+          { label: 'Free transfers', value: week.free_transfers ?? '–' },
+          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
+        ] : undefined} />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
         <ChipCalendar />
@@ -361,7 +366,12 @@ export function PlanScreen() {
   if (!p.has_plan) {
     return (
       <div className="data-in pb-16">
-        <Masthead />
+        <Masthead stats={week ? [
+          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
+          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
+          { label: 'Free transfers', value: week.free_transfers ?? '–' },
+          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
+        ] : undefined} />
         {week && <WeekPlanDesk plan={week} />}
         {week && <WhatIf />}
         <ChipCalendar />
@@ -376,7 +386,12 @@ export function PlanScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead />
+      <Masthead stats={week ? [
+          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
+          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
+          { label: 'Free transfers', value: week.free_transfers ?? '–' },
+          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
+        ] : undefined} />
       {week && <WeekPlanDesk plan={week} />}
       {week && <WhatIf />}
         <ChipCalendar />

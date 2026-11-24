@@ -273,7 +273,20 @@ export function MatchweekScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead right={<span>{played} matches played</span>} />
+      <Masthead
+        right={<span>{played} matches played</span>}
+        stats={(() => {
+          const t = [...p.table].sort((a, b) => b.points - a.points)
+          const goals = p.table.reduce((n: number, r: LeagueTableRow) => n + r.gf, 0)
+          const tail = t[t.length - 1]
+          return [
+            { label: 'Top', value: t[0]?.short ?? '–', sub: t[0] ? `${t[0].points} points from ${t[0].played}` : undefined },
+            { label: 'Lead', value: t[0] && t[1] ? `+${t[0].points - t[1].points}` : '–', sub: t[1] ? `over ${t[1].short}` : undefined, tone: 'spot' as const },
+            { label: 'Goals a match', value: played ? (goals / played).toFixed(2) : '–' },
+            { label: 'Bottom', value: tail?.short ?? '–', sub: tail ? `${tail.points} points` : undefined, tone: 'bad' as const },
+          ]
+        })()}
+      />
 
       <div className="px-10 py-8">
         <div className="mb-3 flex flex-wrap items-baseline gap-3">

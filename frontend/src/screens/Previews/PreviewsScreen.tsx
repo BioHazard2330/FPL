@@ -359,7 +359,21 @@ export function PreviewsScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead right={<span>{d.fixtures.length} fixtures &middot; the expected goals are the same ones every projection uses</span>} />
+      <Masthead
+        right={<span>{d.fixtures.length} fixtures &middot; the expected goals are the same ones every projection uses</span>}
+        stats={(() => {
+          const sides = d.fixtures.flatMap((f) => [{ s: f.home.short, xg: f.xg?.home ?? 0, opp: f.away.short }, { s: f.away.short, xg: f.xg?.away ?? 0, opp: f.home.short }])
+          const top = [...sides].sort((a, b) => b.xg - a.xg)
+          const total = sides.reduce((n, x) => n + x.xg, 0)
+          const mine = d.fixtures.reduce((n, f) => n + (f.home.yours?.length ?? 0) + (f.away.yours?.length ?? 0), 0)
+          return [
+            { label: 'Most goals expected', value: top[0]?.s ?? '–', sub: top[0] ? `${top[0].xg.toFixed(2)} xG v ${top[0].opp}` : undefined },
+            { label: 'Next best', value: top[1]?.s ?? '–', sub: top[1] ? `${top[1].xg.toFixed(2)} xG v ${top[1].opp}` : undefined },
+            { label: 'Goals expected', value: total.toFixed(1), sub: `${d.fixtures.length} fixtures` },
+            { label: 'Your players', value: mine, sub: 'across these fixtures', tone: 'spot' as const },
+          ]
+        })()}
+      />
       {d.ticker && (
         <RunOfFixtures
           ticker={d.ticker}

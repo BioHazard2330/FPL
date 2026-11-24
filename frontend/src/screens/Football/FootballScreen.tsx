@@ -399,7 +399,12 @@ export function FootballScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead right={p.squad_signal_count > 0 ? `${p.squad_signal_count} signals touch your squad` : undefined} />
+      <Masthead right={p.squad_signal_count > 0 ? `${p.squad_signal_count} signals touch your squad` : undefined} stats={[
+        { label: 'Signals this week', value: p.signal_count },
+        { label: 'Touching your squad', value: p.squad_signal_count, tone: 'spot' as const },
+        { label: 'Squad changes', value: p.squad_changes.length },
+        { label: 'Clubs tracked', value: p.team_state.length },
+      ]} />
 
       <FixtureTicker rows={p.fixture_ticker} />
 

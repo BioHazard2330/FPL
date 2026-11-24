@@ -427,7 +427,21 @@ export function LeaguesScreen() {
   const state = useFetch(fetchLeagues, [], 120_000)
   return (
     <div className="data-in pb-16">
-      <Masthead right={state.status === 'ready' && state.data.locked_event ? <span>Rivals' teams as locked for GW{state.data.locked_event}</span> : undefined} />
+      <Masthead
+        right={state.status === 'ready' && state.data.locked_event ? <span>Rivals' teams as locked for GW{state.data.locked_event}</span> : undefined}
+        stats={state.status === 'ready' && state.data.leagues?.length ? (() => {
+          const ls = state.data.leagues
+          const best = [...ls].filter((l) => l.my_rank != null).sort((a, b) => (a.my_rank! / a.size) - (b.my_rank! / b.size))[0]
+          const lead = [...ls].filter((l) => l.odds?.p_lead != null).sort((a, b) => (b.odds?.p_lead ?? 0) - (a.odds?.p_lead ?? 0))[0]
+          const leading = ls.filter((l) => l.my_rank === 1).length
+          return [
+            { label: 'Leagues', value: ls.length, sub: `${leading} you lead` },
+            { label: 'Best placed', value: best ? `${best.my_rank}/${best.size}` : '–', sub: best?.name },
+            { label: 'Best title odds', value: lead?.odds?.p_lead != null ? `${Math.round(lead.odds.p_lead * 100)}%` : '–', sub: lead?.name, tone: 'good' as const },
+            { label: 'Moved last week', value: best && best.my_last_rank != null && best.my_rank != null ? `${best.my_last_rank - best.my_rank >= 0 ? '▲' : '▼'} ${Math.abs(best.my_last_rank - best.my_rank)}` : '–', sub: best?.name },
+          ]
+        })() : undefined}
+      />
       {state.status === 'loading' && (
         <div className="animate-pulse space-y-6 px-10 py-6">
           <Skel className="h-20 w-full" />

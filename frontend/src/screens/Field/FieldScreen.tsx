@@ -213,6 +213,17 @@ export function FieldScreen() {
       <Masthead
         edition="The Field"
         title="This week against everyone else"
+        stats={state.status === 'ready' && state.data.status === 'ok' ? (() => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const f: any = state.data
+          const e = f.plan_option?.edge ?? {}
+          return [
+            { label: 'Overall rank', value: f.posture?.overall_rank ? f.posture.overall_rank.toLocaleString() : '–', sub: f.posture ? `top ${(100 - f.posture.percentile).toFixed(1)}%` : undefined },
+            { label: 'Edge this week', value: e.mean != null ? `${e.mean >= 0 ? '+' : ''}${e.mean.toFixed(1)}` : '–', tone: (e.mean ?? 0) >= 0 ? 'good' as const : 'bad' as const, sub: 'the plan against the field' },
+            { label: '12+ clear', value: e.big_win != null ? `${Math.round(e.big_win * 100)}%` : '–', tone: 'good' as const },
+            { label: '12+ behind', value: e.big_loss != null ? `${Math.round(e.big_loss * 100)}%` : '–', tone: 'bad' as const },
+          ]
+        })() : undefined}
         right={state.status === 'ready' && state.data.field ? <span className="text-text-muted">{state.data.n_trials?.toLocaleString()} simulated gameweeks · {pct(state.data.field.coverage)} of ownership covered</span> : undefined}
       />
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-divider px-10 py-3">
