@@ -122,8 +122,26 @@ def eye_adjustment(conn: sqlite3.Connection, player_id: int) -> float:
 
         r = latest_reads(conn).get(player_id)
     except Exception:
-        return 0.0
-    return w * r["rating"] if r else 0.0
+        r = None
+    if r:
+        return w * r["rating"]
+    return w * recent_moves(conn).get(player_id, 0)
+
+
+def recent_moves(conn: sqlite3.Connection) -> dict[int, int]:
+    """+1 for a player the manager bought in the last four gameweeks, -1 for one he sold (his transfers as reads)."""
+    try:
+        from fpl_agent.models.rules import current_season
+        from fpl_agent.models.self_tuning import MOVE_READ_WEEKS, implicit_reads
+
+        last = conn.execute("SELECT MAX(event) FROM my_team_transfers").fetchone()[0] or 0
+        out: dict[int, int] = {}
+        for pid, e, rating in implicit_reads(conn, current_season(conn)):
+            if e > last - MOVE_READ_WEEKS:
+                out[pid] = rating
+        return out
+    except Exception:
+        return {}
 
 
 def recent_form(conn: sqlite3.Connection) -> dict[int, float]:

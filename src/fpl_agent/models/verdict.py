@@ -128,6 +128,15 @@ def build(conn: sqlite3.Connection, player_ids: list[int] | None = None, with_ch
     except Exception:
         pass
 
+    weights = dict(WEIGHTS)
+    try:
+        from fpl_agent.models.self_tuning import sizes
+
+        tuned = sizes(conn).get("verdict")
+        if tuned and tuned.get("adopted"):
+            weights = tuned["weights"]
+    except Exception:
+        pass
     out = {}
     for pid in targets:
         p = players.get(pid)
@@ -164,8 +173,9 @@ def build(conn: sqlite3.Connection, player_ids: list[int] | None = None, with_ch
         checked = 15 if any(f["level"] == "red" for f in flags) else 60 if flags else 100
         lenses["security"] = checked if share is None else min(checked, round(100 * share))
         have = {k: v for k, v in lenses.items() if v is not None}
-        wsum = sum(WEIGHTS[k] for k in have)
-        score = round(sum(WEIGHTS[k] * v for k, v in have.items()) / wsum) if wsum else None
+        W = weights
+        wsum = sum(W[k] for k in have)
+        score = round(sum(W[k] * v for k, v in have.items()) / wsum) if wsum else None
         label = next(lab for cut, lab in LABELS if score is not None and score >= cut) if score is not None else "Unknown"
         d = ret.get(pid, {"m": 0, "p": 0, "lm": 0, "lp": 0, "series": []})
         notes = []

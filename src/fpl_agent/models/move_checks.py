@@ -147,10 +147,12 @@ def red(flags: list[dict]) -> bool:
     return any(f["level"] == "red" for f in flags)
 
 
-# An amber doubt over the place itself (start feed under 75, under four starts in five, a fit regular contesting it)
-# makes a purchase earn the bar twice (2026-11-26: the road ahead bought Konsa at 60% on the start feed with Saliba fit).
+# A fit regular contesting the place makes a purchase earn the bar twice (2026-11-26: the road ahead bought Konsa at 60%
+# with Saliba fit). A start feed under 75 or missed starts are not penalised again: tested on this season the same day,
+# players projected 3+ with the feed under 75 came in +0.10 against their projection (39), the rest -0.13 - the
+# projection already prices the feed and the rotation discount the starts.
 AMBER_PENALTY = 1.5
-_PLACE_CHECKS = {"feed", "starts", "contest"}
+_PLACE_CHECKS = {"contest"}
 
 
 def buy_gates(conn: sqlite3.Connection, candidate_ids, squad_ids) -> dict[int, float]:

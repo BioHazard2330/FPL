@@ -33,3 +33,17 @@ def build_locks_payload(ctx=None, params: dict | None = None) -> dict:
 
 build_decide_payload.needs_context = False
 build_locks_payload.needs_context = False
+
+
+def build_deadline_watch_payload(ctx=None, params: dict | None = None) -> dict:
+    from fpl_agent.database.connection import get_connection
+    from fpl_agent.models.deadline_watch import watch
+
+    conn = get_connection()
+    try:
+        return watch(conn)
+    finally:
+        conn.close()
+
+
+build_deadline_watch_payload.needs_context = False

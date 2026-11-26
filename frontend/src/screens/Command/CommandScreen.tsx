@@ -23,6 +23,7 @@ import { MidweekWatch } from '@/components/command/MidweekWatch'
 import { PlanChanges } from '@/components/command/PlanChanges'
 import { LinedUp } from '@/components/command/LinedUp'
 import { LockedCalls } from '@/components/command/LockedCalls'
+import { DeadlineWatch } from '@/components/command/DeadlineWatch'
 import { PunditCall } from '@/components/command/PunditCall'
 import { PunditDesk } from '@/components/command/PunditDesk'
 import { TenKWeek } from '@/components/command/TenKWeek'
@@ -229,6 +230,7 @@ export function CommandScreen() {
         </nav>
         {tab === 'week' && (
           <>
+            <DeadlineWatch />
             <div className="bare"><PunditCall /></div>
             <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
             <LockedCalls />

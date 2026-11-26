@@ -18,7 +18,7 @@ def chip_draft(conn: sqlite3.Connection, chip: str, event: int) -> dict | None:
     from fpl_agent.optimization.locked_squad import get_locked_squad
     from fpl_agent.optimization.milp_planner import plan_transfers_milp
     from fpl_agent.optimization.squad import resolve_projected_xi
-    from fpl_agent.optimization.week_plan import EVIDENCE_K, POOL_PER_POSITION, _BENCH_WEIGHT, _buyable_pool, evidence_matches, eye_gates, squad_sell_prices
+    from fpl_agent.optimization.week_plan import _evidence_k, POOL_PER_POSITION, _BENCH_WEIGHT, _buyable_pool, evidence_matches, eye_gates, squad_sell_prices
 
     if chip not in ("wildcard", "freehit"):
         return None
@@ -40,7 +40,7 @@ def chip_draft(conn: sqlite3.Connection, chip: str, event: int) -> dict | None:
         return plan_transfers_milp(
             conn, squad, 1, bank, start_event=event, horizon_gw=horizon, pool_per_position=POOL_PER_POSITION,
             bench_weight=_BENCH_WEIGHT, time_limit_seconds=DRAFT_SECONDS, model_chips=False, xp_cache=cache, league_pool=pool,
-            max_first_gw_transfers=0 if hold else None, evidence_matches=evidence, evidence_k=EVIDENCE_K,
+            max_first_gw_transfers=0 if hold else None, evidence_matches=evidence, evidence_k=_evidence_k(conn),
             sell_penalty=sell_pen, buy_penalty=buy_pen, wildcard_first=free, sell_prices_tenths=sell_prices,
         )
 

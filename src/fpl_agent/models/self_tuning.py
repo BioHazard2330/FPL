@@ -13,7 +13,7 @@ Under `MIN_SAMPLES` settled projections the hand-set defaults stand.
   season alone first (GW8-11): the top 20 by projection averaged 4.97 points, by last-six form 4.00, by 20-50% blends
   4.43-4.78, so it starts where the season puts it and turns itself up if form starts beating the model.
 - `eye`: points per rating step of the manager's own read (eye journal, -2..+2), fitted on his notes that have an
-  outcome. It stays at 0 until 12 notes are scored: the eye earns weight by being right, never by being asserted.
+  outcome. Transfers count as reads (+1 bought, -1 sold, for the move's gameweek and three after; 2026-11-26: the manager's four scoreable moves GW9-11 gained 43 points on the real scores against 12.3 projected). It stays at 0 until 12 reads are scored: the eye earns weight by being right, never by being asserted.
 
 Each size is drawn from a bounded grid, so one strange week cannot swing it far. Stored in `app_meta['self_tuning']`
 with the settled-outcome signature, so it is refitted once per settled gameweek and read cheaply otherwise."""
@@ -26,16 +26,18 @@ ROT_GRID = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5)
 EYE_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 FORM_GRID = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5)
 FORM_WEEKS = 6
+MOVE_READ_WEEKS = 4
 EYE_MIN_NOTES = 12
 MIN_SAMPLES = 400
-DEFAULTS = {"track": 0.1, "rot": 0.2, "eye": 0.0, "form": 0.0}
+DEFAULTS = {"track": 0.1, "rot": 0.2, "eye": 0.0, "form": 0.0, "evidence_k": 3}
 _MEMO: dict[str, tuple[str, dict]] = {}
 
 
 def _signature(conn: sqlite3.Connection) -> str:
     a = conn.execute("SELECT COUNT(*), MAX(event) FROM prediction_outcomes WHERE actual_points IS NOT NULL").fetchone()
     b = conn.execute("SELECT COUNT(*), MAX(created_at) FROM eye_note").fetchone() if _has(conn, "eye_note") else (0, None)
-    return f"{a[0]}:{a[1]}|{b[0]}:{b[1]}"
+    m = conn.execute("SELECT COUNT(*), MAX(event) FROM my_team_transfers").fetchone() if _has(conn, "my_team_transfers") else (0, None)
+    return f"{a[0]}:{a[1]}|{b[0]}:{b[1]}|{m[0]}:{m[1]}"
 
 
 def _has(conn: sqlite3.Connection, table: str) -> bool:
@@ -95,15 +97,97 @@ def fit(conn: sqlite3.Connection, season: str) -> dict:
     base_se = sum((a - p) ** 2 for p, a, _, _, _ in samples)
     out["error_before"] = round(base_se / max(1, len(samples)), 3)
     out["error_after"] = round(best[0] / max(1, len(samples)), 3) if best else out["error_before"]
+    out["evidence_k"] = _fit_evidence_k(conn, season)
+    try:
+        from fpl_agent.models.verdict_tuning import fit as fit_verdict
+
+        vt = fit_verdict(conn, season)
+        if vt:
+            out["verdict"] = vt
+    except Exception:
+        pass
+    notes = []
     if _has(conn, "eye_note"):
-        notes = conn.execute(
+        notes = [tuple(r) for r in conn.execute(
             "SELECT n.rating, po.predicted_median, po.actual_points FROM eye_note n JOIN prediction_outcomes po "
             "ON po.player_id = n.player_id AND po.event = n.event + 1 AND po.season = ? "
             "WHERE po.actual_points IS NOT NULL AND po.predicted_median IS NOT NULL", (season,),
-        ).fetchall()
-        out["eye_notes"] = len(notes)
-        if len(notes) >= EYE_MIN_NOTES:
-            out["eye"] = min(EYE_GRID, key=lambda w: sum((a - (p + w * r)) ** 2 for r, p, a in notes))
+        )]
+    # The manager's transfers are reads too: a player bought is a +1 and a player sold a -1 for the gameweek of the move
+    # and the three after it, scored against the frozen projection the same way.
+    moves = implicit_reads(conn, season)
+    settled = {(int(r[0]), int(r[1])): (float(r[2]), float(r[3])) for r in conn.execute(
+        "SELECT player_id, event, predicted_median, actual_points FROM prediction_outcomes WHERE season = ? "
+        "AND actual_points IS NOT NULL AND predicted_median IS NOT NULL", (season,))}
+    move_count = 0
+    for pid, start, rating in moves:
+        hit = False
+        for e in range(start, start + MOVE_READ_WEEKS):
+            if (pid, e) in settled:
+                p, a = settled[(pid, e)]
+                notes.append((rating, p, a))
+                hit = True
+        move_count += hit
+    out["eye_notes"] = len(notes)
+    out["eye_moves"] = move_count // 2
+    if len(notes) >= EYE_MIN_NOTES:
+        best = min(EYE_GRID, key=lambda w: sum((a - (p + w * r)) ** 2 for r, p, a in notes))
+        # Few moves make a loud fit: shrink by the number of transfers scored (n / (n + 4)), bounded by the grid.
+        n = max(move_count / 2, len(notes) / (2 * MOVE_READ_WEEKS))
+        out["eye"] = round(best * n / (n + 4), 2)
+        out["eye_raw"] = best
+    return out
+
+
+EVIDENCE_GRID = (0, 1, 3, 6, 12)
+
+
+def _fit_evidence_k(conn: sqlite3.Connection, season: str) -> int:
+    """The thin-record shrink the plan's objective uses (`week_plan.EVIDENCE_K`), chosen by what the top 30 by shrunk
+    projection actually scored each settled week (the decision is a ranking; squared error favours shrinking nobody).
+    First fit 2026-11-26, GW7-11: k 0/1/3/6/12 -> 4.49/4.55/4.62/4.41/4.45 points; players under 40 career matches
+    projected 3+ missed by -0.4 to -0.5 a week, established ones by -0.03."""
+    try:
+        from fpl_agent.optimization.week_plan import EVIDENCE_K, evidence_matches
+
+        ev = evidence_matches(conn)
+    except Exception:
+        return 3
+    pos = {r[0]: r[1] for r in conn.execute(
+        "SELECT p.id, et.singular_name_short FROM players p JOIN element_types et ON et.id = p.element_type")}
+    weeks: dict[int, list[tuple[float, float, int, str]]] = {}
+    for pid, e, p, a in conn.execute(
+        "SELECT player_id, event, predicted_median, actual_points FROM prediction_outcomes WHERE season = ? "
+        "AND actual_points IS NOT NULL AND predicted_median IS NOT NULL", (season,)):
+        weeks.setdefault(int(e), []).append((float(p), float(a), int(ev.get(pid, 0)), pos.get(pid, "MID")))
+    weeks = {e: r for e, r in weeks.items() if len(r) >= 100}
+    if len(weeks) < 3:
+        return EVIDENCE_K
+
+    def score(k: int) -> float:
+        tot = 0.0
+        for rows in weeks.values():
+            means: dict[str, list[float]] = {}
+            for p, _, _, ps in rows:
+                means.setdefault(ps, []).append(p)
+            m = {ps: sum(v) / len(v) for ps, v in means.items()}
+            shrunk = sorted(rows, key=lambda r: -((r[0] * r[2] + m[r[3]] * k) / (r[2] + k) if k else r[0]))[:30]
+            tot += sum(r[1] for r in shrunk) / 30
+        return tot / len(weeks)
+
+    return max(EVIDENCE_GRID, key=score)
+
+
+def implicit_reads(conn: sqlite3.Connection, season: str) -> list[tuple[int, int, int]]:
+    """(player, first gameweek, rating) for every transfer the manager made outside a wildcard or free hit."""
+    if not _has(conn, "my_team_transfers"):
+        return []
+    chips = {r[0]: r[1] for r in conn.execute("SELECT DISTINCT event, active_chip FROM my_team_picks WHERE active_chip IS NOT NULL")}         if _has(conn, "my_team_picks") else {}
+    out = []
+    for e, i, o in conn.execute("SELECT event, element_in, element_out FROM my_team_transfers ORDER BY event"):
+        if chips.get(e) in ("wildcard", "freehit"):
+            continue
+        out += [(int(i), int(e), 1), (int(o), int(e), -1)]
     return out
 
 

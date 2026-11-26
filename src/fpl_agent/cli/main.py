@@ -1785,6 +1785,16 @@ def _record_self_check() -> None:
             conn.close()
     except Exception:
         logging.getLogger("fpl_agent.scheduler").exception("run-scheduled locked-call check failed - not fatal")
+    try:
+        from fpl_agent.models.deadline_watch import raise_alerts
+
+        conn = get_connection()
+        try:
+            raise_alerts(conn)
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger("fpl_agent.scheduler").exception("run-scheduled deadline watch failed - not fatal")
 
 
 def _run_scheduled_cycle(gated: bool):
