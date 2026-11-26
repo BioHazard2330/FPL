@@ -8,6 +8,10 @@ gameweek is predicted using only the weeks before it, and the candidate with the
 - `track`: share of a player's mean miss over his last eight frozen weeks carried into the next projection.
 - `rot`: discount per unit of start share missed over his last five gameweeks.
 Under `MIN_SAMPLES` settled projections the hand-set defaults stand.
+- `form`: weight on how he is playing now - his mean FPL points over his last six gameweeks with a fixture -
+  blended into the projection (2026-11-26, the manager: "the judgement should be about this season"). Tested on this
+  season alone first (GW8-11): the top 20 by projection averaged 4.97 points, by last-six form 4.00, by 20-50% blends
+  4.43-4.78, so it starts where the season puts it and turns itself up if form starts beating the model.
 - `eye`: points per rating step of the manager's own read (eye journal, -2..+2), fitted on his notes that have an
   outcome. It stays at 0 until 12 notes are scored: the eye earns weight by being right, never by being asserted.
 
@@ -20,9 +24,11 @@ from datetime import datetime, timezone
 TRACK_GRID = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3)
 ROT_GRID = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5)
 EYE_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
+FORM_GRID = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5)
+FORM_WEEKS = 6
 EYE_MIN_NOTES = 12
 MIN_SAMPLES = 400
-DEFAULTS = {"track": 0.1, "rot": 0.2, "eye": 0.0}
+DEFAULTS = {"track": 0.1, "rot": 0.2, "eye": 0.0, "form": 0.0}
 _MEMO: dict[str, tuple[str, dict]] = {}
 
 
@@ -46,13 +52,19 @@ def _rows(conn: sqlite3.Connection, season: str):
     return out
 
 
+def blend(pred: float, form: float | None, w: float) -> float:
+    return pred if form is None or not w else (1 - w) * pred + w * form
+
+
 def fit(conn: sqlite3.Connection, season: str) -> dict:
     rows = _rows(conn, season)
     starts: dict[int, list[tuple[int, int]]] = {}
-    for pid, e, st in conn.execute(
-        "SELECT player_id, event, starts FROM player_gw_stats WHERE season = ? AND fixtures > 0 ORDER BY event", (season,),
+    points: dict[int, list[tuple[int, float]]] = {}
+    for pid, e, st, pts in conn.execute(
+        "SELECT player_id, event, starts, total_points FROM player_gw_stats WHERE season = ? AND fixtures > 0 ORDER BY event", (season,),
     ):
         starts.setdefault(int(pid), []).append((int(e), min(int(st or 0), 1)))
+        points.setdefault(int(pid), []).append((int(e), float(pts or 0)))
     hist: dict[int, list[float]] = {}
     samples = []  # (pred, actual, prior mean miss or None, start share or None)
     for pid, e, pred, act in rows:
@@ -60,24 +72,27 @@ def fit(conn: sqlite3.Connection, season: str) -> dict:
         miss = sum(prior) / len(prior) if len(prior) >= 2 else None
         sw = [s for ev, s in starts.get(pid, []) if ev < e][-5:]
         share = sum(sw) / len(sw) if len(sw) >= 3 else None
-        samples.append((pred, act, miss, share))
+        pw = [x for ev, x in points.get(pid, []) if ev < e][-FORM_WEEKS:]
+        form = sum(pw) / len(pw) if len(pw) >= 3 else None
+        samples.append((pred, act, miss, share, form))
         hist.setdefault(pid, []).append(act - pred)
     if len(samples) < MIN_SAMPLES:
         return {**DEFAULTS, "samples": len(samples)}
     best = None
-    for k in TRACK_GRID:
-        for r in ROT_GRID:
-            se = 0.0
-            for pred, act, miss, share in samples:
-                adj = pred * (1 - r * (1 - share)) if share is not None else pred
-                if miss is not None:
-                    adj += k * miss
-                se += (act - max(0.0, adj)) ** 2
-            if best is None or se < best[0]:
-                best = (se, k, r)
-    out = {"track": best[1] if best else DEFAULTS["track"], "rot": best[2] if best else DEFAULTS["rot"], "eye": 0.0,
-           "samples": len(samples)}
-    base_se = sum((a - p) ** 2 for p, a, _, _ in samples)
+    for w in FORM_GRID:
+        for k in TRACK_GRID:
+            for r in ROT_GRID:
+                se = 0.0
+                for pred, act, miss, share, form in samples:
+                    adj = blend(pred, form, w)
+                    adj = adj * (1 - r * (1 - share)) if share is not None else adj
+                    if miss is not None:
+                        adj += k * miss
+                    se += (act - max(0.0, adj)) ** 2
+                if best is None or se < best[0]:
+                    best = (se, k, r, w)
+    out = {"track": best[1], "rot": best[2], "form": best[3], "eye": 0.0, "samples": len(samples)}
+    base_se = sum((a - p) ** 2 for p, a, _, _, _ in samples)
     out["error_before"] = round(base_se / max(1, len(samples)), 3)
     out["error_after"] = round(best[0] / max(1, len(samples)), 3) if best else out["error_before"]
     if _has(conn, "eye_note"):

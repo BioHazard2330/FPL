@@ -243,7 +243,7 @@ def calibration_id(conn: sqlite3.Connection | None = None) -> str:
 
         t = tuned_sizes(conn)
         TRACK_K, ROT = t.get("track", TRACK_K), t.get("rot", ROT)
-        tuned = f"|eye={t['eye']}" if t.get("eye") else ""
+        tuned = (f"|eye={t['eye']}" if t.get("eye") else "") + (f"|form={t['form']}" if t.get("form") else "")
     base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}|rot={ROT}{tuned}"
     views = signature(conn) if conn is not None else ""
     return f"{base}|views={views}" if views else base

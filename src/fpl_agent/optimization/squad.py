@@ -563,7 +563,12 @@ def build_player_pool_for_ids(
             xp_cache[key] = expected_points(conn, r["id"], n_gw=1, from_event=event)
         ep = xp_cache[key]
         f = view_factor(conn, r["id"], event)
-        from fpl_agent.models.track_record import adjustment, eye_adjustment, rotation_factor
+        from fpl_agent.models.track_record import adjustment, eye_adjustment, form_blend, rotation_factor
+
+        if f:
+            ep_med = form_blend(conn, r["id"], ep.median * f) / f
+            if ep.median:
+                f = f * ep_med / ep.median
 
         adj = adjustment(conn, r["id"]) + eye_adjustment(conn, r["id"])
         f = f * rotation_factor(conn, r["id"])

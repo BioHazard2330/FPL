@@ -126,8 +126,44 @@ def eye_adjustment(conn: sqlite3.Connection, player_id: int) -> float:
     return w * r["rating"] if r else 0.0
 
 
+def recent_form(conn: sqlite3.Connection) -> dict[int, float]:
+    """Per player: mean FPL points over his last six gameweeks with a fixture (three or more needed)."""
+    key = "form:" + _db_key(conn)
+    now = time.time()
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < _TTL:
+            return hit[1]
+    from fpl_agent.models.rules import current_season
+
+    try:
+        season = current_season(conn)
+    except Exception:
+        return {}
+    by: dict[int, list[float]] = {}
+    for pid, pts in conn.execute(
+        "SELECT player_id, total_points FROM player_gw_stats WHERE season = ? AND fixtures > 0 ORDER BY event", (season,),
+    ):
+        by.setdefault(pid, []).append(float(pts or 0))
+    out = {pid: sum(r[-6:]) / len(r[-6:]) for pid, r in by.items() if len(r) >= 3}
+    if not key.endswith(":memory:"):
+        with _LOCK:
+            _CACHE[key] = (now, out)
+    return out
+
+
+def form_blend(conn: sqlite3.Connection, player_id: int, xp: float) -> float:
+    w = _sizes(conn).get("form", 0.0)
+    if not w:
+        return xp
+    f = recent_form(conn).get(player_id)
+    return xp if f is None else (1 - w) * xp + w * f
+
+
 def apply(conn: sqlite3.Connection, player_id: int, xp: float) -> float:
-    """A gameweek projection with the rotation discount, the track-record carry and the manager's earned eye."""
+    """A gameweek projection with this season's form at its fitted weight, the rotation discount, the track-record
+    carry and the manager's earned eye."""
+    xp = form_blend(conn, player_id, xp)
     return max(0.0, xp * rotation_factor(conn, player_id) + adjustment(conn, player_id) + eye_adjustment(conn, player_id))
 
 
