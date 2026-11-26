@@ -123,6 +123,18 @@ def _returners(conn: sqlite3.Connection, p: sqlite3.Row, now: datetime) -> list[
             (r["id"], (now - timedelta(days=7)).isoformat())).fetchone():
             out.append({"check": "returner", "level": "amber",
                         "text": f"{r['web_name']} ({int(mins)} league minutes last season) is fit again this week: check whose place that is"})
+        elif r["status"] == "a" and r["pos"] == p["pos"]:
+            # A regular of the same position, fit but not yet back in the side, whom the start feed rates a real
+            # chance (Saliba at 50% against Konsa at 60%): the place is contested, whatever the last five say.
+            from fpl_agent.models.track_record import start_shares
+
+            share = start_shares(conn).get(r["id"])
+            feed = conn.execute("SELECT start_percent FROM player_start_probability WHERE player_id = ?", (r["id"],)).fetchone()
+            own = conn.execute("SELECT start_percent FROM player_start_probability WHERE player_id = ?", (p["id"],)).fetchone()
+            own_feed = own[0] if own and own[0] is not None else 100
+            if feed and feed[0] is not None and feed[0] >= 40 and feed[0] >= own_feed - 20 and (share is None or share < 0.6):
+                out.append({"check": "contest", "level": "amber",
+                            "text": f"{r['web_name']} ({int(mins)} league minutes last season) is fit, {feed[0]}% on the start feed: the place is contested"})
     return out
 
 
@@ -135,16 +147,25 @@ def red(flags: list[dict]) -> bool:
     return any(f["level"] == "red" for f in flags)
 
 
+# An amber doubt over the place itself (start feed under 75, under four starts in five, a fit regular contesting it)
+# makes a purchase earn the bar twice (2026-11-26: the road ahead bought Konsa at 60% on the start feed with Saliba fit).
+AMBER_PENALTY = 1.5
+_PLACE_CHECKS = {"feed", "starts", "contest"}
+
+
 def buy_gates(conn: sqlite3.Connection, candidate_ids, squad_ids) -> dict[int, float]:
-    """`RED_PENALTY` for every candidate not owned with a red flag."""
+    """`RED_PENALTY` for every candidate not owned with a red flag, `AMBER_PENALTY` for an amber doubt over his place."""
     squad = set(squad_ids)
     out = {}
     for pid in candidate_ids:
         if pid in squad:
             continue
         try:
-            if red(check_player(conn, pid)):
+            flags = check_player(conn, pid)
+            if red(flags):
                 out[pid] = RED_PENALTY
+            elif any(f["check"] in _PLACE_CHECKS for f in flags):
+                out[pid] = AMBER_PENALTY
         except Exception:
             continue
     return out

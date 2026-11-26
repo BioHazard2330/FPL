@@ -376,6 +376,34 @@ def evidence_matches(conn: sqlite3.Connection) -> dict[int, int]:
 # history of the verdicts to replay it on, so it is a judgement, and the GW report keeps score of what it blocked.
 EYE_PENALTY = 1.5
 MANAGER_BLOCK = 50.0
+STRONG_HOLD = 50.0
+
+
+_SIDEWAYS: dict[tuple, tuple[float, frozenset[int]]] = {}
+
+
+def _sideways_ok(conn: sqlite3.Connection, squad_ids) -> frozenset[int]:
+    """Owned players whose place is in doubt (a red flag, or the start feed, starts or a fit regular against him): only
+    they may be swapped for a team-mate in the same position (`milp_planner`'s no-sideways rule)."""
+    import time
+
+    key = (id(conn), tuple(sorted(squad_ids)))
+    hit = _SIDEWAYS.get(key)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    from fpl_agent.models.move_checks import check_player
+
+    out = set()
+    for pid in squad_ids:
+        try:
+            flags = check_player(conn, pid)
+        except Exception:
+            continue
+        if any(f["level"] == "red" or f["check"] in ("feed", "starts", "contest", "flagged") for f in flags):
+            out.add(pid)
+    got = frozenset(out)
+    _SIDEWAYS[key] = (time.time(), got)
+    return got
 
 
 def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: list) -> tuple[dict[int, float], dict[int, float], dict[int, str]]:
@@ -400,17 +428,24 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
         _logger.exception("verdicts failed - the football read gates alone")
         verdicts = {}
     sell = {}
+    doubt = _sideways_ok(conn, list(squad))
     for p in squad:
         v = verdicts.get(p)
         if v is not None:
             if v["label"] == "Strong":
-                sell[p] = EYE_PENALTY
+                # A player strong on every lens with no doubt over his place is not sold for a projection edge
+                # (2026-11-26: the plan sold Silva, 8-3-8-8-8 in his last five, for Van Hecke at +2.65 over five weeks).
+                sell[p] = STRONG_HOLD if p not in doubt else EYE_PENALTY
         elif labels.get(p) == "backs him":
             sell[p] = EYE_PENALTY
     buy = {p: EYE_PENALTY for p, lab in labels.items() if p not in squad and lab == "against him"}
     for p, v in verdicts.items():
         if p not in squad and v["label"] in ("Weak", "Avoid"):
             buy[p] = EYE_PENALTY
+        elif p not in squad and v["label"] in ("Good", "Mixed"):
+            # Buy players strong on every lens: a Good or Mixed buy earns the bar twice, three times for Mixed
+            # (2026-11-26: Calvert-Lewin, verdict 73, for Barry, verdict 73).
+            buy[p] = EYE_PENALTY if v["label"] == "Good" else 2 * EYE_PENALTY
     # The manager's own eye (models/eye_journal) overrides the read: rated +1 or better protects, -1 or worse unprotects
     # an owned player and gates a target.
     try:
@@ -871,7 +906,7 @@ def build_road_ahead(
         start_event=event, horizon_gw=horizon, pool_per_position=POOL_PER_POSITION, bench_weight=_BENCH_WEIGHT,
         time_limit_seconds=SOLVE_SECONDS, model_chips=False, xp_cache=cache, league_pool=pool,
         transfer_penalty=min_move_gain, evidence_matches=evidence_matches(conn), evidence_k=EVIDENCE_K,
-        sell_penalty=eye_sell, buy_penalty=eye_buy, sell_prices_tenths=squad_sell_prices(conn, squad_ids),
+        sideways_ok=_sideways_ok(conn, squad_ids), sell_penalty=eye_sell, buy_penalty=eye_buy, sell_prices_tenths=squad_sell_prices(conn, squad_ids),
     )
     plan = plan_transfers_milp(
         conn, squad_ids, free_transfers, bank, max_first_gw_transfers=len(pairs),
@@ -1251,7 +1286,7 @@ def build_week_plan(
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=scale,
             evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_prices_tenths=sell_prices,
-            sell_penalty=sell_pen if gated else None, buy_penalty=buy_pen if gated else None,
+            sideways_ok=_sideways_ok(conn, squad_ids), sell_penalty=sell_pen if gated else None, buy_penalty=buy_pen if gated else None,
         )
 
     selection = select_moves(solve, event, min_move_gain)
@@ -1502,7 +1537,7 @@ def plan_with_view(
             model_chips=False, xp_cache=cache, max_first_gw_transfers=max_moves,
             league_pool=[c for c in pool if c.player_id not in banned] if banned else pool,
             forced_in_first=frozenset(fin), forced_out_first=frozenset(fout), xp_scale=merged or None,
-            evidence_matches=evidence, evidence_k=EVIDENCE_K, sell_penalty=eye_sell, buy_penalty=eye_buy,
+            evidence_matches=evidence, evidence_k=EVIDENCE_K, sideways_ok=_sideways_ok(conn, squad_ids), sell_penalty=eye_sell, buy_penalty=eye_buy,
             sell_prices_tenths=squad_sell_prices(conn, squad_ids),
         )
 
@@ -1787,7 +1822,7 @@ def route_to(conn: sqlite3.Connection, target: int, horizon: int = HORIZON_GW, m
             model_chips=False, xp_cache=cache, max_first_gw_transfers=k, league_pool=pool,
             forced_in_first=forced, forced_out_first=frozenset(), evidence_matches=evidence, evidence_k=EVIDENCE_K,
             sell_prices_tenths=sell_prices,
-            sell_penalty=eye_sell, buy_penalty=buy_pen,
+            sideways_ok=_sideways_ok(conn, squad_ids), sell_penalty=eye_sell, buy_penalty=buy_pen,
         )
 
     stored = latest_week_plan(conn)

@@ -222,6 +222,7 @@ def plan_transfers_milp(
     buy_penalty: dict[int, float] | None = None,
     wildcard_first: bool = False,
     terminal_value: dict[int, float] | None = None,
+    sideways_ok: frozenset[int] | None = None,
 ) -> MilpPlanResult:
     """Solve the whole horizon at once and return it as the same
     `TransferSequence` the beam search produces, so every existing consumer
@@ -438,6 +439,17 @@ def plan_transfers_milp(
 
         for team_id in {club[p] for p in ids}:
             prob += pulp.lpSum(x[(p, t)] for p in ids if club[p] == team_id) <= club_limit
+
+        # No sideways swaps (2026-11-26, the manager: "why would I sell one Brighton defender for another?"): selling a
+        # player and buying a team-mate in his position the same week is allowed only when the seller's own place is in
+        # doubt (`sideways_ok`). Otherwise the two share a fixture and a defence, and the edge is projection noise.
+        if sideways_ok is not None:
+            for team_id, position in {(club[p], pos[p]) for p in ids}:
+                group = [p for p in ids if club[p] == team_id and pos[p] == position]
+                sellers = [p for p in group if p in owned and p not in sideways_ok]
+                if sellers and len(group) > 1:
+                    for q in sellers:
+                        prob += tout[(q, t)] + pulp.lpSum(tin[(p, t)] for p in group if p != q) <= 1
 
         for p in ids:
             prob += cap[(p, t)] <= s[(p, t)]
