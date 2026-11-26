@@ -237,7 +237,14 @@ def calibration_id(conn: sqlite3.Connection | None = None) -> str:
     sizes = ",".join(f"{s}:{d}={v}" for (s, d), v in sorted(CALIBRATED_FRACTIONS.items()))
     from fpl_agent.models.track_record import K as TRACK_K, ROT
 
-    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}|rot={ROT}"
+    tuned = ""
+    if conn is not None:
+        from fpl_agent.models.self_tuning import sizes as tuned_sizes
+
+        t = tuned_sizes(conn)
+        TRACK_K, ROT = t.get("track", TRACK_K), t.get("rot", ROT)
+        tuned = f"|eye={t['eye']}" if t.get("eye") else ""
+    base = f"{MODEL_VERSION}|{PROJECTION_REVISION}|{sizes}|default={MAX_ADJUSTMENT_FRACTION}|track={TRACK_K}|rot={ROT}{tuned}"
     views = signature(conn) if conn is not None else ""
     return f"{base}|views={views}" if views else base
 
@@ -368,6 +375,7 @@ def evidence_matches(conn: sqlite3.Connection) -> dict[int, int]:
 # horizon), in this week's moves and on the road ahead. It only ever holds a move back, never forces one; there is no
 # history of the verdicts to replay it on, so it is a judgement, and the GW report keeps score of what it blocked.
 EYE_PENALTY = 1.5
+MANAGER_BLOCK = 50.0
 
 
 def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: list) -> tuple[dict[int, float], dict[int, float], dict[int, str]]:
@@ -413,8 +421,10 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
             sell[p] = EYE_PENALTY
         for p in unprotect & squad:
             sell.pop(p, None)
+        # The manager's own "no" is final (2026-11-26): at EYE_PENALTY the plan kept routing to players he had turned
+        # down by name (Odegaard, De Cuyper), so a -1 or worse read blocks the purchase outright.
         for p in block - squad:
-            buy[p] = EYE_PENALTY
+            buy[p] = MANAGER_BLOCK
     except Exception:
         _logger.exception("eye journal gate failed - the read's gate stands")
     # Pre-flight checks (models/move_checks.py): a candidate benched last match, flagged, or off the start feed is held
@@ -1223,6 +1233,15 @@ def build_week_plan(
     for o, i in standing:
         sell_pen[o] = sell_pen.get(o, 0.0) - STANDING_BONUS
         buy_pen[i] = buy_pen.get(i, 0.0) - STANDING_BONUS
+    # The manager's -2 on an owned player ("sell him") makes his sale easier by the eye gate's size.
+    try:
+        from fpl_agent.models.eye_journal import latest_reads
+
+        for p, r in latest_reads(conn).items():
+            if r["rating"] <= -2 and p in squad_ids:
+                sell_pen[p] = sell_pen.get(p, 0.0) - EYE_PENALTY
+    except Exception:
+        _logger.exception("eye journal sell nudge failed")
 
     def solve(max_moves: int, fin, fout, scale=None, banned=frozenset(), gated=True):
         return plan_transfers_milp(

@@ -193,6 +193,9 @@ def _gw_xp(conn: sqlite3.Connection, player_id: int, event: int, cache: dict) ->
     return cache[key]
 
 
+HOLD_WEEKS = 3
+
+
 def plan_transfers_milp(
     conn: sqlite3.Connection,
     squad_ids: list[int],
@@ -448,6 +451,10 @@ def plan_transfers_milp(
         for p in ids:
             prev = (1 if p in owned else 0) if i == 0 else x[(p, events[i - 1])]
             prob += x[(p, t)] - prev == tin[(p, t)] - tout[(p, t)]
+            # A player bought is kept at least HOLD_WEEKS gameweeks (2026-11-26: the road ahead bought Van Hecke in
+            # GW13 and sold him in GW14 - churn no manager would make, and a sign the earlier buy was noise).
+            for j in range(max(0, i - HOLD_WEEKS + 1), i):
+                prob += tin[(p, events[j])] + tout[(p, t)] <= 1
 
     # --- free transfers, hits, bank --------------------------------------
     for i, t in enumerate(events):
