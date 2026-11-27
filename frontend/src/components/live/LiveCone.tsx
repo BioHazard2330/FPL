@@ -3,6 +3,7 @@ import { Note } from '@/components/ui/Info'
 import { EdgeDensity } from '@/components/charts/EdgeDensity'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchLiveCone } from '@/lib/api'
+import { vsTop10k } from '@/lib/say'
 import { useFetch } from '@/lib/useFetch'
 
 /** WHERE THIS GAMEWEEK ENDS - the rest of the gameweek simulated from the state
@@ -46,7 +47,7 @@ export function LiveCone() {
             <div>
               <div className="text-[12px] font-bold text-text-faint">Ahead of them</div>
               <div className="tabular font-display text-4xl font-bold leading-none text-text">{Math.round(e.p_beat * 100)}%</div>
-              <div className="tabular mt-1 text-xs text-text-faint">{e.mean >= 0 ? '+' : ''}{e.mean.toFixed(1)} on average</div>
+              <div className="tabular mt-1 text-xs text-text-faint">{vsTop10k(e.mean)} on average</div>
             </div>
           </div>
           <div className="mt-6">

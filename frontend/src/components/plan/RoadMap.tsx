@@ -34,7 +34,7 @@ function MoveCard({ m, event, plan, rise }: { m: Move; event: number; plan: Week
         )}
         {m.why_later && (
           <div className="mt-0.5 text-[10.5px] leading-snug text-text-faint" title="What this move adds in each gameweek alone, and whether it can be paid for now at strict sale prices">
-            GW{plan.event} {signed(m.why_later.gain_this_week)} · GW{event} {signed(m.why_later.gain_in_its_week)}
+            worth {signed(m.why_later.gain_this_week)} pts if made in GW{plan.event}, {signed(m.why_later.gain_in_its_week)} in GW{event}
             {short && <span className="font-semibold text-broadcast-gold"> · £{(m.why_later.short_now_tenths / 10).toFixed(1)}m short</span>}
           </div>
         )}

@@ -6,6 +6,7 @@ import { Face } from '@/components/ui/Face'
 import { NextFixture } from '@/components/football/FixtureRun'
 import { clubColors } from '@/lib/clubs'
 import type { WeekPlanMove, WeekPlanPayload } from '@/lib/types'
+import { gainVsRoll } from '@/lib/say'
 import { MadeItButton, RecordedStrip } from '@/components/command/MadeTransfer'
 
 const ago = (hours: number) => (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min ago` : hours < 48 ? `${Math.round(hours)}h ago` : `${Math.round(hours / 24)}d ago`)
@@ -80,8 +81,8 @@ function Moves({ plan }: { plan: WeekPlanPayload }) {
         ))}
       </div>
       <div className="mt-5 flex items-baseline gap-3">
-        <span className="tabular font-display text-3xl font-black text-pitch-green">+{(plan.gain_vs_roll ?? 0).toFixed(1)}</span>
-        <span className="text-[12px] font-bold uppercase tracking-[0.1em] text-text-faint">pts / {horizon} GW v rolling</span>
+        <span className="tabular font-display text-3xl font-black text-pitch-green">{(plan.gain_vs_roll ?? 0).toFixed(1)} pts</span>
+        <span className="text-[13px] font-bold text-text-faint">{gainVsRoll(plan.gain_vs_roll ?? 0, horizon)}, if you make these moves</span>
         {late && <Pill tone="gold">after team news</Pill>}
       </div>
     </>

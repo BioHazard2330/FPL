@@ -8,6 +8,7 @@ import { EdgeDensity } from '@/components/charts/EdgeDensity'
 import { ChaseBand } from '@/components/field/ChaseBand'
 import { fetchFieldPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { aheadWord } from '@/lib/say'
 import type { EdgeStats, FieldPayload } from '@/lib/types'
 
 /** THE FIELD - this week measured against everyone else.
@@ -219,7 +220,7 @@ export function FieldScreen() {
           const e = f.plan_option?.edge ?? {}
           return [
             { label: 'Overall rank', value: f.posture?.overall_rank ? f.posture.overall_rank.toLocaleString() : '–', sub: f.posture ? `top ${(100 - f.posture.percentile).toFixed(1)}%` : undefined },
-            { label: 'Edge this week', value: e.mean != null ? `${e.mean >= 0 ? '+' : ''}${e.mean.toFixed(1)}` : '–', tone: (e.mean ?? 0) >= 0 ? 'good' as const : 'bad' as const, sub: 'the plan against the field' },
+            { label: e.mean != null ? `Pts ${aheadWord(e.mean)} of the 10k, a week` : 'Against the top 10k', value: e.mean != null ? Math.abs(e.mean).toFixed(1) : '–', tone: (e.mean ?? 0) >= 0 ? 'good' as const : 'bad' as const, sub: 'the plan against the field' },
             { label: '12+ clear', value: e.big_win != null ? `${Math.round(e.big_win * 100)}%` : '–', tone: 'good' as const },
             { label: '12+ behind', value: e.big_loss != null ? `${Math.round(e.big_loss * 100)}%` : '–', tone: 'bad' as const },
           ]

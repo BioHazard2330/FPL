@@ -8,6 +8,7 @@ import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { DepartureBoard } from '@/components/live/DepartureBoard'
 import { crestUrl, fetchLiveSnapshot, getJson } from '@/lib/api'
 import { useCrowd } from '@/lib/crowd'
+import { aheadWord } from '@/lib/say'
 import { useFetch } from '@/lib/useFetch'
 import type { LiveMatch, LiveSnapshot, LiveSquadPlayer } from '@/lib/types'
 
@@ -204,9 +205,9 @@ export function TvScreen() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="border-2 border-paper/15 p-3">
-              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">vs top 10k</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">{edge == null ? 'vs top 10k' : `pts ${aheadWord(edge)} of top 10k`}</div>
               <div className="tabular font-display text-5xl font-black leading-none" style={{ color: edge == null ? undefined : edge >= 0 ? GREEN : RED }}>
-                {edge == null ? '—' : `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}`}
+                {edge == null ? '—' : Math.abs(edge).toFixed(1)}
               </div>
             </div>
             <div className="border-2 border-paper/15 p-3">
@@ -234,7 +235,7 @@ export function TvScreen() {
 
           {swing && ((swing.helping ?? []).length > 0 || (swing.hurting ?? []).length > 0) && (
             <div className="min-h-0 flex-1 overflow-hidden border-2 border-paper/15 p-3">
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">who is moving your rank</div>
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">who is moving your rank · pts on the top 10k</div>
               {[...(swing.helping ?? []).slice(0, 3).map((m) => ({ ...m, good: true })), ...(swing.hurting ?? []).slice(0, 3).map((m) => ({ ...m, good: false }))].map((m) => (
                 <div key={`${m.good}${m.player_id}`} className="flex items-center gap-2 border-b border-paper/10 py-1 last:border-0">
                   <span className="size-2 rounded-full" style={{ background: m.good ? GREEN : RED }} />
@@ -317,8 +318,8 @@ export function TvScreen() {
                       <div className="mt-2 grid grid-cols-2 gap-2 text-center">
                         {[c.home, c.away].map((s, i) => (
                           <div key={i} className="border border-paper/15 py-1">
-                            <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-paper/45">{s.short} score next</div>
-                            <div className="tabular font-display text-2xl font-black" style={{ color: s.next_goal >= 0 ? GREEN : RED }}>{s.next_goal >= 0 ? '+' : ''}{s.next_goal.toFixed(1)}</div>
+                            <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-paper/45">if {s.short} score next</div>
+                            <div className="tabular font-display text-2xl font-black" style={{ color: s.next_goal >= 0 ? GREEN : RED }}>{s.next_goal >= 0 ? '+' : '−'}{Math.abs(s.next_goal).toFixed(1)} pts</div>
                           </div>
                         ))}
                       </div>

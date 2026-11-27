@@ -702,3 +702,7 @@ removed or changed, as rules for what comes next:
   nobody made.
 - **Distribution charts** (`EdgeDensity`): smooth curve, one-hue fade, the half left of the zero rule drawn in red when it is one
   series, and the share of trials on each side written on the rule.
+
+## Signed numbers say what they are (2026-11-27)
+
+The manager: "+0.2, -0.6 ... just doesn't make sense when I see it." A signed figure is never shown bare. It carries its unit and what it is measured against, in words where there is room ("1.1 pts behind the top 10k", "if they score: +2.9 pts gained on the 10k", "1.6 pts more than rolling over 5 gameweeks") and at least "pts" plus a caption where there is not. Helpers in `frontend/src/lib/say.ts` (`vsTop10k`, `aheadWord`, `pts`, `gainVsRoll`).

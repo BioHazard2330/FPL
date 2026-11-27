@@ -2,6 +2,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import { Info } from '@/components/ui/Info'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fdrFill } from '@/lib/fdr'
+import { aheadWord } from '@/lib/say'
 import type { PunditBrief, PunditLens, PunditMove, WeekPlanPayload } from '@/lib/types'
 
 /** THE PUNDIT'S DESK: each of the plan's moves judged across every lens the app measures (`models/pundit.py`), shown as
@@ -70,7 +71,7 @@ function MoveBrief({ m, i, photos }: { m: PunditMove; i: number; photos: Record<
         </div>
         <div className="text-right">
           <div className="tabular font-display text-[2rem] font-black leading-none text-pitch-green">{(m.gain ?? 0) >= 0 ? '+' : ''}{(m.gain ?? 0).toFixed(1)}</div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-faint">pts / 5 GW</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-faint">pts gained over 5 GWs</div>
         </div>
         <div className={`pundit-stamp shrink-0 -rotate-3 border-2 border-ink px-3 py-1 font-display text-[1.2rem] font-black uppercase ${g.tone}`}>{g.label}</div>
       </div>
@@ -158,7 +159,7 @@ export function PunditDesk({ plan }: { plan: WeekPlanPayload }) {
               {[
                 { v: `${rank.gap}`, l: 'points behind' },
                 { v: (rank.gap / Math.max(rank.weeks_left, 1)).toFixed(1), l: 'needed a week' },
-                { v: `${rank.pace.mean >= 0 ? '+' : ''}${rank.pace.mean.toFixed(1)}`, l: 'your pace a week' },
+                { v: `${Math.abs(rank.pace.mean).toFixed(1)}`, l: `pts a week ${aheadWord(rank.pace.mean)} of the 10k` },
                 { v: `${rank.weeks_left}`, l: 'weeks left' },
               ].map((t) => (
                 <div key={t.l}>

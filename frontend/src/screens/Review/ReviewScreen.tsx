@@ -6,6 +6,7 @@ import { Skel, ScreenError } from '@/components/shell/ScreenStates'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { fetchReviewPayload } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
+import { aheadWord } from '@/lib/say'
 import type { ReviewPayload, ReviewPlayer, ReviewSwing } from '@/lib/types'
 
 /** THE GAMEWEEK REPORT - a finished gameweek read back like the last page of a programme: the score against everyone and
@@ -345,7 +346,7 @@ export function ReviewScreen() {
           const edge = r.top10k_field != null ? r.points - r.top10k_field : null
           return [
             { label: `GW${r.event} score`, value: r.points, sub: r.provisional ? 'provisional until FPL confirms bonus' : 'final' },
-            { label: 'On the top 10k', value: edge == null ? '–' : `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}`, tone: edge == null ? undefined : edge >= 0 ? 'good' as const : 'bad' as const, sub: r.top10k_field != null ? `field ${r.top10k_field.toFixed(1)}` : undefined },
+            { label: edge == null ? 'Against the top 10k' : `Pts ${aheadWord(edge)} of the top 10k`, value: edge == null ? '–' : Math.abs(edge).toFixed(1), tone: edge == null ? undefined : edge >= 0 ? 'good' as const : 'bad' as const, sub: r.top10k_field != null ? `field ${r.top10k_field.toFixed(1)}` : undefined },
             { label: 'Overall rank', value: r.rank ? r.rank.toLocaleString() : r.previous_rank ? `~${r.previous_rank.toLocaleString()}` : '–', sub: r.rank && r.previous_rank ? `from ${r.previous_rank.toLocaleString()}` : undefined },
             { label: 'Left on the bench', value: r.bench_points ?? '–', tone: (r.bench_points ?? 0) >= 10 ? 'bad' as const : undefined },
           ]

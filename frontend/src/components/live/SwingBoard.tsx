@@ -1,3 +1,4 @@
+import { aheadWord, pts, vsTop10k } from '@/lib/say'
 import { Info } from '@/components/ui/Info'
 import { PlayerPhoto } from '@/components/ui/PlayerPhoto'
 import { crestUrl, getJson } from '@/lib/api'
@@ -21,7 +22,9 @@ function GoalWorth({ side, on }: { side: Side; on: boolean }) {
     <div className={`flex flex-1 flex-col items-center gap-1 border-2 border-ink px-2 py-3 ${on ? 'bg-spot text-ink' : 'bg-paper text-text'}`}>
       {crestUrl(side.code) && <img src={crestUrl(side.code)!} alt="" className="size-9" />}
       <span className="font-display text-lg font-black uppercase leading-none">{side.short}</span>
+      <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] opacity-70">if they score</span>
       <span className={`tabular font-display text-3xl font-black leading-none ${on ? '' : tone(side.next_goal)}`}>{signed(side.next_goal)}</span>
+      <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] opacity-70">pts {side.next_goal >= 0 ? 'gained' : 'lost'} on the 10k</span>
     </div>
   )
 }
@@ -42,11 +45,12 @@ function CheerCard({ c }: { c: Card }) {
         <GoalWorth side={c.away} on={c.cheer === 'away'} />
       </div>
       {c.key.length > 0 && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1" title="What each point he scores is worth to you against the top 10k">
           {c.key.map((k) => (
-            <span key={k.player_id} className="flex min-w-0 items-center gap-1" title={`${k.name}: ${signed(k.stake)} a point`}>
+            <span key={k.player_id} className="flex min-w-0 items-center gap-1" title={`${k.name}: each point he scores moves you ${pts(k.stake)} against the top 10k`}>
               <PlayerPhoto code={k.photo_code} teamCode={k.team_code} className="h-7 w-6" />
-              <span className={`tabular text-[12px] font-bold ${tone(k.stake)}`}>{signed(k.stake)}</span>
+              <span className="min-w-0 truncate text-[11px] text-text-muted">{k.name}</span>
+              <span className={`tabular text-[12px] font-bold ${tone(k.stake)}`}>{signed(k.stake)}/pt</span>
             </span>
           ))}
         </div>
@@ -60,10 +64,10 @@ function MoverColumn({ title, rows }: { title: string; rows: Mover[] }) {
   const top = Math.max(...rows.map((r) => Math.abs(r.edge)), 1)
   return (
     <div>
-      <div className="mb-2 font-display text-[15px] font-black uppercase text-text">{title}</div>
+      <div className="mb-2 font-display text-[15px] font-black uppercase text-text">{title} <span className="text-[11px] font-bold normal-case tracking-normal text-text-faint">pts gained or lost on the top 10k</span></div>
       <div className="space-y-1.5">
         {rows.map((m) => (
-          <div key={m.player_id} className="grid grid-cols-[2rem_6.5rem_minmax(0,1fr)_3.2rem] items-center gap-2" title={`${m.points} points · yours ×${m.mine} · top 10k ${m.eo}`}>
+          <div key={m.player_id} className="grid grid-cols-[2rem_6.5rem_minmax(0,1fr)_3.2rem] items-center gap-2" title={`${m.points} points so far. You own him ×${m.mine}, the top 10k ×${m.eo.toFixed(2)} on average, so he has moved you ${pts(m.edge)} against them`}>
             <PlayerPhoto code={m.photo_code} teamCode={m.team_code} className="h-9 w-7" />
             <span className="truncate text-[13.5px] font-bold text-text">{m.name}</span>
             <span className="h-3 bg-raised"><span className={`block h-full ${m.edge >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${(Math.abs(m.edge) / top) * 100}%` }} /></span>
@@ -82,8 +86,8 @@ export function EdgeLine() {
   const edge = state.data.edge ?? 0
   return (
     <div className="mt-3 flex items-baseline gap-2">
-      <span className={`tabular font-display text-4xl font-black ${edge >= 0 ? 'text-[#4fd88a]' : 'text-[#ff6b57]'}`}>{signed(edge)}</span>
-      <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">on the top 10k</span>
+      <span className={`tabular font-display text-4xl font-black ${edge >= 0 ? 'text-[#4fd88a]' : 'text-[#ff6b57]'}`}>{Math.abs(edge).toFixed(1)}</span>
+      <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-paper/45">pts {aheadWord(edge)} of the top 10k</span>
     </div>
   )
 }
@@ -97,9 +101,9 @@ export function SwingBoard({ event }: { event?: number }) {
     <section className="px-10 py-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className={`tabular font-display text-7xl font-black leading-none ${tone(edge)}`}>{signed(edge)}</div>
+          <div className={`tabular font-display text-7xl font-black leading-none ${tone(edge)}`}>{Math.abs(edge).toFixed(1)} <span className="text-3xl">pts {aheadWord(edge)}</span></div>
           <div className="mt-1 flex items-center gap-2 text-[13px] font-bold uppercase tracking-[0.1em] text-text-faint">
-            on the top 10k this gameweek
+            {vsTop10k(edge)} this gameweek, on the points so far
             <Info label="How this is worked out">
               Every player&apos;s live points, with provisional bonus, times your multiplier minus his effective ownership among the top 10k ({d.field}). Your substitutions and armband follow FPL&apos;s rules once a match ends; the field&apos;s are as locked. A next goal is shared across the side&apos;s players on the pitch by their projected goals and assists, with the bonus a goal usually carries, and takes off what the other side&apos;s 60-minute players lose.
             </Info>
@@ -113,7 +117,8 @@ export function SwingBoard({ event }: { event?: number }) {
       </div>
       {(d.matches ?? []).length > 0 && (
         <>
-          <h2 className="mt-6 font-display text-text">Next goal, your edge</h2>
+          <h2 className="mt-6 font-display text-text">Who to cheer</h2>
+          <p className="voice mt-1 text-[15px] text-text-muted">For each match left: how many points you would gain or lose against the top 10k if each side scores next.</p>
           <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {d.matches!.map((c) => <CheerCard key={c.fixture} c={c} />)}
           </div>
