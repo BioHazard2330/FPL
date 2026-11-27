@@ -918,3 +918,16 @@ main { view-transition-name: page; }
 .screen-frame > * > *:nth-child(4) { animation-delay: 120ms; }
 .screen-frame > * > *:nth-child(n+5) { animation-delay: 160ms; }
 @media (prefers-reduced-motion: reduce) { .screen-frame > * > * { animation: none; } }
+
+/* Matchday TV: a player whose match is in play wears a pulsing spot ring on the pitch. */
+.tv-live-ring::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  border: 3px solid #ff4614;
+  animation: tv-ring 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes tv-ring { from { opacity: 0.9; transform: scale(0.9); } to { opacity: 0; transform: scale(1.25); } }
+@media (prefers-reduced-motion: reduce) { .tv-live-ring::after { animation: none; } }

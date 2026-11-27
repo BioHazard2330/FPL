@@ -51,7 +51,7 @@ import { Skel, SkelMasthead, SkelRail, ScreenError } from '@/components/shell/Sc
  * every number here traces to the same `CommandPayload` fields the
  * previous version already rendered. */
 
-type CommandTab = 'week' | 'ahead' | 'form' | 'season' | 'news'
+type CommandTab = 'week' | 'ahead' | 'form' | 'season'
 
 type SectionKey =
   | 'decision' | 'value' | 'lineup' | 'record' | 'squad' | 'horizon' | 'captain' | 'strategy' | 'evidence' | 'confidence' | 'later' | 'desk' | 'checklist' | 'field'
@@ -196,12 +196,12 @@ export function CommandScreen() {
 
   if (plan) {
     const moves = plan.moves ?? []
-    const tabs: { key: CommandTab; label: string; note: string }[] = [
-      { key: 'week', label: 'This week', note: moves.length === 0 ? 'roll' : `${moves.length} move${moves.length === 1 ? '' : 's'}` },
-      { key: 'ahead', label: 'The weeks ahead', note: 'armband & road' },
-      { key: 'form', label: 'Form', note: 'the eye test' },
-      { key: 'season', label: 'Season', note: 'rank & record' },
-      { key: 'news', label: 'News', note: 'the desk' },
+    const tabs: { key: CommandTab; label: string; note: string; blurb: string }[] = [
+      { key: 'week', label: 'The call', note: moves.length === 0 ? 'roll' : `${moves.length} move${moves.length === 1 ? '' : 's'}`,
+        blurb: 'What to do this gameweek, in one place. The evidence behind it is folded underneath.' },
+      { key: 'ahead', label: 'The weeks ahead', note: 'armband & road', blurb: 'The armband and the transfers the plan expects over the next eight gameweeks.' },
+      { key: 'form', label: 'Around the game', note: 'form, news, the 10k', blurb: 'How your players are playing, what the press is saying, what the top 10k did and tonight’s prices.' },
+      { key: 'season', label: 'Season', note: 'rank & record', blurb: 'Your season so far and how the calls have scored.' },
     ]
     return (
       <div className="data-in">
@@ -209,7 +209,6 @@ export function CommandScreen() {
         <MatchdayHeader plan={plan} />
         <CommandStage plan={plan} />
         <SquadVerdict />
-        <LastReport />
         <nav className="bare -mb-4 flex items-end gap-2 border-b-[3px] border-ink" aria-label="Command sections">
           {tabs.map((t, i) => (
             <button
@@ -228,41 +227,37 @@ export function CommandScreen() {
             </button>
           ))}
         </nav>
+        <p className="bare voice -mt-3 px-1 text-[16px] text-text-muted">{tabs.find((t) => t.key === tab)?.blurb}</p>
         {tab === 'week' && (
           <>
             <DeadlineWatch />
             <div className="bare"><PunditCall /></div>
             <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
-            <LockedCalls />
-            <LinedUp plan={plan} />
-            <PunditDesk plan={plan} />
-            <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-              <div className="min-w-0 space-y-7">
-                <PlanChanges changes={plan.changes} horizon={plan.horizon ?? 5} />
-                {moves.length > 0 && (
-                  <Disclosure title="Scouting file" summary={`${moves.length} move${moves.length === 1 ? '' : 's'} · craft, fixtures, chances`}>
+            <SquadNews />
+            <div className="bare">
+              <Disclosure title="Why this call" summary="the pundit's desk, how each move was priced, what changed, the checklist">
+                <div className="space-y-7">
+                  <PunditDesk plan={plan} />
+                  <LinedUp plan={plan} />
+                  <LockedCalls />
+                  <PlanChanges changes={plan.changes} horizon={plan.horizon ?? 5} />
+                  <MarginalValue plan={plan} />
+                  {moves.length > 0 && (
                     <div className="space-y-4">
                       {moves.map((m) => (
                         <MoveCard key={m.into.player_id} m={m} horizon={plan.horizon ?? 5} fixtures={plan.fixtures} startEvent={plan.event ?? 0} board={plan.matchups} />
                       ))}
-                      {(plan.declined ?? []).map((m) => (
-                        <p key={m.into.player_id} className="text-[13px] text-text-muted">
-                          <span className="font-semibold text-text">Left out:</span> {m.out.name} &rarr; {m.into.name} adds {m.gain >= 0 ? '+' : ''}
-                          {m.gain.toFixed(1)} over {plan.horizon} GW, under the {plan.min_move_gain} a move has to earn.
-                        </p>
-                      ))}
                     </div>
-                  </Disclosure>
-                )}
-                <SquadNews />
-                <MarginalValue plan={plan} />
-              </div>
-              <div className="min-w-0 space-y-7">
-                <DeadlineChecklist plan={plan} desk={desk} />
-                <MidweekWatch />
-                <TenKWeek />
-                <TonightPrices />
-              </div>
+                  )}
+                  {(plan.declined ?? []).map((m) => (
+                    <p key={m.into.player_id} className="text-[13px] text-text-muted">
+                      <span className="font-semibold text-text">Left out:</span> {m.out.name} &rarr; {m.into.name} adds {m.gain >= 0 ? '+' : ''}
+                      {m.gain.toFixed(1)} over {plan.horizon} GW, under the {plan.min_move_gain} a move has to earn.
+                    </p>
+                  ))}
+                  <DeadlineChecklist plan={plan} desk={desk} />
+                </div>
+              </Disclosure>
             </div>
           </>
         )}
@@ -272,14 +267,23 @@ export function CommandScreen() {
             <RoadAhead plan={plan} compact />
           </>
         )}
-        {tab === 'form' && <EyeTest plan={plan} />}
+        {tab === 'form' && (
+          <>
+            <EyeTest plan={plan} />
+            <DeskStrip desk={desk} />
+            <div className="bare grid grid-cols-1 items-start gap-7 xl:grid-cols-2">
+              <div className="min-w-0 space-y-7"><TenKWeek /><MidweekWatch /></div>
+              <div className="min-w-0 space-y-7"><TonightPrices /></div>
+            </div>
+          </>
+        )}
         {tab === 'season' && (
           <>
+            <LastReport />
             <SeasonRibbon />
             <TrackRecord />
           </>
         )}
-        {tab === 'news' && <DeskStrip desk={desk} />}
       </div>
     )
   }
