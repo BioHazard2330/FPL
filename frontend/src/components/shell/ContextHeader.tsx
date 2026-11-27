@@ -6,6 +6,7 @@ import { derivePhase, formatCountdown, useCountdown } from '@/lib/clock'
 import { useLiveMeta } from '@/lib/useLiveMeta'
 import { relativeTime } from '@/lib/time'
 import { SyncButton } from '@/components/shell/SyncButton'
+import { Pulse } from '@/components/shell/Pulse'
 
 /** THE ONE BAR ABOVE EVERY SCREEN.
  *
@@ -60,6 +61,7 @@ export function ContextHeader() {
       </div>
 
       <div className="ml-auto flex items-center gap-4">
+        <Pulse />
         {matches.length > 0 && (
           <div className="hidden items-center gap-1.5 xl:flex">
             {matches.slice(0, 5).map((m) => {
