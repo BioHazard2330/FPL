@@ -17,6 +17,7 @@ import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, 
 import { ScreenError } from '@/components/shell/ScreenStates'
 import type { LiveMatchEvent, LiveSnapshot, LiveSquadPlayer } from '@/lib/types'
 import { ScreenTabs, useScreenTab, type ScreenTab } from '@/components/shell/ScreenTabs'
+import { LiveRaces } from '@/components/live/LiveRaces'
 
 type LiveTab = 'eleven' | 'matches' | 'rank' | 'season'
 const LIVE_TAB_KEYS = ['eleven', 'matches', 'rank', 'season'] as const
@@ -160,6 +161,7 @@ export function LiveScreen() {
         </section>
       )}
 
+          <LiveRaces />
         </>
       )}
       {tab === 'matches' && (

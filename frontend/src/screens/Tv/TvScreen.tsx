@@ -51,7 +51,7 @@ function minuteOf(m: LiveMatch): number {
 }
 
 /** One of your players on the pitch: photo, name plate, live points, event stamps. */
-function PitchPlayer({ s, pts, state, events }: { s: LiveSquadPlayer; pts: number; state: string; events: { goal: number; assist: number; red: number } }) {
+function PitchPlayer({ s, pts, state, events, dc }: { s: LiveSquadPlayer; pts: number; state: string; events: { goal: number; assist: number; red: number }; dc?: { count: number | null; threshold: number | null; bonus: number | null } }) {
   const live = state === 'live'
   const done = state === 'played'
   return (
@@ -71,6 +71,12 @@ function PitchPlayer({ s, pts, state, events }: { s: LiveSquadPlayer; pts: numbe
         <div className={`tabular font-display text-[1.9rem] font-black leading-[1.05] ${live ? 'animate-pulse' : ''}`} style={{ background: done || live ? GOLD : '#2a2f38', color: done || live ? INK : '#fbf6ea99' }}>
           <Odometer value={pts} className="justify-center" />
         </div>
+        {dc && (live || done) && ((dc.threshold && dc.count != null) || dc.bonus) ? (
+          <div className="flex items-center justify-between bg-[#07090d] px-1.5 text-[11px] font-black uppercase">
+            {dc.threshold && dc.count != null ? <span style={{ color: dc.count >= dc.threshold ? GREEN : '#fbf6eacc' }}>DC {dc.count}/{dc.threshold}</span> : <span />}
+            {dc.bonus ? <span style={{ color: GOLD }}>+{dc.bonus} bonus</span> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -255,7 +261,9 @@ export function TvScreen() {
                 <div key={pos} className="flex justify-center gap-6">
                   {row.map((s) => {
                     const b = byPlayer.get(s.player_id)
-                    return <PitchPlayer key={s.player_id} s={s} pts={b ? b.points * Math.max(1, b.multiplier) : 0} state={b?.play_state ?? ''} events={evOf(s.player_id)} />
+                    const bd = (snap?.bonus_defcon ?? []).find((x) => x.player_id === s.player_id)
+                    return <PitchPlayer key={s.player_id} s={s} pts={b ? b.points * Math.max(1, b.multiplier) : 0} state={b?.play_state ?? ''} events={evOf(s.player_id)}
+                      dc={bd ? { count: bd.defensive_contribution, threshold: bd.defcon_threshold, bonus: bd.confirmed_bonus ?? bd.provisional_bonus } : undefined} />
                   })}
                 </div>
               )
