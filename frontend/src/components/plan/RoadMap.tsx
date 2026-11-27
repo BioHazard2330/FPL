@@ -68,7 +68,7 @@ export function RoadMap({ plan }: { plan: WeekPlanPayload }) {
           {[
             ['this week', moves.length === 0 ? 'roll' : `${moves.length} move${moves.length > 1 ? 's' : ''}`],
             ['over the road', `${totalMoves} moves`],
-            ['against rolling now', signed(road.gain_vs_roll)],
+            ['pts against rolling now', signed(road.gain_vs_roll)],
             ['banked at the end', `${road.final_free_transfers} FT`],
           ].map(([k, v]) => (
             <div key={k} className="bg-paper px-3 py-1.5">

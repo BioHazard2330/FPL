@@ -59,7 +59,7 @@ export function ChaseBand({ c }: { c: Chase }) {
             </div>
             <div>
               <div className="tabular font-display text-[3.4rem] font-black leading-[0.8] text-spot [text-shadow:2px_2px_0_var(--ink)]">{c.need_per_week !== null ? signed(c.need_per_week) : '—'}</div>
-              <div className="mt-2 text-[13px] text-text-muted">a week above the top-10k average, for {c.weeks_left} gameweeks</div>
+              <div className="mt-2 text-[13px] text-text-muted">pts a week above the top-10k average, for {c.weeks_left} gameweeks</div>
             </div>
           </div>
           <Ruler c={c} />
@@ -71,7 +71,7 @@ export function ChaseBand({ c }: { c: Chase }) {
               <div className={`tabular font-display text-[4.2rem] font-black leading-none ${chanceNow >= 0.5 ? 'text-pitch-green' : chanceNow >= 0.2 ? 'text-broadcast-gold' : 'text-alert-red'}`}>{pct(chanceNow)}</div>
             </div>
             <div className="text-right text-[12.5px] leading-snug text-text-muted">
-              {pace ? <>at your measured pace, {signed(pace.mean)} a week over {pace.weeks} gameweeks</> : <>at the plan's simulated pace</>}
+              {pace ? <>at your measured pace, {signed(pace.mean)} pts a week against the top 10k over {pace.weeks} gameweeks</> : <>at the plan's simulated pace</>}
               <br />
               at this week's simulated pace ({signed(c.plan_pace.mean)}): <span className="font-semibold text-text">{pct(c.chance_at_plan_pace)}</span>
             </div>
@@ -91,7 +91,7 @@ export function ChaseBand({ c }: { c: Chase }) {
                           : { top: '50%', height: `${(-m.edge / maxEdge) * 50}%` }}
                       />
                     </div>
-                    <div className={`tabular font-display text-[14px] font-black ${m.edge >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{signed(m.edge)}</div>
+                    <div className={`tabular font-display text-[14px] font-black ${m.edge >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{signed(m.edge)} pts</div>
                     <div className="font-display text-[11px] font-black text-text-faint">GW{m.event}</div>
                   </div>
                 ))}
@@ -109,7 +109,7 @@ export function ChaseBand({ c }: { c: Chase }) {
             return (
               <div key={r.key} className="grid grid-cols-[minmax(0,1fr)_6rem_6rem_6rem] items-baseline gap-4 py-2">
                 <span className="text-[14px] text-text">{r.label}</span>
-                <span className="tabular text-right text-[13px] text-text-muted">{signed(r.mean)} edge</span>
+                <span className="tabular text-right text-[13px] text-text-muted">{signed(r.mean)} pts on the 10k a week</span>
                 <span className="tabular text-right font-display text-lg font-black text-text">{pct(r.chance)}</span>
                 <span className={`tabular text-right text-[13px] font-semibold ${Math.abs(d) < 0.0005 ? 'text-text-faint' : d > 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
                   {Math.abs(d) < 0.0005 ? "—" : `${d > 0 ? "+" : ""}${(d * 100).toFixed(1)} pp`}

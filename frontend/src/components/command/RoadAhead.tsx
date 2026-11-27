@@ -1,7 +1,7 @@
 import { Panel } from '@/components/ui/kit'
 import type { WeekPlanPayload } from '@/lib/types'
 
-const signed = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
+const signed = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} pts`
 
 /** BEYOND THIS WEEK - how the plan continues, a gameweek per column. Only the next three are shown: past that the planner is
  * guessing at injuries and prices that do not exist yet, and a row of empty "roll" columns says nothing. Every column after
@@ -46,7 +46,7 @@ export function RoadAhead({ plan, title = 'Beyond this week (indicative)', lead 
                         className="mt-0.5 text-[11.5px] leading-snug text-text-faint"
                         title="What this move adds in each gameweek alone, and whether it can be paid for now on its own at strict sale prices"
                       >
-                        GW{plan.event} {signed(m.why_later.gain_this_week)} · GW{w.event} {signed(m.why_later.gain_in_its_week)}
+                        worth {signed(m.why_later.gain_this_week)} if made in GW{plan.event}, {signed(m.why_later.gain_in_its_week)} in GW{w.event}
                         {m.why_later.short_now_tenths > 0 && <span className="text-broadcast-gold"> · £{(m.why_later.short_now_tenths / 10).toFixed(1)}m short now</span>}
                       </div>
                     )}

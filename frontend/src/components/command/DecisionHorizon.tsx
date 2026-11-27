@@ -48,7 +48,7 @@ export function DecisionHorizon({ checkpoint }: { checkpoint: CheckpointBlock })
             <div key={h} className="flex flex-1 flex-col items-center gap-2">
               <div className="tabular text-sm font-bold text-text">
                 {edge >= 0 ? '+' : ''}
-                {edge.toFixed(1)}
+                {edge.toFixed(1)} pts
               </div>
               <div className="flex h-24 w-full items-end justify-center">
                 <div

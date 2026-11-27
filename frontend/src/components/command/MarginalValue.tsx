@@ -37,7 +37,7 @@ export function MarginalValue({ plan }: { plan: WeekPlanPayload }) {
               </div>
               <span className={`tabular w-[3.5rem] shrink-0 text-right font-display text-2xl font-black ${taken ? 'text-pitch-green' : 'text-text-faint'}`}>
                 {s.marginal >= 0 ? '+' : ''}
-                {s.marginal.toFixed(1)}
+                {s.marginal.toFixed(1)}<span className="ml-0.5 text-[12px]">pts</span>
               </span>
             </div>
           )

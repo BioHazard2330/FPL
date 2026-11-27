@@ -103,7 +103,7 @@ export function ScoutingReport({ r, name }: { r: ScoutingReportData; name: strin
                     {r.finishing.np_goals} non-penalty goal{r.finishing.np_goals === 1 ? '' : 's'} from {r.finishing.npxg.toFixed(2)} xG:{' '}
                     <span className={r.finishing.difference >= 0 ? 'font-semibold text-pitch-green' : 'font-semibold text-alert-red'}>
                       {r.finishing.difference >= 0 ? '+' : ''}
-                      {r.finishing.difference.toFixed(2)}
+                      {r.finishing.difference.toFixed(2)} goals against his xG
                     </span>
                     . Finishing above or below xG has not carried to the next match in this database (r +0.03); getting the chances has (r +0.48).
                   </li>

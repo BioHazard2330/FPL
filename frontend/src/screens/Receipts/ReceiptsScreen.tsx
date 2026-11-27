@@ -65,7 +65,7 @@ function DeltaBars({ row, scale }: { row: LedgerRow; scale: number }) {
             <div className={`tabular w-14 text-right text-sm font-semibold ${
  r.value === null ? 'text-text-faint' : r.value < 0 ? 'text-alert-red' : 'text-text'
  }`}>
-              {r.value === null ? '—' : `${r.value > 0 ? '+' : ''}${r.value}`}
+              {r.value === null ? '—' : `${r.value > 0 ? '+' : ''}${r.value} pts`}
             </div>
           </div>
         )
@@ -103,7 +103,7 @@ function GameweekCard({ row, scale }: { row: LedgerRow; scale: number }) {
         </div>
         {row.delta_vs_you !== null && (
           <div className={`tabular ml-auto text-lg font-bold ${beat ? 'text-broadcast-blue' : 'text-pitch-green'}`}>
-            {row.delta_vs_you > 0 ? '+' : ''}{row.delta_vs_you}
+            {row.delta_vs_you > 0 ? '+' : ''}{row.delta_vs_you} pts
             <span className="ml-1 text-[12px] font-normal text-text-faint">
               {beat ? 'it would have gained' : 'you were ahead'}
             </span>
@@ -202,7 +202,7 @@ export function ReceiptsScreen() {
           {h.delta !== null && (
             <div className="ml-auto text-right">
               <div className={`tabular text-5xl font-bold leading-none ${behind ? 'text-alert-red' : 'text-broadcast-blue'}`}>
-                {h.delta > 0 ? '+' : ''}{h.delta}
+                {h.delta > 0 ? '+' : ''}{h.delta} pts
               </div>
               <div className="mt-2 max-w-[16rem] text-[13px] text-text-faint">
                 {behind ? 'points it would have cost you' : 'points it would have gained you'}

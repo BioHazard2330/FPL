@@ -29,7 +29,7 @@ import type { EdgeStats, FieldPayload } from '@/lib/types'
  * it; the "pts" column does not, and is not a forecast of your score. */
 
 const pct = (p: number) => `${Math.round(p * 100)}%`
-const sign = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
+const sign = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)} pts`
 
 function Stat({ label, value, sub, tone = 'text-text' }: { label: string; value: React.ReactNode; sub?: string; tone?: string }) {
   return (
@@ -43,7 +43,7 @@ function Stat({ label, value, sub, tone = 'text-text' }: { label: string; value:
 
 function EdgeRow({ label, e, mean, highlight }: { label: React.ReactNode; e: EdgeStats; mean?: number; highlight?: boolean }) {
   return (
-    <div className={`grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem_4.5rem_4.5rem] items-center gap-3 border-b border-divider py-2 text-sm ${highlight ? 'bg-panel' : ''}`}>
+    <div className={`grid grid-cols-[minmax(0,1fr)_4rem_5.5rem_5.5rem_5.5rem_5.5rem] items-center gap-3 border-b border-divider py-2 text-sm ${highlight ? 'bg-panel' : ''}`}>
       <div className="min-w-0 truncate pl-2 font-semibold text-text">{label}</div>
       <div className="tabular text-right text-text-muted">{mean !== undefined ? mean.toFixed(1) : ''}</div>
       <div className={`tabular text-right font-bold ${e.mean >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{sign(e.mean)}</div>
@@ -56,7 +56,7 @@ function EdgeRow({ label, e, mean, highlight }: { label: React.ReactNode; e: Edg
 
 function Header() {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem_4.5rem_4.5rem] gap-3 border-b border-divider py-1.5 text-[12px] text-text-faint">
+    <div className="grid grid-cols-[minmax(0,1fr)_4rem_5.5rem_5.5rem_5.5rem_5.5rem] gap-3 border-b border-divider py-1.5 text-[12px] text-text-faint">
       <div className="pl-2" />
       <div className="text-right">pts</div>
       <div className="text-right">edge</div>
@@ -184,7 +184,7 @@ function Body({ d }: { d: FieldPayload }) {
               <div className="min-w-0"><Link to={`/player/${t.player_id}`} className="font-bold text-text hover:text-pitch-green">{t.name}</Link><span className="ml-2 text-[12px] text-text-faint">{t.team_short} · {t.position}</span></div>
               <div className="tabular text-right text-text-muted" title="average multiplier across the field">{t.field_eo.toFixed(2)}</div>
               <div className="tabular text-right text-text-muted" title="chance of 8+ points">{pct(t.p_haul)} haul</div>
-              <div className="tabular text-right font-bold text-alert-red" title="field ownership times expected points">−{t.cost.toFixed(1)}</div>
+              <div className="tabular text-right font-bold text-alert-red" title="field ownership times expected points: what he could cost you against the top 10k">−{t.cost.toFixed(1)} pts</div>
             </div>
           ))}
         </div>
@@ -192,7 +192,7 @@ function Body({ d }: { d: FieldPayload }) {
           <h2 className="font-display text-2xl font-bold text-text">Where your edge comes from</h2>
           <Note>For each starter: his expected points times (your multiplier minus the field's). Low or negative means you are only matching the field there.</Note>
           {(d.contributions ?? []).map((c) => (
-            <div key={c.player_id} className="grid grid-cols-[minmax(0,1fr)_4rem_9rem_3.5rem] items-center gap-3 border-b border-divider py-2 text-sm">
+            <div key={c.player_id} className="grid grid-cols-[minmax(0,1fr)_4rem_9rem_4.5rem] items-center gap-3 border-b border-divider py-2 text-sm">
               <div className="min-w-0"><Link to={`/player/${c.player_id}`} className="font-bold text-text hover:text-pitch-green">{c.name}</Link>{c.you === 2 && <span className="ml-2 bg-broadcast-gold px-1 text-[12px] font-bold leading-4 text-broadcast-gold-ink">C</span>}</div>
               <div className="tabular text-right text-text-faint">EO {c.field_eo.toFixed(2)}</div>
               <div className="relative h-2.5 bg-raised"><div className={`h-full ${c.edge >= 0 ? 'bg-pitch-green' : 'bg-alert-red'}`} style={{ width: `${Math.min(100, (Math.abs(c.edge) / 7) * 100)}%` }} /></div>

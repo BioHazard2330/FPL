@@ -55,7 +55,7 @@ export function Workload() {
             <span className="tabular text-right text-[13px]">
               {r.last?.top_speed ? <span className="font-display text-lg font-black text-text">{r.last.top_speed.toFixed(1)}</span> : '—'}
               {speedDrop !== null && Math.abs(speedDrop) >= 1 && (
-                <span className={`ml-1 font-bold ${speedDrop < 0 ? 'text-alert-red' : 'text-pitch-green'}`}>{speedDrop > 0 ? '+' : ''}{speedDrop.toFixed(1)}</span>
+                <span className={`ml-1 font-bold ${speedDrop < 0 ? 'text-alert-red' : 'text-pitch-green'}`}>{speedDrop > 0 ? '+' : ''}{speedDrop.toFixed(1)} km/h on his average</span>
               )}
             </span>
           </div>

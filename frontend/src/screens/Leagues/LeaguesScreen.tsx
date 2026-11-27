@@ -21,7 +21,7 @@ const ordinal = (n: number) => {
   const v = n % 100
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`
 }
-const signed = (v: number, d = 0) => `${v > 0 ? '+' : ''}${v.toFixed(d)}`
+const signed = (v: number, d = 0) => `${v > 0 ? '+' : ''}${v.toFixed(d)} pts`
 
 function Movement({ rank, last }: { rank: number; last: number | null }) {
   if (!last || last === rank) return <Minus className="size-3.5 text-text-faint" aria-label="no change" />

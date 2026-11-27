@@ -16,7 +16,7 @@ function Cell({ r }: { r: ComponentRow | undefined }) {
   const tone = rel < 0.1 ? 'text-text-muted' : r.gap > 0 ? 'text-broadcast-blue' : 'text-alert-red'
   return (
     <td className="px-2 py-2 text-center">
-      <div className={`tabular font-display text-[17px] font-black leading-none ${tone}`}>{r.gap >= 0 ? '+' : ''}{r.gap.toFixed(2)}</div>
+      <div className={`tabular font-display text-[17px] font-black leading-none ${tone}`}>{r.gap >= 0 ? '+' : ''}{r.gap.toFixed(2)}<span className="ml-0.5 text-[10px] font-bold">pts</span></div>
       <div className="tabular mt-0.5 text-[11px] text-text-faint">{r.predicted.toFixed(2)} → {r.actual.toFixed(2)}</div>
     </td>
   )

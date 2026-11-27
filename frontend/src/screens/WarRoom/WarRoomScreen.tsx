@@ -16,7 +16,7 @@ import type { ComparePayload, ExplorerPlayer, WhatIfPayload } from '@/lib/types'
  * and the eye are on one ticket. Up to three moves. Nothing is sent to FPL. */
 
 const POS = ['GKP', 'DEF', 'MID', 'FWD'] as const
-const signed = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
+const signed = (v: number, d = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(d)} pts`
 const STAMP: Record<string, string> = { 'backs him': 'bg-pitch-green text-pitch-green-ink', mixed: 'bg-broadcast-gold text-ink', 'against him': 'bg-alert-red text-alert-red-ink' }
 const FDR = (d: number | null) => (d === null ? 'bg-raised' : d <= 2 ? 'bg-pitch-green text-paper' : d >= 4 ? 'bg-alert-red text-paper' : 'bg-raised text-text')
 

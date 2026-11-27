@@ -169,7 +169,7 @@ export function AdvancedScreen() {
                   <Link to={`/player/${d.player_id}`} className="w-36 font-semibold text-text hover:text-pitch-green">{d.web_name}</Link>
                   <span className="tabular text-[14px] text-text-muted">ours {d.our_median.toFixed(1)}</span>
                   <span className="tabular text-[14px] text-text-muted">Solio {d.solio_pr_points.toFixed(1)}</span>
-                  <span className={`tabular font-semibold ${Math.abs(gap) >= 2 ? 'text-alert-red' : 'text-broadcast-gold'}`}>{(gap >= 0 ? '+' : '') + gap.toFixed(1)}</span>
+                  <span className={`tabular font-semibold ${Math.abs(gap) >= 2 ? 'text-alert-red' : 'text-broadcast-gold'}`}>{Math.abs(gap).toFixed(1)} pts {gap >= 0 ? 'above' : 'below'} Solio</span>
                   {d.largest_driver && <span className="text-[13px] text-text-faint">mostly {d.largest_driver}</span>}
                 </div>
               )

@@ -60,7 +60,7 @@ function Row({ r, scale }: { r: LuckRow; scale: number }) {
       </div>
       <div className="text-center"><LuckBar v={r.luck} scale={scale} /></div>
       <div className={`tabular text-right text-sm font-bold ${r.z >= 2 ? 'text-broadcast-gold' : r.z <= -2 ? 'text-broadcast-blue' : 'text-text-muted'}`}>
-        {r.z > 0 ? '+' : ''}{r.z.toFixed(1)}
+        <span title="How far his points sit above (+) or below (−) what his chances imply, in standard errors: beyond ±2 is unusual luck">{r.z > 0 ? 'lucky ' : r.z < 0 ? 'unlucky ' : ''}{Math.abs(r.z).toFixed(1)}σ</span>
       </div>
     </div>
   )
@@ -165,7 +165,7 @@ export function AuditScreen() {
             <h2 className="font-display text-2xl font-bold text-text">Your armband</h2>
             <span className="text-[13px] text-text-muted">
               the armband has cost <span className="tabular font-bold text-text">{d.armband.reduce((s, r) => s + r.cost, 0).toFixed(0)}</span> points against the best in each eleven;{' '}
-              <span className="tabular font-bold text-broadcast-blue">{d.armband.reduce((s, r) => s + r.owed, 0).toFixed(0)}</span> of the captains' own returns were owed by their chances
+              {(() => { const o = d.armband.reduce((s, r) => s + r.owed, 0); return <>your captains scored <span className="tabular font-bold text-broadcast-blue">{Math.abs(o).toFixed(0)}</span> points {o >= 0 ? 'fewer' : 'more'} than their chances said they should have</> })()}
             </span>
           </div>
           <Note>
@@ -187,8 +187,8 @@ export function AuditScreen() {
                 <Link to={`/player/${r.best_actual.player_id}`} className="hover:text-pitch-green">{r.best_actual.name}</Link>{' '}
                 <span className="tabular text-text-faint">{r.best_actual.actual}</span>
               </span>
-              <span className={`tabular text-right font-bold ${r.cost > 0 ? 'text-alert-red' : 'text-pitch-green'}`}>{r.cost > 0 ? `−${r.cost.toFixed(0)}` : '0'}</span>
-              <span className={`tabular text-right ${r.owed > 1 ? 'text-broadcast-blue' : r.owed < -1 ? 'text-broadcast-gold' : 'text-text-faint'}`}>{r.owed > 0 ? '+' : ''}{r.owed.toFixed(1)}</span>
+              <span className={`tabular text-right font-bold ${r.cost > 0 ? 'text-alert-red' : 'text-pitch-green'}`}>{r.cost > 0 ? `−${r.cost.toFixed(0)} pts` : '0'}</span>
+              <span className={`tabular text-right ${r.owed > 1 ? 'text-broadcast-blue' : r.owed < -1 ? 'text-broadcast-gold' : 'text-text-faint'}`}>{r.owed > 0 ? '+' : ''}{r.owed.toFixed(1)} pts</span>
             </div>
           ))}
         </section>

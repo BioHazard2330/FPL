@@ -14,7 +14,7 @@ import type { ReviewPayload, ReviewPlayer, ReviewSwing } from '@/lib/types'
  * the plan of record would have scored, and how much of it was the model and how much luck. Every number is stored data
  * (`models/gw_review.py`); the plan's score uses its own bench for automatic substitutions. */
 
-const signed = (v: number, d = 0) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
+const signed = (v: number, d = 0) => `${v >= 0 ? '+' : ''}${v.toFixed(d)} pts`
 const fmtRank = (r: number) => (r >= 1_000_000 ? `${(r / 1_000_000).toFixed(2)}m` : r >= 1_000 ? `${Math.round(r / 1_000)}k` : String(r))
 const CHIP: Record<string, string> = { '3xc': 'Triple captain', bboost: 'Bench boost', freehit: 'Free hit', wildcard: 'Wildcard' }
 

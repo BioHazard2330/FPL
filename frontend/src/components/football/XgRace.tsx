@@ -196,7 +196,7 @@ export function XgRace({ career, thisSeason }: { career: CareerMatch[]; thisSeas
                 </div>
                 <div className="tabular mt-1 text-xs text-text-muted">
                   to date: <span className="font-semibold text-text">{h.actual}</span> v <span className="font-semibold text-pitch-green">{h.expected.toFixed(1)}</span>
-                  {' '}<span className={h.actual - h.expected >= 0 ? 'text-pitch-green' : 'text-alert-red'}>({h.actual - h.expected >= 0 ? '+' : ''}{(h.actual - h.expected).toFixed(1)})</span>
+                  {' '}<span className={h.actual - h.expected >= 0 ? 'text-pitch-green' : 'text-alert-red'}>({Math.abs(h.actual - h.expected).toFixed(1)} {h.actual - h.expected >= 0 ? 'above' : 'below'} expected)</span>
                 </div>
               </div>
             ) : (

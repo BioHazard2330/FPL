@@ -118,7 +118,7 @@ export function ModelVsReality({ block }: { block: CalibrationBlock }) {
           <div className="text-[12px] font-bold text-text-faint">Lean</div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className={`tabular font-display text-3xl font-bold ${block.bias > 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
-              {block.bias > 0 ? '+' : ''}{block.bias.toFixed(2)}
+              {block.bias > 0 ? '+' : ''}{block.bias.toFixed(2)} <span className="text-base">pts a player</span>
             </span>
             <span className="text-[12px] text-text-faint">
               {block.bias > 0 ? 'it undersells' : 'it oversells'}

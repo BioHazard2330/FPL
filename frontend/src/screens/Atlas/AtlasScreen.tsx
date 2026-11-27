@@ -194,7 +194,7 @@ export function AtlasScreen() {
           <div className="ml-auto flex items-baseline gap-3 border-l border-broadcast-gold pl-5">
             <Big v={String(t.mine_goals)} label="your goals" tone="text-broadcast-gold" />
             <Big v={t.mine_xg.toFixed(1)} label={`from xG · ${t.mine_shots} shots`} tone="text-broadcast-gold" />
-            <Big v={`${t.mine_goals - t.mine_xg >= 0 ? '+' : ''}${(t.mine_goals - t.mine_xg).toFixed(1)}`} label="finishing" tone={t.mine_goals - t.mine_xg >= 0 ? 'text-pitch-green' : 'text-alert-red'} />
+            <Big v={`${t.mine_goals - t.mine_xg >= 0 ? '+' : ''}${(t.mine_goals - t.mine_xg).toFixed(1)}`} label="goals above xG (finishing)" tone={t.mine_goals - t.mine_xg >= 0 ? 'text-pitch-green' : 'text-alert-red'} />
           </div>
         </div>
       )}
@@ -225,7 +225,7 @@ export function AtlasScreen() {
           on the pitch <span className="tabular font-bold text-text">{sums.shots}</span> shots ·{' '}
           <span className="tabular font-bold text-text">{sums.goals}</span> goals ·{' '}
           <span className="tabular font-bold text-text">{sums.xg.toFixed(1)}</span> xG ·{' '}
-          <span className={`tabular font-bold ${overperf >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{overperf >= 0 ? '+' : ''}{overperf.toFixed(1)}</span>
+          <span className={`tabular font-bold ${overperf >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{overperf >= 0 ? '+' : ''}{overperf.toFixed(1)} goals vs xG</span>
         </div>
       </div>
 
@@ -278,7 +278,7 @@ export function AtlasScreen() {
                 <div className="tabular text-xs text-text-muted">{p.xg.toFixed(1)}<span className="text-text-faint">xG</span></div>
                 <div className={`tabular w-12 text-right text-xs font-bold ${diff > 0.5 ? 'text-pitch-green' : diff < -0.5 ? 'text-alert-red' : 'text-text-muted'}`}>
                   {p.goals}<span className="text-[12px] font-normal text-text-faint">g</span>
-                  <span className="ml-1 text-[12px]">{diff >= 0 ? '+' : ''}{diff.toFixed(1)}</span>
+                  <span className="ml-1 text-[12px]" title="goals minus xG">{diff >= 0 ? '+' : ''}{diff.toFixed(1)} vs xG</span>
                 </div>
               </button>
             )

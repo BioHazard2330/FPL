@@ -83,7 +83,7 @@ export function WeekPlanAudit({ audit }: { audit: WeekPlanAuditBlock }) {
                       {m.stress ? (
                         <span className={m.stress.survives_half ? 'font-bold text-pitch-green' : 'font-bold text-alert-red'}>
                           {m.stress.gain_if_half >= 0 ? '+' : ''}
-                          {m.stress.gain_if_half.toFixed(1)}
+                          {m.stress.gain_if_half.toFixed(1)} pts
                         </span>
                       ) : (
                         <span className="text-text-faint">—</span>

@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom'
 import { fetchReviewPayload } from '@/lib/api'
+import { aheadWord } from '@/lib/say'
 import { useFetch } from '@/lib/useFetch'
 
-const signed = (v: number, d = 0) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`
 const fmtRank = (r: number) => (r >= 1_000_000 ? `${(r / 1_000_000).toFixed(2)}m` : `${Math.round(r / 1_000)}k`)
 
 /** The last finished gameweek in one line, linking to its report: score, against the top ten thousand, rank move, and what
@@ -15,7 +15,7 @@ export function LastReport() {
   const field = d.top10k_field !== null ? d.points - d.top10k_field : null
   const items: [string, string, string?][] = [
     ['scored', String(d.points)],
-    ...(field !== null ? [['on the top 10k', signed(field, 1), field >= 0 ? 'text-[#7fe0a6]' : 'text-[#ff8a7a]'] as [string, string, string]] : []),
+    ...(field !== null ? [[`pts ${aheadWord(field)} of the top 10k`, Math.abs(field).toFixed(1), field >= 0 ? 'text-[#7fe0a6]' : 'text-[#ff8a7a]'] as [string, string, string]] : []),
     ...(moved !== null ? [['rank', `${moved >= 0 ? '▲' : '▼'} ${fmtRank(Math.abs(moved))}`, moved >= 0 ? 'text-[#7fe0a6]' : 'text-[#ff8a7a]'] as [string, string, string]] : []),
     ...(d.plan ? [['the plan would have', String(d.plan.score)] as [string, string]] : []),
     ...(d.captain ? [['armband', `${d.captain.captain.name} ${d.captain.captain.actual * d.captain.multiplier}`]] as [string, string][] : []),

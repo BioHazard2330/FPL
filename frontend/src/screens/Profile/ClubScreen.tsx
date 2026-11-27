@@ -52,7 +52,7 @@ function ResultRow({ r }: { r: ClubResultRow }) {
  }`}
           title="Real goal difference minus expected goal difference - did the scoreline flatter them"
         >
-          {outperformed > 0 ? '+' : ''}{outperformed.toFixed(1)}
+          {outperformed > 0 ? '+' : ''}{outperformed.toFixed(1)} vs xGD
         </span>
       )}
       <span className="w-12 shrink-0 text-right text-[12px] text-text-faint">{shortDate(r.kickoff_time)}</span>

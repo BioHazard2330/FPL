@@ -181,7 +181,7 @@ export function WhatIf() {
               <div>
                 <div className="text-[12px] text-text-faint">Net over {r.horizon} gameweeks, against keeping your fifteen</div>
                 <div className={`tabular font-display text-6xl font-bold leading-none ${r.totals.gain_net >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>
-                  {r.totals.gain_net >= 0 ? '+' : ''}{r.totals.gain_net.toFixed(1)}
+                  {r.totals.gain_net >= 0 ? '+' : ''}{r.totals.gain_net.toFixed(1)}<span className="ml-1 text-2xl">pts</span>
                 </div>
               </div>
               <div className="pb-1 text-[13px] text-text-muted">
@@ -203,7 +203,7 @@ export function WhatIf() {
                       />
                       <div className="absolute inset-y-[-2px] left-1/2 w-px bg-divider" />
                     </div>
-                    <span className={`tabular text-right font-semibold ${d >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{d >= 0 ? '+' : ''}{d.toFixed(1)}</span>
+                    <span className={`tabular text-right font-semibold ${d >= 0 ? 'text-pitch-green' : 'text-alert-red'}`}>{d >= 0 ? '+' : ''}{d.toFixed(1)} pts</span>
                   </div>
                 )
               })}
@@ -227,7 +227,7 @@ export function WhatIf() {
                         <span className="text-text-faint"> &rarr; </span>
                         <span className="font-bold text-text">{Math.round(after * 100)}%</span>
                         <span className={`ml-2 font-semibold ${d > 0.005 ? 'text-pitch-green' : d < -0.005 ? 'text-alert-red' : 'text-text-faint'}`}>
-                          {d >= 0 ? '+' : ''}{Math.round(d * 100)}
+                          {d >= 0 ? 'up ' : 'down '}{Math.abs(Math.round(d * 100))} points of chance
                         </span>
                       </span>
                     </div>
@@ -238,7 +238,7 @@ export function WhatIf() {
             )}
             {r.plan && r.plan.gain !== null && (
               <Note>
-                The week plan&apos;s own moves ({r.plan.moves.join(', ') || 'roll'}) are worth {r.plan.gain >= 0 ? '+' : ''}{r.plan.gain.toFixed(1)}, but against rolling the transfer to next week, which would make the same move a week later. That gap is about one gameweek of the difference, so it is smaller than the figure here by design.
+                The week plan&apos;s own moves ({r.plan.moves.join(', ') || 'roll'}) are worth {r.plan.gain >= 0 ? '+' : ''}{r.plan.gain.toFixed(1)} pts, but against rolling the transfer to next week, which would make the same move a week later. That gap is about one gameweek of the difference, so it is smaller than the figure here by design.
               </Note>
             )}
           </div>
