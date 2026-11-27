@@ -72,6 +72,9 @@ def watch(conn: sqlite3.Connection, now: datetime | None = None) -> dict:
     roles = _watched(conn, event)
     ids = list(roles)
     warnings = fresh_warnings(conn, ids)
+    from fpl_agent.models.press_reads import reads as press_reads
+
+    press = press_reads(conn)
     names = {r[0]: (r[1], r[2]) for r in conn.execute(
         f"SELECT p.id, p.web_name, t.short_name FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
     rows = []
@@ -80,6 +83,11 @@ def watch(conn: sqlite3.Connection, now: datetime | None = None) -> dict:
             flags = [f for f in check_player(conn, pid) if f["check"] != "returner" or "lists him deeper" in f["text"]]
         except Exception:
             flags = []
+        for e in press.get(pid, []):
+            if e["label"] in ("out", "doubt", "dropped"):
+                flags.append({"check": "manager", "level": "red" if e["label"] == "out" else "amber",
+                              "text": f"presser: {e['label']} - {e['sentence'][:140]}"})
+                break
         w = warnings.get(pid)
         if w is not None:
             flags.append({"check": "headline", "level": "amber", "text": f"injury headline: {w['title']}"})
@@ -102,6 +110,18 @@ def raise_alerts(conn: sqlite3.Connection, now: datetime | None = None) -> int:
     block = watch(conn, now)
     if block.get("status") != "ok" or not block["alerting"]:
         return 0
+    # Freeze the council's votes for this gameweek once, in its last hours, so each source can be scored on the points.
+    key_c = f"council_gw{block['event']}"
+    if not conn.execute("SELECT 1 FROM app_meta WHERE key = ?", (key_c,)).fetchone():
+        try:
+            import json
+
+            from fpl_agent.models.council import council
+
+            conn.execute("INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)", (key_c, json.dumps(council(conn)), now.isoformat()))
+            conn.commit()
+        except Exception:
+            pass
     fired = 0
     for r in block["players"]:
         for f in r["flags"]:

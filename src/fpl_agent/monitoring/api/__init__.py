@@ -35,6 +35,7 @@ from fpl_agent.monitoring.api.midweek_payload import build_midweek_payload
 from fpl_agent.monitoring.api.cohort_payload import build_cohort_payload
 from fpl_agent.monitoring.api.bonusrace_payload import build_bonusrace_payload
 from fpl_agent.monitoring.api.pulse_payload import build_pulse_payload
+from fpl_agent.monitoring.api.council_payload import build_council_payload
 from fpl_agent.monitoring.api.decide_payload import build_deadline_watch_payload, build_decide_payload, build_locks_payload
 from fpl_agent.monitoring.api.getme_payload import build_getme_payload
 from fpl_agent.monitoring.api.map_payload import build_map_payload
@@ -80,6 +81,7 @@ API_BUILDERS = {
     "deadlinewatch": build_deadline_watch_payload,
     "bonusrace": build_bonusrace_payload,
     "pulse": build_pulse_payload,
+    "council": build_council_payload,
     "getme": build_getme_payload,
     "map": build_map_payload,
     "story": build_story_payload,

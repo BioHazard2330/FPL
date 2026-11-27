@@ -479,6 +479,22 @@ def eye_gates(conn: sqlite3.Connection, squad_ids: list[int] | set[int], pool: l
             buy[p] = max(buy.get(p, 0.0), pen)
     except Exception:
         _logger.exception("pre-flight checks failed - the read's gate stands")
+    # The manager's own words (2026-11-27, `models/press_reads`): a target his manager has said will miss out is not
+    # bought; one said to be a doubt or dropped must earn the bar twice. An owned player said to be out loses protection.
+    try:
+        from fpl_agent.models.press_reads import latest_label, reads as press_reads
+
+        for p, entries in press_reads(conn).items():
+            lab = latest_label(entries)
+            if p in squad:
+                if lab == "out":
+                    sell.pop(p, None)
+            elif lab == "out":
+                buy[p] = max(buy.get(p, 0.0), MANAGER_BLOCK)
+            elif lab in ("doubt", "dropped"):
+                buy[p] = max(buy.get(p, 0.0), EYE_PENALTY)
+    except Exception:
+        _logger.exception("press reads failed - the other gates stand")
     return sell, buy, labels
 
 

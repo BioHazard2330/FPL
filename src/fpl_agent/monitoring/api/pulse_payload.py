@@ -108,6 +108,17 @@ def _build(conn) -> dict:
         except ValueError:
             pass
     items += _self_checks(conn, names, mine)
+    try:
+        from fpl_agent.models.press_reads import reads as press_reads
+
+        for pid, es in press_reads(conn).items():
+            if pid not in mine:
+                continue
+            e = es[0]
+            items.append({"at": _iso(e["fetched_at"]), "kind": "manager", "text": f"{names.get(pid)} ({e['label']}): {e['sentence']}"[:220],
+                          "player_id": pid, "yours": True, "high": e["label"] in ("out", "doubt")})
+    except Exception:
+        pass
     items = [i for i in items if i["at"]]
     items.sort(key=lambda i: i["at"], reverse=True)
     last_cycle = conn.execute("SELECT MAX(started_at) FROM pipeline_run").fetchone()[0]

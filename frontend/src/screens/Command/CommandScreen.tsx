@@ -24,6 +24,7 @@ import { PlanChanges } from '@/components/command/PlanChanges'
 import { LinedUp } from '@/components/command/LinedUp'
 import { LockedCalls } from '@/components/command/LockedCalls'
 import { DeadlineWatch } from '@/components/command/DeadlineWatch'
+import { Council } from '@/components/command/Council'
 import { PunditCall } from '@/components/command/PunditCall'
 import { PunditDesk } from '@/components/command/PunditDesk'
 import { TenKWeek } from '@/components/command/TenKWeek'
@@ -233,6 +234,7 @@ export function CommandScreen() {
             <DeadlineWatch />
             <div className="bare"><PunditCall /></div>
             <DecisionSheet plan={plan} chips={p?.bar.chips_available ?? []} />
+            <Council />
             <SquadNews />
             <div className="bare">
               <Disclosure title="Why this call" summary="the pundit's desk, how each move was priced, what changed, the checklist">

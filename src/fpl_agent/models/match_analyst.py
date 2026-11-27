@@ -1167,7 +1167,11 @@ def analyse_live(conn: sqlite3.Connection, match_id: int, as_of_minute: int | No
     return build_story(inputs, cached_league_profile(conn), live_minute=minute)
 
 
-AUTO_AFTER_HOURS = 8
+# 2026-11-27 (the manager: analyse right after the games): 2.5 hours after kickoff, about half an hour after the whistle,
+# instead of 8. The analyst's own analysis is rewritten whenever its story is rebuilt later (FPL's injury news for
+# players who came off lands hours after the match, and `refresh_stories` rebuilds recent stories every 30 minutes),
+# so the early read is corrected rather than waited for. A human `fpl match-analyze` is never overwritten.
+AUTO_AFTER_HOURS = 2.5
 
 
 def auto_analyse_unreviewed(conn: sqlite3.Connection, after_hours: float = AUTO_AFTER_HOURS) -> int:
@@ -1181,8 +1185,9 @@ def auto_analyse_unreviewed(conn: sqlite3.Connection, after_hours: float = AUTO_
     rows = conn.execute(
         "SELECT mi.id FROM match_intelligence mi JOIN match_story ms ON ms.match_id = mi.id "
         "WHERE mi.status = 'FULL_TIME' AND mi.kickoff_utc < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) "
-        "AND NOT EXISTS (SELECT 1 FROM match_analysis_summary s WHERE s.match_id = mi.id AND s.phase = 'FULL_TIME') ORDER BY mi.kickoff_utc",
-        (f"-{after_hours} hours",),
+        "AND NOT EXISTS (SELECT 1 FROM match_analysis_summary s WHERE s.match_id = mi.id AND s.phase = 'FULL_TIME' "
+        "AND (s.analysis_version != ? OR s.generated_at >= ms.generated_at)) ORDER BY mi.kickoff_utc",
+        (f"-{after_hours} hours", ENGINE_VERSION),
     ).fetchall()
     written = 0
     for r in rows:
