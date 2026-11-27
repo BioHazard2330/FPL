@@ -6,13 +6,13 @@ import type { ChipPlan, WeekPlanPayload } from '@/lib/types'
 
 /** THE PLAN, as the exact solver sees it: this week's moves, the weeks after, then the chips and whether the fixture list gives
  * any of them a reason to be played. It is the same plan Command tells the manager to execute, extended. */
-export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
+export function WeekPlanDesk({ plan, part = 'all' }: { plan: WeekPlanPayload; part?: 'all' | 'road' | 'chips' }) {
   const moves = plan.moves ?? []
   const chips = plan.chip_outlook
 
   return (
     <>
-      {plan.road_ahead ? (
+      {part === 'chips' ? null : plan.road_ahead ? (
         <RoadMap plan={plan} />
       ) : (
         <RoadAhead
@@ -22,7 +22,7 @@ export function WeekPlanDesk({ plan }: { plan: WeekPlanPayload }) {
         />
       )}
 
-      {chips && (
+      {chips && part !== 'road' && (
         <Panel title="Chips">
           <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
             <div className="flex flex-wrap gap-2">

@@ -1,6 +1,15 @@
 import { useState } from 'react'
+import { ScreenTabs, useScreenTab, type ScreenTab } from '@/components/shell/ScreenTabs'
+
+type PlanTab = 'road' | 'try' | 'chips' | 'second'
+const PLAN_TAB_KEYS = ['road', 'try', 'chips', 'second'] as const
+const PLAN_TABS: ScreenTab<PlanTab>[] = [
+  { key: 'road', label: 'The road', note: 'this week on', blurb: 'The transfers the plan makes this week and in each of the next eight, and why each one waits for its week.' },
+  { key: 'try', label: 'Try your own', note: 'price any move', blurb: 'Type up to three transfers and see them priced the way the plan prices its own.' },
+  { key: 'chips', label: 'Chips', note: 'when to play them', blurb: 'What each chip in hand is worth week by week, the calendar of blanks and doubles, and the wildcard drafts.' },
+  { key: 'second', label: 'Second opinion', note: 'the older planner', blurb: 'One transfer a gameweek, chips included. When it disagrees about this week, the road is the one to act on.' },
+]
 import { Masthead } from '@/components/shell/Masthead'
-import { Disclosure } from '@/components/ui/kit'
 import { fetchPlanPayload, fetchWeekPlanPayload, shirtUrl } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { Skel, SkelMasthead, SkelTable, ScreenError } from '@/components/shell/ScreenStates'
@@ -290,6 +299,7 @@ export function PlanScreen() {
   const weekState = useFetch(fetchWeekPlanPayload, [], 60000)
   const [activePath, setActivePath] = useState(1)
   const week = weekState.status === 'ready' && weekState.data.status !== 'none' ? weekState.data : null
+  const [tab, setTab] = useScreenTab<PlanTab>('plan', 'road', PLAN_TAB_KEYS)
 
   if (state.status === 'loading' && !week) {
     // Shaped like the strategy desk it precedes: headline path, then the
@@ -323,32 +333,31 @@ export function PlanScreen() {
     )
   }
 
-  const second = (body: React.ReactNode) =>
-    week ? (
-      <Disclosure
-        title="Second opinion: the older planner"
-        summary="One transfer a gameweek, chips included. When it disagrees about this week, the plan above is the one to act on."
-      >
-        {body}
-      </Disclosure>
-    ) : (
-      body
-    )
+
+  const shell = (older: React.ReactNode) => (
+    <div className="data-in pb-16">
+      <Masthead stats={week ? [
+        { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
+        { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
+        { label: 'Free transfers', value: week.free_transfers ?? '–' },
+        { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
+      ] : undefined} />
+      <ScreenTabs tabs={PLAN_TABS} active={tab} onChange={setTab} />
+      {tab === 'road' && week && <WeekPlanDesk plan={week} part="road" />}
+      {tab === 'try' && <WhatIf />}
+      {tab === 'chips' && (
+        <>
+          {week && <WeekPlanDesk plan={week} part="chips" />}
+          <ChipCalendar />
+          <ChipDraft />
+        </>
+      )}
+      {tab === 'second' && older}
+    </div>
+  )
 
   if (state.status !== 'ready') {
-    return (
-      <div className="data-in pb-16">
-        <Masthead stats={week ? [
-          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
-          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
-          { label: 'Free transfers', value: week.free_transfers ?? '–' },
-          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
-        ] : undefined} />
-        {week && <WeekPlanDesk plan={week} />}
-        {week && <WhatIf />}
-        <ChipCalendar />
-        <ChipDraft />
-        {second(
+    return shell(
           state.status === 'loading' ? (
             <div className="animate-pulse">
               <Skel className="h-2 w-40" />
@@ -357,46 +366,18 @@ export function PlanScreen() {
           ) : (
             <div className="text-sm text-text-muted">The older planner&apos;s plan could not be fetched. Nothing is being shown in its place.</div>
           ),
-        )}
-      </div>
-    )
+        )
   }
 
   const p = state.data
   if (!p.has_plan) {
-    return (
-      <div className="data-in pb-16">
-        <Masthead stats={week ? [
-          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
-          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
-          { label: 'Free transfers', value: week.free_transfers ?? '–' },
-          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
-        ] : undefined} />
-        {week && <WeekPlanDesk plan={week} />}
-        {week && <WhatIf />}
-        <ChipCalendar />
-        <ChipDraft />
-        {second(<div className="text-text-muted">{p.reason}</div>)}
-      </div>
-    )
+    return shell(<div className="px-10 py-8 text-text-muted">{p.reason}</div>)
   }
 
   const leader = p.leader!
   const current = p.paths?.find((pp) => pp.idx === activePath) ?? p.paths?.[0]
 
-  return (
-    <div className="data-in pb-16">
-      <Masthead stats={week ? [
-          { label: `GW${week.event} call`, value: (week.moves ?? []).length === 0 ? 'Roll' : `${(week.moves ?? []).length} move${(week.moves ?? []).length === 1 ? '' : 's'}`, sub: (week.moves ?? []).map((m) => m.into.name).join(', ') || 'nothing clears the bar' },
-          { label: `Gain over ${week.horizon ?? 5} GWs`, value: `+${(week.gain_vs_roll ?? 0).toFixed(1)}`, tone: 'good' as const },
-          { label: 'Free transfers', value: week.free_transfers ?? '–' },
-          { label: 'Bank', value: week.bank_tenths != null ? `£${(week.bank_tenths / 10).toFixed(1)}m` : '–' },
-        ] : undefined} />
-      {week && <WeekPlanDesk plan={week} />}
-      {week && <WhatIf />}
-        <ChipCalendar />
-        <ChipDraft />
-      {second(
+  return shell(
         <>
       <div className="relative overflow-hidden px-10 pb-8 pt-7">
         <div className="relative text-[13px] font-bold text-text-faint">
@@ -501,7 +482,5 @@ export function PlanScreen() {
 
       {p.planner_cross_check && <PlannerCrossCheckPanel x={p.planner_cross_check} />}
         </>,
-      )}
-    </div>
   )
 }

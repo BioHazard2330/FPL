@@ -16,6 +16,16 @@ import { useCrowd } from '@/lib/crowd'
 import { CHART_COLORS, areaFade, barFill, baseChart, formatRank, intAxisLabels, lastPoint, rankAxisLabels } from '@/lib/chartTheme'
 import { ScreenError } from '@/components/shell/ScreenStates'
 import type { LiveMatchEvent, LiveSnapshot, LiveSquadPlayer } from '@/lib/types'
+import { ScreenTabs, useScreenTab, type ScreenTab } from '@/components/shell/ScreenTabs'
+
+type LiveTab = 'eleven' | 'matches' | 'rank' | 'season'
+const LIVE_TAB_KEYS = ['eleven', 'matches', 'rank', 'season'] as const
+const LIVE_TABS: ScreenTab<LiveTab>[] = [
+  { key: 'eleven', label: 'Your eleven', note: 'points as they land', blurb: 'Your team on the pitch with live points, bonus and events, and every match of the gameweek beside it.' },
+  { key: 'matches', label: 'The matches', note: 'play by play', blurb: 'The live tracker, the score, momentum and shots for every match, yours first.' },
+  { key: 'rank', label: 'Your rank', note: 'who to cheer', blurb: 'Your edge on the top 10k, which goal helps you in each match left, and where the gameweek is likely to end.' },
+  { key: 'season', label: 'Season', note: 'rank line', blurb: 'Your overall rank and points through the season.' },
+]
 
 const RETURN_KIND: Record<LiveMatchEvent['kind'], { label: string; color: string }> = {
   goal: { label: 'Goal', color: 'text-pitch-green' },
@@ -60,6 +70,7 @@ function LiveSkeleton() {
 
 export function LiveScreen() {
   const pbpMatches = useLiveMatches()
+  const [tab, setTab] = useScreenTab<LiveTab>('live', 'eleven', LIVE_TAB_KEYS)
   const state = useFetch(fetchLiveSnapshot, [], 10000)
   const ready = state.status === 'ready' ? state.data : null
   const crowd = useCrowd(ready?.match_events ?? [], ready?.squad?.find((s) => s.is_captain)?.player_id ?? null)
@@ -130,6 +141,9 @@ export function LiveScreen() {
 
       <Scoreboard p={p} starting={starting} />
 
+      <ScreenTabs tabs={LIVE_TABS} active={tab} onChange={setTab} />
+      {tab === 'eleven' && (
+        <>
       {squad.length > 0 && (
         <section className="grid gap-6 px-10 py-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
           <div>
@@ -146,101 +160,11 @@ export function LiveScreen() {
         </section>
       )}
 
+        </>
+      )}
+      {tab === 'matches' && (
+        <>
       {anyInPlay(pbpMatches) && <LivePlayByPlay matches={pbpMatches} />}
-
-      <SwingBoard />
-
-      <LiveCone />
-
-      {/* LIVE PROGRESSION - real gap found 2026-09-12 (direct user report:
-          "amazing graphs... barely there" - a real sub-gameweek points/rank
-          sample has been logged roughly every real minute of live play
-          since 2026-08-28, but nothing ever plotted it in this app; the old
-          dashboard.html only ever charted rank, never points, and never in
-          the React app at all). Redraws with every 10s poll as new real
-          samples land - genuinely live, not a static snapshot. */}
-      {charts?.intragame && charts.intragame.timestamps.length > 1 && (
-        <div className="grid grid-cols-1 gap-px border-b border-divider bg-divider lg:grid-cols-2">
-          <div className="bg-void px-10 py-8">
-            <div className="mb-3 text-[13px] font-bold text-text-faint">
-              Your points through the gameweek
-            </div>
-            <Chart
-              type="area"
-              height={220}
-              options={baseChart({
-                chart: { type: 'area' },
-                fill: areaFade(),
-                stroke: { curve: 'stepline' },
-                colors: [CHART_COLORS.primary],
-                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
-                yaxis: { labels: intAxisLabels },
-                tooltip: { x: { format: 'HH:mm' } },
-                annotations: lastPoint(
-                  new Date(charts.intragame.timestamps[charts.intragame.timestamps.length - 1]).getTime(),
-                  charts.intragame.points[charts.intragame.points.length - 1],
-                  CHART_COLORS.primary,
-                  `${charts.intragame.points[charts.intragame.points.length - 1]}`,
-                ),
-              })}
-              series={[{
-                name: 'Points',
-                data: charts.intragame.timestamps.map((t, i) => [new Date(t).getTime(), charts!.intragame!.points[i]]),
-              }]}
-            />
-          </div>
-          <div className="bg-void px-10 py-8">
-            <div className="mb-3 text-[13px] font-bold text-text-faint">
-              Your rank through the gameweek
-            </div>
-            <Chart
-              type="area"
-              height={220}
-              options={baseChart({
-                chart: { type: 'area' },
-                fill: areaFade(0.5, true),
-                colors: [CHART_COLORS.secondary],
-                // Reversed: a lower overall rank is better, so an unreversed
-                // axis would draw a real climb up the leaderboard as a fall.
-                stroke: { curve: 'stepline' },
-                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
-                yaxis: { reversed: true, labels: rankAxisLabels },
-                tooltip: { x: { format: 'HH:mm' } },
-                annotations: (() => {
-                  const ranked = charts.intragame.timestamps
-                    .map((t, i) => ({ t: new Date(t).getTime(), r: charts.intragame!.rank[i] }))
-                    .filter((pt): pt is { t: number; r: number } => pt.r !== null)
-                  const end = ranked[ranked.length - 1]
-                  return end ? lastPoint(end.t, end.r, CHART_COLORS.secondary, formatRank(end.r)) : undefined
-                })(),
-              })}
-              series={[{
-                name: 'Rank',
-                data: charts.intragame.timestamps
-                  .map((t, i) => [new Date(t).getTime(), charts!.intragame!.rank[i]] as [number, number | null])
-                  .filter((pt): pt is [number, number] => pt[1] !== null),
-              }]}
-            />
-          </div>
-        </div>
-      )}
-
-      {(matches.length > 0 || pointsChanges) && (
-        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-1 px-8 py-4 text-[14px] text-text-muted">
-          {matches.length > 0 && (
-            <span>
-              <span className="tabular font-semibold text-alert-red">{matches.length}</span> match{matches.length === 1 ? '' : 'es'} on now
-              {squadMatches > 0 && <span className="text-broadcast-gold"> &middot; {squadMatches} with your players</span>}
-            </span>
-          )}
-          {pointsChanges && (
-            <span>
-              GW{pointsChanges.event} points revised for <span className="tabular font-semibold text-text">{pointsChanges.squad_revisions}</span> of your players
-              <span className="text-text-faint"> ({pointsChanges.total_revisions} league-wide, {pointsChanges.locked ? 'now locked' : 'still provisional'})</span>
-            </span>
-          )}
-        </div>
-      )}
 
       {/* MATCH CENTRE - the dominant object whenever football is actually
           happening. Real score, real per-team state, real momentum and shot
@@ -349,6 +273,108 @@ export function LiveScreen() {
         </div>
       )}
 
+        </>
+      )}
+      {tab === 'rank' && (
+        <>
+      <SwingBoard />
+
+      <LiveCone />
+
+      {/* LIVE PROGRESSION - real gap found 2026-09-12 (direct user report:
+          "amazing graphs... barely there" - a real sub-gameweek points/rank
+          sample has been logged roughly every real minute of live play
+          since 2026-08-28, but nothing ever plotted it in this app; the old
+          dashboard.html only ever charted rank, never points, and never in
+          the React app at all). Redraws with every 10s poll as new real
+          samples land - genuinely live, not a static snapshot. */}
+      {charts?.intragame && charts.intragame.timestamps.length > 1 && (
+        <div className="grid grid-cols-1 gap-px border-b border-divider bg-divider lg:grid-cols-2">
+          <div className="bg-void px-10 py-8">
+            <div className="mb-3 text-[13px] font-bold text-text-faint">
+              Your points through the gameweek
+            </div>
+            <Chart
+              type="area"
+              height={220}
+              options={baseChart({
+                chart: { type: 'area' },
+                fill: areaFade(),
+                stroke: { curve: 'stepline' },
+                colors: [CHART_COLORS.primary],
+                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+                yaxis: { labels: intAxisLabels },
+                tooltip: { x: { format: 'HH:mm' } },
+                annotations: lastPoint(
+                  new Date(charts.intragame.timestamps[charts.intragame.timestamps.length - 1]).getTime(),
+                  charts.intragame.points[charts.intragame.points.length - 1],
+                  CHART_COLORS.primary,
+                  `${charts.intragame.points[charts.intragame.points.length - 1]}`,
+                ),
+              })}
+              series={[{
+                name: 'Points',
+                data: charts.intragame.timestamps.map((t, i) => [new Date(t).getTime(), charts!.intragame!.points[i]]),
+              }]}
+            />
+          </div>
+          <div className="bg-void px-10 py-8">
+            <div className="mb-3 text-[13px] font-bold text-text-faint">
+              Your rank through the gameweek
+            </div>
+            <Chart
+              type="area"
+              height={220}
+              options={baseChart({
+                chart: { type: 'area' },
+                fill: areaFade(0.5, true),
+                colors: [CHART_COLORS.secondary],
+                // Reversed: a lower overall rank is better, so an unreversed
+                // axis would draw a real climb up the leaderboard as a fall.
+                stroke: { curve: 'stepline' },
+                xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+                yaxis: { reversed: true, labels: rankAxisLabels },
+                tooltip: { x: { format: 'HH:mm' } },
+                annotations: (() => {
+                  const ranked = charts.intragame.timestamps
+                    .map((t, i) => ({ t: new Date(t).getTime(), r: charts.intragame!.rank[i] }))
+                    .filter((pt): pt is { t: number; r: number } => pt.r !== null)
+                  const end = ranked[ranked.length - 1]
+                  return end ? lastPoint(end.t, end.r, CHART_COLORS.secondary, formatRank(end.r)) : undefined
+                })(),
+              })}
+              series={[{
+                name: 'Rank',
+                data: charts.intragame.timestamps
+                  .map((t, i) => [new Date(t).getTime(), charts!.intragame!.rank[i]] as [number, number | null])
+                  .filter((pt): pt is [number, number] => pt[1] !== null),
+              }]}
+            />
+          </div>
+        </div>
+      )}
+
+      {(matches.length > 0 || pointsChanges) && (
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-1 px-8 py-4 text-[14px] text-text-muted">
+          {matches.length > 0 && (
+            <span>
+              <span className="tabular font-semibold text-alert-red">{matches.length}</span> match{matches.length === 1 ? '' : 'es'} on now
+              {squadMatches > 0 && <span className="text-broadcast-gold"> &middot; {squadMatches} with your players</span>}
+            </span>
+          )}
+          {pointsChanges && (
+            <span>
+              GW{pointsChanges.event} points revised for <span className="tabular font-semibold text-text">{pointsChanges.squad_revisions}</span> of your players
+              <span className="text-text-faint"> ({pointsChanges.total_revisions} league-wide, {pointsChanges.locked ? 'now locked' : 'still provisional'})</span>
+            </span>
+          )}
+        </div>
+      )}
+
+        </>
+      )}
+      {tab === 'season' && (
+        <>
       {/* SEASON TRAJECTORY - real rank/points/captain history */}
       {charts && (charts.rank.events.length > 1 || charts.cumulative_points.events.length > 1) && (
         <div className={`grid grid-cols-1 gap-px border-t border-divider bg-divider ${chartCols > 1 ? 'lg:grid-cols-2' : ''}`}>
@@ -422,6 +448,8 @@ export function LiveScreen() {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
 
     </div>

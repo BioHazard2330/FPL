@@ -14,6 +14,15 @@ import { PitchMarkings } from '@/components/football/PitchMarkings'
 import type { ActionSquadPlayer, FixtureContext, SquadPlayer } from '@/lib/types'
 import { plain } from '@/lib/text'
 import { SquadVerdict } from '@/components/verdict/SquadVerdict'
+import { ScreenTabs, useScreenTab, type ScreenTab } from '@/components/shell/ScreenTabs'
+
+type TeamTab = 'eleven' | 'judged' | 'minutes'
+const TEAM_TAB_KEYS = ['eleven', 'judged', 'minutes'] as const
+const TEAM_TABS: ScreenTab<TeamTab>[] = [
+  { key: 'eleven', label: 'The eleven', note: 'pitch & watch list', blurb: 'Who starts this gameweek, with the strongest and weakest picks, the last match in one line each and the fixtures ahead.' },
+  { key: 'judged', label: 'Judged', note: 'every lens', blurb: 'Each of your fifteen scored on the model, returns, value, track record, fixtures and minutes.' },
+  { key: 'minutes', label: 'Minutes', note: 'workload', blurb: 'Every match in the last four weeks, league and cup: who is being run into the ground and who is being rested.' },
+]
 
 const CHIP_DISPLAY_NAME: Record<string, string> = {
   wildcard: 'Wildcard', freehit: 'Free Hit', bboost: 'Bench Boost', '3xc': 'Triple Captain',
@@ -277,6 +286,7 @@ function squadClubs(p: { positions?: { players: SquadPlayer[] }[]; bench?: Squad
 
 export function MyTeamScreen() {
   const state = useFetch(fetchMyTeamPayload, [], 60000)
+  const [tab, setTab] = useScreenTab<TeamTab>('my-team', 'eleven', TEAM_TAB_KEYS)
   // Real id, not the fetched row object (2026-09-08, direct user finding:
   // "I don't want that lag" led to real polling on `useFetch` - a stored
   // object reference would freeze the detail sheet on stale data forever
@@ -366,43 +376,16 @@ export function MyTeamScreen() {
 
   return (
     <div className="data-in pb-16">
-      <Masthead />
-      <div className="px-8 pt-6"><SquadVerdict /></div>
-
-      <div className="grid grid-cols-2 gap-x-8 gap-y-5 px-8 py-6 md:grid-cols-5">
-        <div>
-          <div className="text-[13px] text-text-faint">Squad value</div>
-          <div className="tabular mt-0.5 font-display text-2xl font-semibold text-text">£{p.bar.squad_value_m.toFixed(1)}m</div>
-        </div>
-        <div>
-          <div className="text-[13px] text-text-faint">In the bank</div>
-          <div className="tabular mt-0.5 font-display text-2xl font-semibold text-text">£{p.bar.bank_m.toFixed(1)}m</div>
-        </div>
-        {p.bar.formation && (
-          <div>
-            <div className="text-[13px] text-text-faint">Formation</div>
-            <div className="mt-0.5 font-display text-2xl font-semibold text-text">{p.bar.formation}</div>
-          </div>
-        )}
-        {p.bar.captain_name && (
-          <div>
-            <div className="text-[13px] text-text-faint">Captain</div>
-            <div className="mt-0.5 font-display text-2xl font-semibold text-broadcast-gold">{p.bar.captain_name}</div>
-          </div>
-        )}
-        {p.bar.vice_name && (
-          <div>
-            <div className="text-[13px] text-text-faint">Vice-captain</div>
-            <div className="mt-0.5 font-display text-2xl font-semibold text-text-muted">{p.bar.vice_name}</div>
-          </div>
-        )}
-      </div>
-
-      {/* TACTICAL BOARD - the pitch (+ bench, real substitutes standing by)
-          runs alone in the main column, uninterrupted; every supporting
-          fact moves into a real, wide analysis rail alongside it - a true
-          left/right split for the whole surface, not sections stacked
-          under a full-width pitch. */}
+      <Masthead stats={[
+        { label: 'Squad value', value: `£${p.bar.squad_value_m.toFixed(1)}m` },
+        { label: 'In the bank', value: `£${p.bar.bank_m.toFixed(1)}m` },
+        ...(p.bar.formation ? [{ label: 'Formation', value: p.bar.formation }] : []),
+        ...(p.bar.captain_name ? [{ label: 'Captain', value: p.bar.captain_name, tone: 'spot' as const, sub: p.bar.vice_name ? `vice ${p.bar.vice_name}` : undefined }] : []),
+      ]} />
+      <ScreenTabs tabs={TEAM_TABS} active={tab} onChange={setTab} />
+      {tab === 'judged' && <div className="px-8 py-6"><SquadVerdict /></div>}
+      {tab === 'minutes' && <Workload />}
+      {tab === 'eleven' && (
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="border-r-0 border-divider px-8 py-10 lg:border-r">
           {doctor?.worth_changing && (
@@ -570,7 +553,7 @@ export function MyTeamScreen() {
         </aside>
       </div>
 
-      <Workload />
+      )}
 
       <PlayerDetailSheet player={selected} onClose={() => setSelectedId(null)} />
     </div>
